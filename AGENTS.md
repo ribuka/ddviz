@@ -11,7 +11,6 @@
 
 - The app runs fully offline: it loads no external resource (scripts, stylesheets, fonts, icons, or images from a CDN or any other URL). Bundle every asset with the app.
 - Never load whole Parquet files into memory; read only the columns a graph needs. The app must run on a PC with 16GB RAM.
-- Aggregate data on the Python side; never send raw points to the UI.
 
 ## Python
 
