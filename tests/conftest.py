@@ -49,7 +49,7 @@ def scatter_path(tmp_path: Path, scatter_frame: pl.DataFrame) -> Path:
 def scatter_spec(scatter_path: Path) -> PlotSpec:
     """Return a spec plotting `scatter_path` colored by color and faceted by facet."""
     return PlotSpec(
-        path=str(scatter_path),
+        files={c: str(scatter_path) for c in ["x", "y", "label", "color", "facet"]},
         x="x",
         y="y",
         color="color",

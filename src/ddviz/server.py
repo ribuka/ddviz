@@ -1,6 +1,8 @@
 """UI server: serves the page, runs plot tasks in workers, and answers hovers.
 
 This process never imports polars; it only reads the files the workers write.
+Columns a plot uses for the first time are converted into the column cache
+before the plot task, and the plot reads them from there.
 """
 
 from __future__ import annotations
@@ -20,12 +22,14 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ddviz.cache import ColumnCache, evict
 from ddviz.figure import build_figure
 from ddviz.hover import HoverIndex
 from ddviz.jobs import WorkerJob, physical_memory
 from ddviz.manifest import read_manifest
 from ddviz.palette import DEFAULT_COLORS
 from ddviz.runner import WorkerPool
+from ddviz.settings import Settings
 from ddviz.spec import PlotSpec
 
 STATIC = Path(__file__).parent / "static"
@@ -49,6 +53,8 @@ class _State:
 
     data_path: str
     root: Path
+    cache_root: Path
+    settings: Settings
     pool: WorkerPool | None = None
     job: WorkerJob | None = None
     log: object = None
@@ -58,9 +64,13 @@ class _State:
     hover: HoverIndex | None = None
     hover_task: int | None = None
     schema: list | None = None
+    cache: ColumnCache | None = None
+    converting: bool = False
 
 
-def create_app(data_path: str, root: Path) -> FastAPI:
+def create_app(
+    data_path: str, root: Path, cache_root: Path, settings: Settings
+) -> FastAPI:
     """Create the UI server for one Parquet file.
 
     Parameters
@@ -69,13 +79,19 @@ def create_app(data_path: str, root: Path) -> FastAPI:
         Parquet file to plot.
     root : pathlib.Path
         Empty directory for task outputs and the worker log; removed on shutdown.
+    cache_root : pathlib.Path
+        Directory of the column cache; kept across runs.
+    settings : Settings
+        Limits of the column cache.
 
     Returns
     -------
     fastapi.FastAPI
         The application.
     """
-    state = _State(data_path=data_path, root=root)
+    state = _State(
+        data_path=data_path, root=root, cache_root=cache_root, settings=settings
+    )
 
     def on_event(task_id: int, message: dict) -> None:
         """Hand a worker message to the event loop (called from reader threads)."""
@@ -132,6 +148,11 @@ def create_app(data_path: str, root: Path) -> FastAPI:
     async def index() -> FileResponse:
         return FileResponse(STATIC / "index.html")
 
+    def evict_cache(keep: list[Path]) -> None:
+        """Remove old column files, keeping the given ones."""
+        limits = state.settings.cache
+        evict(state.cache_root, limits.max_bytes, limits.max_unused_days, keep)
+
     @app.get("/api/schema")
     async def schema() -> list:
         if state.schema is None:
@@ -139,9 +160,38 @@ def create_app(data_path: str, root: Path) -> FastAPI:
             if end["type"] != "done":
                 raise HTTPException(500, end.get("message", end["type"]))
             out = root / "tasks" / str(task_id)
-            state.schema = read_manifest(out)["columns"]
+            columns = read_manifest(out)["columns"]
             shutil.rmtree(out, ignore_errors=True)
+            state.cache = await asyncio.to_thread(
+                ColumnCache,
+                state.cache_root,
+                Path(state.data_path),
+                [c["name"] for c in columns],
+            )
+            await asyncio.to_thread(evict_cache, [])
+            state.schema = columns
         return state.schema
+
+    async def convert(columns: list[str]) -> None:
+        """Convert the columns not in the cache yet; plots are refused meanwhile."""
+        missing = state.cache.missing(columns)
+        if not missing:
+            return
+        state.converting = True
+        try:
+            task_id, end = await run(
+                {
+                    "kind": "convert",
+                    "path": state.data_path,
+                    "files": {c: str(state.cache.file(c)) for c in missing},
+                }
+            )
+        finally:
+            state.converting = False
+        shutil.rmtree(root / "tasks" / str(task_id), ignore_errors=True)
+        if end["type"] != "done":
+            raise HTTPException(500, end.get("message", end["type"]))
+        await asyncio.to_thread(evict_cache, [state.cache.file(c) for c in columns])
 
     @app.post("/api/plot")
     async def plot(request: PlotRequest) -> JSONResponse:
@@ -154,8 +204,14 @@ def create_app(data_path: str, root: Path) -> FastAPI:
         missing = [c for c in hover if c not in names]
         if missing:
             raise HTTPException(400, f"unknown columns: {missing}")
+        # The page refuses edits while converting; a plot now would kill the conversion.
+        if state.converting:
+            raise HTTPException(409, "converting")
+        started = time.perf_counter()
+        await convert(hover)
+        convert_seconds = time.perf_counter() - started
         spec = PlotSpec(
-            path=state.data_path,
+            files={c: str(state.cache.file(c)) for c in hover},
             hover=hover,
             colors=DEFAULT_COLORS,
             **request.model_dump(),
@@ -167,6 +223,7 @@ def create_app(data_path: str, root: Path) -> FastAPI:
         if end["type"] == "error":
             raise HTTPException(500, end["message"])
         task_seconds = time.perf_counter() - started
+        await asyncio.to_thread(state.cache.touch, hover)
         out = root / "tasks" / str(task_id)
         index = await asyncio.to_thread(HoverIndex, out)
         old, state.hover, state.hover_task = state.hover, index, task_id
@@ -183,6 +240,7 @@ def create_app(data_path: str, root: Path) -> FastAPI:
         result = build_figure(index.manifest, source)
         result["meta"]["task"] = task_id
         result["meta"]["task_seconds"] = task_seconds
+        result["meta"]["convert_seconds"] = convert_seconds
         return JSONResponse(result)
 
     @app.get("/api/hover")

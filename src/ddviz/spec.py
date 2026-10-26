@@ -11,8 +11,9 @@ class PlotSpec:
 
     Parameters
     ----------
-    path : str
-        Parquet file to read.
+    files : dict of str to str
+        Parquet file to read each column of the plot from: a file of the
+        column cache, or the source itself (`ddviz.scan.scan_columns`).
     x, y : str
         Columns on the x and y axes.
     color : str or None
@@ -29,7 +30,7 @@ class PlotSpec:
         Series colors as ``#rrggbb``, cycled over the series.
     """
 
-    path: str
+    files: dict[str, str]
     x: str
     y: str
     color: str | None

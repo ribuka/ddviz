@@ -9,6 +9,7 @@ import polars as pl
 
 from ddviz.keys import BinGrid
 from ddviz.layout import GridLayout, grid_layout
+from ddviz.scan import scan_columns
 from ddviz.spec import PlotSpec
 
 KEY = "__key"
@@ -80,6 +81,18 @@ def _index_expr(column: str | None, levels: list) -> pl.Expr:
     )
 
 
+def _scan(
+    spec: PlotSpec, columns: list[str], row_index: str | None = None
+) -> pl.LazyFrame:
+    """Return a scan of only `columns` of the plot.
+
+    Each query gets its own scan: queries in one `collect_all` sharing a scan
+    followed by a ``select`` made the streaming engine peak at about 6.7GB on
+    100M rows, against about 1.2GB with separate scans.
+    """
+    return scan_columns({c: spec.files[c] for c in dict.fromkeys(columns)}, row_index)
+
+
 def aggregate(
     spec: PlotSpec, progress: Callable[[str], None] = lambda _: None
 ) -> Aggregation:
@@ -108,16 +121,15 @@ def aggregate(
     # same pass made the streaming engine peak at about 6.5GB on 100M rows,
     # against about 1.1GB without it.
     progress("levels")
-    raw = pl.scan_parquet(spec.path)
     found = pl.collect_all(
         [
-            raw.select(
+            _scan(spec, [spec.x, spec.y]).select(
                 x.filter(x.is_finite()).min().alias("x_min"),
                 x.filter(x.is_finite()).max().alias("x_max"),
                 y.filter(y.is_finite()).min().alias("y_min"),
                 y.filter(y.is_finite()).max().alias("y_max"),
             ),
-            *[raw.group_by(pl.col(c).cast(pl.String)).len() for c in used],
+            *[_scan(spec, [c]).group_by(pl.col(c).cast(pl.String)).len() for c in used],
         ],
         engine="streaming",
     )
@@ -153,11 +165,9 @@ def aggregate(
     )
 
     progress("bins")
-    lf = pl.scan_parquet(spec.path, row_index_name=INDEX)
     bins = (
-        lf.filter(
-            x.is_finite(), y.is_finite(), *[pl.col(c).is_not_null() for c in used]
-        )
+        _scan(spec, [spec.x, spec.y, *used], INDEX)
+        .filter(x.is_finite(), y.is_finite(), *[pl.col(c).is_not_null() for c in used])
         .select(key.alias(KEY), pl.col(INDEX))
         .group_by(KEY)
         .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
@@ -168,7 +178,8 @@ def aggregate(
     progress("rows")
     hover = list(dict.fromkeys(spec.hover))
     rows = (
-        lf.join(bins.lazy().select(INDEX), on=INDEX, how="semi")
+        _scan(spec, hover, INDEX)
+        .join(bins.lazy().select(INDEX), on=INDEX, how="semi")
         .select(INDEX, *hover)
         .collect(engine="streaming")
     )

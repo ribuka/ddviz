@@ -10,6 +10,7 @@ import numpy as np
 import polars as pl
 
 from ddviz.aggregate import COUNT, INDEX, KEY, aggregate
+from ddviz.convert import convert_columns
 from ddviz.manifest import write_manifest
 from ddviz.palette import series_color
 from ddviz.png import encode_mask
@@ -121,8 +122,10 @@ def run_task(task: dict, emit: Emit) -> None:
     Parameters
     ----------
     task : dict
-        ``{"kind": "schema" | "plot", "out": directory, ...}``; ``"path"`` for
-        a schema task and ``"spec"`` for a plot task.
+        ``{"kind": "schema" | "convert" | "plot", "out": directory, ...}``;
+        ``"path"`` for a schema task, ``"path"`` and ``"files"`` (the file to
+        write for each column) for a convert task, and ``"spec"`` for a plot
+        task.
     emit : callable
         Receives progress messages.
 
@@ -135,6 +138,8 @@ def run_task(task: dict, emit: Emit) -> None:
     out.mkdir(parents=True, exist_ok=True)
     if task["kind"] == "schema":
         run_schema(task["path"], out, emit)
+    elif task["kind"] == "convert":
+        convert_columns(task["path"], task["files"], emit)
     elif task["kind"] == "plot":
         run_plot(PlotSpec.from_dict(task["spec"]), out, emit)
     else:

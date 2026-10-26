@@ -64,3 +64,31 @@ body {
   color: #444;
   white-space: pre-wrap;
 }
+
+/* Covers the page while columns are converted: edits wait for the conversion. */
+#converting {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.7);
+  z-index: 100;
+}
+
+#converting[hidden] {
+  display: none;
+}
+
+#converting .box {
+  padding: 16px 24px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+}
+
+#converting progress {
+  display: block;
+  width: 320px;
+  margin-top: 8px;
+}

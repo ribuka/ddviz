@@ -1,0 +1,9 @@
+# ddviz の設定。exe では ddviz.exe と同じフォルダの config/settings.toml を読む。
+# 項目を省いたときは既定値を使う。
+
+[cache]
+# 列キャッシュ（%LOCALAPPDATA%\ddviz\cache）の合計の上限（GB）。
+# 超えたら、最後に使った日時が古い列から消す。
+max_gb = 10
+# この日数のあいだ使わなかった列のキャッシュを消す。
+max_unused_days = 30

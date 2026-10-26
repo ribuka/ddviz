@@ -70,3 +70,25 @@ def test_a_failing_task_reports_an_error(pool: tuple, tmp_path: Path) -> None:
     )
     message = _until_end(events, task_id)
     assert message["type"] == "error"
+
+
+def test_convert_task_writes_each_column(
+    pool: tuple, scatter_path: Path, tmp_path: Path
+) -> None:
+    """A convert task reports progress per column and leaves one file each."""
+    workers, events = pool
+    files = {c: str(tmp_path / f"{c}.parquet") for c in ("x", "label")}
+    task_id = workers.submit(
+        {"kind": "convert", "path": str(scatter_path), "files": files}
+    )
+    seen = []
+    while True:
+        got, message = events.get(timeout=TIMEOUT)
+        if got != task_id:
+            continue
+        if message["type"] != "progress":
+            break
+        seen.append(message["column"])
+    assert message == {"type": "done"}
+    assert seen == ["x", "label"]
+    assert all(Path(f).exists() for f in files.values())

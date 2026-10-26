@@ -28,12 +28,19 @@ def main() -> int:
 
     import uvicorn
 
+    from ddviz.cache import default_cache_root
     from ddviz.server import create_app
+    from ddviz.settings import load_settings
 
     root = Path(tempfile.mkdtemp(prefix="ddviz-"))
     print(f"ddviz: http://127.0.0.1:{args.port}/", flush=True)
     uvicorn.run(
-        create_app(str(Path(args.path).resolve()), root),
+        create_app(
+            str(Path(args.path).resolve()),
+            root,
+            default_cache_root(),
+            load_settings(),
+        ),
         host="127.0.0.1",
         port=args.port,
     )
