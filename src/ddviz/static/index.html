@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>ddviz</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/plotly-4.1.1.min.js"></script>
+  <script type="module" src="/static/js/app.js"></script>
+</head>
+<body>
+  <form id="controls">
+    <label>x <select name="x"></select></label>
+    <label>y <select name="y"></select></label>
+    <label>color <select name="color"></select></label>
+    <label>row <select name="row"></select></label>
+    <label>col <select name="col"></select></label>
+    <button type="submit">描画</button>
+    <span id="status"></span>
+  </form>
+  <div id="stage">
+    <div id="plot"></div>
+    <div id="hover-ring" hidden></div>
+    <div id="hover-label" hidden></div>
+  </div>
+  <pre id="info"></pre>
+</body>
+</html>
