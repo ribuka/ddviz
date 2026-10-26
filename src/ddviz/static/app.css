@@ -64,3 +64,30 @@ body {
   color: #444;
   white-space: pre-wrap;
 }
+
+/* Shown while the server is unreachable: dims the page and takes every click. */
+#disconnected {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 100;
+}
+
+#disconnected[hidden] {
+  display: none;
+}
+
+#disconnected .message {
+  max-width: 420px;
+  padding: 16px 20px;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+#disconnected p {
+  margin: 8px 0 0;
+}

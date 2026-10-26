@@ -38,10 +38,22 @@ async function loadSchema() {
   }
 }
 
+// The progress stream doubles as the connection check: while it is down the
+// page is dimmed and locked. A server that comes back has lost every task, so
+// the page reloads instead of carrying on with stale ones.
+const disconnected = document.getElementById("disconnected");
+let lostConnection = false;
 const events = new EventSource("/api/events");
 events.onmessage = (event) => {
   const message = JSON.parse(event.data);
   if (message.type === "progress") status.textContent = `task ${message.task}: ${message.stage}`;
+};
+events.onerror = () => {
+  lostConnection = true;
+  disconnected.hidden = false;
+};
+events.onopen = () => {
+  if (lostConnection) location.reload();
 };
 
 async function plot() {
