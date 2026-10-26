@@ -7,11 +7,6 @@
 - This repository is in development (0.x); backward compatibility is NOT required.
   - NEVER add or keep compatibility layers, deprecated aliases, or re-exports for old import paths.
 
-## App rules
-
-- The app runs fully offline: it loads no external resource (scripts, stylesheets, fonts, icons, or images from a CDN or any other URL). Bundle every asset with the app.
-- Never load whole Parquet files into memory; read only the columns a graph needs. The app must run on a PC with 16GB RAM.
-
 ## Python
 
 - Always use `uv run -m`.
