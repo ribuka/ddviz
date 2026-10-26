@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# cache
+.pytest_cache/
+.ruff_cache/
+
+# local agent configuration
+.codex/
+.claude/*
+!.claude/settings.json
+
+# tmp
+/tmp/
+
+# Playwright traces of failed E2E tests
+/test-results/
