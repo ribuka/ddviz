@@ -28,6 +28,19 @@ class PlotSpec:
         Columns whose values the hover shows for the representative rows.
     colors : list of str
         Series colors as ``#rrggbb``, cycled over the series.
+    x_range, y_range : list of float or None
+        Zoomed view to aggregate: the bins cover exactly these data ranges
+        and rows outside them are left out. None for the overview, whose
+        bins cover the padded data ranges.
+    levels : dict or None
+        Levels of the overview (`ddviz.aggregate.Aggregation.levels`), given
+        with a view so that its panels and series stay those of the overview
+        and the levels need no pass over the data.
+
+    Raises
+    ------
+    ValueError
+        When only some of `x_range`, `y_range` and `levels` are given.
     """
 
     files: dict[str, str]
@@ -40,6 +53,20 @@ class PlotSpec:
     height: int
     hover: list[str] = field(default_factory=list)
     colors: list[str] = field(default_factory=list)
+    x_range: list[float] | None = None
+    y_range: list[float] | None = None
+    levels: dict[str, list] | None = None
+
+    def __post_init__(self) -> None:
+        """Check that the view fields are all given or all None."""
+        view = (self.x_range, self.y_range, self.levels)
+        if any(v is None for v in view) and any(v is not None for v in view):
+            raise ValueError("x_range, y_range and levels go together")
+
+    @property
+    def is_view(self) -> bool:
+        """Whether the spec aggregates a zoomed view rather than the overview."""
+        return self.levels is not None
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.

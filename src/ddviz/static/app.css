@@ -92,3 +92,23 @@ body {
   width: 320px;
   margin-top: 8px;
 }
+
+/* While a zoomed view is aggregated, the stretched images of the previous
+   result stand in for it, faded. */
+#plot.pending .imagelayer {
+  opacity: 0.35;
+}
+
+#pending {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  padding: 4px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 12px;
+  z-index: 10;
+}

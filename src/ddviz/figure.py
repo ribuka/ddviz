@@ -27,7 +27,7 @@ def _label(column: str | None, level: object) -> str:
     return f"{column} = {level}"
 
 
-def build_figure(manifest: dict, image_source: Callable[[str], str]) -> dict:
+def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> dict:
     """Return the figure of a plot task and what the page needs for hovering.
 
     Each series of each panel is an image trace; one empty scatter trace per
@@ -39,7 +39,8 @@ def build_figure(manifest: dict, image_source: Callable[[str], str]) -> dict:
     manifest : dict
         Manifest of the plot task.
     image_source : callable
-        Returns the ``source`` of an image trace (a data URI) from a PNG file name.
+        Returns the ``source`` of an image trace (a data URI) from the offset
+        and length of its PNG in the images file (`ddviz.manifest.IMAGES`).
 
     Returns
     -------
@@ -66,7 +67,7 @@ def build_figure(manifest: dict, image_source: Callable[[str], str]) -> dict:
             "autoexpand": False,
         },
         "hovermode": False,
-        "dragmode": "zoom",
+        "dragmode": "pan",
         "showlegend": True,
         "legend": {
             "x": 1 + _LEGEND_OFFSET / (layout.width - MARGIN_LEFT - MARGIN_RIGHT),
@@ -190,6 +191,22 @@ def build_figure(manifest: dict, image_source: Callable[[str], str]) -> dict:
                 "hoverinfo": "skip",
             }
         )
+    # plotly leaves out the axes of a subplot without traces, so a panel with
+    # no rows in the view gets an empty trace.
+    for panel, images in enumerate(manifest["images"]):
+        if all(image is None for image in images):
+            data.append(
+                {
+                    "type": "scatter",
+                    "mode": "markers",
+                    "x": [],
+                    "y": [],
+                    "xaxis": panels[panel]["xaxis"],
+                    "yaxis": panels[panel]["yaxis"],
+                    "showlegend": False,
+                    "hoverinfo": "skip",
+                }
+            )
     meta = {
         "panels": panels,
         "grid": grid,

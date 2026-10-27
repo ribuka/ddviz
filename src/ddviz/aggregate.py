@@ -93,34 +93,15 @@ def _scan(
     return scan_columns({c: spec.files[c] for c in dict.fromkeys(columns)}, row_index)
 
 
-def aggregate(
-    spec: PlotSpec, progress: Callable[[str], None] = lambda _: None
-) -> Aggregation:
-    """Aggregate a scatter plot into pixel bins and pick their representative rows.
-
-    Rows with a null or non-finite x or y, or a null color, row or col, are left out.
-
-    Parameters
-    ----------
-    spec : PlotSpec
-        What to aggregate.
-    progress : callable
-        Called with the name of each stage as it starts.
-
-    Returns
-    -------
-    Aggregation
-        The bins.
-    """
-    roles = {"color": spec.color, "row": spec.row, "col": spec.col}
-    used = list(dict.fromkeys(c for c in roles.values() if c is not None))
+def _overview(
+    spec: PlotSpec, roles: dict[str, str | None], used: list[str]
+) -> tuple[tuple[float, float], tuple[float, float], dict[str, list]]:
+    """Return the padded data ranges and the levels of each role, in one pass."""
     x = pl.col(spec.x).cast(pl.Float64)
     y = pl.col(spec.y).cast(pl.Float64)
-
     # Levels and ranges come from the unfiltered scan: a row filter on the
     # same pass made the streaming engine peak at about 6.5GB on 100M rows,
     # against about 1.1GB without it.
-    progress("levels")
     found = pl.collect_all(
         [
             _scan(spec, [spec.x, spec.y]).select(
@@ -144,6 +125,42 @@ def aggregate(
         role: (column_levels[c] if c is not None else [None])
         for role, c in roles.items()
     }
+    return x_range, y_range, levels
+
+
+def aggregate(
+    spec: PlotSpec, progress: Callable[[str], None] = lambda _: None
+) -> Aggregation:
+    """Aggregate a scatter plot into pixel bins and pick their representative rows.
+
+    Rows with a null or non-finite x or y, or a null color, row or col, are
+    left out, and for a view, rows outside its ranges. The overview finds the
+    levels and the data ranges first; a view takes them from the spec.
+
+    Parameters
+    ----------
+    spec : PlotSpec
+        What to aggregate.
+    progress : callable
+        Called with the name of each stage as it starts.
+
+    Returns
+    -------
+    Aggregation
+        The bins.
+    """
+    roles = {"color": spec.color, "row": spec.row, "col": spec.col}
+    used = list(dict.fromkeys(c for c in roles.values() if c is not None))
+    x = pl.col(spec.x).cast(pl.Float64)
+    y = pl.col(spec.y).cast(pl.Float64)
+
+    if spec.is_view:
+        x_range = (spec.x_range[0], spec.x_range[1])
+        y_range = (spec.y_range[0], spec.y_range[1])
+        levels = spec.levels
+    else:
+        progress("levels")
+        x_range, y_range, levels = _overview(spec, roles, used)
 
     layout = grid_layout(
         spec.width, spec.height, len(levels["row"]), len(levels["col"])
@@ -167,7 +184,13 @@ def aggregate(
     progress("bins")
     bins = (
         _scan(spec, [spec.x, spec.y, *used], INDEX)
-        .filter(x.is_finite(), y.is_finite(), *[pl.col(c).is_not_null() for c in used])
+        .filter(
+            x.is_finite(),
+            y.is_finite(),
+            x.is_between(*x_range),
+            y.is_between(*y_range),
+            *[pl.col(c).is_not_null() for c in used],
+        )
         .select(key.alias(KEY), pl.col(INDEX))
         .group_by(KEY)
         .agg(pl.len().alias(COUNT), pl.col(INDEX).max())

@@ -48,9 +48,10 @@ function locate(gd, meta, event) {
   return null;
 }
 
-// Attaches the hover to a drawn figure. Only one lookup is in flight; moves
-// during it collapse into the latest one.
-export function attachHover(gd, meta, onTiming) {
+// Attaches the hover to the plot element once; `getMeta` returns the meta of
+// the result whose images are drawn (the overview or a zoomed view). Only one
+// lookup is in flight; moves during it collapse into the latest one.
+export function attachHover(gd, getMeta, onTiming) {
   const label = document.getElementById("hover-label");
   const ring = document.getElementById("hover-ring");
   let queued = null;
@@ -62,6 +63,8 @@ export function attachHover(gd, meta, onTiming) {
   }
 
   async function show(event) {
+    const meta = getMeta();
+    if (!meta) return;
     const at = locate(gd, meta, event);
     if (!at) {
       hide();
@@ -82,7 +85,7 @@ export function attachHover(gd, meta, onTiming) {
     const body = await response.json();
     onTiming?.(performance.now() - started);
     const hit = body.hit;
-    if (!hit) {
+    if (!hit || meta !== getMeta()) {
       hide();
       return;
     }
@@ -129,5 +132,5 @@ export function attachHover(gd, meta, onTiming) {
     queued = null;
     hide();
   });
-  gd.on("plotly_relayout", hide);
+  return hide;
 }

@@ -28,9 +28,23 @@ function setTracesActive(gd, indices, active) {
   );
 }
 
+// Returns `data` (new traces of the same series) with the active state of
+// each legend group taken from the drawn traces.
+export function withLegendState(gd, data) {
+  const inactive = new Set(
+    (gd.data ?? [])
+      .filter((trace) => trace.type === "scatter" && trace.legendgroup && isInactiveTrace(trace))
+      .map((trace) => trace.legendgroup),
+  );
+  return data.map((trace) =>
+    inactive.has(trace.legendgroup) ? { ...trace, opacity: INACTIVE_OPACITY, zorder: INACTIVE_ZORDER } : trace,
+  );
+}
+
 // A click on a legend item toggles its group; a right click makes only that
 // group active, or every group again when only it already is. A double click
-// does nothing.
+// does nothing. Call after each `Plotly.newPlot`, which drops plotly's handlers;
+// the right click listener on the element is added only once.
 export function attachLegendOpacity(gd) {
   gd.on("plotly_legendclick", (event) => {
     if (event.event?.button === 2) {
@@ -42,6 +56,8 @@ export function attachLegendOpacity(gd) {
     return false;
   });
   gd.on("plotly_legenddoubleclick", () => false);
+  if (gd.dataset.legendAttached) return;
+  gd.dataset.legendAttached = "1";
   gd.addEventListener("contextmenu", (event) => {
     const toggle = event.target.closest?.(".legendtoggle");
     if (!toggle) {
@@ -53,8 +69,9 @@ export function attachLegendOpacity(gd) {
       return;
     }
     const group = new Set(legendGroupIndices(gd, index));
-    const isolated = gd.data.every((trace, i) => isInactiveTrace(trace) !== group.has(i));
-    const indices = gd.data.map((_, i) => i);
+    // Only series traces; empty traces that keep a panel's axes have no group.
+    const indices = gd.data.flatMap((trace, i) => (trace.legendgroup ? [i] : []));
+    const isolated = indices.every((i) => isInactiveTrace(gd.data[i]) !== group.has(i));
     setTracesActive(gd, indices, indices.map((i) => isolated || group.has(i)));
   });
 }
@@ -64,7 +81,7 @@ export function attachLegendOpacity(gd) {
 export function seriesOrder(gd, nSeries) {
   const inactive = new Set();
   gd.data.forEach((trace) => {
-    if (trace.type === "scatter" && isInactiveTrace(trace)) {
+    if (trace.type === "scatter" && trace.legendgroup && isInactiveTrace(trace)) {
       inactive.add(Number(trace.legendgroup.slice(1)));
     }
   });

@@ -3,6 +3,10 @@
 This process never imports polars; it only reads the files the workers write.
 Columns a plot uses for the first time are converted into the column cache
 before the plot task, and the plot reads them from there.
+
+A plot first aggregates its overview (the whole data range). Zooming and
+panning aggregate the view again in a worker; the overview's result is kept
+so that going back to it needs no worker.
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ from ddviz.cache import ColumnCache, evict
 from ddviz.figure import build_figure
 from ddviz.hover import HoverIndex
 from ddviz.jobs import WorkerJob, physical_memory
-from ddviz.manifest import read_manifest
+from ddviz.manifest import IMAGES, read_manifest
 from ddviz.palette import DEFAULT_COLORS
 from ddviz.runner import WorkerPool
 from ddviz.settings import Settings
@@ -47,6 +51,13 @@ class PlotRequest(BaseModel):
     height: int
 
 
+class ViewRequest(BaseModel):
+    """Body of ``POST /api/view``: the data ranges of the zoomed view."""
+
+    x_range: tuple[float, float]
+    y_range: tuple[float, float]
+
+
 @dataclass
 class _State:
     """Mutable state of the server."""
@@ -61,8 +72,8 @@ class _State:
     waiting: dict[int, asyncio.Future] = field(default_factory=dict)
     ended: dict[int, dict] = field(default_factory=dict)
     listeners: set[asyncio.Queue] = field(default_factory=set)
-    hover: HoverIndex | None = None
-    hover_task: int | None = None
+    overview: HoverIndex | None = None
+    view: HoverIndex | None = None
     schema: list | None = None
     cache: ColumnCache | None = None
     converting: bool = False
@@ -122,8 +133,9 @@ def create_app(
         finally:
             state.pool.close()
             state.job.close()
-            if state.hover is not None:
-                state.hover.close()
+            for index in (state.overview, state.view):
+                if index is not None:
+                    index.close()
             state.log.close()
             shutil.rmtree(root, ignore_errors=True)
 
@@ -193,6 +205,39 @@ def create_app(
             raise HTTPException(500, end.get("message", end["type"]))
         await asyncio.to_thread(evict_cache, [state.cache.file(c) for c in columns])
 
+    def drop(index: HoverIndex | None) -> None:
+        """Close a result's hover files and remove its directory."""
+        if index is not None:
+            index.close()
+            shutil.rmtree(index.out, ignore_errors=True)
+
+    async def run_plot(spec: PlotSpec) -> tuple[HoverIndex | None, dict]:
+        """Run a plot task; return its opened result, or None when a newer task killed it."""
+        started = time.perf_counter()
+        task_id, end = await run({"kind": "plot", "spec": spec.to_dict()})
+        if end["type"] == "cancelled":
+            return None, {}
+        if end["type"] == "error":
+            raise HTTPException(500, end["message"])
+        timing = {"task_seconds": time.perf_counter() - started}
+        await asyncio.to_thread(state.cache.touch, spec.hover)
+        index = await asyncio.to_thread(HoverIndex, root / "tasks" / str(task_id))
+        return index, timing
+
+    def figure(index: HoverIndex, timing: dict) -> JSONResponse:
+        """Return the figure of a result, with its images as data URIs."""
+        images = (index.out / IMAGES).read_bytes()
+
+        def source(span: list[int]) -> str:
+            start, length = span
+            png = images[start : start + length]
+            return "data:image/png;base64," + base64.b64encode(png).decode()
+
+        result = build_figure(index.manifest, source)
+        result["meta"]["task"] = int(index.out.name)
+        result["meta"].update(timing)
+        return JSONResponse(result)
+
     @app.post("/api/plot")
     async def plot(request: PlotRequest) -> JSONResponse:
         names = [c["name"] for c in (await schema())]
@@ -216,32 +261,40 @@ def create_app(
             colors=DEFAULT_COLORS,
             **request.model_dump(),
         )
-        started = time.perf_counter()
-        task_id, end = await run({"kind": "plot", "spec": spec.to_dict()})
-        if end["type"] == "cancelled":
+        index, timing = await run_plot(spec)
+        if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
-        if end["type"] == "error":
-            raise HTTPException(500, end["message"])
-        task_seconds = time.perf_counter() - started
-        await asyncio.to_thread(state.cache.touch, hover)
-        out = root / "tasks" / str(task_id)
-        index = await asyncio.to_thread(HoverIndex, out)
-        old, state.hover, state.hover_task = state.hover, index, task_id
-        if old is not None:
-            old.close()
-            shutil.rmtree(old.out, ignore_errors=True)
+        # Open the new result before closing the old ones, whose files are
+        # memory-mapped and cannot be removed while open on Windows.
+        old = (state.overview, state.view)
+        state.overview, state.view = index, None
+        for o in old:
+            drop(o)
+        return figure(index, {**timing, "convert_seconds": convert_seconds})
 
-        def source(name: str) -> str:
-            return (
-                "data:image/png;base64,"
-                + base64.b64encode((out / name).read_bytes()).decode()
-            )
-
-        result = build_figure(index.manifest, source)
-        result["meta"]["task"] = task_id
-        result["meta"]["task_seconds"] = task_seconds
-        result["meta"]["convert_seconds"] = convert_seconds
-        return JSONResponse(result)
+    @app.post("/api/view")
+    async def view(request: ViewRequest) -> JSONResponse:
+        if state.overview is None:
+            raise HTTPException(409, "no plot")
+        if state.converting:
+            raise HTTPException(409, "converting")
+        overview = state.overview.manifest
+        spec = PlotSpec.from_dict(
+            {
+                **overview["spec"],
+                "x_range": list(request.x_range),
+                "y_range": list(request.y_range),
+                "levels": overview["levels"],
+            }
+        )
+        index, timing = await run_plot(spec)
+        # Cancelled by a newer view or plot, or the plot changed meanwhile.
+        if index is None or state.overview.manifest is not overview:
+            drop(index)
+            return JSONResponse({"cancelled": True}, status_code=409)
+        old, state.view = state.view, index
+        drop(old)
+        return figure(index, timing)
 
     @app.get("/api/hover")
     async def hover(
@@ -253,10 +306,18 @@ def create_app(
         sy: float,
         order: str = "",
     ) -> dict:
-        if state.hover is None or task != state.hover_task:
+        index = next(
+            (
+                i
+                for i in (state.view, state.overview)
+                if i is not None and i.out.name == str(task)
+            ),
+            None,
+        )
+        if index is None:
             return {"stale": True}
         series = [int(s) for s in order.split(",") if s]
-        return {"hit": state.hover.lookup(panel, fx, fy, sx, sy, series)}
+        return {"hit": index.lookup(panel, fx, fy, sx, sy, series)}
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:

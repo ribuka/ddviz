@@ -7,6 +7,9 @@ import os
 from pathlib import Path
 
 MANIFEST = "manifest.json"
+# File of a plot task holding the PNG of every panel and series one after
+# another; the manifest gives the offset and length of each.
+IMAGES = "images.bin"
 
 
 def write_manifest(out: Path, manifest: dict) -> None:
