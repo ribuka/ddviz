@@ -20,3 +20,6 @@ wheels/
 
 # tmp
 /tmp/
+
+# WebView2 fixed-version runtime, fetched by packaging/build.py
+/packaging/webview2/
