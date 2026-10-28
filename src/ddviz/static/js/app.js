@@ -1,5 +1,6 @@
 // Prototype page: pick columns, plot, zoom and pan, resize, hover, and report the selected range.
 import { attachHover } from "./hover.js";
+import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { attachLegendOpacity, withLegendState } from "./legend.js";
 
 const form = document.getElementById("controls");
@@ -21,6 +22,8 @@ function setInfo(extra = {}) {
       task_s: timings.task,
       fetch_ms: timings.fetch,
       newPlot_ms: timings.plot,
+      images_ms: timings.images,
+      newPlot_and_images_ms: timings.plotAndImages,
       view_task_s: timings.viewTask,
       view_fetch_ms: timings.viewFetch,
       view_react_ms: timings.react,
@@ -69,10 +72,13 @@ events.onmessage = (event) => {
 };
 
 // The overview (whole data range) as the server sent it with the size it was
-// aggregated for, kept to go back to without a worker, and the meta of the
-// result whose images are drawn.
+// aggregated for and its decoded images, kept to go back to without a worker,
+// and the meta of the result whose images are drawn.
 let overview = null;
 let current = null;
+const layers = new ImageLayers(gd);
+// Decoded images on the canvas; freed when replaced, unless the overview's.
+let shownImages = null;
 // Size of the plot area that the latest request was made for, and that the
 // drawn result was aggregated for.
 let requestedSize = null;
@@ -127,6 +133,35 @@ function setCurrent(meta) {
   stage.classList.toggle("scrolls", meta.scroll);
 }
 
+// Draws the images of a result on the canvas and frees the ones it replaces.
+function showImages(meta, bitmaps) {
+  const old = shownImages;
+  shownImages = bitmaps;
+  layers.set(meta, bitmaps);
+  if (old && old !== bitmaps && old !== overview?.bitmaps) closeImages(old);
+}
+
+// Keeps `next` as the overview and frees the old overview's images unless drawn.
+function setOverview(next) {
+  const old = overview?.bitmaps;
+  overview = next;
+  if (old && old !== shownImages && old !== next.bitmaps) closeImages(old);
+}
+
+// Fetches and decodes the images of a result, timing it; null on failure
+// (a newer result may have replaced it on the server).
+async function fetchImages(meta) {
+  const started = performance.now();
+  try {
+    const bitmaps = await loadImages(meta);
+    timings.images = Math.round(performance.now() - started);
+    return bitmaps;
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
 // Returns the size of the plot area, which the figure is aggregated for; a
 // grid of many panels may be larger and scroll in it.
 function stageSize() {
@@ -165,21 +200,34 @@ async function plot() {
   timings.fetch = Math.round(performance.now() - started);
   timings.size = Math.round(text.length / 1024);
   const { figure, meta } = JSON.parse(text);
+  // The images decode while plotly draws the axes.
+  const images = fetchImages(meta);
   timings.task = Number(meta.task_seconds.toFixed(2));
   timings.convert = Number(meta.convert_seconds.toFixed(2));
-  overview = { figure: structuredClone(figure), meta, size };
+  setOverview({ figure: structuredClone(figure), meta, size, bitmaps: null });
   requested = { x: [], y: [] };
   setCurrent(meta);
   shownSize = size;
   const drawStarted = performance.now();
   setPending(false);
+  showImages(meta, null);
   Plotly.purge(gd);
+  drawnKey = figureKey(figure.data, figure.layout);
   await Plotly.newPlot(gd, figure.data, figure.layout, PLOT_CONFIG);
   timings.plot = Math.round(performance.now() - drawStarted);
+  layers.attach();
   attachLegendOpacity(gd);
   gd.on("plotly_relayout", onRelayout);
   gd.on("plotly_selected", (event) => setInfo({ selected_range: event?.range ?? null, selected_points: event?.points?.length }));
   status.textContent = `task ${meta.task}: ${meta.rows.toLocaleString()} 行`;
+  const bitmaps = await images;
+  if (overview.meta !== meta) {
+    closeImages(bitmaps);
+    return;
+  }
+  overview.bitmaps = bitmaps;
+  if (current === meta) showImages(meta, bitmaps);
+  timings.plotAndImages = Math.round(performance.now() - drawStarted);
   setInfo();
   // The area may have changed size while the plot was aggregated.
   if (!sameSize(stageSize(), size)) onResize();
@@ -203,10 +251,51 @@ function withShownRanges(layout) {
   return out;
 }
 
-// Draws `data` with `layout`, keeping each series' legend state.
-async function draw(data, layout) {
+// The drawn figure without its axis ranges. A result of the same plot and
+// size has the same figure, and then only its images and ranges change:
+// plotly redraws the axes of 100 panels in about 0.4s, even for `react`.
+let drawnKey = null;
+// The ranges this page is setting with `Plotly.relayout`, whose own
+// `plotly_relayout` is not a view to aggregate.
+let ownRelayout = null;
+
+function figureKey(data, layout) {
+  const axes = {};
+  for (const [key, value] of Object.entries(layout)) {
+    axes[key] = /^[xy]axis\d*$/.test(key) ? { ...value, range: null } : value;
+  }
+  return JSON.stringify([data, axes]);
+}
+
+// Returns the relayout that gives every axis its range in `layout`, or null
+// when the axes already have them.
+function rangeUpdate(layout) {
+  const update = {};
+  for (const [key, value] of Object.entries(layout)) {
+    if (/^[xy]axis\d*$/.test(key) && !sameRange(gd._fullLayout[key].range, value.range)) {
+      update[`${key}.range`] = [...value.range];
+    }
+  }
+  return Object.keys(update).length ? update : null;
+}
+
+// Draws `data` with `layout`, keeping each series' legend state, and the
+// images of `meta` over it.
+async function draw(data, layout, meta, bitmaps) {
   const started = performance.now();
-  await Plotly.react(gd, withLegendState(gd, data), layout);
+  const key = figureKey(data, layout);
+  if (key === drawnKey) {
+    const update = rangeUpdate(layout);
+    if (update) {
+      ownRelayout = update;
+      await Plotly.relayout(gd, update);
+      ownRelayout = null;
+    }
+  } else {
+    await Plotly.react(gd, withLegendState(gd, data), layout);
+    drawnKey = key;
+  }
+  showImages(meta, bitmaps);
   timings.react = Math.round(performance.now() - started);
 }
 
@@ -223,19 +312,20 @@ function setPending(on) {
 async function showOverview() {
   generation++;
   requested = { x: [], y: [] };
-  const { figure, meta, size } = structuredClone(overview);
+  const { meta, size, bitmaps } = overview;
+  const figure = structuredClone(overview.figure);
   setCurrent(meta);
   if (!sameSize(size, stageSize())) {
     // The overview of the old size stands in, stretched to the drawn figure.
     setPending(true);
     const { width, height } = gd._fullLayout;
-    await draw(figure.data, { ...figure.layout, width, height });
+    await draw(figure.data, { ...figure.layout, width, height }, meta, bitmaps);
     requestOverview();
     return;
   }
   setPending(false);
   shownSize = size;
-  await draw(figure.data, figure.layout);
+  await draw(figure.data, figure.layout, meta, bitmaps);
   status.textContent = `task ${meta.task}: ${meta.rows.toLocaleString()} 行`;
   setInfo();
 }
@@ -269,18 +359,23 @@ async function requestOverview() {
     return;
   }
   const { figure, meta } = await response.json();
+  const drawn = isDrawn(meta, figure.layout);
+  const images = drawn ? Promise.resolve(shownImages) : fetchImages(meta);
   await noDrag();
   // A pan or zoom during the request or the drag supersedes it.
   await new Promise((resolve) => setTimeout(resolve));
-  if (mine !== generation) return;
+  const bitmaps = await images;
+  if (mine !== generation || !bitmaps) {
+    if (!drawn) closeImages(bitmaps);
+    return;
+  }
   timings.viewFetch = Math.round(performance.now() - started);
   timings.viewTask = Number(meta.task_seconds.toFixed(2));
-  overview = { figure: structuredClone(figure), meta, size };
-  const drawn = isDrawn(meta, figure.layout);
+  setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
   setCurrent(meta);
   shownSize = size;
   hideHover();
-  if (!drawn) await draw(figure.data, figure.layout);
+  if (!drawn) await draw(figure.data, figure.layout, meta, bitmaps);
   if (mine === generation) setPending(false);
   status.textContent = `task ${meta.task}: ${meta.rows.toLocaleString()} 行`;
   setInfo();
@@ -309,19 +404,24 @@ async function requestView(xRange, yRange) {
     return;
   }
   const { figure, meta } = await response.json();
+  const drawn = isDrawn(meta, figure.layout);
+  const images = drawn ? Promise.resolve(shownImages) : fetchImages(meta);
   await noDrag();
   // A pan or zoom during the request or the drag supersedes it. Its relayout
   // comes after the mouseup, so let it run first.
   await new Promise((resolve) => setTimeout(resolve));
-  if (mine !== generation) return;
+  const bitmaps = await images;
+  if (mine !== generation || !bitmaps) {
+    if (!drawn) closeImages(bitmaps);
+    return;
+  }
   timings.viewFetch = Math.round(performance.now() - started);
   timings.viewTask = Number(meta.task_seconds.toFixed(2));
-  const drawn = isDrawn(meta, figure.layout);
   setCurrent(meta);
   shownSize = size;
   hideHover();
   // The images and the panels' placement change; the axes stay where the user put them.
-  if (!drawn) await draw(figure.data, withShownRanges(figure.layout));
+  if (!drawn) await draw(figure.data, withShownRanges(figure.layout), meta, bitmaps);
   if (mine === generation) setPending(false);
   status.textContent = `task ${meta.task}: 表示範囲に ${meta.rows.toLocaleString()} 行`;
   setInfo();
@@ -335,6 +435,7 @@ function onRelayout(event) {
   hideHover();
   if (!overview) return;
   const keys = Object.keys(event);
+  if (ownRelayout && keys.every((key) => key in ownRelayout)) return;
   if (keys.some((key) => key.endsWith("autorange"))) {
     showOverview();
     return;
@@ -374,7 +475,11 @@ function onResize() {
 async function onResizeSettled() {
   if (plotting === generation) return;
   const size = stageSize();
-  if (!current.scroll) await Plotly.relayout(gd, size);
+  if (!current.scroll) {
+    // The figure no longer matches a result of its size.
+    drawnKey = null;
+    await Plotly.relayout(gd, size);
+  }
   if (requested.x.length) {
     requestView([...gd._fullLayout.xaxis.range], [...gd._fullLayout.yaxis.range]);
   } else {

@@ -14,29 +14,44 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 def _figure(spec: PlotSpec, out: Path) -> dict:
-    """Run the plot task and build its figure, with each image's PNG as its source."""
+    """Run the plot task and build its figure."""
     out.mkdir()
     run_plot(spec, out, lambda _: None)
-    images = (out / IMAGES).read_bytes()
-    return build_figure(
-        read_manifest(out), lambda span: images[span[0] : span[0] + span[1]]
-    )
+    return build_figure(read_manifest(out))
 
 
 def test_images_are_slices_of_one_file(tmp_path: Path, scatter_spec: PlotSpec) -> None:
-    """Every image trace's source is a whole PNG cut from the images file."""
-    figure = _figure(scatter_spec, tmp_path / "task")["figure"]
-    sources = [t["source"] for t in figure["data"] if t["type"] == "image"]
-    assert len(sources) == 2 * 3
+    """The meta locates each series' PNG in the images file; plotly gets no image."""
+    result = _figure(scatter_spec, tmp_path / "task")
+    images = (tmp_path / "task" / IMAGES).read_bytes()
+    spans = [s for s in result["meta"]["images"] if s is not None]
+    assert len(spans) == len(result["meta"]["series"])
+    pngs = [images[start : start + length] for start, length in spans]
     assert all(
-        s.startswith(PNG_SIGNATURE) and s.endswith(b"IEND\xaeB`\x82") for s in sources
+        p.startswith(PNG_SIGNATURE) and p.endswith(b"IEND\xaeB`\x82") for p in pngs
     )
+    assert sum(len(p) for p in pngs) == len(images)
+    assert {t["type"] for t in result["figure"]["data"]} == {"scatter"}
+
+
+def test_every_panel_and_series_has_an_empty_trace(
+    tmp_path: Path, scatter_spec: PlotSpec
+) -> None:
+    """One trace per series carries its legend item; one per panel keeps its axes."""
+    result = _figure(scatter_spec, tmp_path / "task")
+    data = result["figure"]["data"]
+    legend = [t["legendgroup"] for t in data if "legendgroup" in t]
+    assert legend == [f"s{s}" for s in range(len(result["meta"]["series"]))]
+    empty = [t for t in data if "legendgroup" not in t]
+    assert [(t["xaxis"], t["yaxis"]) for t in empty] == [
+        (p["xaxis"], p["yaxis"]) for p in result["meta"]["panels"]
+    ]
 
 
 def test_a_panel_without_rows_keeps_its_axes(
     tmp_path: Path, scatter_spec: PlotSpec
 ) -> None:
-    """A view where no row falls gets one empty trace per panel, so plotly draws the axes."""
+    """A view where no row falls has no image, and every panel keeps its axes."""
     overview = read_manifest(_overview_dir(tmp_path, scatter_spec))
     view = replace(
         scatter_spec,
@@ -46,7 +61,7 @@ def test_a_panel_without_rows_keeps_its_axes(
     )
     result = _figure(view, tmp_path / "view")
     data = result["figure"]["data"]
-    assert not [t for t in data if t["type"] == "image"]
+    assert all(s is None for s in result["meta"]["images"])
     empty = [t for t in data if t["type"] == "scatter" and "legendgroup" not in t]
     assert [(t["xaxis"], t["yaxis"]) for t in empty] == [
         (p["xaxis"], p["yaxis"]) for p in result["meta"]["panels"]

@@ -113,9 +113,17 @@ body {
   margin-top: 8px;
 }
 
+/* The series images, drawn between plotly's two SVG layers (layers.js). */
+.image-layers {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
 /* While a zoomed view or a new size is aggregated, the stretched images of
    the previous result stand in for it, faded. */
-#plot.pending .imagelayer {
+#plot.pending .image-layers {
   opacity: 0.35;
 }
 

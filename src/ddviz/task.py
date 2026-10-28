@@ -14,7 +14,7 @@ from ddviz.convert import convert_columns
 from ddviz.manifest import IMAGES, write_manifest
 from ddviz.palette import series_color
 from ddviz.png import encode_mask
-from ddviz.raster import masks, occupancy
+from ddviz.raster import atlas, masks, occupancy
 from ddviz.spec import PlotSpec
 
 Emit = Callable[[dict], None]
@@ -83,26 +83,22 @@ def run_plot(spec: PlotSpec, out: Path, emit: Emit) -> None:
     bin_masks = masks(keys, agg.grid)
     np.save(out / "occupancy.npy", occupancy(bin_masks))
     colors = [series_color(spec.colors, s) for s in range(agg.grid.n_series)]
+    # One PNG per series holds all its panels as tiles: the page decodes 5
+    # images instead of 500 (about 45ms instead of 120ms for 10 x 10 panels).
     # All PNGs go into one file: the first read of each freshly written file
-    # costs about 0.6ms on Windows (the virus scan, we assume), which made 500
-    # separate files take the UI server about 0.9s.
-    images: list[list[list[int] | None]] = []
+    # costs about 0.6ms on Windows (the virus scan, we assume).
+    images: list[list[int] | None] = []
     offset = 0
     with open(out / IMAGES, "wb") as file:
-        for p in range(agg.grid.n_panels):
-            row: list[list[int] | None] = []
-            for s in range(agg.grid.n_series):
-                mask = bin_masks[p, s]
-                if not mask.any():
-                    row.append(None)
-                    continue
-                # Row 0 is the bottom bin: plotly's image trace puts the image's
-                # first row at y0 on an increasing y axis.
-                png = encode_mask(mask, colors[s])
-                file.write(png)
-                row.append([offset, len(png)])
-                offset += len(png)
-            images.append(row)
+        for s in range(agg.grid.n_series):
+            series_masks = bin_masks[:, s]
+            if not series_masks.any():
+                images.append(None)
+                continue
+            png = encode_mask(atlas(series_masks, agg.layout.ncol), colors[s])
+            file.write(png)
+            images.append([offset, len(png)])
+            offset += len(png)
 
     write_manifest(
         out,

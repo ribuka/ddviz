@@ -1,8 +1,10 @@
-"""Builds the plotly figure of a plot task: series image layers on a facet grid."""
+"""Builds the plotly figure of a plot task: the axes of a facet grid and the legend.
+
+The series images are not plotly traces: the page draws them on a canvas
+from the figure's axes (``static/js/layers.js``).
+"""
 
 from __future__ import annotations
-
-from collections.abc import Callable
 
 from ddviz.layout import (
     MARGIN_BOTTOM,
@@ -55,34 +57,32 @@ def _panel_titles(spec: dict, levels: dict, layout: GridLayout) -> list[dict]:
     return titles
 
 
-def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> dict:
-    """Return the figure of a plot task and what the page needs for hovering.
+def build_figure(manifest: dict) -> dict:
+    """Return the figure of a plot task and what the page needs to draw its images.
 
-    Each series of each panel is an image trace; one empty scatter trace per
-    series carries its legend item, in the same legend group, so a legend
-    click fades the series' images.
+    The figure holds the axes of every panel, each kept by an empty scatter
+    trace (plotly leaves out the axes of a subplot without traces), and one
+    empty scatter trace per series that carries its legend item, in legend
+    group ``s<series>``.
 
     Parameters
     ----------
     manifest : dict
         Manifest of the plot task.
-    image_source : callable
-        Returns the ``source`` of an image trace (a data URI) from the offset
-        and length of its PNG in the images file (`ddviz.manifest.IMAGES`).
 
     Returns
     -------
     dict
         ``{"figure": {"data", "layout"}, "meta": {...}}``; the meta holds the
-        axes of each panel, the bin grid, the data ranges and whether the
-        grid scrolls.
+        axes of each panel, the bin grid, the data ranges, where each
+        series' PNG lies in the images file (`ddviz.manifest.IMAGES`; its
+        panels are tiles, ``ncol`` to a row, as `ddviz.raster.atlas`) and
+        whether the grid scrolls.
     """
     spec = manifest["spec"]
     grid = manifest["grid"]
     layout = GridLayout(**manifest["layout"])
     (x_lo, x_hi), (y_lo, y_hi) = manifest["x_range"], manifest["y_range"]
-    dx = (x_hi - x_lo) / grid["width"]
-    dy = (y_hi - y_lo) / grid["height"]
     levels = manifest["levels"]
 
     fig_layout: dict = {
@@ -117,9 +117,6 @@ def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> di
                 "range": [x_lo, x_hi],
                 "showticklabels": layout.scroll or row == layout.nrow - 1,
                 "zeroline": False,
-                # Image traces otherwise make pixels square by shrinking the
-                # domain, so a bin would no longer be a screen pixel.
-                "scaleanchor": False,
                 **({"matches": "x"} if panel else {}),
             }
             fig_layout[f"yaxis{suffix}"] = {
@@ -128,7 +125,6 @@ def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> di
                 "range": [y_lo, y_hi],
                 "showticklabels": layout.scroll or col == 0,
                 "zeroline": False,
-                "scaleanchor": False,
                 **({"matches": "y"} if panel else {}),
             }
             panels.append({"xaxis": f"x{suffix}", "yaxis": f"y{suffix}"})
@@ -190,26 +186,7 @@ def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> di
 
     data = []
     for series, color in enumerate(manifest["colors"]):
-        group = f"s{series}"
         name = str(levels["color"][series]) if spec["color"] is not None else spec["y"]
-        for panel, images in enumerate(manifest["images"]):
-            if images[series] is None:
-                continue
-            data.append(
-                {
-                    "type": "image",
-                    "source": image_source(images[series]),
-                    "x0": x_lo + dx / 2,
-                    "dx": dx,
-                    "y0": y_lo + dy / 2,
-                    "dy": dy,
-                    "xaxis": panels[panel]["xaxis"],
-                    "yaxis": panels[panel]["yaxis"],
-                    "hoverinfo": "skip",
-                    "legendgroup": group,
-                    "name": name,
-                }
-            )
         data.append(
             {
                 "type": "scatter",
@@ -217,27 +194,24 @@ def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> di
                 "x": [None],
                 "y": [None],
                 "name": name,
-                "legendgroup": group,
+                "legendgroup": f"s{series}",
                 "marker": {"color": color, "size": 10},
                 "hoverinfo": "skip",
             }
         )
-    # plotly leaves out the axes of a subplot without traces, so a panel with
-    # no rows in the view gets an empty trace.
-    for panel, images in enumerate(manifest["images"]):
-        if all(image is None for image in images):
-            data.append(
-                {
-                    "type": "scatter",
-                    "mode": "markers",
-                    "x": [],
-                    "y": [],
-                    "xaxis": panels[panel]["xaxis"],
-                    "yaxis": panels[panel]["yaxis"],
-                    "showlegend": False,
-                    "hoverinfo": "skip",
-                }
-            )
+    # plotly leaves out the axes of a subplot without traces.
+    for panel in panels:
+        data.append(
+            {
+                "type": "scatter",
+                "mode": "markers",
+                "x": [],
+                "y": [],
+                **panel,
+                "showlegend": False,
+                "hoverinfo": "skip",
+            }
+        )
     meta = {
         "panels": panels,
         "grid": grid,
@@ -245,6 +219,8 @@ def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> di
         "y_range": [y_lo, y_hi],
         "series": [str(v) for v in levels["color"]],
         "colors": manifest["colors"],
+        "images": manifest["images"],
+        "ncol": layout.ncol,
         "rows": manifest["rows"],
         "scroll": layout.scroll,
     }

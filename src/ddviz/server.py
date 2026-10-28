@@ -14,7 +14,6 @@ overview's levels and ranges.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import shutil
 import time
@@ -238,15 +237,8 @@ def create_app(
         return index, timing
 
     def figure(index: HoverIndex, timing: dict) -> JSONResponse:
-        """Return the figure of a result, with its images as data URIs."""
-        images = (index.out / IMAGES).read_bytes()
-
-        def source(span: list[int]) -> str:
-            start, length = span
-            png = images[start : start + length]
-            return "data:image/png;base64," + base64.b64encode(png).decode()
-
-        result = build_figure(index.manifest, source)
+        """Return the figure of a result; the page fetches its images on their own."""
+        result = build_figure(index.manifest)
         result["meta"]["task"] = int(index.out.name)
         result["meta"].update(timing)
         return JSONResponse(result)
@@ -364,6 +356,25 @@ def create_app(
         drop(old)
         return figure(index, timing)
 
+    def opened(task: int) -> HoverIndex | None:
+        """Return the open result (the overview or the view) of a task, if any."""
+        return next(
+            (
+                i
+                for i in (state.view, state.overview)
+                if i is not None and i.out.name == str(task)
+            ),
+            None,
+        )
+
+    @app.get("/api/images/{task}")
+    async def images(task: int) -> FileResponse:
+        """Return the PNGs of a result one after another (the meta's ``images`` slices it)."""
+        index = opened(task)
+        if index is None:
+            raise HTTPException(404, "stale")
+        return FileResponse(index.out / IMAGES, media_type="application/octet-stream")
+
     @app.get("/api/hover")
     async def hover(
         task: int,
@@ -374,14 +385,7 @@ def create_app(
         sy: float,
         order: str = "",
     ) -> dict:
-        index = next(
-            (
-                i
-                for i in (state.view, state.overview)
-                if i is not None and i.out.name == str(task)
-            ),
-            None,
-        )
+        index = opened(task)
         if index is None:
             return {"stale": True}
         series = [int(s) for s in order.split(",") if s]

@@ -1,6 +1,8 @@
 // Legend clicks fade series instead of hiding them, as flat-pca's plot_legend.js.
-const INACTIVE_OPACITY = 0.1;
-const INACTIVE_ZORDER = -1;
+// Each series has one empty scatter trace that carries its legend item; its
+// opacity is the series' state, which the image layers (layers.js) and the
+// hover follow.
+export const INACTIVE_OPACITY = 0.1;
 
 // Returns whether a trace is made inactive from its legend.
 export function isInactiveTrace(trace) {
@@ -16,16 +18,10 @@ function legendGroupIndices(gd, index) {
   return gd.data.flatMap((trace, i) => (trace.legendgroup === group ? [i] : []));
 }
 
-// Makes each of the traces `indices` active or inactive by `active`.
+// Makes each of the traces `indices` active or inactive by `active`. Only the
+// opacity changes, which plotly restyles without drawing the figure again.
 function setTracesActive(gd, indices, active) {
-  return Plotly.restyle(
-    gd,
-    {
-      opacity: active.map((on) => (on ? 1 : INACTIVE_OPACITY)),
-      zorder: active.map((on) => (on ? 0 : INACTIVE_ZORDER)),
-    },
-    indices,
-  );
+  return Plotly.restyle(gd, { opacity: active.map((on) => (on ? 1 : INACTIVE_OPACITY)) }, indices);
 }
 
 // Returns `data` (new traces of the same series) with the active state of
@@ -33,12 +29,10 @@ function setTracesActive(gd, indices, active) {
 export function withLegendState(gd, data) {
   const inactive = new Set(
     (gd.data ?? [])
-      .filter((trace) => trace.type === "scatter" && trace.legendgroup && isInactiveTrace(trace))
+      .filter((trace) => trace.legendgroup && isInactiveTrace(trace))
       .map((trace) => trace.legendgroup),
   );
-  return data.map((trace) =>
-    inactive.has(trace.legendgroup) ? { ...trace, opacity: INACTIVE_OPACITY, zorder: INACTIVE_ZORDER } : trace,
-  );
+  return data.map((trace) => (inactive.has(trace.legendgroup) ? { ...trace, opacity: INACTIVE_OPACITY } : trace));
 }
 
 // A click on a legend item toggles its group; a right click makes only that
@@ -69,22 +63,28 @@ export function attachLegendOpacity(gd) {
       return;
     }
     const group = new Set(legendGroupIndices(gd, index));
-    // Only series traces; empty traces that keep a panel's axes have no group.
+    // Only series traces; the empty traces that keep the panels' axes have no group.
     const indices = gd.data.flatMap((trace, i) => (trace.legendgroup ? [i] : []));
     const isolated = indices.every((i) => isInactiveTrace(gd.data[i]) !== group.has(i));
     setTracesActive(gd, indices, indices.map((i) => isolated || group.has(i)));
   });
 }
 
-// Returns the series from the top drawn layer down: active series before
-// inactive ones (which sit behind), later series above earlier ones.
-export function seriesOrder(gd, nSeries) {
+// Returns the set of inactive series.
+export function inactiveSeries(gd) {
   const inactive = new Set();
-  gd.data.forEach((trace) => {
-    if (trace.type === "scatter" && trace.legendgroup && isInactiveTrace(trace)) {
+  (gd.data ?? []).forEach((trace) => {
+    if (trace.legendgroup && isInactiveTrace(trace)) {
       inactive.add(Number(trace.legendgroup.slice(1)));
     }
   });
+  return inactive;
+}
+
+// Returns the series from the top drawn layer down: active series before
+// inactive ones (which sit behind), later series above earlier ones.
+export function seriesOrder(gd, nSeries) {
+  const inactive = inactiveSeries(gd);
   const down = [...Array(nSeries).keys()].reverse();
   return [...down.filter((s) => !inactive.has(s)), ...down.filter((s) => inactive.has(s))];
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from ddviz.keys import BinGrid
-from ddviz.raster import masks, occupancy
+from ddviz.raster import atlas, masks, occupancy
 
 
 def test_occupancy_sets_one_bit_per_series() -> None:
@@ -19,3 +19,14 @@ def test_occupancy_sets_one_bit_per_series() -> None:
     assert occ[0, 1, 2] == 0b101
     assert occ[1, 0, 0] == 0b010
     assert occ.sum() == 0b101 + 0b010
+
+
+def test_atlas_puts_each_panel_in_its_tile() -> None:
+    """Panel p is the tile at row p // ncol, column p % ncol; a short row is padded."""
+    panel_masks = np.zeros((3, 2, 4), dtype=bool)
+    panel_masks[0, 0, 1] = True
+    panel_masks[1, 1, 3] = True
+    panel_masks[2, 0, 0] = True
+    out = atlas(panel_masks, ncol=2)
+    assert out.shape == (4, 8)
+    assert np.argwhere(out).tolist() == [[0, 1], [1, 7], [2, 0]]
