@@ -56,6 +56,10 @@ STATIC = Path(__file__).parent / "static"
 TABLE_PAGE = 100
 # Most columns of the selection table read at once.
 TABLE_MAX_COLUMNS = 200
+# File in the column cache's directory of a source holding the share of
+# non-null values of each column, so that a later Load needs no task; the
+# cache discards it with the columns when the source changes.
+NONNULL = "nonnull.json"
 
 
 class PlotRequest(BaseModel):
@@ -117,6 +121,11 @@ class _State:
     plot_id: int = 0
     view: HoverIndex | None = None
     schema: list | None = None
+    # Share of non-null values per column (`ddviz.nonnull`), measured after
+    # Load; "pending" until then, "failed" when the task failed.
+    shares: list | None = None
+    shares_state: str = "pending"
+    shares_task: asyncio.Task | None = None
     cache: ColumnCache | None = None
     converting: bool = False
     # The selected rows (`Selection`) and their layer over the drawn result:
@@ -246,15 +255,60 @@ def create_app(
             )
             await asyncio.to_thread(evict_cache, [])
             state.schema = columns
+            stored = state.cache.dir / NONNULL
+            if stored.exists():
+                state.shares = json.loads(stored.read_text(encoding="utf-8"))
+                state.shares_state = "done"
+            else:
+                state.shares_task = asyncio.create_task(measure_shares())
         return state.schema
 
+    async def measure_shares() -> None:
+        """Measure the share of non-null values of each column after Load and keep it in the cache.
+
+        The task runs in the summary pool, under its lock, since a new task
+        in a pool kills the running one.
+        """
+        names = [c["name"] for c in state.schema]
+        async with summary_lock:
+            task_id, end = await run(
+                {"kind": "nonnull", "path": state.data_path, "names": names},
+                "summary",
+            )
+        out = root / "summary" / str(task_id)
+        if end["type"] != "done":
+            state.shares_state = "failed"
+            shutil.rmtree(out, ignore_errors=True)
+            return
+        shares = read_manifest(out)["shares"]
+        shutil.rmtree(out, ignore_errors=True)
+        stored = state.cache.dir / NONNULL
+        partial = stored.with_suffix(".json.tmp")
+        partial.write_text(json.dumps(shares), encoding="utf-8")
+        partial.replace(stored)
+        state.shares = shares
+        state.shares_state = "done"
+
     @app.get("/api/columns")
-    async def columns(q: str = "", kind: str | None = None, limit: int = 200) -> dict:
-        """Return the columns whose names hold every word of `q` (`ddviz.columns`)."""
+    async def columns(
+        q: str = "",
+        kind: str | None = None,
+        limit: int = 200,
+        min_share: float | None = None,
+        order: str = "file",
+    ) -> dict:
+        """Return the columns whose names hold every word of `q` (`ddviz.columns`).
+
+        ``"shares"`` tells whether the share of non-null values is known
+        yet: ``"pending"``, ``"done"`` or ``"failed"``.
+        """
         try:
-            return search_columns(await schema(), q, kind, limit)
+            found = search_columns(
+                await schema(), q, kind, limit, state.shares, min_share, order
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+        return {**found, "shares": state.shares_state}
 
     async def convert(columns: list[str]) -> None:
         """Convert the columns not in the cache yet; plots are refused meanwhile."""

@@ -25,6 +25,11 @@
           <button type="button" data-kind="numeric">数値</button>
           <button type="button" data-kind="categorical">カテゴリ</button>
         </div>
+        <div class="column-shares">
+          <label title="値がすべて null の列を除く"><input type="checkbox" class="column-hide-empty"> null だけの列を隠す</label>
+          <label title="値のある行の割合がこれ以上の列だけを出す">非 null ≥ <input type="number" class="column-min-share" min="0" max="100" step="any" placeholder="0">%</label>
+          <button type="button" class="column-order" title="値のある行の割合が高い順に並べる">割合順</button>
+        </div>
         <div class="column-count"></div>
         <div class="column-list"></div>
       </section>
