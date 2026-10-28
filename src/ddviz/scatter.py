@@ -1,4 +1,4 @@
-"""Plot request passed from the UI server to a worker process."""
+"""Scatter plot request passed from the UI server to a worker process."""
 
 from __future__ import annotations
 
@@ -6,8 +6,31 @@ from dataclasses import asdict, dataclass, field
 
 
 @dataclass(frozen=True)
-class PlotSpec:
+class View:
+    """Zoomed view of a scatter plot.
+
+    Parameters
+    ----------
+    x_range, y_range : list of float
+        Data ranges to aggregate: the bins cover exactly these ranges and rows
+        outside them are left out.
+    levels : dict
+        Levels of the overview (`ddviz.aggregate.Aggregation.levels`), so that
+        the panels and series stay those of the overview and the levels need
+        no pass over the data.
+    """
+
+    x_range: list[float]
+    y_range: list[float]
+    levels: dict[str, list]
+
+
+@dataclass(frozen=True)
+class ScatterSpec:
     """What a worker aggregates for one scatter plot.
+
+    Made from the graph's `ddviz.encoding.Encoding` by `ddviz.plan`; it
+    holds only the roles that are drawn.
 
     Parameters
     ----------
@@ -28,19 +51,9 @@ class PlotSpec:
         Columns whose values the hover shows for the representative rows.
     colors : list of str
         Series colors as ``#rrggbb``, cycled over the series.
-    x_range, y_range : list of float or None
-        Zoomed view to aggregate: the bins cover exactly these data ranges
-        and rows outside them are left out. None for the overview, whose
-        bins cover the padded data ranges.
-    levels : dict or None
-        Levels of the overview (`ddviz.aggregate.Aggregation.levels`), given
-        with a view so that its panels and series stay those of the overview
-        and the levels need no pass over the data.
-
-    Raises
-    ------
-    ValueError
-        When only some of `x_range`, `y_range` and `levels` are given.
+    view : View or None
+        Zoomed view to aggregate, or None for the overview, whose bins cover
+        the padded data ranges.
     """
 
     files: dict[str, str]
@@ -53,20 +66,7 @@ class PlotSpec:
     height: int
     hover: list[str] = field(default_factory=list)
     colors: list[str] = field(default_factory=list)
-    x_range: list[float] | None = None
-    y_range: list[float] | None = None
-    levels: dict[str, list] | None = None
-
-    def __post_init__(self) -> None:
-        """Check that the view fields are all given or all None."""
-        view = (self.x_range, self.y_range, self.levels)
-        if any(v is None for v in view) and any(v is not None for v in view):
-            raise ValueError("x_range, y_range and levels go together")
-
-    @property
-    def is_view(self) -> bool:
-        """Whether the spec aggregates a zoomed view rather than the overview."""
-        return self.levels is not None
+    view: View | None = None
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.
@@ -74,12 +74,12 @@ class PlotSpec:
         Returns
         -------
         dict
-            The fields of the spec.
+            The fields of the spec; the view as a dict or None.
         """
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> PlotSpec:
+    def from_dict(cls, data: dict) -> ScatterSpec:
         """Build a spec from the dict made by `to_dict`.
 
         Parameters
@@ -89,7 +89,8 @@ class PlotSpec:
 
         Returns
         -------
-        PlotSpec
+        ScatterSpec
             The spec.
         """
-        return cls(**data)
+        view = data.get("view")
+        return cls(**{**data, "view": View(**view) if view is not None else None})

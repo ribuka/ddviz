@@ -10,7 +10,7 @@ import polars as pl
 from ddviz.keys import BinGrid
 from ddviz.layout import GridLayout, grid_layout
 from ddviz.scan import scan_columns
-from ddviz.spec import PlotSpec
+from ddviz.scatter import ScatterSpec
 
 KEY = "__key"
 COUNT = "__n"
@@ -82,7 +82,7 @@ def _index_expr(column: str | None, levels: list) -> pl.Expr:
 
 
 def _scan(
-    spec: PlotSpec, columns: list[str], row_index: str | None = None
+    spec: ScatterSpec, columns: list[str], row_index: str | None = None
 ) -> pl.LazyFrame:
     """Return a scan of only `columns` of the plot.
 
@@ -94,7 +94,7 @@ def _scan(
 
 
 def _overview(
-    spec: PlotSpec, roles: dict[str, str | None], used: list[str]
+    spec: ScatterSpec, roles: dict[str, str | None], used: list[str]
 ) -> tuple[tuple[float, float], tuple[float, float], dict[str, list]]:
     """Return the padded data ranges and the levels of each role, in one pass."""
     x = pl.col(spec.x).cast(pl.Float64)
@@ -129,7 +129,7 @@ def _overview(
 
 
 def aggregate(
-    spec: PlotSpec, progress: Callable[[str], None] = lambda _: None
+    spec: ScatterSpec, progress: Callable[[str], None] = lambda _: None
 ) -> Aggregation:
     """Aggregate a scatter plot into pixel bins and pick their representative rows.
 
@@ -139,7 +139,7 @@ def aggregate(
 
     Parameters
     ----------
-    spec : PlotSpec
+    spec : ScatterSpec
         What to aggregate.
     progress : callable
         Called with the name of each stage as it starts.
@@ -154,10 +154,10 @@ def aggregate(
     x = pl.col(spec.x).cast(pl.Float64)
     y = pl.col(spec.y).cast(pl.Float64)
 
-    if spec.is_view:
-        x_range = (spec.x_range[0], spec.x_range[1])
-        y_range = (spec.y_range[0], spec.y_range[1])
-        levels = spec.levels
+    if spec.view is not None:
+        x_range = (spec.view.x_range[0], spec.view.x_range[1])
+        y_range = (spec.view.y_range[0], spec.view.y_range[1])
+        levels = spec.view.levels
     else:
         progress("levels")
         x_range, y_range, levels = _overview(spec, roles, used)

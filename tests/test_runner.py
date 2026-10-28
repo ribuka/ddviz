@@ -11,7 +11,7 @@ import pytest
 from ddviz.jobs import WorkerJob
 from ddviz.manifest import read_manifest
 from ddviz.runner import WorkerPool
-from ddviz.spec import PlotSpec
+from ddviz.scatter import ScatterSpec
 
 TIMEOUT = 60
 
@@ -50,7 +50,7 @@ def test_schema_task_writes_its_manifest(
 
 
 def test_a_new_task_kills_the_running_one(
-    pool: tuple, scatter_spec: PlotSpec, tmp_path: Path
+    pool: tuple, scatter_spec: ScatterSpec, tmp_path: Path
 ) -> None:
     """Submitting again cancels the first task and removes its output; the second completes."""
     workers, events = pool
@@ -63,7 +63,7 @@ def test_a_new_task_kills_the_running_one(
 
 
 def test_cancel_kills_the_running_task(
-    pool: tuple, scatter_spec: PlotSpec, tmp_path: Path
+    pool: tuple, scatter_spec: ScatterSpec, tmp_path: Path
 ) -> None:
     """Cancelling ends the running task as cancelled and removes its output."""
     workers, events = pool

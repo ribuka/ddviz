@@ -6,14 +6,13 @@ from dataclasses import replace
 
 import numpy as np
 import polars as pl
-import pytest
 
 from ddviz.aggregate import COUNT, INDEX, KEY, aggregate
-from ddviz.spec import PlotSpec
+from ddviz.scatter import ScatterSpec, View
 
 
 def test_aggregate_matches_brute_force(
-    scatter_spec: PlotSpec, scatter_frame: pl.DataFrame
+    scatter_spec: ScatterSpec, scatter_frame: pl.DataFrame
 ) -> None:
     """Counts, representative rows (largest index) and hover values match numpy."""
     agg = aggregate(scatter_spec)
@@ -63,15 +62,13 @@ def test_aggregate_matches_brute_force(
 
 
 def test_view_bins_only_the_rows_in_its_ranges(
-    scatter_spec: PlotSpec, scatter_frame: pl.DataFrame
+    scatter_spec: ScatterSpec, scatter_frame: pl.DataFrame
 ) -> None:
     """A view keeps the overview's levels and bins exactly its ranges, leaving out other rows."""
     overview = aggregate(scatter_spec)
     view = replace(
         scatter_spec,
-        x_range=[-0.5, 1.0],
-        y_range=[0.0, 2.0],
-        levels=overview.levels,
+        view=View(x_range=[-0.5, 1.0], y_range=[0.0, 2.0], levels=overview.levels),
     )
     agg = aggregate(view)
     assert agg.levels == overview.levels
@@ -97,10 +94,3 @@ def test_view_bins_only_the_rows_in_its_ranges(
     assert sorted(set(keys.tolist())) == agg.bins[KEY].to_list()
     assert agg.bins[COUNT].sum() == inside.height
     assert 0 < inside.height < 2000
-
-
-def test_view_fields_go_together(scatter_spec: PlotSpec) -> None:
-    """Ranges without levels, or levels without ranges, are refused."""
-    with pytest.raises(ValueError, match="go together"):
-        replace(scatter_spec, x_range=[0.0, 1.0], y_range=[0.0, 1.0])
-    assert not scatter_spec.is_view

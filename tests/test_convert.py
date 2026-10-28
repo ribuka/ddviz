@@ -10,7 +10,7 @@ from polars.testing import assert_frame_equal
 from ddviz.aggregate import aggregate
 from ddviz.convert import convert_columns
 from ddviz.scan import scan_columns
-from ddviz.spec import PlotSpec
+from ddviz.scatter import ScatterSpec
 
 
 def _convert(source: Path, out: Path, columns: list[str]) -> dict[str, str]:
@@ -41,9 +41,9 @@ def test_converted_columns_read_back_side_by_side(
 
 
 def test_aggregate_from_the_cache_matches_the_source(
-    scatter_spec: PlotSpec, tmp_path: Path, scatter_path: Path
+    scatter_spec: ScatterSpec, tmp_path: Path, scatter_path: Path
 ) -> None:
     """Aggregating from per-column files gives the same bins as from the source."""
     files = _convert(scatter_path, tmp_path / "cache", list(scatter_spec.files))
-    cached = PlotSpec.from_dict({**scatter_spec.to_dict(), "files": files})
+    cached = ScatterSpec.from_dict({**scatter_spec.to_dict(), "files": files})
     assert_frame_equal(aggregate(cached).bins, aggregate(scatter_spec).bins)

@@ -8,7 +8,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from ddviz.spec import PlotSpec
+from ddviz.scatter import ScatterSpec
 
 
 @pytest.fixture
@@ -46,9 +46,9 @@ def scatter_path(tmp_path: Path, scatter_frame: pl.DataFrame) -> Path:
 
 
 @pytest.fixture
-def scatter_spec(scatter_path: Path) -> PlotSpec:
+def scatter_spec(scatter_path: Path) -> ScatterSpec:
     """Return a spec plotting `scatter_path` colored by color and faceted by facet."""
-    return PlotSpec(
+    return ScatterSpec(
         files={c: str(scatter_path) for c in ["x", "y", "label", "color", "facet"]},
         x="x",
         y="y",

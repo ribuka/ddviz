@@ -7,20 +7,22 @@ from pathlib import Path
 
 from ddviz.figure import build_figure
 from ddviz.manifest import IMAGES, read_manifest
-from ddviz.spec import PlotSpec
+from ddviz.scatter import ScatterSpec, View
 from ddviz.task import run_plot
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
-def _figure(spec: PlotSpec, out: Path) -> dict:
+def _figure(spec: ScatterSpec, out: Path) -> dict:
     """Run the plot task and build its figure."""
     out.mkdir()
     run_plot(spec, out, lambda _: None)
     return build_figure(read_manifest(out))
 
 
-def test_images_are_slices_of_one_file(tmp_path: Path, scatter_spec: PlotSpec) -> None:
+def test_images_are_slices_of_one_file(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
     """The meta locates each series' PNG in the images file; plotly gets no image."""
     result = _figure(scatter_spec, tmp_path / "task")
     images = (tmp_path / "task" / IMAGES).read_bytes()
@@ -35,7 +37,7 @@ def test_images_are_slices_of_one_file(tmp_path: Path, scatter_spec: PlotSpec) -
 
 
 def test_every_panel_and_series_has_an_empty_trace(
-    tmp_path: Path, scatter_spec: PlotSpec
+    tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
     """One trace per series carries its legend item; one per panel keeps its axes."""
     result = _figure(scatter_spec, tmp_path / "task")
@@ -49,15 +51,15 @@ def test_every_panel_and_series_has_an_empty_trace(
 
 
 def test_a_panel_without_rows_keeps_its_axes(
-    tmp_path: Path, scatter_spec: PlotSpec
+    tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
     """A view where no row falls has no image, and every panel keeps its axes."""
     overview = read_manifest(_overview_dir(tmp_path, scatter_spec))
     view = replace(
         scatter_spec,
-        x_range=[50.0, 60.0],
-        y_range=[50.0, 60.0],
-        levels=overview["levels"],
+        view=View(
+            x_range=[50.0, 60.0], y_range=[50.0, 60.0], levels=overview["levels"]
+        ),
     )
     result = _figure(view, tmp_path / "view")
     data = result["figure"]["data"]
@@ -70,7 +72,7 @@ def test_a_panel_without_rows_keeps_its_axes(
     assert result["figure"]["layout"]["xaxis"]["range"] == [50.0, 60.0]
 
 
-def _overview_dir(tmp_path: Path, spec: PlotSpec) -> Path:
+def _overview_dir(tmp_path: Path, spec: ScatterSpec) -> Path:
     """Run the overview plot task and return its directory."""
     out = tmp_path / "overview"
     out.mkdir()
@@ -79,7 +81,7 @@ def _overview_dir(tmp_path: Path, spec: PlotSpec) -> Path:
 
 
 def test_a_scrolled_grid_labels_every_panel(
-    tmp_path: Path, scatter_spec: PlotSpec
+    tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
     """When the panels are too small for the size, each carries tick labels and a facet title."""
     small = replace(scatter_spec, width=300, height=200)
@@ -94,7 +96,7 @@ def test_a_scrolled_grid_labels_every_panel(
 
 
 def test_a_fitting_grid_labels_the_outer_panels(
-    tmp_path: Path, scatter_spec: PlotSpec
+    tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
     """A grid that fits labels the y ticks of the first column only."""
     big = replace(scatter_spec, width=800, height=400)
