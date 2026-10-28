@@ -119,11 +119,6 @@ class AxisGrid:
     ny: int = 1
 
     @property
-    def gaps(self) -> tuple[int, int]:
-        """Gaps between the panels of a fitting grid along x and y: `GAP` both ways."""
-        return (GAP, GAP)
-
-    @property
     def rows(self) -> int:
         """Panel rows of the figure."""
         return self.nrow * self.ny
@@ -177,12 +172,10 @@ def grid_layout(
     height: int,
     nrow: int,
     ncol: int,
-    gap_x: int = GAP,
-    gap_y: int = GAP,
 ) -> GridLayout:
     """Split a figure into a facet grid of equal panels.
 
-    The panels fill the given size. When they would be smaller than
+    The panels fill the given size, `GAP` apart. When they would be smaller than
     `MIN_PANEL_WIDTH` by `MIN_PANEL_HEIGHT`, the grid scrolls instead: each
     side is the smallest size or larger to fill the size left by the scroll
     bars, and the figure grows to hold them.
@@ -193,9 +186,6 @@ def grid_layout(
         Size of the area that shows the figure, in pixels.
     nrow, ncol : int
         Panel rows and columns.
-    gap_x, gap_y : int
-        Gaps between the panels when they fit (`AxisGrid.gaps`); a grid that
-        scrolls has larger ones.
 
     Returns
     -------
@@ -204,12 +194,10 @@ def grid_layout(
     """
     margins_x = MARGIN_LEFT + MARGIN_RIGHT
     margins_y = MARGIN_TOP + MARGIN_BOTTOM
-    panel_width = _split(width, margins_x, ncol, gap_x)
-    panel_height = _split(height, margins_y, nrow, gap_y)
+    panel_width = _split(width, margins_x, ncol, GAP)
+    panel_height = _split(height, margins_y, nrow, GAP)
     if panel_width >= MIN_PANEL_WIDTH and panel_height >= MIN_PANEL_HEIGHT:
-        return GridLayout(
-            width, height, nrow, ncol, panel_width, panel_height, gap_x, gap_y
-        )
+        return GridLayout(width, height, nrow, ncol, panel_width, panel_height)
     panel_width = max(
         _split(width - SCROLLBAR, margins_x, ncol, SCROLL_GAP_X), MIN_PANEL_WIDTH
     )
