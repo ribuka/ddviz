@@ -467,7 +467,7 @@ def create_app(
         manifest = index.manifest
         old = manifest["layout"]
         axes = AxisGrid(**manifest["axes"])
-        layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols, *axes.gaps)
+        layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols)
         return (
             asdict(layout) == old
             and [list(r) for r in manifest["x_ranges"]] == spec.view.x_ranges

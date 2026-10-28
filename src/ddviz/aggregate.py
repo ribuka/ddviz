@@ -309,7 +309,7 @@ def aggregate(
         nx=len(spec.x),
         ny=len(spec.y),
     )
-    layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols, *axes.gaps)
+    layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols)
     grid = BinGrid(
         n_panels=layout.nrow * layout.ncol,
         n_series=len(levels["color"]),

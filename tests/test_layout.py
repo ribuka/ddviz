@@ -90,5 +90,7 @@ def test_axis_grid_nests_axis_columns_in_facet_cells() -> None:
 
 def test_axis_columns_and_facets_share_one_gap() -> None:
     """A fitting grid keeps the same one-pixel gap between axis columns as between facets."""
-    assert AxisGrid(nrow=2, ncol=3, nx=2, ny=3).gaps == (GAP, GAP)
-    assert GAP == 1
+    axes = AxisGrid(nrow=2, ncol=3, nx=2, ny=3)
+    layout = grid_layout(1600, 1200, axes.rows, axes.cols)
+    assert not layout.scroll
+    assert (layout.gap_x, layout.gap_y) == (GAP, GAP) == (1, 1)
