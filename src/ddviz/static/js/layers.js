@@ -1,7 +1,7 @@
 // Series image layers drawn on one canvas from plotly's axes, instead of an
 // image trace per panel and series: plotly then only draws the axes, and a
 // legend click redraws the canvas instead of the figure.
-import { INACTIVE_OPACITY, inactiveSeries, seriesOrder } from "./legend.js";
+import { INACTIVE_OPACITY } from "./legend.js";
 
 function axisKey(id) {
   return id.replace(/^([xy])/, "$1axis");
@@ -26,10 +26,12 @@ export function closeImages(bitmaps) {
 }
 
 // The canvas sits between plotly's two SVG layers: above the panels' grid and
-// below the legend, the zoom box and the selection. It takes no pointer events.
+// below the zoom box and the selection. It takes no pointer events. The
+// series' state comes from the legend (legend.js).
 export class ImageLayers {
-  constructor(gd) {
+  constructor(gd, legend) {
     this.gd = gd;
+    this.legend = legend;
     this.canvas = document.createElement("canvas");
     this.canvas.className = "image-layers";
     this.meta = null;
@@ -49,11 +51,11 @@ export class ImageLayers {
     watchRatio();
   }
 
-  // Redraws on every change of the axes (also during a pan drag) or the
-  // legend. Call after each `Plotly.newPlot`, which drops plotly's handlers.
+  // Redraws on every change of the axes (also during a pan drag). Call after
+  // each `Plotly.newPlot`, which drops plotly's handlers.
   attach() {
     const draw = () => this.draw();
-    for (const event of ["plotly_afterplot", "plotly_relayout", "plotly_relayouting", "plotly_restyle"]) {
+    for (const event of ["plotly_afterplot", "plotly_relayout", "plotly_relayouting"]) {
       this.gd.on(event, draw);
     }
     this.draw();
@@ -87,9 +89,9 @@ export class ImageLayers {
     if (!meta || !bitmaps) return;
     ctx.imageSmoothingEnabled = false;
     const nSeries = meta.series.length;
-    const inactive = inactiveSeries(this.gd);
+    const inactive = this.legend.inactive;
     // Bottom layer first: inactive series behind, later series above earlier ones.
-    const order = seriesOrder(this.gd, nSeries).reverse();
+    const order = this.legend.order(nSeries).reverse();
     const [x0, x1] = meta.x_range;
     const [y0, y1] = meta.y_range;
     const { width: w, height: h } = meta.grid;

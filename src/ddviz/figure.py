@@ -1,7 +1,9 @@
-"""Builds the plotly figure of a plot task: the axes of a facet grid and the legend.
+"""Builds the plotly figure of a plot task: the axes of a facet grid.
 
 The series images are not plotly traces: the page draws them on a canvas
-from the figure's axes (``static/js/layers.js``).
+from the figure's axes (``static/js/layers.js``). The legend and the axis
+names are not plotly's either: the page shows them outside the scrolled
+figure (``static/js/legend.js`` and the drop zones).
 """
 
 from __future__ import annotations
@@ -13,10 +15,6 @@ from ddviz.layout import (
     MARGIN_TOP,
     GridLayout,
 )
-
-# Distance of the legend from the right edge of the plot area, in pixels,
-# leaving room for the row labels.
-_LEGEND_OFFSET = 28
 
 
 def _axis_suffix(panel: int) -> str:
@@ -61,9 +59,7 @@ def build_figure(manifest: dict) -> dict:
     """Return the figure of a plot task and what the page needs to draw its images.
 
     The figure holds the axes of every panel, each kept by an empty scatter
-    trace (plotly leaves out the axes of a subplot without traces), and one
-    empty scatter trace per series that carries its legend item, in legend
-    group ``s<series>``.
+    trace (plotly leaves out the axes of a subplot without traces).
 
     Parameters
     ----------
@@ -97,13 +93,7 @@ def build_figure(manifest: dict) -> dict:
         },
         "hovermode": False,
         "dragmode": "pan",
-        "showlegend": True,
-        "legend": {
-            "x": 1 + _LEGEND_OFFSET / (layout.width - MARGIN_LEFT - MARGIN_RIGHT),
-            "xanchor": "left",
-            "y": 1,
-            "title": {"text": spec["color"] or ""},
-        },
+        "showlegend": False,
         "annotations": [],
     }
     panels = []
@@ -160,45 +150,7 @@ def build_figure(manifest: dict) -> dict:
                     "showarrow": False,
                 }
             )
-    fig_layout["annotations"] += [
-        {
-            "text": spec["x"],
-            "x": 0.5,
-            "y": 0,
-            "yshift": -36,
-            "xref": "paper",
-            "yref": "paper",
-            "yanchor": "top",
-            "showarrow": False,
-        },
-        {
-            "text": spec["y"],
-            "x": 0,
-            "y": 0.5,
-            "xshift": -46,
-            "textangle": -90,
-            "xref": "paper",
-            "yref": "paper",
-            "xanchor": "right",
-            "showarrow": False,
-        },
-    ]
-
     data = []
-    for series, color in enumerate(manifest["colors"]):
-        name = str(levels["color"][series]) if spec["color"] is not None else spec["y"]
-        data.append(
-            {
-                "type": "scatter",
-                "mode": "markers",
-                "x": [None],
-                "y": [None],
-                "name": name,
-                "legendgroup": f"s{series}",
-                "marker": {"color": color, "size": 10},
-                "hoverinfo": "skip",
-            }
-        )
     # plotly leaves out the axes of a subplot without traces.
     for panel in panels:
         data.append(

@@ -36,16 +36,15 @@ def test_images_are_slices_of_one_file(
     assert {t["type"] for t in result["figure"]["data"]} == {"scatter"}
 
 
-def test_every_panel_and_series_has_an_empty_trace(
+def test_every_panel_has_an_empty_trace_and_no_legend(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
-    """One trace per series carries its legend item; one per panel keeps its axes."""
+    """One empty trace per panel keeps its axes; the page shows the legend."""
     result = _figure(scatter_spec, tmp_path / "task")
     data = result["figure"]["data"]
-    legend = [t["legendgroup"] for t in data if "legendgroup" in t]
-    assert legend == [f"s{s}" for s in range(len(result["meta"]["series"]))]
-    empty = [t for t in data if "legendgroup" not in t]
-    assert [(t["xaxis"], t["yaxis"]) for t in empty] == [
+    assert not result["figure"]["layout"]["showlegend"]
+    assert result["meta"]["series"] == ["a", "b", "c"]
+    assert [(t["xaxis"], t["yaxis"]) for t in data] == [
         (p["xaxis"], p["yaxis"]) for p in result["meta"]["panels"]
     ]
 
@@ -64,8 +63,7 @@ def test_a_panel_without_rows_keeps_its_axes(
     result = _figure(view, tmp_path / "view")
     data = result["figure"]["data"]
     assert all(s is None for s in result["meta"]["images"])
-    empty = [t for t in data if t["type"] == "scatter" and "legendgroup" not in t]
-    assert [(t["xaxis"], t["yaxis"]) for t in empty] == [
+    assert [(t["xaxis"], t["yaxis"]) for t in data] == [
         (p["xaxis"], p["yaxis"]) for p in result["meta"]["panels"]
     ]
     assert result["meta"]["x_range"] == [50.0, 60.0]

@@ -1,16 +1,16 @@
-// Prototype page: pick columns, plot, zoom and pan, resize, hover, and report the selected range.
+// The page: drop columns on the graph builder's zones, plot, zoom and pan,
+// resize, hover, and report the selected range.
+import { Builder } from "./builder.js";
+import { attachColumnList } from "./columns.js";
 import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
-import { attachLegendOpacity, withLegendState } from "./legend.js";
+import { Legend } from "./legend.js";
 
-const form = document.getElementById("controls");
 const status = document.getElementById("status");
 const info = document.getElementById("info");
 const gd = document.getElementById("plot");
 const stage = document.getElementById("stage");
 const timings = { hover: [] };
-
-const DEFAULTS = { x: "x", y: "y", color: "color", row: "g1", col: "g2" };
 
 function setInfo(extra = {}) {
   const hover = timings.hover;
@@ -34,16 +34,6 @@ function setInfo(extra = {}) {
     null,
     1,
   );
-}
-
-async function loadSchema() {
-  const columns = await (await fetch("/api/schema")).json();
-  for (const role of ["x", "y", "color", "row", "col"]) {
-    const select = form.elements[role];
-    if (!["x", "y"].includes(role)) select.add(new Option("(なし)", ""));
-    for (const c of columns) select.add(new Option(`${c.name} (${c.dtype})`, c.name));
-    select.value = DEFAULTS[role];
-  }
 }
 
 const converting = document.getElementById("converting");
@@ -76,7 +66,9 @@ events.onmessage = (event) => {
 // and the meta of the result whose images are drawn.
 let overview = null;
 let current = null;
-const layers = new ImageLayers(gd);
+const legend = new Legend(document.getElementById("legend"), () => layers.draw());
+const layers = new ImageLayers(gd, legend);
+const empty = document.getElementById("empty");
 // Decoded images on the canvas; freed when replaced, unless the overview's.
 let shownImages = null;
 // Size of the plot area that the latest request was made for, and that the
@@ -112,7 +104,7 @@ function noDrag() {
   });
 }
 
-const hideHover = attachHover(gd, () => current, (ms) => {
+const hideHover = attachHover(gd, () => current, legend, (ms) => {
   timings.hover.push(ms);
   if (timings.hover.length % 20 === 0) setInfo();
 });
@@ -172,10 +164,10 @@ function sameSize(a, b) {
   return a !== null && b !== null && a.width === b.width && a.height === b.height;
 }
 
-async function plot() {
-  // The graph's roles (`ddviz.encoding.Encoding`); the axes hold lists of columns.
-  const value = (role) => form.elements[role].value || null;
-  const encoding = { x: [value("x")], y: [value("y")], color: value("color"), row: value("row"), col: value("col") };
+const CONVERT_RETRY_MS = 300;
+
+// Aggregates the overview of a graph (`ddviz.encoding.Encoding`) and draws it.
+async function plot(encoding) {
   const size = stageSize();
   const body = { encoding, ...size };
   requestedSize = size;
@@ -183,11 +175,19 @@ async function plot() {
   const mine = ++generation;
   plotting = mine;
   const started = performance.now();
-  const response = await fetch("/api/plot", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let response;
+  for (;;) {
+    response = await fetch("/api/plot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    // An edit dropped while an earlier plot converts its columns is refused
+    // (it would kill the conversion); it waits for the conversion's end.
+    if (response.status !== 409 || mine !== generation) break;
+    if ((await response.clone().json()).detail !== "converting") break;
+    await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
+  }
   if (plotting === mine) plotting = 0;
   if (response.status === 409 || mine !== generation) return; // superseded by a newer request
   const text = await response.text();
@@ -210,18 +210,19 @@ async function plot() {
   shownSize = size;
   const drawStarted = performance.now();
   setPending(false);
+  empty.hidden = true;
+  legend.set(encoding.color, meta.series, meta.colors);
   showImages(meta, null);
   Plotly.purge(gd);
   drawnKey = figureKey(figure.data, figure.layout);
   await Plotly.newPlot(gd, figure.data, figure.layout, PLOT_CONFIG);
   timings.plot = Math.round(performance.now() - drawStarted);
   layers.attach();
-  attachLegendOpacity(gd);
   gd.on("plotly_relayout", onRelayout);
   gd.on("plotly_selected", (event) => setInfo({ selected_range: event?.range ?? null, selected_points: event?.points?.length }));
   status.textContent = `task ${meta.task}: ${meta.rows.toLocaleString()} 行`;
   const bitmaps = await images;
-  if (overview.meta !== meta) {
+  if (overview?.meta !== meta) {
     closeImages(bitmaps);
     return;
   }
@@ -279,8 +280,7 @@ function rangeUpdate(layout) {
   return Object.keys(update).length ? update : null;
 }
 
-// Draws `data` with `layout`, keeping each series' legend state, and the
-// images of `meta` over it.
+// Draws `data` with `layout`, and the images of `meta` over it.
 async function draw(data, layout, meta, bitmaps) {
   const started = performance.now();
   const key = figureKey(data, layout);
@@ -292,7 +292,7 @@ async function draw(data, layout, meta, bitmaps) {
       ownRelayout = null;
     }
   } else {
-    await Plotly.react(gd, withLegendState(gd, data), layout);
+    await Plotly.react(gd, data, layout);
     drawnKey = key;
   }
   showImages(meta, bitmaps);
@@ -489,10 +489,37 @@ async function onResizeSettled() {
 
 new ResizeObserver(onResize).observe(stage);
 
-form.addEventListener("submit", (event) => {
-  event.preventDefault();
-  plot();
-});
+// Removes the figure of a graph that cannot be drawn (no x or no y column).
+function clearPlot() {
+  generation++;
+  plotting = 0;
+  setPending(false);
+  hideHover();
+  Plotly.purge(gd);
+  drawnKey = null;
+  legend.clear();
+  showImages(null, null);
+  if (overview?.bitmaps) closeImages(overview.bitmaps);
+  overview = null;
+  current = null;
+  stage.classList.remove("scrolls");
+  empty.hidden = false;
+  status.textContent = "";
+}
 
-await loadSchema();
-plot();
+// The roles a scatter plot draws (`ddviz.plan.drawn_columns`): placing an
+// n-th axis or overlay changes nothing drawn, so it aggregates nothing.
+function drawnRoles(encoding) {
+  const { x, y, color, row, col } = encoding;
+  return JSON.stringify([x[0] ?? null, y[0] ?? null, color, row, col]);
+}
+
+let drawnRolesKey = drawnRoles({ x: [], y: [], color: null, row: null, col: null });
+new Builder(document.getElementById("builder"), document.getElementById("columns"), (encoding) => {
+  const key = drawnRoles(encoding);
+  if (key === drawnRolesKey) return;
+  drawnRolesKey = key;
+  if (encoding.x.length && encoding.y.length) plot(encoding);
+  else clearPlot();
+});
+await attachColumnList(document.getElementById("columns"));

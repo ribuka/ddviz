@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Figure margins in pixels: room for tick labels, facet labels and the legend.
-MARGIN_LEFT = 60
-MARGIN_RIGHT = 140
-MARGIN_TOP = 40
-MARGIN_BOTTOM = 50
+# Figure margins in pixels: room for tick labels and facet labels. The axis
+# names and the legend are outside the figure.
+MARGIN_LEFT = 50
+MARGIN_RIGHT = 30
+MARGIN_TOP = 30
+MARGIN_BOTTOM = 30
 # Gap between panels in pixels when the grid fits the given size.
 GAP = 6
 # Smallest plot area of a panel in pixels. A grid whose panels would be

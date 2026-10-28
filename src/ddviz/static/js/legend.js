@@ -1,90 +1,83 @@
-// Legend clicks fade series instead of hiding them, as flat-pca's plot_legend.js.
-// Each series has one empty scatter trace that carries its legend item; its
-// opacity is the series' state, which the image layers (layers.js) and the
-// hover follow.
+// The legend, in HTML beside the figure so that a scrolled grid does not hide
+// it. Clicks fade series instead of hiding them, as flat-pca's plot_legend.js:
+// a click toggles a series; a right click makes only that series active, or
+// every series again when only it already is. The image layers (layers.js)
+// and the hover follow its state.
 export const INACTIVE_OPACITY = 0.1;
 
-// Returns whether a trace is made inactive from its legend.
-export function isInactiveTrace(trace) {
-  return trace?.opacity === INACTIVE_OPACITY;
-}
-
-// Returns the indices of the traces in the legend group of trace `index`.
-function legendGroupIndices(gd, index) {
-  const group = gd.data[index].legendgroup;
-  if (!group) {
-    return [index];
+export class Legend {
+  // `element` holds the items; `onChange` runs after each click.
+  constructor(element, onChange) {
+    this.element = element;
+    this.onChange = onChange;
+    this.series = [];
+    this.inactive = new Set();
   }
-  return gd.data.flatMap((trace, i) => (trace.legendgroup === group ? [i] : []));
-}
 
-// Makes each of the traces `indices` active or inactive by `active`. Only the
-// opacity changes, which plotly restyles without drawing the figure again.
-function setTracesActive(gd, indices, active) {
-  return Plotly.restyle(gd, { opacity: active.map((on) => (on ? 1 : INACTIVE_OPACITY)) }, indices);
-}
+  // Shows the series of a result: `title` is the color column (null for a
+  // single series). A result of the same series keeps their state.
+  set(title, series, colors) {
+    const same = series.length === this.series.length && series.every((s, i) => s === this.series[i]);
+    if (!same) this.inactive.clear();
+    this.title = title;
+    this.series = series;
+    this.colors = colors;
+    this.render();
+  }
 
-// Returns `data` (new traces of the same series) with the active state of
-// each legend group taken from the drawn traces.
-export function withLegendState(gd, data) {
-  const inactive = new Set(
-    (gd.data ?? [])
-      .filter((trace) => trace.legendgroup && isInactiveTrace(trace))
-      .map((trace) => trace.legendgroup),
-  );
-  return data.map((trace) => (inactive.has(trace.legendgroup) ? { ...trace, opacity: INACTIVE_OPACITY } : trace));
-}
+  clear() {
+    this.series = [];
+    this.inactive.clear();
+    this.element.replaceChildren();
+  }
 
-// A click on a legend item toggles its group; a right click makes only that
-// group active, or every group again when only it already is. A double click
-// does nothing. Call after each `Plotly.newPlot`, which drops plotly's handlers;
-// the right click listener on the element is added only once.
-export function attachLegendOpacity(gd) {
-  gd.on("plotly_legendclick", (event) => {
-    if (event.event?.button === 2) {
-      return false;
+  render() {
+    const items = this.series.map((name, i) => {
+      const item = document.createElement("div");
+      item.className = "legend-item";
+      item.classList.toggle("inactive", this.inactive.has(i));
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.background = this.colors[i];
+      item.append(swatch, this.title === null ? "全体" : name);
+      item.addEventListener("click", () => this.toggle(i));
+      item.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        this.isolate(i);
+      });
+      return item;
+    });
+    const nodes = [];
+    if (this.title !== null) {
+      const title = document.createElement("div");
+      title.className = "legend-title";
+      title.textContent = this.title;
+      nodes.push(title);
     }
-    const indices = legendGroupIndices(gd, event.curveNumber);
-    const active = indices.some((index) => isInactiveTrace(gd.data[index]));
-    setTracesActive(gd, indices, indices.map(() => active));
-    return false;
-  });
-  gd.on("plotly_legenddoubleclick", () => false);
-  if (gd.dataset.legendAttached) return;
-  gd.dataset.legendAttached = "1";
-  gd.addEventListener("contextmenu", (event) => {
-    const toggle = event.target.closest?.(".legendtoggle");
-    if (!toggle) {
-      return;
-    }
-    event.preventDefault();
-    const index = toggle.parentNode.__data__?.[0]?.trace?.index;
-    if (index === undefined) {
-      return;
-    }
-    const group = new Set(legendGroupIndices(gd, index));
-    // Only series traces; the empty traces that keep the panels' axes have no group.
-    const indices = gd.data.flatMap((trace, i) => (trace.legendgroup ? [i] : []));
-    const isolated = indices.every((i) => isInactiveTrace(gd.data[i]) !== group.has(i));
-    setTracesActive(gd, indices, indices.map((i) => isolated || group.has(i)));
-  });
-}
+    this.element.replaceChildren(...nodes, ...items);
+  }
 
-// Returns the set of inactive series.
-export function inactiveSeries(gd) {
-  const inactive = new Set();
-  (gd.data ?? []).forEach((trace) => {
-    if (trace.legendgroup && isInactiveTrace(trace)) {
-      inactive.add(Number(trace.legendgroup.slice(1)));
-    }
-  });
-  return inactive;
-}
+  toggle(i) {
+    if (!this.inactive.delete(i)) this.inactive.add(i);
+    this.changed();
+  }
 
-// Returns the series from the top drawn layer down: active series before
-// inactive ones (which sit behind), later series above earlier ones.
-export function seriesOrder(gd, nSeries) {
-  const inactive = inactiveSeries(gd);
-  const down = [...Array(nSeries).keys()].reverse();
-  return [...down.filter((s) => !inactive.has(s)), ...down.filter((s) => inactive.has(s))];
+  isolate(i) {
+    const isolated = this.series.every((_, j) => this.inactive.has(j) !== (j === i));
+    this.inactive.clear();
+    if (!isolated) this.series.forEach((_, j) => j !== i && this.inactive.add(j));
+    this.changed();
+  }
+
+  changed() {
+    this.render();
+    this.onChange();
+  }
+
+  // Returns the series from the top drawn layer down: active series before
+  // inactive ones (which sit behind), later series above earlier ones.
+  order(nSeries) {
+    const down = [...Array(nSeries).keys()].reverse();
+    return [...down.filter((s) => !this.inactive.has(s)), ...down.filter((s) => this.inactive.has(s))];
+  }
 }
