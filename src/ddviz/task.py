@@ -25,6 +25,7 @@ from ddviz.png import encode_mask
 from ddviz.raster import atlas, masks, occupancy
 from ddviz.scan import scan_columns
 from ddviz.scatter import ScatterSpec
+from ddviz.summary import summarize_column
 
 Emit = Callable[[dict], None]
 # Rows of a table page further apart than this are read with separate
@@ -280,18 +281,39 @@ def run_table(
     )
 
 
+def run_summary(file: str, column: str, out: Path, emit: Emit) -> None:
+    """Write what the filter pane shows of a column (`ddviz.summary`).
+
+    Parameters
+    ----------
+    file : str
+        Parquet file holding the column.
+    column : str
+        The column.
+    out : pathlib.Path
+        Directory to write the result into.
+    emit : callable
+        Receives progress messages.
+    """
+    emit({"type": "progress", "stage": "summary"})
+    summary = summarize_column(file, column)
+    write_manifest(out, {"kind": "summary", "column": column, **summary})
+
+
 def run_task(task: dict, emit: Emit) -> None:
     """Run a task described by the UI server.
 
     Parameters
     ----------
     task : dict
-        ``{"kind": "schema" | "convert" | "plot" | "selection" | "table",
+        ``{"kind": "schema" | "convert" | "plot" | "selection" | "table" |
+        "summary",
         "out": directory, ...}``; ``"path"`` for a schema task, ``"path"``
         and ``"files"`` (the file to write for each column) for a convert
         task, ``"spec"`` for a plot or selection task, and ``"spec"``,
         ``"offset"``, ``"limit"`` and ``"files"`` (the file to read each
-        column from) for a table task.
+        column from) for a table task, and ``"file"`` and ``"column"`` for
+        a summary task.
     emit : callable
         Receives progress messages.
 
@@ -319,5 +341,7 @@ def run_task(task: dict, emit: Emit) -> None:
             out,
             emit,
         )
+    elif task["kind"] == "summary":
+        run_summary(task["file"], task["column"], out, emit)
     else:
         raise ValueError(f"unknown task kind: {task['kind']}")

@@ -25,14 +25,69 @@ button {
   font: inherit;
 }
 
-/* ---- column list ---- */
+/* ---- left pane: the column list, the filter pane below it ---- */
+/* Its width is the plot area's too: folding it or dragging its edge makes the
+   plot area larger, which aggregates again once the size settles. */
 #left {
+  position: relative;
   flex: none;
   width: 240px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #ccc;
   min-height: 0;
+}
+
+/* Folded to the left, a strip keeps the filter's conditions in sight. */
+#left.collapsed {
+  width: 26px !important;
+}
+
+#left.collapsed > :not(#left-strip) {
+  display: none;
+}
+
+#left-strip {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border: 0;
+  background: #f6f6f6;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+#left.collapsed #left-strip {
+  display: flex;
+}
+
+#left-strip:hover {
+  background: #eef4ff;
+}
+
+.strip-text {
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+  color: #444;
+}
+
+#left-strip.filtered .strip-text {
+  color: #b35c00;
+  font-weight: 600;
+}
+
+.left-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 5;
 }
 
 #columns {
@@ -43,9 +98,236 @@ button {
 }
 
 .pane-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 8px;
   background: #f6f6f6;
   font-weight: 600;
+}
+
+.pane-head button {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  padding: 0 4px;
+  color: #666;
+  cursor: pointer;
+}
+
+.pane-head button:hover {
+  color: #2a6fdb;
+}
+
+/* ---- filter pane ---- */
+#filters {
+  flex: none;
+  max-height: 55%;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid #ccc;
+}
+
+#filters.over {
+  outline: 2px solid #2a6fdb;
+  outline-offset: -2px;
+  background: #e3edff;
+}
+
+.filter-head {
+  cursor: default;
+}
+
+.filter-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #b35c00;
+  font-weight: normal;
+  font-size: 12px;
+}
+
+.filter-head button {
+  margin-left: 0;
+}
+
+#filters.collapsed .filter-body {
+  display: none;
+}
+
+.filter-body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.filter-drop {
+  margin: 6px 8px 8px;
+  padding: 8px;
+  border: 1px dashed #bbb;
+  border-radius: 4px;
+  color: #999;
+  font-size: 12px;
+  text-align: center;
+}
+
+.filter-card {
+  margin: 6px 8px 0;
+  border: 1px solid #d4d9e4;
+  border-radius: 4px;
+}
+
+.filter-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 6px;
+  background: #f3f6fb;
+}
+
+.filter-card-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.filter-card-remove {
+  border: 0;
+  background: none;
+  padding: 0 3px;
+  color: #789;
+  cursor: pointer;
+}
+
+.filter-card-remove:hover {
+  color: #c00;
+}
+
+.filter-card-body {
+  padding: 4px 6px 6px;
+  font-size: 12px;
+}
+
+.filter-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #666;
+}
+
+.filter-reset {
+  margin-left: auto;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #fff;
+  padding: 0 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.filter-reset:disabled {
+  color: #bbb;
+  cursor: default;
+}
+
+/* Two range inputs over one track make a slider with two thumbs. */
+.filter-slider {
+  position: relative;
+  height: 20px;
+  margin: 4px 6px 2px;
+}
+
+.filter-slider::before,
+.filter-slider-fill {
+  position: absolute;
+  top: 8px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.filter-slider::before {
+  content: "";
+  left: 0;
+  right: 0;
+  background: #ddd;
+}
+
+.filter-slider-fill {
+  background: #2a6fdb;
+}
+
+.filter-slider input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  background: none;
+  pointer-events: none;
+  appearance: none;
+}
+
+.filter-slider input::-webkit-slider-runnable-track {
+  background: none;
+}
+
+.filter-slider input::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 16px;
+  border: 1px solid #2a6fdb;
+  border-radius: 3px;
+  background: #fff;
+  pointer-events: auto;
+  cursor: ew-resize;
+}
+
+.filter-range {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.filter-range input {
+  width: 0;
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 1px 3px;
+}
+
+.filter-levels {
+  max-height: 180px;
+  overflow: auto;
+  margin-top: 4px;
+}
+
+.filter-level {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.filter-level:hover {
+  background: #eef4ff;
+}
+
+.filter-level-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-level-count {
+  color: #888;
+  font-variant-numeric: tabular-nums;
 }
 
 .column-search {
@@ -299,6 +581,10 @@ button {
 
 .legend-item.inactive {
   opacity: 0.35;
+}
+
+.legend-item.empty {
+  color: #999;
 }
 
 .swatch {

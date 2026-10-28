@@ -38,6 +38,11 @@ export function endDrag() {
   dragged = null;
 }
 
+// The column being dragged, for drop targets outside the builder (the filter pane).
+export function draggedColumn() {
+  return dragged;
+}
+
 export class Builder {
   // `root` holds the zones (`[data-role]`); `columnList` takes chips dropped
   // to remove them; `onChange` gets the graph after each edit.

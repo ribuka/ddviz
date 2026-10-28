@@ -9,6 +9,7 @@ import polars as pl
 
 from ddviz.keys import BinGrid
 from ddviz.layout import AxisGrid, GridLayout, grid_layout
+from ddviz.rowfilter import filter_columns, filter_conditions
 from ddviz.scan import scan_columns
 from ddviz.scatter import ScatterSpec
 
@@ -71,8 +72,8 @@ def selection_filter(spec: ScatterSpec) -> list[pl.Expr]:
     """Return the conditions that pick the selected rows of a spec with a selection.
 
     A row is selected when it is drawn in the panel the box was drawn on:
-    its facet levels are the panel's, its x and y are in the box, and its
-    color, row and col are not null.
+    its facet levels are the panel's, its x and y are in the box, its
+    color, row and col are not null, and it passes the local filter.
 
     Parameters
     ----------
@@ -97,7 +98,7 @@ def selection_filter(spec: ScatterSpec) -> list[pl.Expr]:
     for column, level in ((spec.row, selection.row), (spec.col, selection.col)):
         if column is not None and level is not None:
             conditions.append(pl.col(column).cast(pl.String) == level)
-    return conditions
+    return conditions + filter_conditions(spec.filters)
 
 
 def selection_columns(spec: ScatterSpec) -> list[str]:
@@ -114,6 +115,7 @@ def selection_columns(spec: ScatterSpec) -> list[str]:
         The columns, once each.
     """
     columns = [spec.selection.x, spec.selection.y, spec.color, spec.row, spec.col]
+    columns += filter_columns(spec.filters)
     return list(dict.fromkeys(c for c in columns if c is not None))
 
 
@@ -218,8 +220,10 @@ def aggregate(
     process. A panel leaves out
     rows with a null or non-finite x or y, and for a view, rows outside the
     ranges of its columns; every panel leaves out rows with a null color,
-    row or col. The overview finds the levels and the data ranges first; a
-    view takes them from the spec.
+    row or col, and rows the local filter leaves out (`ddviz.rowfilter`).
+    The overview finds the levels and the data ranges first, over every
+    row, so that the filter changes neither; a view takes them from the
+    spec.
 
     With a selection, the selected rows are also aggregated into bins of
     their own, in every panel (`selection_filter`).
@@ -316,7 +320,7 @@ def aggregate(
     bins = None
     if not selection_only:
         progress("bins")
-        bins = all_pairs([], [])
+        bins = all_pairs(filter_conditions(spec.filters), filter_columns(spec.filters))
         progress("rows")
         hover = list(dict.fromkeys(spec.hover))
         rows = (
