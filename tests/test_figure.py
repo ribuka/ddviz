@@ -61,3 +61,30 @@ def _overview_dir(tmp_path: Path, spec: PlotSpec) -> Path:
     out.mkdir()
     run_plot(spec, out, lambda _: None)
     return out
+
+
+def test_a_scrolled_grid_labels_every_panel(
+    tmp_path: Path, scatter_spec: PlotSpec
+) -> None:
+    """When the panels are too small for the size, each carries tick labels and a facet title."""
+    small = replace(scatter_spec, width=300, height=200)
+    result = _figure(small, tmp_path / "task")
+    layout = result["figure"]["layout"]
+    assert result["meta"]["scroll"]
+    assert layout["width"] > 300
+    assert all(layout[a]["showticklabels"] for a in ("xaxis", "yaxis2"))
+    titles = [a["text"] for a in layout["annotations"]]
+    assert "facet = p" in titles
+    assert "facet = q" in titles
+
+
+def test_a_fitting_grid_labels_the_outer_panels(
+    tmp_path: Path, scatter_spec: PlotSpec
+) -> None:
+    """A grid that fits labels the y ticks of the first column only."""
+    big = replace(scatter_spec, width=800, height=400)
+    result = _figure(big, tmp_path / "task")
+    layout = result["figure"]["layout"]
+    assert not result["meta"]["scroll"]
+    assert layout["yaxis"]["showticklabels"]
+    assert not layout["yaxis2"]["showticklabels"]

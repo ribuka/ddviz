@@ -6,7 +6,9 @@ before the plot task, and the plot reads them from there.
 
 A plot first aggregates its overview (the whole data range). Zooming and
 panning aggregate the view again in a worker; the overview's result is kept
-so that going back to it needs no worker.
+so that going back to it needs no worker. A new size of the plot area
+aggregates the overview or the view again at that size, reusing the
+overview's levels and ranges.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import shutil
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -30,6 +32,7 @@ from ddviz.cache import ColumnCache, evict
 from ddviz.figure import build_figure
 from ddviz.hover import HoverIndex
 from ddviz.jobs import WorkerJob, physical_memory
+from ddviz.layout import grid_layout
 from ddviz.manifest import IMAGES, read_manifest
 from ddviz.palette import DEFAULT_COLORS
 from ddviz.runner import WorkerPool
@@ -51,8 +54,15 @@ class PlotRequest(BaseModel):
     height: int
 
 
-class ViewRequest(BaseModel):
-    """Body of ``POST /api/view``: the data ranges of the zoomed view."""
+class SizeRequest(BaseModel):
+    """Body of ``POST /api/overview``: the size of the plot area in pixels."""
+
+    width: int
+    height: int
+
+
+class ViewRequest(SizeRequest):
+    """Body of ``POST /api/view``: the data ranges of the zoomed view and the plot area size."""
 
     x_range: tuple[float, float]
     y_range: tuple[float, float]
@@ -73,6 +83,9 @@ class _State:
     ended: dict[int, dict] = field(default_factory=dict)
     listeners: set[asyncio.Queue] = field(default_factory=set)
     overview: HoverIndex | None = None
+    # Bumped by every new plot, so that a view or a resized overview of an
+    # older plot is dropped.
+    plot_id: int = 0
     view: HoverIndex | None = None
     schema: list | None = None
     cache: ColumnCache | None = None
@@ -261,6 +274,7 @@ def create_app(
             colors=DEFAULT_COLORS,
             **request.model_dump(),
         )
+        state.plot_id += 1
         index, timing = await run_plot(spec)
         if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
@@ -272,27 +286,81 @@ def create_app(
             drop(o)
         return figure(index, {**timing, "convert_seconds": convert_seconds})
 
+    def again(request: SizeRequest, x_range: list, y_range: list) -> PlotSpec:
+        """Return the overview's spec for other ranges or another size, reusing its levels."""
+        overview = state.overview.manifest
+        return PlotSpec.from_dict(
+            {
+                **overview["spec"],
+                "width": request.width,
+                "height": request.height,
+                "x_range": x_range,
+                "y_range": y_range,
+                "levels": overview["levels"],
+            }
+        )
+
+    def unchanged(index: HoverIndex | None, spec: PlotSpec) -> bool:
+        """Whether a result already has the panels and ranges of `spec`.
+
+        A new size often keeps the layout: a grid that scrolls in both
+        directions keeps its panels at their smallest size.
+        """
+        if index is None:
+            return False
+        manifest = index.manifest
+        old = manifest["layout"]
+        layout = grid_layout(spec.width, spec.height, old["nrow"], old["ncol"])
+        return (
+            asdict(layout) == old
+            and list(manifest["x_range"]) == spec.x_range
+            and list(manifest["y_range"]) == spec.y_range
+        )
+
+    async def run_again(spec: PlotSpec) -> tuple[HoverIndex | None, dict]:
+        """Run a plot task of the current plot; None when it was cancelled or the plot changed."""
+        plot_id = state.plot_id
+        index, timing = await run_plot(spec)
+        if index is None or state.plot_id != plot_id:
+            drop(index)
+            return None, {}
+        return index, timing
+
     @app.post("/api/view")
     async def view(request: ViewRequest) -> JSONResponse:
         if state.overview is None:
             raise HTTPException(409, "no plot")
         if state.converting:
             raise HTTPException(409, "converting")
-        overview = state.overview.manifest
-        spec = PlotSpec.from_dict(
-            {
-                **overview["spec"],
-                "x_range": list(request.x_range),
-                "y_range": list(request.y_range),
-                "levels": overview["levels"],
-            }
-        )
-        index, timing = await run_plot(spec)
-        # Cancelled by a newer view or plot, or the plot changed meanwhile.
-        if index is None or state.overview.manifest is not overview:
-            drop(index)
+        spec = again(request, list(request.x_range), list(request.y_range))
+        if unchanged(state.view, spec):
+            # A task for another size must not replace the result drawn now.
+            await asyncio.to_thread(state.pool.cancel)
+            return figure(state.view, {"task_seconds": 0.0})
+        index, timing = await run_again(spec)
+        if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
         old, state.view = state.view, index
+        drop(old)
+        return figure(index, timing)
+
+    @app.post("/api/overview")
+    async def overview(request: SizeRequest) -> JSONResponse:
+        """Aggregate the overview again at another size of the plot area."""
+        if state.overview is None:
+            raise HTTPException(409, "no plot")
+        if state.converting:
+            raise HTTPException(409, "converting")
+        # The padded data ranges hold every row, so this is the overview.
+        manifest = state.overview.manifest
+        spec = again(request, manifest["x_range"], manifest["y_range"])
+        if unchanged(state.overview, spec):
+            await asyncio.to_thread(state.pool.cancel)
+            return figure(state.overview, {"task_seconds": 0.0})
+        index, timing = await run_again(spec)
+        if index is None:
+            return JSONResponse({"cancelled": True}, status_code=409)
+        old, state.overview = state.overview, index
         drop(old)
         return figure(index, timing)
 

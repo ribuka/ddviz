@@ -106,6 +106,12 @@ class WorkerPool:
         shutil.rmtree(running.out, ignore_errors=True)
         self._on_event(running.task_id, {"type": "cancelled"})
 
+    def cancel(self) -> None:
+        """Kill the running task, if any; its waiter gets ``{"type": "cancelled"}``."""
+        with self._lock:
+            if self._running is not None and self._running.process.poll() is None:
+                self._cancel(self._running)
+
     def submit(self, task: dict) -> int:
         """Run a task, killing the running one.
 

@@ -27,6 +27,34 @@ def _label(column: str | None, level: object) -> str:
     return f"{column} = {level}"
 
 
+def _panel_titles(spec: dict, levels: dict, layout: GridLayout) -> list[dict]:
+    """Return a facet title above each panel, for a grid that scrolls."""
+    titles = []
+    for row in range(layout.nrow):
+        for col in range(layout.ncol):
+            text = " / ".join(
+                _label(spec[role], levels[role][i])
+                for role, i in (("row", row), ("col", col))
+                if spec[role] is not None
+            )
+            if not text:
+                continue
+            lo, hi = layout.x_domain(col)
+            titles.append(
+                {
+                    "text": text,
+                    "x": (lo + hi) / 2,
+                    "y": layout.y_domain(row)[1],
+                    "yanchor": "bottom",
+                    "xref": "paper",
+                    "yref": "paper",
+                    "showarrow": False,
+                    "font": {"size": 11},
+                }
+            )
+    return titles
+
+
 def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> dict:
     """Return the figure of a plot task and what the page needs for hovering.
 
@@ -46,7 +74,8 @@ def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> di
     -------
     dict
         ``{"figure": {"data", "layout"}, "meta": {...}}``; the meta holds the
-        axes of each panel, the bin grid and the data ranges.
+        axes of each panel, the bin grid, the data ranges and whether the
+        grid scrolls.
     """
     spec = manifest["spec"]
     grid = manifest["grid"]
@@ -86,7 +115,7 @@ def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> di
                 "domain": layout.x_domain(col),
                 "anchor": f"y{suffix}",
                 "range": [x_lo, x_hi],
-                "showticklabels": row == layout.nrow - 1,
+                "showticklabels": layout.scroll or row == layout.nrow - 1,
                 "zeroline": False,
                 # Image traces otherwise make pixels square by shrinking the
                 # domain, so a bin would no longer be a screen pixel.
@@ -97,13 +126,15 @@ def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> di
                 "domain": layout.y_domain(row),
                 "anchor": f"x{suffix}",
                 "range": [y_lo, y_hi],
-                "showticklabels": col == 0,
+                "showticklabels": layout.scroll or col == 0,
                 "zeroline": False,
                 "scaleanchor": False,
                 **({"matches": "y"} if panel else {}),
             }
             panels.append({"xaxis": f"x{suffix}", "yaxis": f"y{suffix}"})
-    if spec["col"] is not None:
+    if layout.scroll:
+        fig_layout["annotations"] += _panel_titles(spec, levels, layout)
+    if spec["col"] is not None and not layout.scroll:
         for col, level in enumerate(levels["col"]):
             lo, hi = layout.x_domain(col)
             fig_layout["annotations"].append(
@@ -117,7 +148,7 @@ def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> di
                     "showarrow": False,
                 }
             )
-    if spec["row"] is not None:
+    if spec["row"] is not None and not layout.scroll:
         for row, level in enumerate(levels["row"]):
             lo, hi = layout.y_domain(row)
             fig_layout["annotations"].append(
@@ -215,5 +246,6 @@ def build_figure(manifest: dict, image_source: Callable[[list[int]], str]) -> di
         "series": [str(v) for v in levels["color"]],
         "colors": manifest["colors"],
         "rows": manifest["rows"],
+        "scroll": layout.scroll,
     }
     return {"figure": {"data": data, "layout": fig_layout}, "meta": meta}

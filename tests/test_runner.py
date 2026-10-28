@@ -62,6 +62,18 @@ def test_a_new_task_kills_the_running_one(
     assert read_manifest(tmp_path / "tasks" / str(second))["kind"] == "plot"
 
 
+def test_cancel_kills_the_running_task(
+    pool: tuple, scatter_spec: PlotSpec, tmp_path: Path
+) -> None:
+    """Cancelling ends the running task as cancelled and removes its output."""
+    workers, events = pool
+    task_id = workers.submit({"kind": "plot", "spec": scatter_spec.to_dict()})
+    workers.cancel()
+    assert _until_end(events, task_id) == {"type": "cancelled"}
+    assert not (tmp_path / "tasks" / str(task_id)).exists()
+    workers.cancel()
+
+
 def test_a_failing_task_reports_an_error(pool: tuple, tmp_path: Path) -> None:
     """A task on a missing file ends with an error message."""
     workers, events = pool
