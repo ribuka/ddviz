@@ -17,6 +17,15 @@ from ddviz.layout import (
     GridLayout,
 )
 
+# Each plot area is white with a frame line around it, on a light gray
+# figure, so neighboring panels stand apart. The frame lies just outside the
+# plot area, where the series canvas (clipped to it) does not cover it; with
+# the one-pixel `GAP`, neighbors share one line.
+FRAME_COLOR = "#aaa"
+PAPER_COLOR = "#f5f5f5"
+PLOT_COLOR = "#fff"
+_FRAME = {"showline": True, "mirror": True, "linecolor": FRAME_COLOR, "linewidth": 1}
+
 
 def _axis_suffix(panel: int) -> str:
     """Return the plotly axis suffix of a panel: "" for the first, else its number."""
@@ -154,6 +163,8 @@ def build_figure(manifest: dict) -> dict:
         "hovermode": False,
         "dragmode": "pan",
         "showlegend": False,
+        "paper_bgcolor": PAPER_COLOR,
+        "plot_bgcolor": PLOT_COLOR,
         "annotations": [],
     }
     panels = []
@@ -168,6 +179,7 @@ def build_figure(manifest: dict) -> dict:
             "range": list(x_ranges[xi]),
             "showticklabels": layout.scroll or prow == layout.nrow - 1,
             "zeroline": False,
+            **_FRAME,
             **({"matches": x_axes[xi]} if x_axis != x_axes[xi] else {}),
         }
         fig_layout[f"yaxis{suffix}"] = {
@@ -176,6 +188,7 @@ def build_figure(manifest: dict) -> dict:
             "range": list(y_ranges[yj]),
             "showticklabels": layout.scroll or pcol == 0,
             "zeroline": False,
+            **_FRAME,
             **({"matches": y_axes[yj]} if y_axis != y_axes[yj] else {}),
         }
         panels.append({"xaxis": x_axis, "yaxis": y_axis, "x": xi, "y": yj})

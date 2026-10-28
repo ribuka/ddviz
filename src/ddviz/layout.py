@@ -13,11 +13,11 @@ MARGIN_LEFT = 50
 MARGIN_RIGHT = 30
 MARGIN_TOP = 30
 MARGIN_BOTTOM = 30
-# Gap between panels in pixels when the grid fits the given size.
-GAP = 6
-# Gap of a fitting grid along a direction with several axis columns: the
-# tick labels of neighboring panels differ there and would run together.
-AXIS_GAP = 24
+# Gap between panels in pixels when the grid fits the given size, between
+# facet cells and between axis columns alike. The figure draws a frame line
+# around each plot area (`ddviz.figure`) just outside it, so with one pixel
+# neighboring panels share one line.
+GAP = 1
 # Smallest plot area of a panel in pixels. A grid whose panels would be
 # smaller grows past the given size, and the page scrolls it.
 MIN_PANEL_WIDTH = 160
@@ -120,11 +120,8 @@ class AxisGrid:
 
     @property
     def gaps(self) -> tuple[int, int]:
-        """Gaps between the panels of a fitting grid along x and y."""
-        return (
-            AXIS_GAP if self.nx > 1 else GAP,
-            AXIS_GAP if self.ny > 1 else GAP,
-        )
+        """Gaps between the panels of a fitting grid along x and y: `GAP` both ways."""
+        return (GAP, GAP)
 
     @property
     def rows(self) -> int:
