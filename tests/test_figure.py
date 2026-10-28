@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from ddviz.figure import build_figure
+from ddviz.figure import FRAME_COLOR, PAPER_COLOR, PLOT_COLOR, build_figure
 from ddviz.manifest import IMAGES, read_manifest
 from ddviz.scatter import ScatterSpec, View
 from ddviz.task import run_plot
@@ -131,3 +131,19 @@ def test_the_panels_of_one_axis_column_share_its_axis(
     # The facet label spans the panels of its cell.
     label = next(a for a in layout["annotations"] if a["text"] == "facet = p")
     assert layout["xaxis"]["domain"][1] < label["x"] < layout["xaxis2"]["domain"][0]
+
+
+def test_every_panel_is_framed_on_a_gray_figure(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """Each plot area is white and framed on all four sides; the figure around it is gray."""
+    two = replace(scatter_spec, x=["x", "y"], width=900, height=400)
+    layout = _figure(two, tmp_path / "task")["figure"]["layout"]
+    assert layout["paper_bgcolor"] == PAPER_COLOR
+    assert layout["plot_bgcolor"] == PLOT_COLOR != PAPER_COLOR
+    axes = [k for k in layout if k.startswith(("xaxis", "yaxis"))]
+    assert len(axes) == 8
+    for axis in axes:
+        assert layout[axis]["showline"]
+        assert layout[axis]["mirror"] is True
+        assert layout[axis]["linecolor"] == FRAME_COLOR
