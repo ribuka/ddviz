@@ -10,8 +10,15 @@
 <body>
   <div id="app">
     <aside id="left">
+      <button type="button" id="left-strip" title="列とフィルタの欄を開く">
+        <span class="strip-open">▶</span>
+        <span class="strip-text">列・フィルタ</span>
+      </button>
       <section id="columns">
-        <div class="pane-head">列</div>
+        <div class="pane-head">
+          <span>列</span>
+          <button type="button" class="left-close" title="列とフィルタの欄を左へ畳む">◀</button>
+        </div>
         <input class="column-search" type="search" placeholder="列名で検索（空白で区切ると、すべてを含む列）">
         <div class="column-kinds">
           <button type="button" data-kind="" class="on">すべて</button>
@@ -21,6 +28,18 @@
         <div class="column-count"></div>
         <div class="column-list"></div>
       </section>
+      <section id="filters">
+        <header class="pane-head filter-head">
+          <span>フィルタ</span>
+          <span class="filter-summary"></span>
+          <button type="button" class="filter-toggle" title="フィルタ欄を畳む（条件の要約は見出しに残る）">▼</button>
+        </header>
+        <div class="filter-body">
+          <div class="filter-list"></div>
+          <div class="filter-drop">列をここにドラッグすると、その列で行を絞る</div>
+        </div>
+      </section>
+      <div class="left-resize" title="ドラッグで欄の幅を変える"></div>
     </aside>
     <main id="builder">
       <div class="zone horizontal" data-role="col"></div>

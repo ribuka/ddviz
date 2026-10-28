@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
+
 from ddviz.encoding import Encoding
-from ddviz.scatter import ScatterSpec
+from ddviz.scatter import Filter, ScatterSpec
 
 
 def undrawn(encoding: Encoding) -> list[str]:
@@ -39,29 +41,90 @@ def drawn_columns(encoding: Encoding) -> list[str]:
     return list(dict.fromkeys(c for c in columns if c is not None))
 
 
+def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
+    """Return the conditions of the local filter the page sent, checked.
+
+    Parameters
+    ----------
+    raw : list of dict
+        ``{"column", "range"}`` for a numeric column, ``{"column",
+        "levels"}`` for a categorical one; one per column.
+    numeric : dict of str to bool
+        Whether each column of the data is numeric.
+
+    Returns
+    -------
+    list of Filter
+        The conditions.
+
+    Raises
+    ------
+    ValueError
+        For an unknown column, a column given twice, or a condition that
+        does not fit its column.
+    """
+    filters = []
+    for item in raw:
+        if not isinstance(item, dict) or not set(item) <= {"column", "range", "levels"}:
+            raise ValueError(f"a filter has a column and a range or levels: {item}")
+        column = item.get("column")
+        if column not in numeric:
+            raise ValueError(f"unknown filter column: {column}")
+        bounds, levels = item.get("range"), item.get("levels")
+        if numeric[column]:
+            ok = (
+                levels is None
+                and isinstance(bounds, list)
+                and len(bounds) == 2
+                and all(isinstance(b, int | float) and math.isfinite(b) for b in bounds)
+                and bounds[0] <= bounds[1]
+            )
+            if not ok:
+                raise ValueError(f"{column} needs a range [lo, hi]")
+            filters.append(Filter(column, range=[float(b) for b in bounds]))
+        else:
+            ok = (
+                bounds is None
+                and isinstance(levels, list)
+                and len(levels) > 0
+                and all(isinstance(v, str) for v in levels)
+            )
+            if not ok:
+                raise ValueError(f"{column} needs a list of levels")
+            filters.append(Filter(column, levels=list(levels)))
+    columns = [f.column for f in filters]
+    if len(set(columns)) != len(columns):
+        raise ValueError("one filter per column")
+    return filters
+
+
 def scatter_spec(
     encoding: Encoding,
     files: dict[str, str],
     width: int,
     height: int,
     colors: list[str],
+    filters: list[Filter] | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
     Every pair of an x and a y column is drawn in a panel of each facet
     cell, colored by color and faceted by row and col; overlay is left out
-    (`undrawn`). The hover shows the drawn columns.
+    (`undrawn`). The hover shows the drawn columns. The local filter's
+    columns are read too.
 
     Parameters
     ----------
     encoding : Encoding
         The graph.
     files : dict of str to str
-        Parquet file to read each drawn column from.
+        Parquet file to read each drawn column and filter column from.
     width, height : int
         Figure size in pixels.
     colors : list of str
         Series colors as ``#rrggbb``.
+    filters : list of Filter, optional
+        Conditions of the local filter.
 
     Returns
     -------
@@ -76,8 +139,10 @@ def scatter_spec(
     if not encoding.x or not encoding.y:
         raise ValueError("x and y need a column")
     hover = drawn_columns(encoding)
+    filters = list(filters or [])
+    read = dict.fromkeys([*hover, *(f.column for f in filters)])
     return ScatterSpec(
-        files={c: files[c] for c in hover},
+        files={c: files[c] for c in read},
         x=list(encoding.x),
         y=list(encoding.y),
         color=encoding.color,
@@ -87,4 +152,5 @@ def scatter_spec(
         height=height,
         hover=hover,
         colors=colors,
+        filters=filters,
     )

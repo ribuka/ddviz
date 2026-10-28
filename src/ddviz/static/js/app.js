@@ -1,9 +1,11 @@
 // The page: drop columns on the graph builder's zones, plot, zoom and pan,
-// resize, hover, and select rows with a box.
+// resize, hover, select rows with a box, and filter rows.
 import { Builder } from "./builder.js";
 import { attachColumnList } from "./columns.js";
+import { FilterPane } from "./filters.js";
 import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
+import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { SelectionTable } from "./table.js";
 
@@ -76,6 +78,13 @@ let shownImages = null;
 // drawn result was aggregated for.
 let requestedSize = null;
 let shownSize = null;
+// Conditions of the local filter (`ddviz.plan.parse_filters`) that every
+// request carries; a result's meta has those it was aggregated with.
+let filters = [];
+// Returns a key of conditions, from the page's or from a result's meta.
+function filtersKey(list) {
+  return JSON.stringify(list.map((f) => [f.column, f.range ?? null, f.levels ?? null]));
+}
 // Generation of the plot request in flight, or 0. A new size waits for it:
 // a request for the old plot would kill its aggregation (or its conversion).
 let plotting = 0;
@@ -123,6 +132,7 @@ const PLOT_CONFIG = {
 // would otherwise leave scroll bars over a grid that fits.
 function setCurrent(meta) {
   current = meta;
+  legend.setEmpty(meta.images);
   stage.classList.toggle("scrolls", meta.scroll);
 }
 
@@ -171,7 +181,7 @@ const CONVERT_RETRY_MS = 300;
 async function plot(encoding) {
   clearSelection(false);
   const size = stageSize();
-  const body = { encoding, ...size };
+  const body = { encoding, ...size, filters };
   requestedSize = size;
   status.textContent = "集約中…";
   const mine = ++generation;
@@ -213,7 +223,7 @@ async function plot(encoding) {
   const drawStarted = performance.now();
   setPending(false);
   empty.hidden = true;
-  legend.set(encoding.color, meta.series, meta.colors);
+  legend.set(encoding.color, meta.series, meta.colors, meta.images);
   showImages(meta, null);
   Plotly.purge(gd);
   drawnKey = figureKey(figure.data, figure.layout);
@@ -223,7 +233,7 @@ async function plot(encoding) {
   gd.on("plotly_relayout", onRelayout);
   gd.on("plotly_selected", onSelected);
   gd.on("plotly_deselect", () => clearSelection());
-  status.textContent = `task ${meta.task}: ${meta.rows.toLocaleString()} 行`;
+  status.textContent = rowsText(meta);
   const bitmaps = await images;
   if (overview?.meta !== meta) {
     closeImages(bitmaps);
@@ -233,8 +243,15 @@ async function plot(encoding) {
   if (current === meta) showImages(meta, bitmaps);
   timings.plotAndImages = Math.round(performance.now() - drawStarted);
   setInfo();
-  // The area may have changed size while the plot was aggregated.
-  if (!sameSize(stageSize(), size)) onResize();
+  // The area may have changed size, or the filter, while the plot was aggregated.
+  if (filtersKey(meta.filters) !== filtersKey(filters)) applyFilters();
+  else if (!sameSize(stageSize(), size)) onResize();
+}
+
+// Returns the status of a result: its rows, and whether the filter left rows out.
+function rowsText(meta, where = "") {
+  const filtered = meta.filters.length ? "（フィルタ後）" : "";
+  return `task ${meta.task}: ${where}${meta.rows.toLocaleString()} 行${filtered}`;
 }
 
 // Returns whether two ranges are equal up to a small part of their span.
@@ -400,8 +417,11 @@ async function followSelection() {
   selection.bitmaps = bitmaps;
   layers.setSelection({ meta, bitmaps });
   status.textContent = `選んだ行：${layer.rows.toLocaleString()} 行（${layer.task_seconds.toFixed(1)} 秒）`;
-  if (selection.fresh) {
+  // A new filter changes the selected rows: the table starts again.
+  const key = filtersKey(meta.filters);
+  if (selection.fresh || selection.filters !== key) {
     selection.fresh = false;
+    selection.filters = key;
     table.show(layer.rows);
   }
 }
@@ -416,7 +436,7 @@ function clearSelection(server = true) {
   table.show(null);
   if (server) {
     fetch("/api/selection", { method: "DELETE" });
-    if (current) status.textContent = `task ${current.task}: ${current.rows.toLocaleString()} 行`;
+    if (current) status.textContent = rowsText(current);
   }
 }
 
@@ -428,8 +448,8 @@ async function showOverview() {
   const { meta, size, bitmaps } = overview;
   const figure = structuredClone(overview.figure);
   setCurrent(meta);
-  if (!sameSize(size, stageSize())) {
-    // The overview of the old size stands in, stretched to the drawn figure.
+  if (!sameSize(size, stageSize()) || filtersKey(meta.filters) !== filtersKey(filters)) {
+    // The overview of the old size or filter stands in, stretched to the drawn figure.
     setPending(true);
     const { width, height } = gd._fullLayout;
     await draw(figure.data, { ...figure.layout, width, height }, meta, bitmaps);
@@ -439,7 +459,7 @@ async function showOverview() {
   setPending(false);
   shownSize = size;
   await draw(figure.data, figure.layout, meta, bitmaps);
-  status.textContent = `task ${meta.task}: ${meta.rows.toLocaleString()} 行`;
+  status.textContent = rowsText(meta);
   setInfo();
 }
 
@@ -463,7 +483,7 @@ async function requestOverview() {
   const response = await fetch("/api/overview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(size),
+    body: JSON.stringify({ ...size, filters }),
   });
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
@@ -490,7 +510,7 @@ async function requestOverview() {
   hideHover();
   if (!drawn) await draw(figure.data, figure.layout, meta, bitmaps);
   if (mine === generation) setPending(false);
-  status.textContent = `task ${meta.task}: ${meta.rows.toLocaleString()} 行`;
+  status.textContent = rowsText(meta);
   setInfo();
 }
 
@@ -508,7 +528,7 @@ async function requestView({ x: xRanges, y: yRanges }) {
   const response = await fetch("/api/view", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ x_ranges: xRanges, y_ranges: yRanges, ...size }),
+    body: JSON.stringify({ x_ranges: xRanges, y_ranges: yRanges, ...size, filters }),
   });
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
@@ -536,7 +556,7 @@ async function requestView({ x: xRanges, y: yRanges }) {
   // The images and the panels' placement change; the axes stay where the user put them.
   if (!drawn) await draw(figure.data, withShownRanges(figure.layout, meta), meta, bitmaps);
   if (mine === generation) setPending(false);
-  status.textContent = `task ${meta.task}: 表示範囲に ${meta.rows.toLocaleString()} 行`;
+  status.textContent = rowsText(meta, "表示範囲に ");
   setInfo();
 }
 
@@ -600,6 +620,32 @@ async function onResizeSettled() {
 }
 
 new ResizeObserver(onResize).observe(stage);
+
+// A new filter aggregates what is shown again: the view when zoomed, else the
+// overview. The levels and the axes' ranges stay those of every row, so only
+// the bins change (`ddviz.aggregate.aggregate`). While zoomed, the overview
+// keeps its old filter until it is shown again.
+function applyFilters() {
+  clearTimeout(resizeTimer);
+  // A plot in flight checks the filter when its result comes.
+  if (!overview || plotting === generation) return;
+  hideHover();
+  if (requested.x.length) {
+    requestView(shownRanges(current));
+  } else {
+    requestOverview();
+  }
+}
+
+const leftPane = new LeftPane(document.getElementById("left"));
+new FilterPane(
+  document.getElementById("filters"),
+  (conditions) => {
+    filters = conditions;
+    applyFilters();
+  },
+  (count, text) => leftPane.setFilter(count, text),
+);
 
 // Removes the figure of a graph that cannot be drawn (no x or no y column).
 function clearPlot() {

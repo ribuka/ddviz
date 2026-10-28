@@ -54,6 +54,29 @@ class Selection:
 
 
 @dataclass(frozen=True)
+class Filter:
+    """Condition of the local filter on one column (`ddviz.rowfilter`).
+
+    A row passes when its value of the column is in the range (a numeric
+    column) or among the levels (a categorical column, compared as text);
+    a row with a null value never passes.
+
+    Parameters
+    ----------
+    column : str
+        The column.
+    range : list of float or None
+        Bounds, both included, for a numeric column.
+    levels : list of str or None
+        Levels kept, for a categorical column.
+    """
+
+    column: str
+    range: list[float] | None = None
+    levels: list[str] | None = None
+
+
+@dataclass(frozen=True)
 class ScatterSpec:
     """What a worker aggregates for one scatter plot.
 
@@ -86,6 +109,10 @@ class ScatterSpec:
         the padded data range of each column.
     selection : Selection or None
         Rows chosen by a box, aggregated as a layer of their own.
+    filters : list of Filter
+        Conditions of the local filter, all of which a row must meet to be
+        drawn, hovered, selected or listed. They leave the levels and the
+        overview's ranges as they are without them.
     """
 
     files: dict[str, str]
@@ -100,6 +127,7 @@ class ScatterSpec:
     colors: list[str] = field(default_factory=list)
     view: View | None = None
     selection: Selection | None = None
+    filters: list[Filter] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.
@@ -132,5 +160,6 @@ class ScatterSpec:
                 **data,
                 "view": View(**view) if view is not None else None,
                 "selection": Selection(**selection) if selection is not None else None,
+                "filters": [Filter(**f) for f in data.get("filters", [])],
             }
         )

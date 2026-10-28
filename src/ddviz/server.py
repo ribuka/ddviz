@@ -14,6 +14,11 @@ A box drawn on a panel selects rows; a worker aggregates them as a layer
 over the drawn result, and the table lists them a page at a time. The
 table's tasks run in a pool of their own, so that reading a page never kills
 an aggregation.
+
+Every plot, view and overview request carries the conditions of the local
+filter (`ddviz.plan.parse_filters`); the result's spec keeps them, so the
+selection and the table of a result follow its filter. The filter pane's
+summary of a column runs in a third pool, once per column.
 """
 
 from __future__ import annotations
@@ -41,9 +46,9 @@ from ddviz.jobs import WorkerJob, physical_memory
 from ddviz.layout import AxisGrid, grid_layout
 from ddviz.manifest import IMAGES, read_manifest
 from ddviz.palette import DEFAULT_COLORS
-from ddviz.plan import drawn_columns, scatter_spec, undrawn
+from ddviz.plan import drawn_columns, parse_filters, scatter_spec, undrawn
 from ddviz.runner import WorkerPool
-from ddviz.scatter import ScatterSpec, Selection
+from ddviz.scatter import Filter, ScatterSpec, Selection
 from ddviz.settings import Settings
 
 STATIC = Path(__file__).parent / "static"
@@ -59,13 +64,15 @@ class PlotRequest(BaseModel):
     encoding: dict
     width: int
     height: int
+    filters: list[dict] = []
 
 
 class SizeRequest(BaseModel):
-    """Body of ``POST /api/overview``: the size of the plot area in pixels."""
+    """Body of ``POST /api/overview``: the size of the plot area in pixels and the local filter."""
 
     width: int
     height: int
+    filters: list[dict] = []
 
 
 class SelectionRequest(BaseModel):
@@ -98,6 +105,7 @@ class _State:
     settings: Settings
     pool: WorkerPool | None = None
     table_pool: WorkerPool | None = None
+    summary_pool: WorkerPool | None = None
     job: WorkerJob | None = None
     log: object = None
     waiting: dict[tuple[str, int], asyncio.Future] = field(default_factory=dict)
@@ -115,6 +123,8 @@ class _State:
     # its directory, manifest, spec and the columns the table shows first.
     selection: Selection | None = None
     layer: dict | None = None
+    # The filter pane's summary of each column (`ddviz.summary`).
+    summaries: dict[str, dict] = field(default_factory=dict)
 
 
 def create_app(
@@ -172,11 +182,15 @@ def create_app(
         state.table_pool = WorkerPool(
             root / "table", on_event("table"), state.job, state.log
         )
+        state.summary_pool = WorkerPool(
+            root / "summary", on_event("summary"), state.job, state.log
+        )
         try:
             yield
         finally:
             state.pool.close()
             state.table_pool.close()
+            state.summary_pool.close()
             state.job.close()
             for index in (state.overview, state.view):
                 if index is not None:
@@ -189,8 +203,12 @@ def create_app(
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     async def run(task: dict, pool: str = "plot") -> tuple[int, dict]:
-        """Submit a task to a pool (``"plot"`` or ``"table"``) and wait for its end."""
-        workers = state.pool if pool == "plot" else state.table_pool
+        """Submit a task to a pool (``"plot"``, ``"table"`` or ``"summary"``) and wait for its end."""
+        workers = {
+            "plot": state.pool,
+            "table": state.table_pool,
+            "summary": state.summary_pool,
+        }[pool]
         task_id = await asyncio.to_thread(workers.submit, task)
         # The task may have ended before its future was registered.
         if (pool, task_id) in state.ended:
@@ -282,8 +300,17 @@ def create_app(
         """Return the figure of a result; the page fetches its images on their own."""
         result = build_figure(index.manifest)
         result["meta"]["task"] = int(index.out.name)
+        result["meta"]["filters"] = index.manifest["spec"]["filters"]
         result["meta"].update(timing)
         return JSONResponse(result)
+
+    async def filters_of(raw: list[dict]) -> list[Filter]:
+        """Return the checked conditions of the local filter of a request."""
+        numeric = {c["name"]: c["numeric"] for c in (await schema())}
+        try:
+            return parse_filters(raw, numeric)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
 
     @app.post("/api/plot")
     async def plot(request: PlotRequest) -> JSONResponse:
@@ -291,6 +318,7 @@ def create_app(
             encoding = Encoding.from_dict(request.encoding)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+        filters = await filters_of(request.filters)
         numeric = {c["name"]: c["numeric"] for c in (await schema())}
         missing = [c for c in encoding.columns() if c not in numeric]
         if missing:
@@ -305,6 +333,7 @@ def create_app(
             raise HTTPException(409, "converting")
         started = time.perf_counter()
         columns = drawn_columns(encoding)
+        columns += [f.column for f in filters if f.column not in columns]
         await convert(columns)
         convert_seconds = time.perf_counter() - started
         spec = scatter_spec(
@@ -313,6 +342,7 @@ def create_app(
             request.width,
             request.height,
             DEFAULT_COLORS,
+            filters,
         )
         state.plot_id += 1
         index, timing = await run_plot(spec)
@@ -335,8 +365,10 @@ def create_app(
             },
         )
 
-    def again(request: SizeRequest, x_ranges: list, y_ranges: list) -> ScatterSpec:
-        """Return the overview's spec for other ranges or another size, reusing its levels."""
+    def again(
+        request: SizeRequest, filters: list[Filter], x_ranges: list, y_ranges: list
+    ) -> ScatterSpec:
+        """Return the overview's spec for other ranges, size or filter, reusing its levels."""
         overview = state.overview.manifest
         if len(x_ranges) != len(overview["spec"]["x"]) or len(y_ranges) != len(
             overview["spec"]["y"]
@@ -345,6 +377,11 @@ def create_app(
         return ScatterSpec.from_dict(
             {
                 **overview["spec"],
+                "files": {
+                    **overview["spec"]["files"],
+                    **{f.column: str(state.cache.file(f.column)) for f in filters},
+                },
+                "filters": [asdict(f) for f in filters],
                 "width": request.width,
                 "height": request.height,
                 "view": {
@@ -356,7 +393,7 @@ def create_app(
         )
 
     def unchanged(index: HoverIndex | None, spec: ScatterSpec) -> bool:
-        """Whether a result already has the panels and ranges of `spec`.
+        """Whether a result already has the panels, ranges and filter of `spec`.
 
         A new size often keeps the layout: a grid that scrolls in both
         directions keeps its panels at their smallest size.
@@ -371,6 +408,7 @@ def create_app(
             asdict(layout) == old
             and [list(r) for r in manifest["x_ranges"]] == spec.view.x_ranges
             and [list(r) for r in manifest["y_ranges"]] == spec.view.y_ranges
+            and manifest["spec"]["filters"] == [asdict(f) for f in spec.filters]
         )
 
     async def run_again(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
@@ -388,7 +426,9 @@ def create_app(
             raise HTTPException(409, "no plot")
         if state.converting:
             raise HTTPException(409, "converting")
-        spec = again(request, request.x_ranges, request.y_ranges)
+        filters = await filters_of(request.filters)
+        await convert([f.column for f in filters])
+        spec = again(request, filters, request.x_ranges, request.y_ranges)
         if unchanged(state.view, spec):
             # A task for another size must not replace the result drawn now.
             await asyncio.to_thread(state.pool.cancel)
@@ -407,9 +447,11 @@ def create_app(
             raise HTTPException(409, "no plot")
         if state.converting:
             raise HTTPException(409, "converting")
+        filters = await filters_of(request.filters)
+        await convert([f.column for f in filters])
         # The padded data ranges hold every row, so this is the overview.
         manifest = state.overview.manifest
-        spec = again(request, manifest["x_ranges"], manifest["y_ranges"])
+        spec = again(request, filters, manifest["x_ranges"], manifest["y_ranges"])
         if unchanged(state.overview, spec):
             await asyncio.to_thread(state.pool.cancel)
             return figure(state.overview, {"task_seconds": 0.0})
@@ -571,6 +613,36 @@ def create_app(
             "columns": page["columns"],
             "plot_columns": len(first),
         }
+
+    @app.get("/api/summary")
+    async def summary(column: str) -> dict:
+        """Return what the filter pane shows of a column (`ddviz.summary`), over every row."""
+        if column not in {c["name"] for c in await schema()}:
+            raise HTTPException(400, f"unknown column: {column}")
+        # One at a time: a new task in the pool kills the running one.
+        async with summary_lock:
+            if column not in state.summaries:
+                await summarize(column)
+        return state.summaries[column]
+
+    summary_lock = asyncio.Lock()
+
+    async def summarize(column: str) -> None:
+        """Run the summary task of a column and keep its result."""
+        # A column not converted yet is read from the source: converting
+        # it here could race the plot's conversion of the same column.
+        missing = await asyncio.to_thread(state.cache.missing, [column])
+        file = state.data_path if missing else str(state.cache.file(column))
+        task_id, end = await run(
+            {"kind": "summary", "file": file, "column": column}, "summary"
+        )
+        out = root / "summary" / str(task_id)
+        if end["type"] == "cancelled":
+            raise HTTPException(409, "cancelled")
+        if end["type"] == "error":
+            raise HTTPException(500, end["message"])
+        state.summaries[column] = read_manifest(out)
+        shutil.rmtree(out, ignore_errors=True)
 
     @app.get("/api/hover")
     async def hover(
