@@ -1,6 +1,5 @@
 // Row-level hover over the image layers: the server looks up the row of the
 // pixel under the cursor, and this module draws a plotly-like label.
-import { seriesOrder } from "./legend.js";
 
 const HOVER_DISTANCE = 20;
 
@@ -51,7 +50,7 @@ function locate(gd, meta, event) {
 // Attaches the hover to the plot element once; `getMeta` returns the meta of
 // the result whose images are drawn (the overview or a zoomed view). Only one
 // lookup is in flight; moves during it collapse into the latest one.
-export function attachHover(gd, getMeta, onTiming) {
+export function attachHover(gd, getMeta, legend, onTiming) {
   const label = document.getElementById("hover-label");
   const ring = document.getElementById("hover-ring");
   let queued = null;
@@ -70,7 +69,7 @@ export function attachHover(gd, getMeta, onTiming) {
       hide();
       return;
     }
-    const order = seriesOrder(gd, meta.series.length);
+    const order = legend.order(meta.series.length);
     const query = new URLSearchParams({
       task: meta.task,
       panel: at.panel,

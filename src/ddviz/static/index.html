@@ -8,26 +8,51 @@
   <script type="module" src="/static/js/app.js"></script>
 </head>
 <body>
-  <form id="controls">
-    <label>x <select name="x"></select></label>
-    <label>y <select name="y"></select></label>
-    <label>color <select name="color"></select></label>
-    <label>row <select name="row"></select></label>
-    <label>col <select name="col"></select></label>
-    <button type="submit">描画</button>
-    <span id="status"></span>
-  </form>
-  <div id="stage">
-    <div id="scroller">
-      <div id="canvas">
-        <div id="plot"></div>
-        <div id="hover-ring" hidden></div>
-        <div id="hover-label" hidden></div>
+  <div id="app">
+    <aside id="left">
+      <section id="columns">
+        <div class="pane-head">列</div>
+        <input class="column-search" type="search" placeholder="列名で検索（空白で区切ると、すべてを含む列）">
+        <div class="column-kinds">
+          <button type="button" data-kind="" class="on">すべて</button>
+          <button type="button" data-kind="numeric">数値</button>
+          <button type="button" data-kind="categorical">カテゴリ</button>
+        </div>
+        <div class="column-count"></div>
+        <div class="column-list"></div>
+      </section>
+    </aside>
+    <main id="builder">
+      <div class="zone horizontal" data-role="col"></div>
+      <div class="zone vertical" data-role="y"></div>
+      <div id="stage">
+        <div id="scroller">
+          <div id="canvas">
+            <div id="plot"></div>
+            <div id="hover-ring" hidden></div>
+            <div id="hover-label" hidden></div>
+          </div>
+        </div>
+        <div id="empty">X と Y に列を置くと描きます</div>
+        <div id="pending" hidden>集約中…</div>
       </div>
-    </div>
-    <div id="pending" hidden>集約中…</div>
+      <div class="zone vertical" data-role="row"></div>
+      <div class="zone horizontal" data-role="x"></div>
+      <aside id="side">
+        <div class="zone stacked" data-role="color"></div>
+        <div class="zone stacked" data-role="overlay"></div>
+        <div id="legend"></div>
+      </aside>
+    </main>
   </div>
-  <pre id="info"></pre>
+  <footer id="statusbar">
+    <span id="status"></span>
+    <details>
+      <summary>計測</summary>
+      <pre id="info"></pre>
+    </details>
+  </footer>
+  <div id="drop-tip" hidden></div>
   <div id="converting" hidden>
     <div class="box">
       <div id="converting-text"></div>

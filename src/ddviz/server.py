@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ddviz.cache import ColumnCache, evict
+from ddviz.columns import search_columns
 from ddviz.encoding import Encoding
 from ddviz.figure import build_figure
 from ddviz.hover import HoverIndex
@@ -194,6 +195,14 @@ def create_app(
             state.schema = columns
         return state.schema
 
+    @app.get("/api/columns")
+    async def columns(q: str = "", kind: str | None = None, limit: int = 200) -> dict:
+        """Return the columns whose names hold every word of `q` (`ddviz.columns`)."""
+        try:
+            return search_columns(await schema(), q, kind, limit)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
     async def convert(columns: list[str]) -> None:
         """Convert the columns not in the cache yet; plots are refused meanwhile."""
         missing = state.cache.missing(columns)
@@ -247,12 +256,15 @@ def create_app(
             encoding = Encoding.from_dict(request.encoding)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        names = {c["name"] for c in (await schema())}
-        missing = [c for c in encoding.columns() if c not in names]
+        numeric = {c["name"]: c["numeric"] for c in (await schema())}
+        missing = [c for c in encoding.columns() if c not in numeric]
         if missing:
             raise HTTPException(400, f"unknown columns: {missing}")
         if not encoding.x or not encoding.y:
             raise HTTPException(400, "x and y need a column")
+        text = [c for c in (*encoding.x, *encoding.y) if not numeric[c]]
+        if text:
+            raise HTTPException(400, f"x and y need numeric columns: {text}")
         # The page refuses edits while converting; a plot now would kill the conversion.
         if state.converting:
             raise HTTPException(409, "converting")

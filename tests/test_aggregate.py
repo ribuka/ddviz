@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import numpy as np
 import polars as pl
+import pytest
 
 from ddviz.aggregate import COUNT, INDEX, KEY, aggregate
 from ddviz.scatter import ScatterSpec, View
@@ -94,3 +95,9 @@ def test_view_bins_only_the_rows_in_its_ranges(
     assert sorted(set(keys.tolist())) == agg.bins[KEY].to_list()
     assert agg.bins[COUNT].sum() == inside.height
     assert 0 < inside.height < 2000
+
+
+def test_a_role_with_too_many_levels_is_refused(scatter_spec: ScatterSpec) -> None:
+    """A numeric column on color has a level per row and is refused before binning."""
+    with pytest.raises(ValueError, match="too many levels"):
+        aggregate(replace(scatter_spec, color="x"))

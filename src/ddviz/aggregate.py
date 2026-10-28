@@ -18,6 +18,9 @@ INDEX = "__idx"
 
 # Margin added on each side of the data range, as a fraction of the range.
 RANGE_PADDING = 0.02
+# Most levels a color, row or col column may have. A numeric column placed on
+# these roles has about one level per row: its masks would not fit in memory.
+MAX_LEVELS = 50
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,12 @@ def _overview(
         c: sorted(f[c].drop_nulls().to_list())
         for c, f in zip(used, found[1:], strict=True)
     }
+    many = {c: len(v) for c, v in column_levels.items() if len(v) > MAX_LEVELS}
+    if many:
+        raise ValueError(
+            f"too many levels (at most {MAX_LEVELS}): "
+            + ", ".join(f"{c} has {n}" for c, n in many.items())
+        )
     levels = {
         role: (column_levels[c] if c is not None else [None])
         for role, c in roles.items()
@@ -148,6 +157,11 @@ def aggregate(
     -------
     Aggregation
         The bins.
+
+    Raises
+    ------
+    ValueError
+        When the color, row or col column has more than `MAX_LEVELS` levels.
     """
     roles = {"color": spec.color, "row": spec.row, "col": spec.col}
     used = list(dict.fromkeys(c for c in roles.values() if c is not None))

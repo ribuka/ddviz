@@ -1,4 +1,5 @@
-/* The page fills the window; the plot area takes what the controls leave. */
+/* The page fills the window: the column list on the left, the graph
+   builder (drop zones around the plot area) in the middle, a status bar below. */
 html,
 body {
   height: 100%;
@@ -7,34 +8,295 @@ body {
 body {
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
   margin: 0;
-  padding: 8px 16px;
   font-family: "Segoe UI", sans-serif;
   font-size: 13px;
   background: #fff;
   color: #222;
 }
 
-#controls {
+#app {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+button {
+  font: inherit;
+}
+
+/* ---- column list ---- */
+#left {
   flex: none;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #ccc;
+  min-height: 0;
+}
+
+#columns {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-head {
+  padding: 6px 8px;
+  background: #f6f6f6;
+  font-weight: 600;
+}
+
+.column-search {
+  margin: 6px 8px 4px;
+  padding: 3px 6px;
+  font: inherit;
+}
+
+.column-kinds {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px 4px;
+}
+
+.column-kinds button {
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #fff;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.column-kinds button.on {
+  background: #e3e3e3;
+}
+
+.column-count {
+  padding: 0 8px 4px;
+  color: #666;
+  font-size: 12px;
+}
+
+.column-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.column {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  cursor: grab;
+  white-space: nowrap;
+}
+
+.column:hover {
+  background: #eef4ff;
+}
+
+.column-type {
+  flex: none;
+  width: 14px;
+  border-radius: 2px;
+  color: #fff;
+  font-size: 11px;
+  text-align: center;
+}
+
+.column-type.numeric {
+  background: #2a6fdb;
+}
+
+.column-type.categorical {
+  background: #d9822b;
+}
+
+.column-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- graph builder: zones around the plot area ---- */
+#builder {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 30px 170px;
+  grid-template-rows: 30px minmax(0, 1fr) 30px;
+  gap: 4px;
+  padding: 6px;
+}
+
+#builder > [data-role="col"] { grid-area: 1 / 2; }
+#builder > [data-role="y"] { grid-area: 2 / 1; }
+#stage { grid-area: 2 / 2; }
+#builder > [data-role="row"] { grid-area: 2 / 3; }
+#builder > [data-role="x"] { grid-area: 3 / 2; }
+
+#side {
+  grid-area: 1 / 4 / 4 / 5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.zone {
+  box-sizing: border-box;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 12px;
   align-items: center;
-  margin-bottom: 8px;
+  justify-content: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px dashed #bbb;
+  border-radius: 4px;
+  background: #fcfcfc;
+  overflow: hidden;
 }
 
-#status {
-  color: #555;
+.zone.stacked {
+  min-height: 34px;
 }
 
+.zone.vertical {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  flex-wrap: nowrap;
+}
+
+.zone.filled {
+  border-style: solid;
+  border-color: #d4d9e4;
+  background: #fff;
+}
+
+.zone.over {
+  border-color: #2a6fdb;
+  background: #e3edff;
+}
+
+.zone-label {
+  color: #999;
+  font-size: 11px;
+}
+
+.zone.filled .zone-label {
+  display: none;
+}
+
+/* X and Y take more columns beside the placed ones (n-th axes). */
+.zone.horizontal.filled[data-role="x"]::after,
+.zone.vertical.filled[data-role="y"]::after {
+  content: "＋";
+  color: #bbb;
+  padding: 0 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 1px 2px 1px 8px;
+  border-radius: 10px;
+  background: #e8eef9;
+  cursor: grab;
+  white-space: nowrap;
+}
+
+.zone.vertical .chip {
+  padding: 8px 1px 2px;
+}
+
+.chip.undrawn {
+  outline: 1px dashed #999;
+  background: #f3f3f3;
+  color: #666;
+}
+
+.chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip-remove {
+  border: 0;
+  background: none;
+  padding: 0 3px;
+  color: #789;
+  cursor: pointer;
+}
+
+.chip-remove:hover {
+  color: #c00;
+}
+
+#drop-tip {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  padding: 4px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 12px;
+  z-index: 50;
+}
+
+#drop-tip[hidden] {
+  display: none;
+}
+
+/* ---- legend ---- */
+#legend {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.legend-title {
+  margin: 2px 4px 4px;
+  font-weight: 600;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.legend-item:hover {
+  background: #f2f2f2;
+}
+
+.legend-item.inactive {
+  opacity: 0.35;
+}
+
+.swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+/* ---- plot area ---- */
 /* The figure is aggregated for this area's size. A grid whose panels would
    be smaller than their smallest size is larger than the area, and scrolls. */
 #stage {
   position: relative;
-  flex: 1;
   min-height: 0;
+  min-width: 0;
 }
 
 #scroller {
@@ -50,6 +312,39 @@ body {
 #canvas {
   position: relative;
   width: max-content;
+}
+
+#empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  pointer-events: none;
+}
+
+#empty[hidden] {
+  display: none;
+}
+
+#statusbar {
+  flex: none;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 3px 8px;
+  border-top: 1px solid #ccc;
+  color: #555;
+  font-size: 12px;
+}
+
+#statusbar details {
+  margin-left: auto;
+}
+
+#statusbar summary {
+  cursor: pointer;
 }
 
 #hover-label {
@@ -77,11 +372,9 @@ body {
 }
 
 #info {
-  flex: none;
-  height: 6em;
+  max-height: 10em;
   overflow: auto;
   margin: 4px 0 0;
-  color: #444;
   white-space: pre-wrap;
 }
 
