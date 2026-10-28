@@ -9,6 +9,11 @@ panning aggregate the view again in a worker; the overview's result is kept
 so that going back to it needs no worker. A new size of the plot area
 aggregates the overview or the view again at that size, reusing the
 overview's levels and ranges.
+
+A box drawn on a panel selects rows; a worker aggregates them as a layer
+over the drawn result, and the table lists them a page at a time. The
+table's tasks run in a pool of their own, so that reading a page never kills
+an aggregation.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ import asyncio
 import json
 import shutil
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -38,10 +43,14 @@ from ddviz.manifest import IMAGES, read_manifest
 from ddviz.palette import DEFAULT_COLORS
 from ddviz.plan import drawn_columns, scatter_spec, undrawn
 from ddviz.runner import WorkerPool
-from ddviz.scatter import ScatterSpec
+from ddviz.scatter import ScatterSpec, Selection
 from ddviz.settings import Settings
 
 STATIC = Path(__file__).parent / "static"
+# Rows of a page of the selection table.
+TABLE_PAGE = 100
+# Most columns of the selection table read at once.
+TABLE_MAX_COLUMNS = 200
 
 
 class PlotRequest(BaseModel):
@@ -57,6 +66,19 @@ class SizeRequest(BaseModel):
 
     width: int
     height: int
+
+
+class SelectionRequest(BaseModel):
+    """Body of ``POST /api/selection``.
+
+    The box drawn on a panel of the drawn result `task`; without a panel,
+    the current selection again, for a new result of the same plot.
+    """
+
+    task: int
+    panel: int | None = None
+    x_range: tuple[float, float] | None = None
+    y_range: tuple[float, float] | None = None
 
 
 class ViewRequest(SizeRequest):
@@ -75,10 +97,11 @@ class _State:
     cache_root: Path
     settings: Settings
     pool: WorkerPool | None = None
+    table_pool: WorkerPool | None = None
     job: WorkerJob | None = None
     log: object = None
-    waiting: dict[int, asyncio.Future] = field(default_factory=dict)
-    ended: dict[int, dict] = field(default_factory=dict)
+    waiting: dict[tuple[str, int], asyncio.Future] = field(default_factory=dict)
+    ended: dict[tuple[str, int], dict] = field(default_factory=dict)
     listeners: set[asyncio.Queue] = field(default_factory=set)
     overview: HoverIndex | None = None
     # Bumped by every new plot, so that a view or a resized overview of an
@@ -88,6 +111,10 @@ class _State:
     schema: list | None = None
     cache: ColumnCache | None = None
     converting: bool = False
+    # The selected rows (`Selection`) and their layer over the drawn result:
+    # its directory, manifest, spec and the columns the table shows first.
+    selection: Selection | None = None
+    layer: dict | None = None
 
 
 def create_app(
@@ -115,19 +142,22 @@ def create_app(
         data_path=data_path, root=root, cache_root=cache_root, settings=settings
     )
 
-    def on_event(task_id: int, message: dict) -> None:
-        """Hand a worker message to the event loop (called from reader threads)."""
-        loop.call_soon_threadsafe(deliver, task_id, message)
+    def on_event(pool: str) -> Callable[[int, dict], None]:
+        """Return the handler of a pool's worker messages (called from reader threads)."""
+        return lambda task_id, message: loop.call_soon_threadsafe(
+            deliver, pool, task_id, message
+        )
 
-    def deliver(task_id: int, message: dict) -> None:
-        """Resolve the request waiting on a task and notify the progress listeners."""
-        for queue in state.listeners:
-            queue.put_nowait({"task": task_id, **message})
+    def deliver(pool: str, task_id: int, message: dict) -> None:
+        """Resolve the request waiting on a task and notify the progress listeners of plots."""
+        if pool == "plot":
+            for queue in state.listeners:
+                queue.put_nowait({"task": task_id, **message})
         if message["type"] not in ("done", "error", "cancelled"):
             return
-        future = state.waiting.get(task_id)
+        future = state.waiting.get((pool, task_id))
         if future is None:
-            state.ended[task_id] = message
+            state.ended[pool, task_id] = message
         elif not future.done():
             future.set_result(message)
 
@@ -138,11 +168,15 @@ def create_app(
         total = physical_memory()
         state.job = WorkerJob(total // 2 if total else None)
         state.log = open(root / "workers.log", "ab")  # noqa: ASYNC230, SIM115 - kept open while serving
-        state.pool = WorkerPool(root / "tasks", on_event, state.job, state.log)
+        state.pool = WorkerPool(root / "tasks", on_event("plot"), state.job, state.log)
+        state.table_pool = WorkerPool(
+            root / "table", on_event("table"), state.job, state.log
+        )
         try:
             yield
         finally:
             state.pool.close()
+            state.table_pool.close()
             state.job.close()
             for index in (state.overview, state.view):
                 if index is not None:
@@ -154,18 +188,19 @@ def create_app(
     app = FastAPI(lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
-    async def run(task: dict) -> tuple[int, dict]:
-        """Submit a task and wait for its end."""
-        task_id = await asyncio.to_thread(state.pool.submit, task)
+    async def run(task: dict, pool: str = "plot") -> tuple[int, dict]:
+        """Submit a task to a pool (``"plot"`` or ``"table"``) and wait for its end."""
+        workers = state.pool if pool == "plot" else state.table_pool
+        task_id = await asyncio.to_thread(workers.submit, task)
         # The task may have ended before its future was registered.
-        if task_id in state.ended:
-            return task_id, state.ended.pop(task_id)
+        if (pool, task_id) in state.ended:
+            return task_id, state.ended.pop((pool, task_id))
         future = loop.create_future()
-        state.waiting[task_id] = future
+        state.waiting[pool, task_id] = future
         try:
             return task_id, await future
         finally:
-            state.waiting.pop(task_id, None)
+            state.waiting.pop((pool, task_id), None)
 
     @app.get("/")
     async def index() -> FileResponse:
@@ -289,6 +324,7 @@ def create_app(
         state.overview, state.view = index, None
         for o in old:
             drop(o)
+        clear_selection()
         return figure(
             index,
             {
@@ -397,11 +433,144 @@ def create_app(
 
     @app.get("/api/images/{task}")
     async def images(task: int) -> FileResponse:
-        """Return the PNGs of a result one after another (the meta's ``images`` slices it)."""
+        """Return the PNGs of a result or a selection layer one after another (its ``images`` slices it)."""
         index = opened(task)
-        if index is None:
+        if index is not None:
+            out = index.out
+        elif state.layer is not None and state.layer["out"].name == str(task):
+            out = state.layer["out"]
+        else:
             raise HTTPException(404, "stale")
-        return FileResponse(index.out / IMAGES, media_type="application/octet-stream")
+        return FileResponse(out / IMAGES, media_type="application/octet-stream")
+
+    def clear_selection() -> None:
+        """Forget the selection and remove its layer."""
+        state.selection = None
+        drop_layer(state.layer)
+        state.layer = None
+
+    def drop_layer(layer: dict | None) -> None:
+        if layer is not None:
+            shutil.rmtree(layer["out"], ignore_errors=True)
+
+    def selection_of(manifest: dict, request: SelectionRequest) -> Selection:
+        """Return the rows the box of a request selects in a result."""
+        spec, levels = manifest["spec"], manifest["levels"]
+        axes = AxisGrid(**manifest["axes"])
+        if not 0 <= request.panel < axes.rows * axes.cols:
+            raise HTTPException(400, "no such panel")
+        if request.x_range is None or request.y_range is None:
+            raise HTTPException(400, "a box needs x_range and y_range")
+        xi, yj = axes.axes(request.panel)
+        prow, pcol = divmod(request.panel, axes.cols)
+        return Selection(
+            x=spec["x"][xi],
+            y=spec["y"][yj],
+            x_range=sorted(request.x_range),
+            y_range=sorted(request.y_range),
+            row=levels["row"][prow // axes.ny] if spec["row"] else None,
+            col=levels["col"][pcol // axes.nx] if spec["col"] else None,
+        )
+
+    @app.post("/api/selection")
+    async def select(request: SelectionRequest) -> dict:
+        """Aggregate the selected rows as a layer over a drawn result."""
+        index = opened(request.task)
+        if index is None:
+            raise HTTPException(409, "stale")
+        manifest = index.manifest
+        if request.panel is not None:
+            selection = selection_of(manifest, request)
+        elif state.selection is not None:
+            selection = state.selection
+        else:
+            raise HTTPException(409, "no selection")
+        spec = ScatterSpec.from_dict(
+            {
+                **manifest["spec"],
+                "view": {
+                    "x_ranges": manifest["x_ranges"],
+                    "y_ranges": manifest["y_ranges"],
+                    "levels": manifest["levels"],
+                },
+                "selection": asdict(selection),
+            }
+        )
+        plot_id = state.plot_id
+        started = time.perf_counter()
+        task_id, end = await run({"kind": "selection", "spec": spec.to_dict()})
+        out = root / "tasks" / str(task_id)
+        if end["type"] == "cancelled" or state.plot_id != plot_id:
+            shutil.rmtree(out, ignore_errors=True)
+            raise HTTPException(409, "cancelled")
+        if end["type"] == "error":
+            raise HTTPException(500, end["message"])
+        layer = read_manifest(out)
+        old, state.layer = state.layer, {"out": out, "spec": spec, **layer}
+        state.selection = selection
+        drop_layer(old)
+        return {
+            "task": task_id,
+            "base": request.task,
+            "images": layer["images"],
+            "rows": layer["rows"],
+            "selection": asdict(selection),
+            "task_seconds": time.perf_counter() - started,
+        }
+
+    @app.delete("/api/selection")
+    async def deselect() -> dict:
+        clear_selection()
+        return {}
+
+    @app.get("/api/table")
+    async def table(offset: int = 0, col_offset: int = 0, col_limit: int = 50) -> dict:
+        """Return a page of the selected rows, the columns of a window of the table.
+
+        The table shows the plot's columns first, then the others in the
+        source's order.
+        """
+        layer = state.layer
+        if layer is None:
+            raise HTTPException(409, "no selection")
+        spec = layer["spec"]
+        first = list(dict.fromkeys(spec.hover))
+        order = first + [c["name"] for c in await schema() if c["name"] not in first]
+        window = order[col_offset : col_offset + min(col_limit, TABLE_MAX_COLUMNS)]
+        missing = set(await asyncio.to_thread(state.cache.missing, window))
+        files = {
+            c: state.data_path if c in missing else str(state.cache.file(c))
+            for c in window
+        }
+        task_id, end = await run(
+            {
+                "kind": "table",
+                "spec": spec.to_dict(),
+                "offset": offset,
+                "limit": TABLE_PAGE,
+                "files": files,
+            },
+            "table",
+        )
+        out = root / "table" / str(task_id)
+        if end["type"] == "cancelled":
+            raise HTTPException(409, "cancelled")
+        if end["type"] == "error":
+            raise HTTPException(500, end["message"])
+        page = read_manifest(out)
+        shutil.rmtree(out, ignore_errors=True)
+        if state.layer is not layer:
+            raise HTTPException(409, "stale")
+        return {
+            "rows": layer["rows"],
+            "offset": offset,
+            "page_size": TABLE_PAGE,
+            "index": page["index"],
+            "total_columns": len(order),
+            "col_offset": col_offset,
+            "columns": page["columns"],
+            "plot_columns": len(first),
+        }
 
     @app.get("/api/hover")
     async def hover(

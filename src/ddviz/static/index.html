@@ -35,6 +35,18 @@
         </div>
         <div id="empty">X と Y に列を置くと描きます</div>
         <div id="pending" hidden>集約中…</div>
+        <section id="table" hidden>
+          <div class="table-resize" title="ドラッグで高さを変える"></div>
+          <header class="table-bar">
+            <span class="table-title"></span>
+            <button type="button" class="table-prev" title="前の 100 行">‹</button>
+            <span class="table-pager"></span>
+            <button type="button" class="table-next" title="次の 100 行">›</button>
+            <span class="table-note">グラフの列が左。矩形の外をダブルクリックで解除</span>
+            <button type="button" class="table-toggle" title="表を畳む">▼</button>
+          </header>
+          <div class="table-scroll"><div class="table-inner"><div class="table-grid"></div></div></div>
+        </section>
       </div>
       <div class="zone vertical" data-role="row"></div>
       <div class="zone horizontal" data-role="x"></div>

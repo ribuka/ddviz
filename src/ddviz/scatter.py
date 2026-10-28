@@ -27,6 +27,33 @@ class View:
 
 
 @dataclass(frozen=True)
+class Selection:
+    """Rows chosen by a box drawn on one panel of a scatter plot.
+
+    The rows are those of the panel's facet cell whose x and y columns fall
+    in the box; every panel highlights them (`ddviz.aggregate.aggregate`
+    with ``selection_only``), and the table lists them.
+
+    Parameters
+    ----------
+    x, y : str
+        The panel's x and y columns.
+    x_range, y_range : list of float
+        The box along them.
+    row, col : str or None
+        The panel's facet levels (as text), or None without a row or col
+        column.
+    """
+
+    x: str
+    y: str
+    x_range: list[float]
+    y_range: list[float]
+    row: str | None = None
+    col: str | None = None
+
+
+@dataclass(frozen=True)
 class ScatterSpec:
     """What a worker aggregates for one scatter plot.
 
@@ -57,6 +84,8 @@ class ScatterSpec:
     view : View or None
         Zoomed view to aggregate, or None for the overview, whose bins cover
         the padded data range of each column.
+    selection : Selection or None
+        Rows chosen by a box, aggregated as a layer of their own.
     """
 
     files: dict[str, str]
@@ -70,6 +99,7 @@ class ScatterSpec:
     hover: list[str] = field(default_factory=list)
     colors: list[str] = field(default_factory=list)
     view: View | None = None
+    selection: Selection | None = None
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.
@@ -96,4 +126,11 @@ class ScatterSpec:
             The spec.
         """
         view = data.get("view")
-        return cls(**{**data, "view": View(**view) if view is not None else None})
+        selection = data.get("selection")
+        return cls(
+            **{
+                **data,
+                "view": View(**view) if view is not None else None,
+                "selection": Selection(**selection) if selection is not None else None,
+            }
+        )

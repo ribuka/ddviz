@@ -43,10 +43,17 @@ class Aggregation:
     levels : dict
         Levels of the ``"color"``, ``"row"`` and ``"col"`` roles as text, in
         index order; a role without a column has the single level None.
-    bins : polars.DataFrame
+    bins : polars.DataFrame or None
         One row per non-empty bin, sorted by `KEY`: the key, the number of
         rows in the bin (`COUNT`), the representative row's index (`INDEX`,
-        the largest row index in the bin) and its hover columns.
+        the largest row index in the bin) and its hover columns. None when
+        only the selection was aggregated.
+    selected : polars.DataFrame or None
+        For a spec with a selection, the bins of the selected rows in every
+        panel (`KEY` and `COUNT`), sorted by key.
+    selected_rows : int or None
+        For a spec with a selection, the number of selected rows; a row in
+        several panels counts once.
     """
 
     grid: BinGrid
@@ -55,7 +62,59 @@ class Aggregation:
     x_ranges: list[tuple[float, float]]
     y_ranges: list[tuple[float, float]]
     levels: dict[str, list]
-    bins: pl.DataFrame
+    bins: pl.DataFrame | None
+    selected: pl.DataFrame | None = None
+    selected_rows: int | None = None
+
+
+def selection_filter(spec: ScatterSpec) -> list[pl.Expr]:
+    """Return the conditions that pick the selected rows of a spec with a selection.
+
+    A row is selected when it is drawn in the panel the box was drawn on:
+    its facet levels are the panel's, its x and y are in the box, and its
+    color, row and col are not null.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        A spec whose ``selection`` is set.
+
+    Returns
+    -------
+    list of polars.Expr
+        Conditions to filter on.
+    """
+    selection = spec.selection
+    x = pl.col(selection.x).cast(pl.Float64)
+    y = pl.col(selection.y).cast(pl.Float64)
+    conditions = [
+        x.is_finite(),
+        y.is_finite(),
+        x.is_between(*selection.x_range),
+        y.is_between(*selection.y_range),
+        *[pl.col(c).is_not_null() for c in (spec.color, spec.row, spec.col) if c],
+    ]
+    for column, level in ((spec.row, selection.row), (spec.col, selection.col)):
+        if column is not None and level is not None:
+            conditions.append(pl.col(column).cast(pl.String) == level)
+    return conditions
+
+
+def selection_columns(spec: ScatterSpec) -> list[str]:
+    """Return the columns `selection_filter` reads.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        A spec whose ``selection`` is set.
+
+    Returns
+    -------
+    list of str
+        The columns, once each.
+    """
+    columns = [spec.selection.x, spec.selection.y, spec.color, spec.row, spec.col]
+    return list(dict.fromkeys(c for c in columns if c is not None))
 
 
 def _padded(lo: float | None, hi: float | None) -> tuple[float, float]:
@@ -147,7 +206,9 @@ def _overview(
 
 
 def aggregate(
-    spec: ScatterSpec, progress: Callable[[str], None] = lambda _: None
+    spec: ScatterSpec,
+    progress: Callable[[str], None] = lambda _: None,
+    selection_only: bool = False,
 ) -> Aggregation:
     """Aggregate a scatter plot into pixel bins and pick their representative rows.
 
@@ -160,12 +221,19 @@ def aggregate(
     row or col. The overview finds the levels and the data ranges first; a
     view takes them from the spec.
 
+    With a selection, the selected rows are also aggregated into bins of
+    their own, in every panel (`selection_filter`).
+
     Parameters
     ----------
     spec : ScatterSpec
         What to aggregate.
     progress : callable
         Called with the name of each stage as it starts.
+    selection_only : bool
+        Aggregate only the selection, for the layer of a result already
+        drawn; the spec must have a view (its levels and ranges) and a
+        selection.
 
     Returns
     -------
@@ -205,8 +273,10 @@ def aggregate(
     col = _index_expr(spec.col, levels["col"])
     series = _index_expr(spec.color, levels["color"])
 
-    def pair(xi: int, yj: int) -> pl.LazyFrame:
-        """Return the keys and row indices of the panels of one pair of axis columns."""
+    def pair(
+        xi: int, yj: int, extra: list[pl.Expr], extra_columns: list[str]
+    ) -> pl.LazyFrame:
+        """Return the bins of the panels of one pair of axis columns, of the rows `extra` keeps."""
         x_col, y_col = spec.x[xi], spec.y[yj]
         x = pl.col(x_col).cast(pl.Float64)
         y = pl.col(y_col).cast(pl.Float64)
@@ -217,40 +287,58 @@ def aggregate(
             _bin_expr(x_col, x_ranges[xi], grid.width),
         )
         return (
-            _scan(spec, [x_col, y_col, *used], INDEX)
+            _scan(spec, [x_col, y_col, *used, *extra_columns], INDEX)
             .filter(
                 x.is_finite(),
                 y.is_finite(),
                 x.is_between(*x_ranges[xi]),
                 y.is_between(*y_ranges[yj]),
                 *[pl.col(c).is_not_null() for c in used],
+                *extra,
             )
             .select(key.alias(KEY), pl.col(INDEX))
             .group_by(KEY)
             .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
         )
 
-    progress("bins")
-    # One query per pair, one after another: the pairs' panels differ, so
-    # their keys do too. One query over all pairs was about 10% faster but
-    # its peak grew with the pairs (9 pairs of 100M rows: 9.0GB against 4.0GB).
-    bins = pl.concat(
-        [
-            pair(xi, yj).collect(engine="streaming")
-            for yj in range(axes.ny)
-            for xi in range(axes.nx)
-        ]
-    ).sort(KEY)
+    def all_pairs(extra: list[pl.Expr], extra_columns: list[str]) -> pl.DataFrame:
+        # One query per pair, one after another: the pairs' panels differ, so
+        # their keys do too. One query over all pairs was about 10% faster but
+        # its peak grew with the pairs (9 pairs of 100M rows: 9.0GB against 4.0GB).
+        return pl.concat(
+            [
+                pair(xi, yj, extra, extra_columns).collect(engine="streaming")
+                for yj in range(axes.ny)
+                for xi in range(axes.nx)
+            ]
+        ).sort(KEY)
 
-    progress("rows")
-    hover = list(dict.fromkeys(spec.hover))
-    rows = (
-        _scan(spec, hover, INDEX)
-        .join(bins.lazy().select(INDEX), on=INDEX, how="semi")
-        .select(INDEX, *hover)
-        .collect(engine="streaming")
-    )
-    bins = bins.join(rows, on=INDEX, how="left", maintain_order="left")
+    bins = None
+    if not selection_only:
+        progress("bins")
+        bins = all_pairs([], [])
+        progress("rows")
+        hover = list(dict.fromkeys(spec.hover))
+        rows = (
+            _scan(spec, hover, INDEX)
+            .join(bins.lazy().select(INDEX), on=INDEX, how="semi")
+            .select(INDEX, *hover)
+            .collect(engine="streaming")
+        )
+        bins = bins.join(rows, on=INDEX, how="left", maintain_order="left")
+    selected = selected_rows = None
+    if spec.selection is not None:
+        progress("selection")
+        conditions = selection_filter(spec)
+        columns = selection_columns(spec)
+        selected = all_pairs(conditions, columns).select(KEY, COUNT)
+        selected_rows = (
+            _scan(spec, columns)
+            .filter(*conditions)
+            .select(pl.len())
+            .collect(engine="streaming")
+            .item()
+        )
     return Aggregation(
         grid=grid,
         layout=layout,
@@ -259,4 +347,6 @@ def aggregate(
         y_ranges=y_ranges,
         levels=levels,
         bins=bins,
+        selected=selected,
+        selected_rows=selected_rows,
     )

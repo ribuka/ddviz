@@ -1,10 +1,11 @@
 // The page: drop columns on the graph builder's zones, plot, zoom and pan,
-// resize, hover, and report the selected range.
+// resize, hover, and select rows with a box.
 import { Builder } from "./builder.js";
 import { attachColumnList } from "./columns.js";
 import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { Legend } from "./legend.js";
+import { SelectionTable } from "./table.js";
 
 const status = document.getElementById("status");
 const info = document.getElementById("info");
@@ -168,6 +169,7 @@ const CONVERT_RETRY_MS = 300;
 
 // Aggregates the overview of a graph (`ddviz.encoding.Encoding`) and draws it.
 async function plot(encoding) {
+  clearSelection(false);
   const size = stageSize();
   const body = { encoding, ...size };
   requestedSize = size;
@@ -219,7 +221,8 @@ async function plot(encoding) {
   timings.plot = Math.round(performance.now() - drawStarted);
   layers.attach();
   gd.on("plotly_relayout", onRelayout);
-  gd.on("plotly_selected", (event) => setInfo({ selected_range: event?.range ?? null, selected_points: event?.points?.length }));
+  gd.on("plotly_selected", onSelected);
+  gd.on("plotly_deselect", () => clearSelection());
   status.textContent = `task ${meta.task}: ${meta.rows.toLocaleString()} 行`;
   const bitmaps = await images;
   if (overview?.meta !== meta) {
@@ -320,11 +323,101 @@ async function draw(data, layout, meta, bitmaps) {
 }
 
 // Marks the drawn images as a stand-in while a view is aggregated: they fade
-// and a notice shows, so that they are not taken for the result.
+// and a notice shows, so that they are not taken for the result. Once a
+// result is drawn, the selection follows it.
 const pending = document.getElementById("pending");
 function setPending(on) {
   gd.classList.toggle("pending", on);
   pending.hidden = !on;
+  if (!on) followSelection();
+}
+
+// The selection: the box drawn on a panel of the drawn result (its index
+// and data ranges, valid for every result of the plot), the result its
+// layer was asked for (`base`), and the layer once it came. Every panel
+// shows the selected rows (`ddviz.aggregate.selection_filter`); until the
+// layer comes, the box shows them in its own panel.
+let selection = null;
+let selectionGeneration = 0;
+const table = new SelectionTable(document.getElementById("table"));
+
+// Returns the panel of a box from plotly's `range` (keyed by axis id).
+function boxOf(meta, range) {
+  const panel = meta.panels.findIndex((p) => p.xaxis in range && p.yaxis in range);
+  if (panel < 0) return null;
+  const { xaxis, yaxis } = meta.panels[panel];
+  return { panel, x_range: [...range[xaxis]], y_range: [...range[yaxis]] };
+}
+
+// plotly sends no range for a click beside the box, which drops it.
+function onSelected(event) {
+  if (!event?.range) {
+    clearSelection();
+    return;
+  }
+  if (!current) return;
+  const box = boxOf(current, event.range);
+  if (!box) return;
+  closeImages(selection?.bitmaps);
+  selection = { box, base: null, bitmaps: null, fresh: true };
+  layers.setSelection({ box });
+  // An aggregation in flight would be killed; the selection waits for its result.
+  if (pending.hidden && !plotting) followSelection();
+}
+
+// Asks for the selected rows' layer over the drawn result, unless asked already.
+async function followSelection() {
+  if (!selection || !current || plotting || selection.base === current.task) return;
+  const mine = ++selectionGeneration;
+  const meta = current;
+  selection.base = meta.task;
+  status.textContent = "選んだ行を集約中…";
+  const response = await fetch("/api/selection", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task: meta.task, ...selection.box }),
+  });
+  if (mine !== selectionGeneration || !selection) return;
+  if (!response.ok) {
+    // Killed by a newer aggregation: asked again once its result is drawn.
+    selection.base = null;
+    if (response.status !== 409) status.textContent = `エラー: ${await response.text()}`;
+    return;
+  }
+  const layer = await response.json();
+  let bitmaps = null;
+  try {
+    bitmaps = await loadImages({ task: layer.task, images: layer.images });
+  } catch (error) {
+    console.error(error);
+  }
+  if (mine !== selectionGeneration || !selection || !bitmaps) {
+    closeImages(bitmaps);
+    if (selection && mine === selectionGeneration) selection.base = null;
+    return;
+  }
+  closeImages(selection.bitmaps);
+  selection.bitmaps = bitmaps;
+  layers.setSelection({ meta, bitmaps });
+  status.textContent = `選んだ行：${layer.rows.toLocaleString()} 行（${layer.task_seconds.toFixed(1)} 秒）`;
+  if (selection.fresh) {
+    selection.fresh = false;
+    table.show(layer.rows);
+  }
+}
+
+// Drops the selection; `server` also tells the server (a new plot drops it there).
+function clearSelection(server = true) {
+  selectionGeneration++;
+  if (!selection) return;
+  closeImages(selection.bitmaps);
+  selection = null;
+  layers.setSelection(null);
+  table.show(null);
+  if (server) {
+    fetch("/api/selection", { method: "DELETE" });
+    if (current) status.textContent = `task ${current.task}: ${current.rows.toLocaleString()} 行`;
+  }
 }
 
 // Goes back to the overview's images and ranges; no worker runs, unless the
@@ -510,6 +603,7 @@ new ResizeObserver(onResize).observe(stage);
 
 // Removes the figure of a graph that cannot be drawn (no x or no y column).
 function clearPlot() {
+  clearSelection();
   generation++;
   plotting = 0;
   setPending(false);
