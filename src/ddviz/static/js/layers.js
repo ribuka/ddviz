@@ -92,13 +92,13 @@ export class ImageLayers {
     const inactive = this.legend.inactive;
     // Bottom layer first: inactive series behind, later series above earlier ones.
     const order = this.legend.order(nSeries).reverse();
-    const [x0, x1] = meta.x_range;
-    const [y0, y1] = meta.y_range;
     const { width: w, height: h } = meta.grid;
     meta.panels.forEach((panel, p) => {
       const xa = full[axisKey(panel.xaxis)];
       const ya = full[axisKey(panel.yaxis)];
       if (!xa || !ya) return;
+      const [x0, x1] = meta.x_ranges[panel.x];
+      const [y0, y1] = meta.y_ranges[panel.y];
       const left = xa._offset + xa.l2p(x0);
       const right = xa._offset + xa.l2p(x1);
       const bottom = ya._offset + ya.l2p(y0);

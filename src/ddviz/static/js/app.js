@@ -240,14 +240,34 @@ function sameRange(a, b) {
   return Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol;
 }
 
-// Returns `layout` with the axis ranges the user has on screen; every panel
-// shares them (`matches`).
-function withShownRanges(layout) {
+// Returns whether two lists of ranges (one per axis column) are equal.
+function sameRanges(a, b) {
+  return a.length === b.length && a.every((range, i) => sameRange(range, b[i]));
+}
+
+function axisKey(id) {
+  return id.replace(/^([xy])/, "$1axis");
+}
+
+// Returns the ranges on screen of each x and y column of a result: the
+// panels of one column share them (`matches`).
+function shownRanges(meta) {
   const full = gd._fullLayout;
+  return {
+    x: meta.x_axes.map((id) => [...full[axisKey(id)].range]),
+    y: meta.y_axes.map((id) => [...full[axisKey(id)].range]),
+  };
+}
+
+// Returns `layout` with the axis ranges the user has on screen.
+function withShownRanges(layout, meta) {
+  const shown = shownRanges(meta);
   const out = { ...layout };
-  for (const key of Object.keys(layout)) {
-    const axis = key.match(/^([xy])axis\d*$/);
-    if (axis) out[key] = { ...layout[key], range: [...full[`${axis[1]}axis`].range] };
+  for (const panel of meta.panels) {
+    const xKey = axisKey(panel.xaxis);
+    const yKey = axisKey(panel.yaxis);
+    out[xKey] = { ...layout[xKey], range: shown.x[panel.x] };
+    out[yKey] = { ...layout[yKey], range: shown.y[panel.y] };
   }
   return out;
 }
@@ -384,18 +404,18 @@ async function requestOverview() {
 // Aggregates the shown ranges again. Until the result comes, plotly keeps
 // drawing the current images stretched to the new axes, faded, and the area
 // they do not cover stays blank.
-async function requestView(xRange, yRange) {
+async function requestView({ x: xRanges, y: yRanges }) {
   const mine = ++generation;
   const size = stageSize();
   requestedSize = size;
-  requested = { x: xRange, y: yRange };
+  requested = { x: xRanges, y: yRanges };
   status.textContent = "表示範囲を集約中…";
   setPending(true);
   const started = performance.now();
   const response = await fetch("/api/view", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ x_range: xRange, y_range: yRange, ...size }),
+    body: JSON.stringify({ x_ranges: xRanges, y_ranges: yRanges, ...size }),
   });
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
@@ -421,14 +441,14 @@ async function requestView(xRange, yRange) {
   shownSize = size;
   hideHover();
   // The images and the panels' placement change; the axes stay where the user put them.
-  if (!drawn) await draw(figure.data, withShownRanges(figure.layout), meta, bitmaps);
+  if (!drawn) await draw(figure.data, withShownRanges(figure.layout, meta), meta, bitmaps);
   if (mine === generation) setPending(false);
   status.textContent = `task ${meta.task}: 表示範囲に ${meta.rows.toLocaleString()} 行`;
   setInfo();
 }
 
-// Every panel shares the x and y axes (`matches`), so the first panel's
-// ranges are the view.
+// The panels of one x or y column share its axis (`matches`), so the view is
+// the range of each column.
 // A relayout during a figure change of this page is not ignored: a pan
 // dropped then would be lost, leaving the axes over images of another range.
 function onRelayout(event) {
@@ -441,14 +461,13 @@ function onRelayout(event) {
     return;
   }
   if (!keys.some((key) => /^[xy]axis\d*\.range/.test(key))) return;
-  const xRange = [...gd._fullLayout.xaxis.range];
-  const yRange = [...gd._fullLayout.yaxis.range];
-  if (sameRange(xRange, overview.meta.x_range) && sameRange(yRange, overview.meta.y_range)) {
+  const shown = shownRanges(overview.meta);
+  if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) {
     showOverview();
     return;
   }
-  if (sameRange(xRange, requested.x) && sameRange(yRange, requested.y)) return;
-  requestView(xRange, yRange);
+  if (sameRanges(shown.x, requested.x) && sameRanges(shown.y, requested.y)) return;
+  requestView(shown);
 }
 
 // A new size of the plot area (the window, or a pane beside it) aggregates
@@ -481,7 +500,7 @@ async function onResizeSettled() {
     await Plotly.relayout(gd, size);
   }
   if (requested.x.length) {
-    requestView([...gd._fullLayout.xaxis.range], [...gd._fullLayout.yaxis.range]);
+    requestView(shownRanges(current));
   } else {
     requestOverview();
   }
@@ -507,11 +526,11 @@ function clearPlot() {
   status.textContent = "";
 }
 
-// The roles a scatter plot draws (`ddviz.plan.drawn_columns`): placing an
-// n-th axis or overlay changes nothing drawn, so it aggregates nothing.
+// The roles a scatter plot draws (`ddviz.plan.drawn_columns`): placing
+// overlay changes nothing drawn, so it aggregates nothing.
 function drawnRoles(encoding) {
   const { x, y, color, row, col } = encoding;
-  return JSON.stringify([x[0] ?? null, y[0] ?? null, color, row, col]);
+  return JSON.stringify([x, y, color, row, col]);
 }
 
 let drawnRolesKey = drawnRoles({ x: [], y: [], color: null, row: null, col: null });

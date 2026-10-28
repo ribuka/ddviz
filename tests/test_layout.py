@@ -13,6 +13,7 @@ from ddviz.layout import (
     SCROLL_GAP_X,
     SCROLL_GAP_Y,
     SCROLLBAR,
+    AxisGrid,
     grid_layout,
 )
 
@@ -69,3 +70,19 @@ def test_grid_layout_scrolled_side_that_fits_fills_the_area() -> None:
     assert layout.panel_height == MIN_PANEL_HEIGHT
     assert layout.panel_width > MIN_PANEL_WIDTH
     assert layout.width <= 3000 - SCROLLBAR
+
+
+def test_axis_grid_nests_axis_columns_in_facet_cells() -> None:
+    """Each facet cell holds the x columns side by side and the y columns stacked from the top."""
+    axes = AxisGrid(nrow=2, ncol=3, nx=2, ny=3)
+    assert (axes.rows, axes.cols) == (6, 6)
+    seen = set()
+    for row in range(2):
+        for col in range(3):
+            for yj in range(3):
+                for xi in range(2):
+                    panel = axes.panel(row, col, xi, yj)
+                    assert divmod(panel, 6) == (row * 3 + yj, col * 2 + xi)
+                    assert axes.axes(panel) == (xi, yj)
+                    seen.add(panel)
+    assert seen == set(range(36))

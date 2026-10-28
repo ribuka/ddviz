@@ -17,16 +17,9 @@ def undrawn(encoding: Encoding) -> list[str]:
     Returns
     -------
     list of str
-        ``"x2"``, ``"y3"`` and so on for the n-th axes, and ``"overlay"``.
+        ``["overlay"]`` when overlay has a column, else empty.
     """
-    roles = [
-        f"{axis}{i + 1}"
-        for axis in ("x", "y")
-        for i in range(1, len(getattr(encoding, axis)))
-    ]
-    if encoding.overlay is not None:
-        roles.append("overlay")
-    return roles
+    return ["overlay"] if encoding.overlay is not None else []
 
 
 def drawn_columns(encoding: Encoding) -> list[str]:
@@ -40,15 +33,9 @@ def drawn_columns(encoding: Encoding) -> list[str]:
     Returns
     -------
     list of str
-        The first x and y columns and the color, row and col columns, once each.
+        The x and y columns and the color, row and col columns, once each.
     """
-    columns = [
-        *encoding.x[:1],
-        *encoding.y[:1],
-        encoding.color,
-        encoding.row,
-        encoding.col,
-    ]
+    columns = [*encoding.x, *encoding.y, encoding.color, encoding.row, encoding.col]
     return list(dict.fromkeys(c for c in columns if c is not None))
 
 
@@ -61,9 +48,9 @@ def scatter_spec(
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
-    The first x and y columns are drawn, colored by color and faceted by row
-    and col; the n-th axes and overlay are left out (`undrawn`). The hover
-    shows the drawn columns.
+    Every pair of an x and a y column is drawn in a panel of each facet
+    cell, colored by color and faceted by row and col; overlay is left out
+    (`undrawn`). The hover shows the drawn columns.
 
     Parameters
     ----------
@@ -88,19 +75,16 @@ def scatter_spec(
     """
     if not encoding.x or not encoding.y:
         raise ValueError("x and y need a column")
-    roles = {
-        "x": encoding.x[0],
-        "y": encoding.y[0],
-        "color": encoding.color,
-        "row": encoding.row,
-        "col": encoding.col,
-    }
     hover = drawn_columns(encoding)
     return ScatterSpec(
         files={c: files[c] for c in hover},
+        x=list(encoding.x),
+        y=list(encoding.y),
+        color=encoding.color,
+        row=encoding.row,
+        col=encoding.col,
         width=width,
         height=height,
         hover=hover,
         colors=colors,
-        **roles,
     )

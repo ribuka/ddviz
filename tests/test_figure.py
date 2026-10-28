@@ -57,7 +57,9 @@ def test_a_panel_without_rows_keeps_its_axes(
     view = replace(
         scatter_spec,
         view=View(
-            x_range=[50.0, 60.0], y_range=[50.0, 60.0], levels=overview["levels"]
+            x_ranges=[[50.0, 60.0]],
+            y_ranges=[[50.0, 60.0]],
+            levels=overview["levels"],
         ),
     )
     result = _figure(view, tmp_path / "view")
@@ -66,7 +68,7 @@ def test_a_panel_without_rows_keeps_its_axes(
     assert [(t["xaxis"], t["yaxis"]) for t in data] == [
         (p["xaxis"], p["yaxis"]) for p in result["meta"]["panels"]
     ]
-    assert result["meta"]["x_range"] == [50.0, 60.0]
+    assert result["meta"]["x_ranges"] == [[50.0, 60.0]]
     assert result["figure"]["layout"]["xaxis"]["range"] == [50.0, 60.0]
 
 
@@ -103,3 +105,29 @@ def test_a_fitting_grid_labels_the_outer_panels(
     assert not result["meta"]["scroll"]
     assert layout["yaxis"]["showticklabels"]
     assert not layout["yaxis2"]["showticklabels"]
+
+
+def test_the_panels_of_one_axis_column_share_its_axis(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """With two x columns, each facet cell has a panel per column, matched to the column's first axis."""
+    two = replace(scatter_spec, x=["x", "y"], width=900, height=400)
+    result = _figure(two, tmp_path / "task")
+    layout = result["figure"]["layout"]
+    meta = result["meta"]
+    assert meta["x_axes"] == ["x", "x2"]
+    assert meta["y_axes"] == ["y"]
+    assert [(p["x"], p["y"]) for p in meta["panels"]] == [
+        (0, 0),
+        (1, 0),
+        (0, 0),
+        (1, 0),
+    ]
+    assert "matches" not in layout["xaxis"]
+    assert "matches" not in layout["xaxis2"]
+    assert layout["xaxis3"]["matches"] == "x"
+    assert layout["xaxis4"]["matches"] == "x2"
+    assert layout["xaxis2"]["range"] == meta["x_ranges"][1]
+    # The facet label spans the panels of its cell.
+    label = next(a for a in layout["annotations"] if a["text"] == "facet = p")
+    assert layout["xaxis"]["domain"][1] < label["x"] < layout["xaxis2"]["domain"][0]
