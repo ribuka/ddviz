@@ -377,6 +377,12 @@ button {
   height: auto !important;
 }
 
+/* The drawer's own height stays in its style, for going back to it. */
+#table.maximized {
+  top: 0;
+  height: auto !important;
+}
+
 #table.collapsed .table-scroll {
   display: none;
 }
