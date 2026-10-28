@@ -50,3 +50,19 @@ def test_table_page_lists_the_selected_rows_in_row_order(
     assert columns["label"] == rows["label"].to_list()
     assert columns["x"] == rows["x"].to_list()
     assert set(columns["facet"]) == {"q"}
+
+
+def test_table_page_of_no_rows_has_empty_columns(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """A selection without rows (its panel left empty by a filter) gives empty columns."""
+    spec = replace(
+        scatter_spec,
+        selection=Selection(
+            x="x", y="y", x_range=[50.0, 60.0], y_range=[50.0, 60.0], col="q"
+        ),
+    )
+    run_table(spec, 0, 100, {"x": spec.files["x"]}, tmp_path, lambda _: None)
+    page = read_manifest(tmp_path)
+    assert page["index"] == []
+    assert page["columns"] == [{"name": "x", "dtype": "Float64", "values": []}]

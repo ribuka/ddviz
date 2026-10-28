@@ -151,6 +151,7 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
             "x_ranges": agg.x_ranges,
             "y_ranges": agg.y_ranges,
             "levels": agg.levels,
+            "all_levels": agg.all_levels,
             "colors": colors,
             "columns": columns,
             "images": images,
@@ -257,11 +258,13 @@ def run_table(
     if frame is not None:
         for start, length in _spans(index):
             parts.append(frame.slice(start, length).collect())
-    values = (
-        pl.concat(parts).filter(pl.col(INDEX).is_in(index))
-        if parts
-        else pl.DataFrame({INDEX: index}, schema={INDEX: pl.UInt32})
-    )
+    if parts:
+        values = pl.concat(parts).filter(pl.col(INDEX).is_in(index))
+    elif frame is not None:
+        # No row is selected: the columns are empty, with their types.
+        values = frame.head(0).collect()
+    else:
+        values = pl.DataFrame({INDEX: index}, schema={INDEX: pl.UInt32})
     columns = [
         {
             "name": name,

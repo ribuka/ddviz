@@ -16,14 +16,19 @@ class View:
         panel cover exactly the ranges of its columns and rows outside them
         are left out of it.
     levels : dict
-        Levels of the overview (`ddviz.aggregate.Aggregation.levels`), so that
-        the panels and series stay those of the overview and the levels need
-        no pass over the data.
+        Levels of the overview over every row
+        (`ddviz.aggregate.Aggregation.all_levels`), so that the series stay
+        those of the overview and the levels need no pass over the data.
+    facets : dict or None
+        Levels of the ``"row"`` and ``"col"`` roles drawn as panels
+        (`ddviz.aggregate.Aggregation.levels`), known from a result with the
+        same local filter; None to find them again from the filter.
     """
 
     x_ranges: list[list[float]]
     y_ranges: list[list[float]]
     levels: dict[str, list]
+    facets: dict[str, list] | None = None
 
 
 @dataclass(frozen=True)
@@ -111,8 +116,9 @@ class ScatterSpec:
         Rows chosen by a box, aggregated as a layer of their own.
     filters : list of Filter
         Conditions of the local filter, all of which a row must meet to be
-        drawn, hovered, selected or listed. They leave the levels and the
-        overview's ranges as they are without them.
+        drawn, hovered, selected or listed. They leave the series and the
+        overview's ranges as they are without them, and drop the facet
+        panels left without rows (`ddviz.aggregate.aggregate`).
     """
 
     files: dict[str, str]

@@ -368,8 +368,13 @@ def create_app(
     def again(
         request: SizeRequest, filters: list[Filter], x_ranges: list, y_ranges: list
     ) -> ScatterSpec:
-        """Return the overview's spec for other ranges, size or filter, reusing its levels."""
+        """Return the overview's spec for other ranges, size or filter, reusing its levels.
+
+        The overview's facet panels are kept for the same filter; another
+        filter finds its own (`ddviz.aggregate.aggregate`).
+        """
         overview = state.overview.manifest
+        same = overview["spec"]["filters"] == [asdict(f) for f in filters]
         if len(x_ranges) != len(overview["spec"]["x"]) or len(y_ranges) != len(
             overview["spec"]["y"]
         ):
@@ -387,10 +392,15 @@ def create_app(
                 "view": {
                     "x_ranges": [list(r) for r in x_ranges],
                     "y_ranges": [list(r) for r in y_ranges],
-                    "levels": overview["levels"],
+                    "levels": overview["all_levels"],
+                    "facets": facets_of(overview) if same else None,
                 },
             }
         )
+
+    def facets_of(manifest: dict) -> dict:
+        """Return the row and col levels a result draws as panels."""
+        return {role: manifest["levels"][role] for role in ("row", "col")}
 
     def unchanged(index: HoverIndex | None, spec: ScatterSpec) -> bool:
         """Whether a result already has the panels, ranges and filter of `spec`.
@@ -533,7 +543,8 @@ def create_app(
                 "view": {
                     "x_ranges": manifest["x_ranges"],
                     "y_ranges": manifest["y_ranges"],
-                    "levels": manifest["levels"],
+                    "levels": manifest["all_levels"],
+                    "facets": facets_of(manifest),
                 },
                 "selection": asdict(selection),
             }

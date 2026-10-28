@@ -44,6 +44,7 @@ def test_every_panel_has_an_empty_trace_and_no_legend(
     data = result["figure"]["data"]
     assert not result["figure"]["layout"]["showlegend"]
     assert result["meta"]["series"] == ["a", "b", "c"]
+    assert [p["facet"] for p in result["meta"]["panels"]] == [[None, "p"], [None, "q"]]
     assert [(t["xaxis"], t["yaxis"]) for t in data] == [
         (p["xaxis"], p["yaxis"]) for p in result["meta"]["panels"]
     ]
@@ -59,7 +60,7 @@ def test_a_panel_without_rows_keeps_its_axes(
         view=View(
             x_ranges=[[50.0, 60.0]],
             y_ranges=[[50.0, 60.0]],
-            levels=overview["levels"],
+            levels=overview["all_levels"],
         ),
     )
     result = _figure(view, tmp_path / "view")

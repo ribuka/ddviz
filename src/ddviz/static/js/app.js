@@ -231,8 +231,12 @@ async function plot(encoding) {
   timings.plot = Math.round(performance.now() - drawStarted);
   layers.attach();
   gd.on("plotly_relayout", onRelayout);
-  gd.on("plotly_selected", onSelected);
-  gd.on("plotly_deselect", () => clearSelection());
+  gd.on("plotly_selected", (event) => {
+    if (!ownReact) onSelected(event);
+  });
+  gd.on("plotly_deselect", () => {
+    if (!ownReact) clearSelection();
+  });
   status.textContent = rowsText(meta);
   const bitmaps = await images;
   if (overview?.meta !== meta) {
@@ -299,6 +303,9 @@ let drawnKey = null;
 // The ranges this page is setting with `Plotly.relayout`, whose own
 // `plotly_relayout` is not a view to aggregate.
 let ownRelayout = null;
+// Whether this page is drawing a new figure with `Plotly.react`, which drops
+// plotly's box of the selection: its events do not drop the selection.
+let ownReact = false;
 
 function figureKey(data, layout) {
   const axes = {};
@@ -320,6 +327,18 @@ function rangeUpdate(layout) {
   return Object.keys(update).length ? update : null;
 }
 
+// Returns `layout` with plotly's box of the selection on the panel of `meta`
+// that has the box's facet levels and axis columns; a filter may have moved
+// the panel or dropped it.
+function withSelectionBox(layout, meta) {
+  if (!selection) return layout;
+  const { at, x_range: x, y_range: y } = selection.box;
+  const panel = meta.panels.find((p) => panelKey(p) === at);
+  if (!panel) return layout;
+  const box = { type: "rect", xref: panel.xaxis, yref: panel.yaxis, x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
+  return { ...layout, selections: [{ ...box, line: { width: 1, dash: "dot" } }] };
+}
+
 // Draws `data` with `layout`, and the images of `meta` over it.
 async function draw(data, layout, meta, bitmaps) {
   const started = performance.now();
@@ -332,7 +351,12 @@ async function draw(data, layout, meta, bitmaps) {
       ownRelayout = null;
     }
   } else {
-    await Plotly.react(gd, data, layout);
+    ownReact = true;
+    try {
+      await Plotly.react(gd, data, withSelectionBox(layout, meta));
+    } finally {
+      ownReact = false;
+    }
     drawnKey = key;
   }
   showImages(meta, bitmaps);
@@ -349,11 +373,14 @@ function setPending(on) {
   if (!on) followSelection();
 }
 
-// The selection: the box drawn on a panel of the drawn result (its index
-// and data ranges, valid for every result of the plot), the result its
-// layer was asked for (`base`), and the layer once it came. Every panel
-// shows the selected rows (`ddviz.aggregate.selection_filter`); until the
-// layer comes, the box shows them in its own panel.
+// The selection: the box drawn on a panel of the drawn result (its data
+// ranges, its panel's facet levels and axis columns (`at`), and the index of
+// that panel in the drawn result, -1 when a filter dropped it), the result
+// its layer was asked for (`base`), the layer once it came, and whether the
+// server holds the selection (`held`). Every panel shows the selected rows
+// (`ddviz.aggregate.selection_filter`); until the layer comes, the box shows
+// them in its own panel. A filter may drop or bring back facet panels, so
+// the panels' indices change: the box follows its facet levels.
 let selection = null;
 let selectionGeneration = 0;
 const table = new SelectionTable(document.getElementById("table"));
@@ -363,7 +390,17 @@ function boxOf(meta, range) {
   const panel = meta.panels.findIndex((p) => p.xaxis in range && p.yaxis in range);
   if (panel < 0) return null;
   const { xaxis, yaxis } = meta.panels[panel];
-  return { panel, x_range: [...range[xaxis]], y_range: [...range[yaxis]] };
+  return { panel, at: panelKey(meta.panels[panel]), x_range: [...range[xaxis]], y_range: [...range[yaxis]] };
+}
+
+// Names a panel by its facet levels and axis columns, the same in every result of a plot.
+function panelKey(panel) {
+  return JSON.stringify([panel.facet, panel.x, panel.y]);
+}
+
+// Whether two results draw the same panels in the same order.
+function samePanels(a, b) {
+  return a.panels.length === b.panels.length && a.panels.every((p, i) => panelKey(p) === panelKey(b.panels[i]));
 }
 
 // plotly sends no range for a click beside the box, which drops it.
@@ -387,12 +424,29 @@ async function followSelection() {
   if (!selection || !current || plotting || selection.base === current.task) return;
   const mine = ++selectionGeneration;
   const meta = current;
+  const { box } = selection;
+  box.panel = meta.panels.findIndex((p) => panelKey(p) === box.at);
+  if (!selection.held && box.panel < 0) {
+    // A filter dropped the box's panel before the server took the box.
+    clearSelection();
+    return;
+  }
+  // The layer of other panels would land on the wrong ones: the box stands in.
+  if (selection.bitmaps && !samePanels(layers.selection.meta, meta)) {
+    closeImages(selection.bitmaps);
+    selection.bitmaps = null;
+    layers.setSelection({ box });
+  }
   selection.base = meta.task;
   status.textContent = "選んだ行を集約中…";
+  // Once the server holds the selection, it is asked again by its facet
+  // levels, which the server keeps, not by the panel's index.
+  const { panel, x_range, y_range } = box;
+  const body = selection.held ? { task: meta.task } : { task: meta.task, panel, x_range, y_range };
   const response = await fetch("/api/selection", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task: meta.task, ...selection.box }),
+    body: JSON.stringify(body),
   });
   if (mine !== selectionGeneration || !selection) return;
   if (!response.ok) {
@@ -415,6 +469,7 @@ async function followSelection() {
   }
   closeImages(selection.bitmaps);
   selection.bitmaps = bitmaps;
+  selection.held = true;
   layers.setSelection({ meta, bitmaps });
   status.textContent = `選んだ行：${layer.rows.toLocaleString()} 行（${layer.task_seconds.toFixed(1)} 秒）`;
   // A new filter changes the selected rows: the table starts again.
