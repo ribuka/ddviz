@@ -1,4 +1,4 @@
-"""Tests of the local filter: aggregation, selection and table follow it; the levels and ranges do not."""
+"""Tests of the local filter: aggregation, selection and table follow it; the series and ranges do not."""
 
 from __future__ import annotations
 
@@ -34,22 +34,62 @@ def _kept(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def test_filter_keeps_the_levels_and_ranges_and_bins_only_its_rows(
+def test_filter_keeps_the_series_and_ranges_and_bins_only_its_rows(
     scatter_spec: ScatterSpec, filtered: ScatterSpec, scatter_frame: pl.DataFrame
 ) -> None:
-    """The panels, series and axes stay those of every row; the bins hold the kept rows."""
+    """The series and axes stay those of every row; the panel of facet p, left without rows, goes."""
     whole = aggregate(scatter_spec)
     agg = aggregate(filtered)
-    assert agg.levels == whole.levels
+    assert agg.levels == {**whole.levels, "col": ["q"]}
+    assert agg.all_levels == whole.levels
     assert agg.x_ranges == whole.x_ranges
     assert agg.y_ranges == whole.y_ranges
-    assert agg.grid == whole.grid
+    assert agg.grid.n_panels == 1
+    assert agg.grid.n_series == whole.grid.n_series
     kept = _kept(scatter_frame)
     assert agg.bins[COUNT].sum() == kept.height
     assert set(agg.bins[INDEX].to_list()) <= set(kept[INDEX].to_list())
-    # The panel of facet p has no rows left.
     panels, *_ = agg.grid.unpack(agg.bins[KEY].to_numpy())
-    assert set(panels.tolist()) == {1}
+    assert set(panels.tolist()) == {0}
+
+
+def test_filter_on_another_column_drops_the_facets_it_leaves_empty(
+    scatter_spec: ScatterSpec, scatter_frame: pl.DataFrame
+) -> None:
+    """A filter on a column other than the facet's drops the facet levels none of its rows has."""
+    labels = scatter_frame.filter(pl.col("facet") == "p")["label"].head(5).to_list()
+    agg = aggregate(replace(scatter_spec, filters=[Filter("label", levels=labels)]))
+    assert agg.levels["col"] == ["p"]
+    assert agg.levels["color"] == ["a", "b", "c"]
+
+
+def test_filter_without_rows_keeps_every_panel(scatter_spec: ScatterSpec) -> None:
+    """A filter that keeps no row leaves the panels of every row, all empty."""
+    agg = aggregate(replace(scatter_spec, filters=[Filter("x", range=[50.0, 60.0])]))
+    assert agg.levels["col"] == ["p", "q"]
+    assert agg.bins.height == 0
+
+
+def test_view_takes_the_facets_it_is_given(
+    filtered: ScatterSpec, scatter_frame: pl.DataFrame
+) -> None:
+    """A view with the facets of its filter draws those panels without finding them again."""
+    overview = aggregate(filtered)
+    view = View(
+        x_ranges=[list(r) for r in overview.x_ranges],
+        y_ranges=[list(r) for r in overview.y_ranges],
+        levels=overview.all_levels,
+    )
+    found = aggregate(replace(filtered, view=view))
+    assert found.levels == overview.levels
+    stages = []
+    given = aggregate(
+        replace(filtered, view=replace(view, facets={"row": [None], "col": ["q"]})),
+        stages.append,
+    )
+    assert "facets" not in stages
+    assert given.levels == overview.levels
+    assert given.bins[COUNT].sum() == _kept(scatter_frame).height
 
 
 def test_selection_and_table_follow_the_filter(
@@ -62,9 +102,12 @@ def test_selection_and_table_follow_the_filter(
         view=View(
             x_ranges=[list(r) for r in overview.x_ranges],
             y_ranges=[list(r) for r in overview.y_ranges],
-            levels=overview.levels,
+            levels=overview.all_levels,
+            facets={"row": overview.levels["row"], "col": overview.levels["col"]},
         ),
-        selection=Selection(x="x", y="y", x_range=[-3.0, 3.0], y_range=[0.0, 3.0]),
+        selection=Selection(
+            x="x", y="y", x_range=[-3.0, 3.0], y_range=[0.0, 3.0], col="q"
+        ),
     )
     agg = aggregate(spec, selection_only=True)
     rows = _kept(scatter_frame).filter(pl.col("y").is_between(0.0, 3.0))

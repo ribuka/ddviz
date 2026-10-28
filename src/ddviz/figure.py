@@ -132,7 +132,8 @@ def build_figure(manifest: dict) -> dict:
     -------
     dict
         ``{"figure": {"data", "layout"}, "meta": {...}}``; the meta holds the
-        axes and the axis columns (``x``, ``y``: their indices) of each panel,
+        axes, the axis columns (``x``, ``y``: their indices) and the facet
+        levels (``facet``: row and col as text, or None) of each panel,
         the axes that hold the range of each x and y column (``x_axes``,
         ``y_axes``), the bin grid, the data range of each column, where each
         series' PNG lies in the images file (`ddviz.manifest.IMAGES`; its
@@ -191,7 +192,13 @@ def build_figure(manifest: dict) -> dict:
             **_FRAME,
             **({"matches": y_axes[yj]} if y_axis != y_axes[yj] else {}),
         }
-        panels.append({"xaxis": x_axis, "yaxis": y_axis, "x": xi, "y": yj})
+        facet = [
+            None if spec[role] is None else str(levels[role][i])
+            for role, i in (("row", prow // axes.ny), ("col", pcol // axes.nx))
+        ]
+        panels.append(
+            {"xaxis": x_axis, "yaxis": y_axis, "x": xi, "y": yj, "facet": facet}
+        )
     if layout.scroll:
         fig_layout["annotations"] += _panel_titles(spec, levels, layout, axes)
     else:
