@@ -11,17 +11,18 @@ class View:
 
     Parameters
     ----------
-    x_range, y_range : list of float
-        Data ranges to aggregate: the bins cover exactly these ranges and rows
-        outside them are left out.
+    x_ranges, y_ranges : list of list of float
+        Data range of each x and each y column to aggregate: the bins of a
+        panel cover exactly the ranges of its columns and rows outside them
+        are left out of it.
     levels : dict
         Levels of the overview (`ddviz.aggregate.Aggregation.levels`), so that
         the panels and series stay those of the overview and the levels need
         no pass over the data.
     """
 
-    x_range: list[float]
-    y_range: list[float]
+    x_ranges: list[list[float]]
+    y_ranges: list[list[float]]
     levels: dict[str, list]
 
 
@@ -37,8 +38,10 @@ class ScatterSpec:
     files : dict of str to str
         Parquet file to read each column of the plot from: a file of the
         column cache, or the source itself (`ddviz.scan.scan_columns`).
-    x, y : str
-        Columns on the x and y axes.
+    x, y : list of str
+        Columns on the x and y axes, at least one each. Every pair of an x and
+        a y column is a panel of each facet cell: the x columns side by side,
+        the y columns stacked from the top (`ddviz.layout.AxisGrid`).
     color : str or None
         Column whose levels make the series, or None for a single series.
     row, col : str or None
@@ -53,12 +56,12 @@ class ScatterSpec:
         Series colors as ``#rrggbb``, cycled over the series.
     view : View or None
         Zoomed view to aggregate, or None for the overview, whose bins cover
-        the padded data ranges.
+        the padded data range of each column.
     """
 
     files: dict[str, str]
-    x: str
-    y: str
+    x: list[str]
+    y: list[str]
     color: str | None
     row: str | None
     col: str | None

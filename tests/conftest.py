@@ -50,8 +50,8 @@ def scatter_spec(scatter_path: Path) -> ScatterSpec:
     """Return a spec plotting `scatter_path` colored by color and faceted by facet."""
     return ScatterSpec(
         files={c: str(scatter_path) for c in ["x", "y", "label", "color", "facet"]},
-        x="x",
-        y="y",
+        x=["x"],
+        y=["y"],
         color="color",
         row=None,
         col="facet",

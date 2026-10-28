@@ -33,7 +33,7 @@ from ddviz.encoding import Encoding
 from ddviz.figure import build_figure
 from ddviz.hover import HoverIndex
 from ddviz.jobs import WorkerJob, physical_memory
-from ddviz.layout import grid_layout
+from ddviz.layout import AxisGrid, grid_layout
 from ddviz.manifest import IMAGES, read_manifest
 from ddviz.palette import DEFAULT_COLORS
 from ddviz.plan import drawn_columns, scatter_spec, undrawn
@@ -60,10 +60,10 @@ class SizeRequest(BaseModel):
 
 
 class ViewRequest(SizeRequest):
-    """Body of ``POST /api/view``: the data ranges of the zoomed view and the plot area size."""
+    """Body of ``POST /api/view``: the data range of each x and y column of the zoomed view and the plot area size."""
 
-    x_range: tuple[float, float]
-    y_range: tuple[float, float]
+    x_ranges: list[tuple[float, float]]
+    y_ranges: list[tuple[float, float]]
 
 
 @dataclass
@@ -299,17 +299,21 @@ def create_app(
             },
         )
 
-    def again(request: SizeRequest, x_range: list, y_range: list) -> ScatterSpec:
+    def again(request: SizeRequest, x_ranges: list, y_ranges: list) -> ScatterSpec:
         """Return the overview's spec for other ranges or another size, reusing its levels."""
         overview = state.overview.manifest
+        if len(x_ranges) != len(overview["spec"]["x"]) or len(y_ranges) != len(
+            overview["spec"]["y"]
+        ):
+            raise HTTPException(400, "one range per x and y column")
         return ScatterSpec.from_dict(
             {
                 **overview["spec"],
                 "width": request.width,
                 "height": request.height,
                 "view": {
-                    "x_range": x_range,
-                    "y_range": y_range,
+                    "x_ranges": [list(r) for r in x_ranges],
+                    "y_ranges": [list(r) for r in y_ranges],
                     "levels": overview["levels"],
                 },
             }
@@ -325,11 +329,12 @@ def create_app(
             return False
         manifest = index.manifest
         old = manifest["layout"]
-        layout = grid_layout(spec.width, spec.height, old["nrow"], old["ncol"])
+        axes = AxisGrid(**manifest["axes"])
+        layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols, *axes.gaps)
         return (
             asdict(layout) == old
-            and list(manifest["x_range"]) == spec.view.x_range
-            and list(manifest["y_range"]) == spec.view.y_range
+            and [list(r) for r in manifest["x_ranges"]] == spec.view.x_ranges
+            and [list(r) for r in manifest["y_ranges"]] == spec.view.y_ranges
         )
 
     async def run_again(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
@@ -347,7 +352,7 @@ def create_app(
             raise HTTPException(409, "no plot")
         if state.converting:
             raise HTTPException(409, "converting")
-        spec = again(request, list(request.x_range), list(request.y_range))
+        spec = again(request, request.x_ranges, request.y_ranges)
         if unchanged(state.view, spec):
             # A task for another size must not replace the result drawn now.
             await asyncio.to_thread(state.pool.cancel)
@@ -368,7 +373,7 @@ def create_app(
             raise HTTPException(409, "converting")
         # The padded data ranges hold every row, so this is the overview.
         manifest = state.overview.manifest
-        spec = again(request, manifest["x_range"], manifest["y_range"])
+        spec = again(request, manifest["x_ranges"], manifest["y_ranges"])
         if unchanged(state.overview, spec):
             await asyncio.to_thread(state.pool.cancel)
             return figure(state.overview, {"task_seconds": 0.0})

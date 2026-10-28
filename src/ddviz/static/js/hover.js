@@ -21,23 +21,28 @@ function locate(gd, meta, event) {
   const px = event.clientX - rect.left;
   const py = event.clientY - rect.top;
   const full = gd._fullLayout;
-  const dxBin = (meta.x_range[1] - meta.x_range[0]) / meta.grid.width;
-  const dyBin = (meta.y_range[1] - meta.y_range[0]) / meta.grid.height;
   for (let panel = 0; panel < meta.panels.length; panel++) {
-    const xa = full[axisKey(meta.panels[panel].xaxis)];
-    const ya = full[axisKey(meta.panels[panel].yaxis)];
+    const { xaxis, yaxis, x: xi, y: yj } = meta.panels[panel];
+    const xa = full[axisKey(xaxis)];
+    const ya = full[axisKey(yaxis)];
     const lx = px - xa._offset;
     const ly = py - ya._offset;
     if (lx < -HOVER_DISTANCE || lx > xa._length + HOVER_DISTANCE) continue;
     if (ly < -HOVER_DISTANCE || ly > ya._length + HOVER_DISTANCE) continue;
     const x = xa.p2l(lx);
     const y = ya.p2l(ly);
+    const x0 = meta.x_ranges[xi][0];
+    const y0 = meta.y_ranges[yj][0];
+    const dxBin = (meta.x_ranges[xi][1] - x0) / meta.grid.width;
+    const dyBin = (meta.y_ranges[yj][1] - y0) / meta.grid.height;
     return {
       panel,
       xa,
       ya,
-      fx: (x - meta.x_range[0]) / dxBin,
-      fy: (y - meta.y_range[0]) / dyBin,
+      x0,
+      y0,
+      fx: (x - x0) / dxBin,
+      fy: (y - y0) / dyBin,
       sx: xa._length / ((xa.range[1] - xa.range[0]) / dxBin),
       sy: ya._length / ((ya.range[1] - ya.range[0]) / dyBin),
       dxBin,
@@ -88,9 +93,15 @@ export function attachHover(gd, getMeta, legend, onTiming) {
       hide();
       return;
     }
-    const cx = at.xa._offset + at.xa.l2p(meta.x_range[0] + (hit.bx + 0.5) * at.dxBin);
-    const cy = at.ya._offset + at.ya.l2p(meta.y_range[0] + (hit.by + 0.5) * at.dyBin);
-    const lines = Object.entries(hit.values).map(([k, v]) => `${k}: ${formatValue(v)}`);
+    const cx = at.xa._offset + at.xa.l2p(at.x0 + (hit.bx + 0.5) * at.dxBin);
+    const cy = at.ya._offset + at.ya.l2p(at.y0 + (hit.by + 0.5) * at.dyBin);
+    // Of the axis columns, the panel's own x and y show: the row may lack the others.
+    const panel = meta.panels[at.panel];
+    const own = new Set([meta.x_columns[panel.x], meta.y_columns[panel.y]]);
+    const others = new Set([...meta.x_columns, ...meta.y_columns].filter((c) => !own.has(c)));
+    const lines = Object.entries(hit.values)
+      .filter(([k]) => !others.has(k))
+      .map(([k, v]) => `${k}: ${formatValue(v)}`);
     lines.push(`行番号: ${hit.row}`);
     lines.push(`このピクセル: ${hit.pixel_count} 行（${meta.series[hit.series]}: ${hit.count} 行）`);
     label.textContent = lines.join("\n");

@@ -168,6 +168,11 @@ button {
   flex-wrap: nowrap;
 }
 
+/* Y runs top to bottom, as its panels stack: the rotated zone reverses. */
+.zone.vertical[data-role="y"] {
+  flex-direction: row-reverse;
+}
+
 .zone.filled {
   border-style: solid;
   border-color: #d4d9e4;
@@ -212,6 +217,10 @@ button {
   padding: 8px 1px 2px;
 }
 
+.chip.target {
+  outline: 2px solid #2a6fdb;
+}
+
 .chip.undrawn {
   outline: 1px dashed #999;
   background: #f3f3f3;
@@ -249,6 +258,15 @@ button {
   z-index: 50;
 }
 
+#drop-line {
+  position: fixed;
+  pointer-events: none;
+  background: #2a6fdb;
+  border-radius: 1px;
+  z-index: 50;
+}
+
+#drop-line[hidden],
 #drop-tip[hidden] {
   display: none;
 }

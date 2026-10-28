@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from ddviz.keys import BinGrid
-from ddviz.layout import GridLayout, grid_layout
+from ddviz.layout import AxisGrid, GridLayout, grid_layout
 from ddviz.scan import scan_columns
 from ddviz.scatter import ScatterSpec
 
@@ -33,9 +33,13 @@ class Aggregation:
         Key space of the bins.
     layout : GridLayout
         Panels in the figure; one bin is one pixel of a panel.
-    x_range, y_range : tuple of float
-        Data ranges the bins cover; bin ``i`` along x spans
-        ``x_range[0] + i * (x_range[1] - x_range[0]) / grid.width`` onward.
+    axes : AxisGrid
+        Facet cell and pair of axis columns of each panel.
+    x_ranges, y_ranges : list of tuple of float
+        Data range of each x and each y column that the bins cover; along x
+        in a panel of the x column ``xi``, bin ``i`` spans
+        ``lo + i * (hi - lo) / grid.width`` onward, where ``lo, hi`` is
+        ``x_ranges[xi]``.
     levels : dict
         Levels of the ``"color"``, ``"row"`` and ``"col"`` roles as text, in
         index order; a role without a column has the single level None.
@@ -47,8 +51,9 @@ class Aggregation:
 
     grid: BinGrid
     layout: GridLayout
-    x_range: tuple[float, float]
-    y_range: tuple[float, float]
+    axes: AxisGrid
+    x_ranges: list[tuple[float, float]]
+    y_ranges: list[tuple[float, float]]
     levels: dict[str, list]
     bins: pl.DataFrame
 
@@ -96,33 +101,37 @@ def _scan(
     return scan_columns({c: spec.files[c] for c in dict.fromkeys(columns)}, row_index)
 
 
+def _range_query(spec: ScatterSpec, column: str) -> pl.LazyFrame:
+    """Return the query of the finite minimum and maximum of a numeric column."""
+    value = pl.col(column).cast(pl.Float64)
+    finite = value.filter(value.is_finite())
+    return _scan(spec, [column]).select(
+        finite.min().alias("min"), finite.max().alias("max")
+    )
+
+
 def _overview(
     spec: ScatterSpec, roles: dict[str, str | None], used: list[str]
-) -> tuple[tuple[float, float], tuple[float, float], dict[str, list]]:
-    """Return the padded data ranges and the levels of each role, in one pass."""
-    x = pl.col(spec.x).cast(pl.Float64)
-    y = pl.col(spec.y).cast(pl.Float64)
+) -> tuple[list[tuple[float, float]], list[tuple[float, float]], dict[str, list]]:
+    """Return the padded data range of each axis column and the levels of each role, in one pass."""
+    numeric = list(dict.fromkeys([*spec.x, *spec.y]))
     # Levels and ranges come from the unfiltered scan: a row filter on the
     # same pass made the streaming engine peak at about 6.5GB on 100M rows,
-    # against about 1.1GB without it.
+    # against about 1.1GB without it. The range of an axis column covers all
+    # its rows, so that all its panels share one axis.
     found = pl.collect_all(
         [
-            _scan(spec, [spec.x, spec.y]).select(
-                x.filter(x.is_finite()).min().alias("x_min"),
-                x.filter(x.is_finite()).max().alias("x_max"),
-                y.filter(y.is_finite()).min().alias("y_min"),
-                y.filter(y.is_finite()).max().alias("y_max"),
-            ),
+            *[_range_query(spec, c) for c in numeric],
             *[_scan(spec, [c]).group_by(pl.col(c).cast(pl.String)).len() for c in used],
         ],
         engine="streaming",
     )
-    row = found[0].row(0, named=True)
-    x_range = _padded(row["x_min"], row["x_max"])
-    y_range = _padded(row["y_min"], row["y_max"])
+    ranges = {c: _padded(*f.row(0)) for c, f in zip(numeric, found, strict=False)}
+    x_ranges = [ranges[c] for c in spec.x]
+    y_ranges = [ranges[c] for c in spec.y]
     column_levels = {
         c: sorted(f[c].drop_nulls().to_list())
-        for c, f in zip(used, found[1:], strict=True)
+        for c, f in zip(used, found[len(numeric) :], strict=True)
     }
     many = {c: len(v) for c, v in column_levels.items() if len(v) > MAX_LEVELS}
     if many:
@@ -134,7 +143,7 @@ def _overview(
         role: (column_levels[c] if c is not None else [None])
         for role, c in roles.items()
     }
-    return x_range, y_range, levels
+    return x_ranges, y_ranges, levels
 
 
 def aggregate(
@@ -142,9 +151,14 @@ def aggregate(
 ) -> Aggregation:
     """Aggregate a scatter plot into pixel bins and pick their representative rows.
 
-    Rows with a null or non-finite x or y, or a null color, row or col, are
-    left out, and for a view, rows outside its ranges. The overview finds the
-    levels and the data ranges first; a view takes them from the spec.
+    Each pair of an x and a y column is a panel of each facet cell
+    (`ddviz.layout.AxisGrid`); a row is in the panels of the pairs whose x
+    and y it has. The pairs are aggregated one after another in this
+    process. A panel leaves out
+    rows with a null or non-finite x or y, and for a view, rows outside the
+    ranges of its columns; every panel leaves out rows with a null color,
+    row or col. The overview finds the levels and the data ranges first; a
+    view takes them from the spec.
 
     Parameters
     ----------
@@ -165,52 +179,68 @@ def aggregate(
     """
     roles = {"color": spec.color, "row": spec.row, "col": spec.col}
     used = list(dict.fromkeys(c for c in roles.values() if c is not None))
-    x = pl.col(spec.x).cast(pl.Float64)
-    y = pl.col(spec.y).cast(pl.Float64)
 
     if spec.view is not None:
-        x_range = (spec.view.x_range[0], spec.view.x_range[1])
-        y_range = (spec.view.y_range[0], spec.view.y_range[1])
+        x_ranges = [(lo, hi) for lo, hi in spec.view.x_ranges]
+        y_ranges = [(lo, hi) for lo, hi in spec.view.y_ranges]
         levels = spec.view.levels
     else:
         progress("levels")
-        x_range, y_range, levels = _overview(spec, roles, used)
+        x_ranges, y_ranges, levels = _overview(spec, roles, used)
 
-    layout = grid_layout(
-        spec.width, spec.height, len(levels["row"]), len(levels["col"])
+    axes = AxisGrid(
+        nrow=len(levels["row"]),
+        ncol=len(levels["col"]),
+        nx=len(spec.x),
+        ny=len(spec.y),
     )
+    layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols, *axes.gaps)
     grid = BinGrid(
         n_panels=layout.nrow * layout.ncol,
         n_series=len(levels["color"]),
         width=layout.panel_width,
         height=layout.panel_height,
     )
-    panel = _index_expr(spec.row, levels["row"]) * len(levels["col"]) + _index_expr(
-        spec.col, levels["col"]
-    )
-    key = grid.pack(
-        panel,
-        _index_expr(spec.color, levels["color"]),
-        _bin_expr(spec.y, y_range, grid.height),
-        _bin_expr(spec.x, x_range, grid.width),
-    )
+    row = _index_expr(spec.row, levels["row"])
+    col = _index_expr(spec.col, levels["col"])
+    series = _index_expr(spec.color, levels["color"])
+
+    def pair(xi: int, yj: int) -> pl.LazyFrame:
+        """Return the keys and row indices of the panels of one pair of axis columns."""
+        x_col, y_col = spec.x[xi], spec.y[yj]
+        x = pl.col(x_col).cast(pl.Float64)
+        y = pl.col(y_col).cast(pl.Float64)
+        key = grid.pack(
+            axes.panel(row, col, xi, yj),
+            series,
+            _bin_expr(y_col, y_ranges[yj], grid.height),
+            _bin_expr(x_col, x_ranges[xi], grid.width),
+        )
+        return (
+            _scan(spec, [x_col, y_col, *used], INDEX)
+            .filter(
+                x.is_finite(),
+                y.is_finite(),
+                x.is_between(*x_ranges[xi]),
+                y.is_between(*y_ranges[yj]),
+                *[pl.col(c).is_not_null() for c in used],
+            )
+            .select(key.alias(KEY), pl.col(INDEX))
+            .group_by(KEY)
+            .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
+        )
 
     progress("bins")
-    bins = (
-        _scan(spec, [spec.x, spec.y, *used], INDEX)
-        .filter(
-            x.is_finite(),
-            y.is_finite(),
-            x.is_between(*x_range),
-            y.is_between(*y_range),
-            *[pl.col(c).is_not_null() for c in used],
-        )
-        .select(key.alias(KEY), pl.col(INDEX))
-        .group_by(KEY)
-        .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
-        .sort(KEY)
-        .collect(engine="streaming")
-    )
+    # One query per pair, one after another: the pairs' panels differ, so
+    # their keys do too. One query over all pairs was about 10% faster but
+    # its peak grew with the pairs (9 pairs of 100M rows: 9.0GB against 4.0GB).
+    bins = pl.concat(
+        [
+            pair(xi, yj).collect(engine="streaming")
+            for yj in range(axes.ny)
+            for xi in range(axes.nx)
+        ]
+    ).sort(KEY)
 
     progress("rows")
     hover = list(dict.fromkeys(spec.hover))
@@ -224,8 +254,9 @@ def aggregate(
     return Aggregation(
         grid=grid,
         layout=layout,
-        x_range=x_range,
-        y_range=y_range,
+        axes=axes,
+        x_ranges=x_ranges,
+        y_ranges=y_ranges,
         levels=levels,
         bins=bins,
     )

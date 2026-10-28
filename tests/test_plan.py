@@ -8,24 +8,25 @@ from ddviz.encoding import Encoding
 from ddviz.plan import drawn_columns, scatter_spec, undrawn
 
 
-def test_scatter_draws_the_first_axes_and_leaves_out_the_rest() -> None:
-    """The n-th axes and overlay are not drawn, read or hovered."""
+def test_scatter_draws_every_axis_and_leaves_out_overlay() -> None:
+    """The n-th axes are drawn, read and hovered; overlay is not."""
     encoding = Encoding(
         x=("a", "a2"), y=("b", "b2", "b3"), color="g", overlay="o", col="h"
     )
     files = {c: f"{c}.parquet" for c in encoding.columns()}
     spec = scatter_spec(encoding, files, 400, 300, ["#000000"])
     assert (spec.x, spec.y, spec.color, spec.row, spec.col) == (
-        "a",
-        "b",
+        ["a", "a2"],
+        ["b", "b2", "b3"],
         "g",
         None,
         "h",
     )
-    assert spec.hover == ["a", "b", "g", "h"] == drawn_columns(encoding)
-    assert sorted(spec.files) == ["a", "b", "g", "h"]
+    assert spec.hover == ["a", "a2", "b", "b2", "b3", "g", "h"]
+    assert spec.hover == drawn_columns(encoding)
+    assert sorted(spec.files) == spec.hover
     assert spec.view is None
-    assert undrawn(encoding) == ["x2", "y2", "y3", "overlay"]
+    assert undrawn(encoding) == ["overlay"]
 
 
 def test_a_column_on_several_roles_is_read_once() -> None:
