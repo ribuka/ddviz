@@ -13,6 +13,14 @@ const INDEX_WIDTH = 90;
 const CHUNK = 50;
 const SCROLL_SETTLE_MS = 120;
 const MIN_HEIGHT = 80;
+// Heights of the drawer, lowest first: its header only, the height it was
+// given (by dragging its edge), and the whole plot area. ▲ and ▼ step
+// through them.
+const STATES = ["collapsed", "open", "maximized"];
+const TITLES = {
+  up: { collapsed: "表を開く", open: "描画領域いっぱいに広げる" },
+  down: { open: "表を畳む", maximized: "元の高さに戻す" },
+};
 
 function formatValue(value) {
   if (value === null || value === undefined) return "";
@@ -28,7 +36,9 @@ export class SelectionTable {
     this.scroll = root.querySelector(".table-scroll");
     this.inner = root.querySelector(".table-inner");
     this.grid = root.querySelector(".table-grid");
-    this.toggle = root.querySelector(".table-toggle");
+    this.up = root.querySelector(".table-up");
+    this.down = root.querySelector(".table-down");
+    this.state = "open";
     this.rows = 0;
     this.offset = 0;
     this.pageSize = 100;
@@ -47,7 +57,8 @@ export class SelectionTable {
     });
     root.querySelector(".table-prev").addEventListener("click", () => this.page(-1));
     root.querySelector(".table-next").addEventListener("click", () => this.page(1));
-    this.toggle.addEventListener("click", () => this.setCollapsed(!root.classList.contains("collapsed")));
+    this.up.addEventListener("click", () => this.step(1));
+    this.down.addEventListener("click", () => this.step(-1));
     this.attachResize(root.querySelector(".table-resize"));
   }
 
@@ -58,6 +69,9 @@ export class SelectionTable {
       handle.setPointerCapture(event.pointerId);
       const startY = event.clientY;
       const startHeight = this.root.offsetHeight;
+      // Dragging the edge of a maximized table sizes it from there.
+      this.root.style.height = `${startHeight}px`;
+      this.setState("open");
       const limit = this.root.parentElement.clientHeight;
       const move = (e) => {
         const height = Math.min(Math.max(startHeight + startY - e.clientY, MIN_HEIGHT), limit);
@@ -74,11 +88,24 @@ export class SelectionTable {
     });
   }
 
-  setCollapsed(collapsed) {
-    this.root.classList.toggle("collapsed", collapsed);
-    this.toggle.textContent = collapsed ? "▲" : "▼";
-    this.toggle.title = collapsed ? "表を開く" : "表を畳む";
-    if (!collapsed) this.fetchInView();
+  // Raises (1) or lowers (-1) the drawer by one of `STATES`.
+  step(by) {
+    const i = STATES.indexOf(this.state) + by;
+    if (i >= 0 && i < STATES.length) this.setState(STATES[i]);
+  }
+
+  // The drawer covers more or less of the plot area, which keeps its size,
+  // so nothing is aggregated again.
+  setState(state) {
+    this.state = state;
+    this.root.classList.toggle("collapsed", state === "collapsed");
+    this.root.classList.toggle("maximized", state === "maximized");
+    this.up.disabled = state === "maximized";
+    this.down.disabled = state === "collapsed";
+    this.up.title = TITLES.up[state] ?? "";
+    this.down.title = TITLES.down[state] ?? "";
+    this.render();
+    this.fetchInView();
   }
 
   // Shows a new selection of `rows` rows from its first page; null hides the table.
