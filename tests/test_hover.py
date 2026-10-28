@@ -9,12 +9,12 @@ import numpy as np
 import pytest
 
 from ddviz.hover import HOVER_DISTANCE, HoverIndex
-from ddviz.spec import PlotSpec
+from ddviz.scatter import ScatterSpec
 from ddviz.task import run_plot
 
 
 @pytest.fixture
-def index(tmp_path: Path, scatter_spec: PlotSpec) -> Iterator[HoverIndex]:
+def index(tmp_path: Path, scatter_spec: ScatterSpec) -> Iterator[HoverIndex]:
     """Run the plot task on the small dataset and open its hover files."""
     out = tmp_path / "task"
     out.mkdir()

@@ -15,7 +15,7 @@ from ddviz.manifest import IMAGES, write_manifest
 from ddviz.palette import series_color
 from ddviz.png import encode_mask
 from ddviz.raster import atlas, masks, occupancy
-from ddviz.spec import PlotSpec
+from ddviz.scatter import ScatterSpec
 
 Emit = Callable[[dict], None]
 
@@ -54,12 +54,12 @@ def run_schema(path: str, out: Path, emit: Emit) -> None:
     write_manifest(out, {"kind": "schema", "columns": columns})
 
 
-def run_plot(spec: PlotSpec, out: Path, emit: Emit) -> None:
+def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     """Aggregate a scatter plot and write its series images and hover files.
 
     Parameters
     ----------
-    spec : PlotSpec
+    spec : ScatterSpec
         What to plot.
     out : pathlib.Path
         Directory to write the result into.
@@ -143,6 +143,6 @@ def run_task(task: dict, emit: Emit) -> None:
     elif task["kind"] == "convert":
         convert_columns(task["path"], task["files"], emit)
     elif task["kind"] == "plot":
-        run_plot(PlotSpec.from_dict(task["spec"]), out, emit)
+        run_plot(ScatterSpec.from_dict(task["spec"]), out, emit)
     else:
         raise ValueError(f"unknown task kind: {task['kind']}")

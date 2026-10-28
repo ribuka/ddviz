@@ -28,27 +28,25 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ddviz.cache import ColumnCache, evict
+from ddviz.encoding import Encoding
 from ddviz.figure import build_figure
 from ddviz.hover import HoverIndex
 from ddviz.jobs import WorkerJob, physical_memory
 from ddviz.layout import grid_layout
 from ddviz.manifest import IMAGES, read_manifest
 from ddviz.palette import DEFAULT_COLORS
+from ddviz.plan import drawn_columns, scatter_spec, undrawn
 from ddviz.runner import WorkerPool
+from ddviz.scatter import ScatterSpec
 from ddviz.settings import Settings
-from ddviz.spec import PlotSpec
 
 STATIC = Path(__file__).parent / "static"
 
 
 class PlotRequest(BaseModel):
-    """Body of ``POST /api/plot``."""
+    """Body of ``POST /api/plot``: the graph (`ddviz.encoding.Encoding.to_dict`) and the plot area size."""
 
-    x: str
-    y: str
-    color: str | None = None
-    row: str | None = None
-    col: str | None = None
+    encoding: dict
     width: int
     height: int
 
@@ -223,7 +221,7 @@ def create_app(
             index.close()
             shutil.rmtree(index.out, ignore_errors=True)
 
-    async def run_plot(spec: PlotSpec) -> tuple[HoverIndex | None, dict]:
+    async def run_plot(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
         """Run a plot task; return its opened result, or None when a newer task killed it."""
         started = time.perf_counter()
         task_id, end = await run({"kind": "plot", "spec": spec.to_dict()})
@@ -245,26 +243,29 @@ def create_app(
 
     @app.post("/api/plot")
     async def plot(request: PlotRequest) -> JSONResponse:
-        names = [c["name"] for c in (await schema())]
-        hover = [
-            c
-            for c in (request.x, request.y, request.color, request.row, request.col)
-            if c is not None
-        ]
-        missing = [c for c in hover if c not in names]
+        try:
+            encoding = Encoding.from_dict(request.encoding)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        names = {c["name"] for c in (await schema())}
+        missing = [c for c in encoding.columns() if c not in names]
         if missing:
             raise HTTPException(400, f"unknown columns: {missing}")
+        if not encoding.x or not encoding.y:
+            raise HTTPException(400, "x and y need a column")
         # The page refuses edits while converting; a plot now would kill the conversion.
         if state.converting:
             raise HTTPException(409, "converting")
         started = time.perf_counter()
-        await convert(hover)
+        columns = drawn_columns(encoding)
+        await convert(columns)
         convert_seconds = time.perf_counter() - started
-        spec = PlotSpec(
-            files={c: str(state.cache.file(c)) for c in hover},
-            hover=hover,
-            colors=DEFAULT_COLORS,
-            **request.model_dump(),
+        spec = scatter_spec(
+            encoding,
+            {c: str(state.cache.file(c)) for c in columns},
+            request.width,
+            request.height,
+            DEFAULT_COLORS,
         )
         state.plot_id += 1
         index, timing = await run_plot(spec)
@@ -276,23 +277,33 @@ def create_app(
         state.overview, state.view = index, None
         for o in old:
             drop(o)
-        return figure(index, {**timing, "convert_seconds": convert_seconds})
+        return figure(
+            index,
+            {
+                **timing,
+                "convert_seconds": convert_seconds,
+                "encoding": encoding.to_dict(),
+                "undrawn": undrawn(encoding),
+            },
+        )
 
-    def again(request: SizeRequest, x_range: list, y_range: list) -> PlotSpec:
+    def again(request: SizeRequest, x_range: list, y_range: list) -> ScatterSpec:
         """Return the overview's spec for other ranges or another size, reusing its levels."""
         overview = state.overview.manifest
-        return PlotSpec.from_dict(
+        return ScatterSpec.from_dict(
             {
                 **overview["spec"],
                 "width": request.width,
                 "height": request.height,
-                "x_range": x_range,
-                "y_range": y_range,
-                "levels": overview["levels"],
+                "view": {
+                    "x_range": x_range,
+                    "y_range": y_range,
+                    "levels": overview["levels"],
+                },
             }
         )
 
-    def unchanged(index: HoverIndex | None, spec: PlotSpec) -> bool:
+    def unchanged(index: HoverIndex | None, spec: ScatterSpec) -> bool:
         """Whether a result already has the panels and ranges of `spec`.
 
         A new size often keeps the layout: a grid that scrolls in both
@@ -305,11 +316,11 @@ def create_app(
         layout = grid_layout(spec.width, spec.height, old["nrow"], old["ncol"])
         return (
             asdict(layout) == old
-            and list(manifest["x_range"]) == spec.x_range
-            and list(manifest["y_range"]) == spec.y_range
+            and list(manifest["x_range"]) == spec.view.x_range
+            and list(manifest["y_range"]) == spec.view.y_range
         )
 
-    async def run_again(spec: PlotSpec) -> tuple[HoverIndex | None, dict]:
+    async def run_again(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
         """Run a plot task of the current plot; None when it was cancelled or the plot changed."""
         plot_id = state.plot_id
         index, timing = await run_plot(spec)

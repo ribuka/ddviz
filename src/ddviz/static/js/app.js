@@ -173,11 +173,11 @@ function sameSize(a, b) {
 }
 
 async function plot() {
-  const body = Object.fromEntries(
-    ["x", "y", "color", "row", "col"].map((role) => [role, form.elements[role].value || null]),
-  );
+  // The graph's roles (`ddviz.encoding.Encoding`); the axes hold lists of columns.
+  const value = (role) => form.elements[role].value || null;
+  const encoding = { x: [value("x")], y: [value("y")], color: value("color"), row: value("row"), col: value("col") };
   const size = stageSize();
-  Object.assign(body, size);
+  const body = { encoding, ...size };
   requestedSize = size;
   status.textContent = "集約中…";
   const mine = ++generation;
