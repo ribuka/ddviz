@@ -3,6 +3,11 @@
 // legend click redraws the canvas instead of the figure.
 import { INACTIVE_OPACITY } from "./legend.js";
 
+// Opacity of every row while rows are selected; the selected rows are drawn
+// again at full opacity. Above the legend's inactive opacity, so that a
+// faded series still differs from an inactive one.
+const SELECTION_DIM = 0.25;
+
 function axisKey(id) {
   return id.replace(/^([xy])/, "$1axis");
 }
@@ -36,6 +41,10 @@ export class ImageLayers {
     this.canvas.className = "image-layers";
     this.meta = null;
     this.bitmaps = null;
+    // The selection: `{box}` (the box drawn on a panel of `meta`) until its
+    // layer comes, then `{meta, bitmaps}` (the layer and the result it was
+    // aggregated for), or null.
+    this.selection = null;
     // A new device pixel ratio (a window moved to another screen, or another
     // zoom) changes no axis, so plotly sends no event.
     const watchRatio = () => {
@@ -68,6 +77,12 @@ export class ImageLayers {
     this.draw();
   }
 
+  // Shows a selection (see the constructor), or none.
+  setSelection(selection) {
+    this.selection = selection;
+    this.draw();
+  }
+
   draw() {
     const full = this.gd._fullLayout;
     const svg = this.gd.querySelector(".main-svg");
@@ -85,15 +100,33 @@ export class ImageLayers {
     const ctx = this.canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, full.width, full.height);
-    const { meta, bitmaps } = this;
+    const { meta, bitmaps, selection } = this;
     if (!meta || !bitmaps) return;
     ctx.imageSmoothingEnabled = false;
-    const nSeries = meta.series.length;
     const inactive = this.legend.inactive;
+    const alpha = (s) => (inactive.has(s) ? INACTIVE_OPACITY : 1);
+    // With a selection every row fades, and the selected rows are drawn
+    // again on top, in every panel.
+    const dim = selection ? SELECTION_DIM : 1;
+    this.drawLayer(ctx, full, dpr, meta, bitmaps, (s) => alpha(s) * dim);
+    if (selection?.bitmaps) {
+      this.drawLayer(ctx, full, dpr, selection.meta, selection.bitmaps, alpha);
+    } else if (selection?.box) {
+      // Until the selected rows' layer comes, the box shows them in its panel.
+      this.drawLayer(ctx, full, dpr, meta, bitmaps, alpha, selection.box);
+    }
+  }
+
+  // Draws one layer: an image per series whose tiles are the panels that
+  // `meta` places. With `box` ({panel, x_range, y_range}), only that panel,
+  // clipped to the box.
+  drawLayer(ctx, full, dpr, meta, bitmaps, alpha, box = null) {
+    const nSeries = meta.series.length;
     // Bottom layer first: inactive series behind, later series above earlier ones.
     const order = this.legend.order(nSeries).reverse();
     const { width: w, height: h } = meta.grid;
     meta.panels.forEach((panel, p) => {
+      if (box && box.panel !== p) return;
       const xa = full[axisKey(panel.xaxis)];
       const ya = full[axisKey(panel.yaxis)];
       if (!xa || !ya) return;
@@ -107,6 +140,13 @@ export class ImageLayers {
       ctx.beginPath();
       ctx.rect(xa._offset, ya._offset, xa._length, ya._length);
       ctx.clip();
+      if (box) {
+        const bx = box.x_range.map((v) => xa._offset + xa.l2p(v));
+        const by = box.y_range.map((v) => ya._offset + ya.l2p(v));
+        ctx.beginPath();
+        ctx.rect(Math.min(...bx), Math.min(...by), Math.abs(bx[1] - bx[0]), Math.abs(by[1] - by[0]));
+        ctx.clip();
+      }
       const sx = (p % meta.ncol) * w;
       const sy = Math.floor(p / meta.ncol) * h;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -116,7 +156,7 @@ export class ImageLayers {
       for (const s of order) {
         const bitmap = bitmaps[s];
         if (!bitmap) continue;
-        ctx.globalAlpha = inactive.has(s) ? INACTIVE_OPACITY : 1;
+        ctx.globalAlpha = alpha(s);
         ctx.drawImage(bitmap, sx, sy, w, h, 0, 0, w, h);
       }
       ctx.restore();

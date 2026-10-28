@@ -10,7 +10,7 @@ import polars as pl
 import pytest
 
 from ddviz.aggregate import COUNT, INDEX, KEY, aggregate
-from ddviz.scatter import ScatterSpec, View
+from ddviz.scatter import ScatterSpec, Selection, View
 
 
 def test_aggregate_matches_brute_force(
@@ -209,3 +209,77 @@ def test_each_pair_of_axis_columns_is_a_panel(tmp_path: Path) -> None:
         lo, hi = view.view.x_ranges[xi]
         values = indexed[zoomed.bins.filter(pl.Series(panels == p))[INDEX].to_list()]
         assert values[spec.x[xi]].is_between(lo, hi).all()
+
+
+def test_selection_bins_the_selected_rows_in_every_panel(tmp_path: Path) -> None:
+    """A box on the x1 x y panel of facet p selects rows that every pair's panels highlight."""
+    rng = np.random.default_rng(2)
+    n = 3000
+    frame = pl.DataFrame(
+        {
+            "x1": rng.normal(0, 1, n),
+            "x2": rng.normal(10, 5, n),
+            "y": rng.normal(0, 1, n),
+            "color": rng.choice(["a", "b"], n),
+            "facet": rng.choice(["p", "q"], n),
+        }
+    ).with_columns(
+        pl.when(pl.int_range(n) % 3 == 0).then(None).otherwise(pl.col("x2")).alias("x2")
+    )
+    path = tmp_path / "sel.parquet"
+    frame.write_parquet(path)
+    spec = ScatterSpec(
+        files={c: str(path) for c in frame.columns},
+        x=["x1", "x2"],
+        y=["y"],
+        color="color",
+        row=None,
+        col="facet",
+        width=600,
+        height=400,
+        hover=list(frame.columns),
+    )
+    overview = aggregate(spec)
+    selected = replace(
+        spec,
+        view=View(
+            x_ranges=[list(r) for r in overview.x_ranges],
+            y_ranges=[list(r) for r in overview.y_ranges],
+            levels=overview.levels,
+        ),
+        selection=Selection(
+            x="x1", y="y", x_range=[-0.5, 1.0], y_range=[0.0, 2.0], col="p"
+        ),
+    )
+    agg = aggregate(selected, selection_only=True)
+    assert agg.bins is None
+    assert agg.grid == overview.grid
+
+    rows = frame.with_row_index(INDEX).filter(
+        pl.col("x1").is_between(-0.5, 1.0),
+        pl.col("y").is_between(0.0, 2.0),
+        pl.col("facet") == "p",
+    )
+    assert agg.selected_rows == rows.height
+    # The selected rows in every panel: the x2 panel shows those with an x2.
+    grid, axes = agg.grid, agg.axes
+    keys = []
+    for xi, x_col in enumerate(spec.x):
+        shown = rows.filter(pl.col(x_col).is_not_null())
+        (x0, x1), (y0, y1) = agg.x_ranges[xi], agg.y_ranges[0]
+        bx = np.clip(
+            np.floor((shown[x_col].to_numpy() - x0) * grid.width / (x1 - x0)),
+            0,
+            grid.width - 1,
+        ).astype(np.int64)
+        by = np.clip(
+            np.floor((shown["y"].to_numpy() - y0) * grid.height / (y1 - y0)),
+            0,
+            grid.height - 1,
+        ).astype(np.int64)
+        series = shown["color"].replace_strict({"a": 0, "b": 1}).to_numpy()
+        keys.append(grid.pack(axes.panel(0, 0, xi, 0), series, by, bx))
+    expected = np.unique(np.concatenate(keys))
+    assert agg.selected[KEY].to_list() == expected.tolist()
+    panels, *_ = grid.unpack(agg.selected[KEY].to_numpy())
+    assert set(panels.tolist()) == {axes.panel(0, 0, 0, 0), axes.panel(0, 0, 1, 0)}
