@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.162.0",
     "numpy>=2.5.4",
     "polars>=1.44.2",
+    "pyarrow>=26.0.0",
     "pywebview>=6.2.1",
     "uvicorn>=0.54.0",
 ]

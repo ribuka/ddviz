@@ -67,6 +67,27 @@ def run_schema(path: str, out: Path, emit: Emit) -> None:
     write_manifest(out, {"kind": "schema", "columns": columns})
 
 
+def run_nonnull(path: str, names: list[str], out: Path, emit: Emit) -> None:
+    """Write the share of non-null values of each column (`ddviz.nonnull`).
+
+    Parameters
+    ----------
+    path : str
+        Parquet file.
+    names : list of str
+        Column names, in schema order.
+    out : pathlib.Path
+        Directory to write the result into.
+    emit : callable
+        Receives progress messages.
+    """
+    # Imported here, so that standby workers do not load pyarrow.
+    from ddviz.nonnull import nonnull_shares
+
+    shares = nonnull_shares(path, names)
+    write_manifest(out, {"kind": "nonnull", "shares": shares})
+
+
 def _write_images(
     out: Path, bin_masks: np.ndarray, ncol: int, colors: list[str]
 ) -> list[list[int] | None]:
@@ -306,9 +327,10 @@ def run_task(task: dict, emit: Emit) -> None:
     Parameters
     ----------
     task : dict
-        ``{"kind": "schema" | "convert" | "plot" | "selection" | "table" |
-        "summary",
+        ``{"kind": "schema" | "nonnull" | "convert" | "plot" | "selection" |
+        "table" | "summary",
         "out": directory, ...}``; ``"path"`` for a schema task, ``"path"``
+        and ``"names"`` (the columns in schema order) for a nonnull task, ``"path"``
         and ``"files"`` (the file to write for each column) for a convert
         task, ``"spec"`` for a plot or selection task, and ``"spec"``,
         ``"offset"``, ``"limit"`` and ``"files"`` (the file to read each
@@ -326,6 +348,8 @@ def run_task(task: dict, emit: Emit) -> None:
     out.mkdir(parents=True, exist_ok=True)
     if task["kind"] == "schema":
         run_schema(task["path"], out, emit)
+    elif task["kind"] == "nonnull":
+        run_nonnull(task["path"], task["names"], out, emit)
     elif task["kind"] == "convert":
         convert_columns(task["path"], task["files"], emit)
     elif task["kind"] == "plot":

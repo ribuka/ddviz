@@ -354,6 +354,41 @@ button {
   background: #e3e3e3;
 }
 
+.column-shares {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 0 8px 4px;
+  font-size: 12px;
+}
+
+.column-shares label {
+  white-space: nowrap;
+}
+
+.column-min-share {
+  width: 44px;
+  font: inherit;
+}
+
+.column-order {
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #fff;
+  padding: 0 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.column-order.on {
+  background: #e3e3e3;
+}
+
+.column-shares :disabled {
+  cursor: default;
+}
+
 .column-count {
   padding: 0 8px 4px;
   color: #666;
@@ -397,8 +432,27 @@ button {
 }
 
 .column-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Share of non-null values: a number over a bar as long as the share. */
+.column-share {
+  flex: none;
+  width: 42px;
+  border-radius: 2px;
+  --share: 0%;
+  background: linear-gradient(to right, #cfe0fa var(--share), transparent var(--share));
+  color: #555;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.column-share.unknown {
+  color: #aaa;
 }
 
 /* ---- graph builder: zones around the plot area ---- */
