@@ -5,7 +5,14 @@ from __future__ import annotations
 import math
 
 from ddviz.encoding import Encoding
-from ddviz.scatter import Filter, ScatterSpec
+from ddviz.scatter import Binning, Filter, ScatterSpec
+
+# A numeric column on Group X or Group Y is cut into this many intervals of
+# about the same number of rows, unless it has at most this many values,
+# each then a level of its own.
+FACET_BINS = 5
+# Numbers of intervals a numeric color column can be cut into.
+COLOR_BINS = (2, 3, 5, 10)
 
 
 def undrawn(encoding: Encoding) -> list[str]:
@@ -105,6 +112,8 @@ def scatter_spec(
     height: int,
     colors: list[str],
     filters: list[Filter] | None = None,
+    numeric: dict[str, bool] | None = None,
+    color_bins: Binning | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -125,6 +134,12 @@ def scatter_spec(
         Series colors as ``#rrggbb``.
     filters : list of Filter, optional
         Conditions of the local filter.
+    numeric : dict of str to bool, optional
+        Whether each column is numeric. A numeric row or col column is cut
+        into `FACET_BINS` intervals (`ddviz.cuts`); a numeric color column
+        is a gradient, or cut by `color_bins`.
+    color_bins : Binning, optional
+        How to cut a numeric color column; None draws it as a gradient.
 
     Returns
     -------
@@ -140,6 +155,16 @@ def scatter_spec(
         raise ValueError("x and y need a column")
     hover = drawn_columns(encoding)
     filters = list(filters or [])
+    numeric = numeric or {}
+    binned = {
+        role: Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
+        for role in ("row", "col")
+        if numeric.get(getattr(encoding, role))
+    }
+    gradient = bool(numeric.get(encoding.color))
+    if gradient and color_bins is not None:
+        binned["color"] = color_bins
+        gradient = False
     read = dict.fromkeys([*hover, *(f.column for f in filters)])
     return ScatterSpec(
         files={c: files[c] for c in read},
@@ -152,5 +177,39 @@ def scatter_spec(
         height=height,
         hover=hover,
         colors=colors,
+        binned=binned,
+        gradient=gradient,
         filters=filters,
     )
+
+
+def parse_color_bins(raw: dict | None) -> Binning | None:
+    """Return how the page asks to cut a numeric color column, checked.
+
+    Parameters
+    ----------
+    raw : dict or None
+        ``{"n": int, "by": "rows" | "values"}``, or None for a gradient.
+
+    Returns
+    -------
+    Binning or None
+        The binning.
+
+    Raises
+    ------
+    ValueError
+        When `raw` has another form, or `n` is not one of `COLOR_BINS`.
+    """
+    if raw is None:
+        return None
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != {"n", "by"}
+        or raw["n"] not in COLOR_BINS
+        or raw["by"] not in ("rows", "values")
+    ):
+        raise ValueError(
+            f"color bins are n in {COLOR_BINS} and by rows or values: {raw}"
+        )
+    return Binning(raw["n"], raw["by"])

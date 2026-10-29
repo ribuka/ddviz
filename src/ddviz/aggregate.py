@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import polars as pl
 
+from ddviz.cuts import cut_index, cut_labels, find_cuts, in_level
 from ddviz.keys import BinGrid
 from ddviz.layout import AxisGrid, GridLayout, grid_layout
 from ddviz.rowfilter import filter_columns, filter_conditions
@@ -49,6 +50,12 @@ class Aggregation:
     all_levels : dict
         Levels of the roles over every row, the local filter aside
         (`ddviz.scatter.View.levels`).
+    cuts : dict
+        Cuts of each role in the spec's ``binned`` (`ddviz.cuts`).
+    color_range : tuple of float or None
+        For a gradient, the finite minimum and maximum of the color column
+        over every row; the bins then also hold the color of their
+        representative row, and so do the selected bins.
     bins : polars.DataFrame or None
         One row per non-empty bin, sorted by `KEY`: the key, the number of
         rows in the bin (`COUNT`), the representative row's index (`INDEX`,
@@ -72,6 +79,8 @@ class Aggregation:
     bins: pl.DataFrame | None
     selected: pl.DataFrame | None = None
     selected_rows: int | None = None
+    cuts: dict[str, dict] = field(default_factory=dict)
+    color_range: tuple[float, float] | None = None
 
 
 def selection_filter(spec: ScatterSpec) -> list[pl.Expr]:
@@ -79,12 +88,13 @@ def selection_filter(spec: ScatterSpec) -> list[pl.Expr]:
 
     A row is selected when it is drawn in the panel the box was drawn on:
     its facet levels are the panel's, its x and y are in the box, its
-    color, row and col are not null, and it passes the local filter.
+    color, row and col are valid (`_valid`), and it passes the local filter.
 
     Parameters
     ----------
     spec : ScatterSpec
-        A spec whose ``selection`` is set.
+        A spec whose ``selection`` is set, with a view holding the levels
+        and cuts of the drawn result.
 
     Returns
     -------
@@ -99,12 +109,39 @@ def selection_filter(spec: ScatterSpec) -> list[pl.Expr]:
         y.is_finite(),
         x.is_between(*selection.x_range),
         y.is_between(*selection.y_range),
-        *[pl.col(c).is_not_null() for c in (spec.color, spec.row, spec.col) if c],
+        *_valid(spec),
     ]
-    for column, level in ((spec.row, selection.row), (spec.col, selection.col)):
-        if column is not None and level is not None:
+    for role, level in (("row", selection.row), ("col", selection.col)):
+        column = getattr(spec, role)
+        if column is None or level is None:
+            continue
+        if role in spec.binned:
+            index = spec.view.levels[role].index(level)
+            conditions.append(in_level(column, spec.view.cuts[role], index))
+        else:
             conditions.append(pl.col(column).cast(pl.String) == level)
     return conditions + filter_conditions(spec.filters)
+
+
+def _numeric_roles(spec: ScatterSpec) -> set[str]:
+    """Return the roles whose column is read as numbers: the binned ones and a gradient's color."""
+    return set(spec.binned) | ({"color"} if spec.gradient else set())
+
+
+def _valid(spec: ScatterSpec) -> list[pl.Expr]:
+    """Return the conditions a drawn row meets on its color, row and col columns.
+
+    A categorical column must not be null; a numeric one (`_numeric_roles`)
+    must be finite.
+    """
+    numeric = {getattr(spec, role) for role in _numeric_roles(spec)}
+    columns = dict.fromkeys(c for c in (spec.color, spec.row, spec.col) if c)
+    return [
+        pl.col(c).cast(pl.Float64).is_finite()
+        if c in numeric
+        else pl.col(c).is_not_null()
+        for c in columns
+    ]
 
 
 def selection_columns(spec: ScatterSpec) -> list[str]:
@@ -177,11 +214,31 @@ def _range_query(spec: ScatterSpec, column: str) -> pl.LazyFrame:
     )
 
 
-def _overview(
-    spec: ScatterSpec, roles: dict[str, str | None], used: list[str]
-) -> tuple[list[tuple[float, float]], list[tuple[float, float]], dict[str, list]]:
-    """Return the padded data range of each axis column and the levels of each role, in one pass."""
+@dataclass(frozen=True)
+class _Overview:
+    """What the overview finds over every row (`_overview`)."""
+
+    x_ranges: list[tuple[float, float]]
+    y_ranges: list[tuple[float, float]]
+    levels: dict[str, list]
+    cuts: dict[str, dict]
+    color_range: tuple[float, float] | None
+
+
+def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
+    """Return the padded data range of each axis column and the levels of each role.
+
+    The ranges and the levels of the categorical roles come in one pass,
+    the cuts of each binned role in passes of their own
+    (`ddviz.cuts.find_cuts`).
+    """
     numeric = list(dict.fromkeys([*spec.x, *spec.y]))
+    used = list(
+        dict.fromkeys(
+            c for r, c in roles.items() if c and r not in _numeric_roles(spec)
+        )
+    )
+    gradient = [spec.color] if spec.gradient else []
     # Levels and ranges come from the unfiltered scan: a row filter on the
     # same pass made the streaming engine peak at about 6.5GB on 100M rows,
     # against about 1.1GB without it. The range of an axis column covers all
@@ -190,9 +247,14 @@ def _overview(
         [
             *[_range_query(spec, c) for c in numeric],
             *[_scan(spec, [c]).group_by(pl.col(c).cast(pl.String)).len() for c in used],
+            *[_range_query(spec, c) for c in gradient],
         ],
         engine="streaming",
     )
+    color_range = None
+    if gradient:
+        lo, hi = found.pop().row(0)
+        color_range = (0.0, 1.0) if lo is None else (lo, hi)
     ranges = {c: _padded(*f.row(0)) for c, f in zip(numeric, found, strict=False)}
     x_ranges = [ranges[c] for c in spec.x]
     y_ranges = [ranges[c] for c in spec.y]
@@ -206,40 +268,63 @@ def _overview(
             f"too many levels (at most {MAX_LEVELS}): "
             + ", ".join(f"{c} has {n}" for c, n in many.items())
         )
-    levels = {
-        role: (column_levels[c] if c is not None else [None])
-        for role, c in roles.items()
+    cuts = {
+        role: find_cuts(_scan(spec, [roles[role]]), roles[role], binning)
+        for role, binning in spec.binned.items()
     }
-    return x_ranges, y_ranges, levels
+    levels = {}
+    for role, c in roles.items():
+        if c is None or (role == "color" and spec.gradient):
+            levels[role] = [None]
+        elif role in cuts:
+            levels[role] = cut_labels(cuts[role])
+        else:
+            levels[role] = column_levels[c]
+    return _Overview(x_ranges, y_ranges, levels, cuts, color_range)
 
 
-def _facet_levels(spec: ScatterSpec, levels: dict[str, list]) -> dict[str, list]:
+def _facet_levels(
+    spec: ScatterSpec, levels: dict[str, list], cuts: dict[str, dict]
+) -> dict[str, list]:
     """Return `levels` with the row and col levels left without rows by the local filter dropped.
 
     Reads only the facet columns and the filter's columns, in a pass of its
     own: on 100M rows it took at most 0.55s, peaking under 2.0GB.
     A filter that keeps no rows keeps every panel.
     """
-    facets = [c for c in dict.fromkeys((spec.row, spec.col)) if c is not None]
+    facets = {r: getattr(spec, r) for r in ("row", "col") if getattr(spec, r)}
     if not spec.filters or not facets:
         return levels
+    numeric = {c for r, c in facets.items() if r in spec.binned}
+    keys = [
+        (
+            cut_index(c, cuts[r]) if r in spec.binned else pl.col(c).cast(pl.String)
+        ).alias(r)
+        for r, c in facets.items()
+    ]
     found = (
-        _scan(spec, [*facets, *filter_columns(spec.filters)])
+        _scan(spec, [*facets.values(), *filter_columns(spec.filters)])
         .filter(
-            *[pl.col(c).is_not_null() for c in facets],
+            *[
+                pl.col(c).cast(pl.Float64).is_finite()
+                if c in numeric
+                else pl.col(c).is_not_null()
+                for c in dict.fromkeys(facets.values())
+            ],
             *filter_conditions(spec.filters),
         )
-        .group_by([pl.col(c).cast(pl.String) for c in facets])
+        .group_by(keys)
         .len()
         .collect(engine="streaming")
     )
     if found.height == 0:
         return levels
     kept = dict(levels)
-    for role, column in (("row", spec.row), ("col", spec.col)):
-        if column is not None:
-            present = set(found[column].to_list())
-            kept[role] = [v for v in levels[role] if v in present]
+    for role in facets:
+        present = set(found[role].to_list())
+        if role in spec.binned:
+            present = {levels[role][i] for i in present}
+        kept[role] = [v for v in levels[role] if v in present]
     return kept
 
 
@@ -294,14 +379,20 @@ def aggregate(
         x_ranges = [(lo, hi) for lo, hi in spec.view.x_ranges]
         y_ranges = [(lo, hi) for lo, hi in spec.view.y_ranges]
         all_levels = spec.view.levels
+        cuts = spec.view.cuts
+        color_range = spec.view.color_range
+        if color_range is not None:
+            color_range = (color_range[0], color_range[1])
     else:
         progress("levels")
-        x_ranges, y_ranges, all_levels = _overview(spec, roles, used)
+        found = _overview(spec, roles)
+        x_ranges, y_ranges = found.x_ranges, found.y_ranges
+        all_levels, cuts, color_range = found.levels, found.cuts, found.color_range
     if spec.view is not None and spec.view.facets is not None:
         levels = {**all_levels, **spec.view.facets}
     else:
         progress("facets")
-        levels = _facet_levels(spec, all_levels)
+        levels = _facet_levels(spec, all_levels, cuts)
 
     axes = AxisGrid(
         nrow=len(levels["row"]),
@@ -316,9 +407,18 @@ def aggregate(
         width=layout.panel_width,
         height=layout.panel_height,
     )
-    row = _index_expr(spec.row, levels["row"])
-    col = _index_expr(spec.col, levels["col"])
-    series = _index_expr(spec.color, levels["color"])
+
+    def index(role: str) -> pl.Expr:
+        """Return the index of each row's level of a role among the drawn levels."""
+        if role in spec.binned:
+            kept = [all_levels[role].index(v) for v in levels[role]]
+            return cut_index(roles[role], cuts[role], kept)
+        if role == "color" and spec.gradient:
+            return pl.lit(0, pl.Int64)
+        return _index_expr(roles[role], levels[role])
+
+    row, col, series = index("row"), index("col"), index("color")
+    valid = _valid(spec)
 
     def pair(
         xi: int, yj: int, extra: list[pl.Expr], extra_columns: list[str]
@@ -340,7 +440,7 @@ def aggregate(
                 y.is_finite(),
                 x.is_between(*x_ranges[xi]),
                 y.is_between(*y_ranges[yj]),
-                *[pl.col(c).is_not_null() for c in used],
+                *valid,
                 *extra,
             )
             .select(key.alias(KEY), pl.col(INDEX))
@@ -378,7 +478,20 @@ def aggregate(
         progress("selection")
         conditions = selection_filter(spec)
         columns = selection_columns(spec)
-        selected = all_pairs(conditions, columns).select(KEY, COUNT)
+        selected = all_pairs(conditions, columns)
+        if spec.gradient:
+            # The top selected row of each bin colors it, as in the result.
+            colors = (
+                _scan(spec, [spec.color], INDEX)
+                .join(selected.lazy().select(INDEX), on=INDEX, how="semi")
+                .collect(engine="streaming")
+            )
+            selected = selected.join(
+                colors, on=INDEX, how="left", maintain_order="left"
+            )
+            selected = selected.select(KEY, COUNT, spec.color)
+        else:
+            selected = selected.select(KEY, COUNT)
         selected_rows = (
             _scan(spec, columns)
             .filter(*conditions)
@@ -397,4 +510,6 @@ def aggregate(
         bins=bins,
         selected=selected,
         selected_rows=selected_rows,
+        cuts=cuts,
+        color_range=color_range,
     )

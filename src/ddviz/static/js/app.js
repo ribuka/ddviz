@@ -7,6 +7,7 @@ import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
+import { openScaleMenu } from "./scalemenu.js";
 import { SelectionTable } from "./table.js";
 
 const status = document.getElementById("status");
@@ -69,7 +70,11 @@ events.onmessage = (event) => {
 // and the meta of the result whose images are drawn.
 let overview = null;
 let current = null;
-const legend = new Legend(document.getElementById("legend"), () => layers.draw());
+const legend = new Legend(
+  document.getElementById("legend"),
+  () => layers.draw(),
+  (event) => openScaleMenu(event, colorBins, setColorBins, recolor),
+);
 const layers = new ImageLayers(gd, legend);
 const empty = document.getElementById("empty");
 // Decoded images on the canvas; freed when replaced, unless the overview's.
@@ -85,6 +90,11 @@ let filters = [];
 function filtersKey(list) {
   return JSON.stringify(list.map((f) => [f.column, f.range ?? null, f.levels ?? null]));
 }
+// How a numeric color column is cut into intervals ({n, by}), or null for a
+// gradient (`ddviz.plan.parse_color_bins`); back to null for another color
+// column. The graph last plotted, to plot again with another cutting.
+let colorBins = null;
+let plottedEncoding = null;
 // Generation of the plot request in flight, or 0. A new size waits for it:
 // a request for the old plot would kill its aggregation (or its conversion).
 let plotting = 0;
@@ -181,7 +191,8 @@ const CONVERT_RETRY_MS = 300;
 async function plot(encoding) {
   clearSelection(false);
   const size = stageSize();
-  const body = { encoding, ...size, filters };
+  plottedEncoding = encoding;
+  const body = { encoding, ...size, filters, color_bins: colorBins };
   requestedSize = size;
   status.textContent = "集約中…";
   const mine = ++generation;
@@ -218,12 +229,12 @@ async function plot(encoding) {
   timings.convert = Number(meta.convert_seconds.toFixed(2));
   setOverview({ figure: structuredClone(figure), meta, size, bitmaps: null });
   requested = { x: [], y: [] };
+  legend.set(meta);
   setCurrent(meta);
   shownSize = size;
   const drawStarted = performance.now();
   setPending(false);
   empty.hidden = true;
-  legend.set(encoding.color, meta.series, meta.colors, meta.images);
   showImages(meta, null);
   Plotly.purge(gd);
   drawnKey = figureKey(figure.data, figure.layout);
@@ -458,7 +469,7 @@ async function followSelection() {
   const layer = await response.json();
   let bitmaps = null;
   try {
-    bitmaps = await loadImages({ task: layer.task, images: layer.images });
+    bitmaps = await loadImages({ task: layer.task, images: layer.images }, meta.color);
   } catch (error) {
     console.error(error);
   }
@@ -469,6 +480,7 @@ async function followSelection() {
   }
   closeImages(selection.bitmaps);
   selection.bitmaps = bitmaps;
+  selection.layer = layer;
   selection.held = true;
   layers.setSelection({ meta, bitmaps });
   status.textContent = `選んだ行：${layer.rows.toLocaleString()} 行（${layer.task_seconds.toFixed(1)} 秒）`;
@@ -729,9 +741,52 @@ function drawnRoles(encoding) {
 }
 
 let drawnRolesKey = drawnRoles({ x: [], y: [], color: null, row: null, col: null });
+// Cuts a numeric color column another way, or draws it as a gradient (null):
+// the series change, so the graph is plotted again.
+function setColorBins(bins) {
+  colorBins = bins;
+  if (plottedEncoding) plot(plottedEncoding);
+}
+
+// Draws the decoded images again in the scale's new colors: the overview's,
+// the drawn result's and the selection layer's. Their files are still on the
+// server, so no aggregation runs.
+async function recolor() {
+  legend.render();
+  if (!overview || overview.meta.color.kind === "levels") return;
+  const mine = generation;
+  const shown = current;
+  const layerOf = selection?.bitmaps ? selection : null;
+  const [overviewImages, shownImages_, layerImages] = await Promise.all([
+    overview.bitmaps ? fetchImages(overview.meta) : null,
+    shown && shown !== overview.meta ? fetchImages(shown) : null,
+    layerOf ? loadImages(layerOf.layer, shown.color).catch(() => null) : null,
+  ]);
+  if (mine !== generation) {
+    for (const b of [overviewImages, shownImages_, layerImages]) closeImages(b);
+    return;
+  }
+  if (overviewImages) {
+    const old = overview.bitmaps;
+    overview.bitmaps = overviewImages;
+    if (current === overview.meta) showImages(current, overviewImages);
+    if (old !== shownImages) closeImages(old);
+  }
+  if (shownImages_ && current === shown) showImages(shown, shownImages_);
+  else closeImages(shownImages_);
+  if (layerImages && selection === layerOf) {
+    closeImages(selection.bitmaps);
+    selection.bitmaps = layerImages;
+    layers.setSelection({ meta: layers.selection.meta, bitmaps: layerImages });
+  } else {
+    closeImages(layerImages);
+  }
+}
+
 new Builder(document.getElementById("builder"), document.getElementById("columns"), (encoding) => {
   const key = drawnRoles(encoding);
   if (key === drawnRolesKey) return;
+  if (encoding.color !== JSON.parse(drawnRolesKey)[2]) colorBins = null;
   drawnRolesKey = key;
   if (encoding.x.length && encoding.y.length) plot(encoding);
   else clearPlot();
