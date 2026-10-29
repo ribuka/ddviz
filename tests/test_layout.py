@@ -10,8 +10,6 @@ from ddviz.layout import (
     MARGIN_TOP,
     MIN_PANEL_HEIGHT,
     MIN_PANEL_WIDTH,
-    SCROLL_GAP_X,
-    SCROLL_GAP_Y,
     SCROLLBAR,
     AxisGrid,
     grid_layout,
@@ -38,7 +36,6 @@ def test_grid_layout_fills_the_area_while_panels_are_large_enough() -> None:
     layout = grid_layout(1200, 900, nrow=2, ncol=2)
     assert (layout.width, layout.height) == (1200, 900)
     assert not layout.scroll
-    assert (layout.gap_x, layout.gap_y) == (GAP, GAP)
 
 
 def test_grid_layout_scrolls_panels_kept_at_their_smallest() -> None:
@@ -49,11 +46,9 @@ def test_grid_layout_scrolls_panels_kept_at_their_smallest() -> None:
         MIN_PANEL_WIDTH,
         MIN_PANEL_HEIGHT,
     )
-    assert layout.width == (
-        MARGIN_LEFT + MARGIN_RIGHT + 10 * MIN_PANEL_WIDTH + 9 * SCROLL_GAP_X
-    )
+    assert layout.width == (MARGIN_LEFT + MARGIN_RIGHT + 10 * MIN_PANEL_WIDTH + 9 * GAP)
     assert layout.height == (
-        MARGIN_TOP + MARGIN_BOTTOM + 10 * MIN_PANEL_HEIGHT + 9 * SCROLL_GAP_Y
+        MARGIN_TOP + MARGIN_BOTTOM + 10 * MIN_PANEL_HEIGHT + 9 * GAP
     )
     lo, hi = layout.x_domain(9)
     assert hi == 1
@@ -89,8 +84,11 @@ def test_axis_grid_nests_axis_columns_in_facet_cells() -> None:
 
 
 def test_axis_columns_and_facets_share_one_gap() -> None:
-    """A fitting grid keeps the same one-pixel gap between axis columns as between facets."""
+    """Axis columns and facets are one pixel apart, whether the grid fits or scrolls."""
     axes = AxisGrid(nrow=2, ncol=3, nx=2, ny=3)
-    layout = grid_layout(1600, 1200, axes.rows, axes.cols)
-    assert not layout.scroll
-    assert (layout.gap_x, layout.gap_y) == (GAP, GAP) == (1, 1)
+    assert GAP == 1
+    for size in ((1600, 1200), (600, 400)):
+        layout = grid_layout(*size, axes.rows, axes.cols)
+        area = layout.width - MARGIN_LEFT - MARGIN_RIGHT
+        gap = (layout.x_domain(1)[0] - layout.x_domain(0)[1]) * area
+        assert round(gap) == GAP
