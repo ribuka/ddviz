@@ -5,7 +5,7 @@
 // on the left, the x ticks of each panel column at the bottom, and the facet
 // labels at the top and on the right, following the scroll and the axes.
 // Unscrolled, the strips lie on the figure's margins, where a grid that fits
-// has its labels. plotly draws none of them (`ddviz.figure`).
+// has its labels. plotly draws none of them (`ddviz.server.figure`).
 
 function axisKey(id) {
   return id.replace(/^([xy])/, "$1axis");

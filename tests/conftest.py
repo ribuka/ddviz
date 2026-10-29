@@ -8,7 +8,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from ddviz.scatter import ScatterSpec
+from ddviz.shared.scatter import ScatterSpec
 
 
 @pytest.fixture

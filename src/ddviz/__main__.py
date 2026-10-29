@@ -30,9 +30,9 @@ def make_app(path: str) -> FastAPI:
     fastapi.FastAPI
         The application.
     """
-    from ddviz.cache import default_cache_root
-    from ddviz.server import create_app
-    from ddviz.settings import load_settings
+    from ddviz.server.app import create_app
+    from ddviz.server.settings import load_settings
+    from ddviz.shared.cache import default_cache_root
 
     root = Path(tempfile.mkdtemp(prefix="ddviz-"))
     return create_app(path, root, default_cache_root(), load_settings())
@@ -47,7 +47,7 @@ def main() -> int:
         Exit code.
     """
     if "--worker" in sys.argv[1:]:
-        from ddviz.worker import main as worker_main
+        from ddviz.workers.worker import main as worker_main
 
         return worker_main()
 
@@ -59,7 +59,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.port is None:
-        from ddviz.window import run_window
+        from ddviz.desktop.window import run_window
 
         return run_window(args.path, make_app)
 

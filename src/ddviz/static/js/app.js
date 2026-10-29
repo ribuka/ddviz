@@ -85,7 +85,7 @@ let shownImages = null;
 // drawn result was aggregated for.
 let requestedSize = null;
 let shownSize = null;
-// Conditions of the local filter (`ddviz.plan.parse_filters`) that every
+// Conditions of the local filter (`ddviz.server.plan.parse_filters`) that every
 // request carries; a result's meta has those it was aggregated with.
 let filters = [];
 // Returns a key of conditions, from the page's or from a result's meta.
@@ -93,7 +93,7 @@ function filtersKey(list) {
   return JSON.stringify(list.map((f) => [f.column, f.range ?? null, f.levels ?? null]));
 }
 // How a numeric color column is cut into intervals ({n, by}), or null for a
-// gradient (`ddviz.plan.parse_color_bins`); back to null for another color
+// gradient (`ddviz.server.plan.parse_color_bins`); back to null for another color
 // column. The graph last plotted, to plot again with another cutting.
 let colorBins = null;
 let plottedEncoding = null;
@@ -190,7 +190,7 @@ function sameSize(a, b) {
 
 const CONVERT_RETRY_MS = 300;
 
-// Aggregates the overview of a graph (`ddviz.encoding.Encoding`) and draws it.
+// Aggregates the overview of a graph (`ddviz.server.encoding.Encoding`) and draws it.
 async function plot(encoding) {
   clearSelection(false);
   const size = stageSize();
@@ -393,7 +393,7 @@ function setPending(on) {
 // that panel in the drawn result, -1 when a filter dropped it), the result
 // its layer was asked for (`base`), the layer once it came, and whether the
 // server holds the selection (`held`). Every panel shows the selected rows
-// (`ddviz.aggregate.selection_filter`); until the layer comes, the box shows
+// (`ddviz.compute.aggregate.selection_filter`); until the layer comes, the box shows
 // them in its own panel. A filter may drop or bring back facet panels, so
 // the panels' indices change: the box follows its facet levels.
 let selection = null;
@@ -694,7 +694,7 @@ new ResizeObserver(onResize).observe(stage);
 
 // A new filter aggregates what is shown again: the view when zoomed, else the
 // overview. The levels and the axes' ranges stay those of every row, so only
-// the bins change (`ddviz.aggregate.aggregate`). While zoomed, the overview
+// the bins change (`ddviz.compute.aggregate.aggregate`). While zoomed, the overview
 // keeps its old filter until it is shown again.
 function applyFilters() {
   clearTimeout(resizeTimer);
@@ -738,7 +738,7 @@ function clearPlot() {
   status.textContent = "";
 }
 
-// The roles a scatter plot draws (`ddviz.plan.drawn_columns`): placing
+// The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`): placing
 // overlay changes nothing drawn, so it aggregates nothing.
 function drawnRoles(encoding) {
   const { x, y, color, row, col } = encoding;

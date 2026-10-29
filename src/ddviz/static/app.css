@@ -664,7 +664,7 @@ button {
 }
 
 /* The strip a scrolled figure leaves for a missing scroll bar takes the
-   figure's color (`ddviz.figure.PAPER_COLOR`). */
+   figure's color (`ddviz.server.figure.PAPER_COLOR`). */
 #stage.scrolls #scroller {
   overflow: auto;
   background: #f5f5f5;
@@ -1007,7 +1007,7 @@ button {
 
 /* ---- labels of a grid that scrolls (sticky.js) ---- */
 /* Strips along the edges of the plot area, in the figure's color
-   (`ddviz.figure.PAPER_COLOR`), with plotly's label font. */
+   (`ddviz.server.figure.PAPER_COLOR`), with plotly's label font. */
 .sticky-labels {
   position: absolute;
   inset: 0;

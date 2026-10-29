@@ -10,7 +10,7 @@ a = Analysis(
     pathex=[str(src)],
     datas=[(str(src / "ddviz" / "static"), "ddviz/static")],
     # The worker imports these inside functions, after the protocol starts.
-    hiddenimports=["ddviz.worker", "ddviz.task"],
+    hiddenimports=["ddviz.workers.worker", "ddviz.compute.task"],
 )
 pyz = PYZ(a.pure)
 exe = EXE(
