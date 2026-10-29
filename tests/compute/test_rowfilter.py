@@ -10,7 +10,7 @@ import pytest
 
 from ddviz.compute.aggregate import COUNT, INDEX, KEY, aggregate
 from ddviz.compute.summary import MAX_FILTER_LEVELS, summarize_column
-from ddviz.compute.task import run_table
+from ddviz.compute.tasks.table import run_table
 from ddviz.shared.manifest import read_manifest
 from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
 

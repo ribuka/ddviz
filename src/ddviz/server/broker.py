@@ -148,7 +148,7 @@ class TaskBroker:
         Parameters
         ----------
         task : dict
-            The task without ``"out"`` (`ddviz.compute.task.run_task`).
+            The task without ``"out"`` (`ddviz.compute.tasks.run.run_task`).
         pool : {"plot", "table", "summary"}
             The pool to run it in.
 

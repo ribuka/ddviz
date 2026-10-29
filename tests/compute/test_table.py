@@ -7,7 +7,7 @@ from pathlib import Path
 
 import polars as pl
 
-from ddviz.compute.task import TABLE_GAP, _spans, run_table
+from ddviz.compute.tasks.table import TABLE_GAP, _spans, run_table
 from ddviz.shared.manifest import read_manifest
 from ddviz.shared.scatter import ScatterSpec, Selection
 

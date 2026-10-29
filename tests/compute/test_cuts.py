@@ -12,7 +12,7 @@ import pytest
 
 from ddviz.compute.aggregate import COUNT, aggregate
 from ddviz.compute.cuts import cut_labels, find_cuts
-from ddviz.compute.task import run_plot, run_selection
+from ddviz.compute.tasks.plot import run_plot, run_selection
 from ddviz.server.encoding import Encoding
 from ddviz.server.plan import FACET_BINS, parse_color_bins, scatter_spec
 from ddviz.shared.manifest import IMAGES, read_manifest

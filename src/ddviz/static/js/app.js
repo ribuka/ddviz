@@ -393,7 +393,7 @@ function setPending(on) {
 // that panel in the drawn result, -1 when a filter dropped it), the result
 // its layer was asked for (`base`), the layer once it came, and whether the
 // server holds the selection (`held`). Every panel shows the selected rows
-// (`ddviz.compute.aggregate.selection_filter`); until the layer comes, the box shows
+// (`ddviz.compute.selection.selection_filter`); until the layer comes, the box shows
 // them in its own panel. A filter may drop or bring back facet panels, so
 // the panels' indices change: the box follows its facet levels.
 let selection = null;
