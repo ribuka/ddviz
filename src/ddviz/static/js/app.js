@@ -8,6 +8,7 @@ import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { openScaleMenu } from "./scalemenu.js";
+import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
 
 const status = document.getElementById("status");
@@ -76,6 +77,7 @@ const legend = new Legend(
   (event) => openScaleMenu(event, colorBins, setColorBins, recolor),
 );
 const layers = new ImageLayers(gd, legend);
+const sticky = new StickyLabels(document.getElementById("scroller"), gd);
 const empty = document.getElementById("empty");
 // Decoded images on the canvas; freed when replaced, unless the overview's.
 let shownImages = null;
@@ -144,6 +146,7 @@ function setCurrent(meta) {
   current = meta;
   legend.setEmpty(meta.images);
   stage.classList.toggle("scrolls", meta.scroll);
+  sticky.set(meta);
 }
 
 // Draws the images of a result on the canvas and frees the ones it replaces.
@@ -241,6 +244,7 @@ async function plot(encoding) {
   await Plotly.newPlot(gd, figure.data, figure.layout, PLOT_CONFIG);
   timings.plot = Math.round(performance.now() - drawStarted);
   layers.attach();
+  sticky.attach();
   gd.on("plotly_relayout", onRelayout);
   gd.on("plotly_selected", (event) => {
     if (!ownReact) onSelected(event);
@@ -729,6 +733,7 @@ function clearPlot() {
   overview = null;
   current = null;
   stage.classList.remove("scrolls");
+  sticky.set(null);
   empty.hidden = false;
   status.textContent = "";
 }

@@ -8,13 +8,15 @@ from typing import TypeVar
 T = TypeVar("T")
 
 # Figure margins in pixels: room for tick labels and facet labels. The axis
-# names and the legend are outside the figure.
+# names and the legend are outside the figure. A grid that scrolls draws its
+# labels in strips of the page of the same sizes, along the edges of the
+# area it scrolls in (``static/js/sticky.js``).
 MARGIN_LEFT = 50
 MARGIN_RIGHT = 30
 MARGIN_TOP = 30
 MARGIN_BOTTOM = 30
-# Gap between panels in pixels when the grid fits the given size, between
-# facet cells and between axis columns alike. The figure draws a frame line
+# Gap between panels in pixels, between facet cells and between axis columns
+# alike, whether the grid fits the given size or scrolls. The figure draws a frame line
 # around each plot area (`ddviz.figure`) just outside it, so with one pixel
 # neighboring panels share one line.
 GAP = 1
@@ -22,11 +24,6 @@ GAP = 1
 # smaller grows past the given size, and the page scrolls it.
 MIN_PANEL_WIDTH = 160
 MIN_PANEL_HEIGHT = 120
-# Gaps of a scrolled grid, where every panel has its own tick labels (left
-# of it) and its own tick labels and facet title (below and above it), so a
-# panel scrolled away from the outer ones can still be read.
-SCROLL_GAP_X = 50
-SCROLL_GAP_Y = 44
 # Room left for the page's scroll bars when the grid scrolls.
 SCROLLBAR = 17
 
@@ -43,12 +40,9 @@ class GridLayout:
         Facet rows and columns.
     panel_width, panel_height : int
         Size of one panel's plot area in pixels.
-    gap_x, gap_y : int
-        Gaps between panels in pixels.
     scroll : bool
         Whether the panels did not fit the given size at their smallest, so
-        the figure is larger and every panel carries its own tick labels and
-        facet title.
+        the figure is larger than the area and scrolls in it.
     """
 
     width: int
@@ -57,8 +51,6 @@ class GridLayout:
     ncol: int
     panel_width: int
     panel_height: int
-    gap_x: int = GAP
-    gap_y: int = GAP
     scroll: bool = False
 
     def x_domain(self, col: int) -> tuple[float, float]:
@@ -75,7 +67,7 @@ class GridLayout:
             Start and end as fractions of the plot area width.
         """
         area = self.width - MARGIN_LEFT - MARGIN_RIGHT
-        left = col * (self.panel_width + self.gap_x)
+        left = col * (self.panel_width + GAP)
         return (left / area, (left + self.panel_width) / area)
 
     def y_domain(self, row: int) -> tuple[float, float]:
@@ -92,7 +84,7 @@ class GridLayout:
             Start and end as fractions of the plot area height, from the bottom.
         """
         area = self.height - MARGIN_TOP - MARGIN_BOTTOM
-        top = row * (self.panel_height + self.gap_y)
+        top = row * (self.panel_height + GAP)
         return (1 - (top + self.panel_height) / area, 1 - top / area)
 
 
@@ -198,20 +190,16 @@ def grid_layout(
     panel_height = _split(height, margins_y, nrow, GAP)
     if panel_width >= MIN_PANEL_WIDTH and panel_height >= MIN_PANEL_HEIGHT:
         return GridLayout(width, height, nrow, ncol, panel_width, panel_height)
-    panel_width = max(
-        _split(width - SCROLLBAR, margins_x, ncol, SCROLL_GAP_X), MIN_PANEL_WIDTH
-    )
+    panel_width = max(_split(width - SCROLLBAR, margins_x, ncol, GAP), MIN_PANEL_WIDTH)
     panel_height = max(
-        _split(height - SCROLLBAR, margins_y, nrow, SCROLL_GAP_Y), MIN_PANEL_HEIGHT
+        _split(height - SCROLLBAR, margins_y, nrow, GAP), MIN_PANEL_HEIGHT
     )
     return GridLayout(
-        width=margins_x + ncol * panel_width + (ncol - 1) * SCROLL_GAP_X,
-        height=margins_y + nrow * panel_height + (nrow - 1) * SCROLL_GAP_Y,
+        width=margins_x + ncol * panel_width + (ncol - 1) * GAP,
+        height=margins_y + nrow * panel_height + (nrow - 1) * GAP,
         nrow=nrow,
         ncol=ncol,
         panel_width=panel_width,
         panel_height=panel_height,
-        gap_x=SCROLL_GAP_X,
-        gap_y=SCROLL_GAP_Y,
         scroll=True,
     )

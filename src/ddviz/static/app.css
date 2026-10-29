@@ -1004,3 +1004,43 @@ button {
   position: absolute;
   left: 8px;
 }
+
+/* ---- labels of a grid that scrolls (sticky.js) ---- */
+/* Strips along the edges of the plot area, in the figure's color
+   (`ddviz.figure.PAPER_COLOR`), with plotly's label font. */
+.sticky-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sticky-labels[hidden] {
+  display: none;
+}
+
+.sticky-strip {
+  position: absolute;
+  overflow: hidden;
+  background: #f5f5f5;
+  font: 12px "Open Sans", verdana, arial, sans-serif;
+  color: #444;
+}
+
+.sticky-strip > span {
+  position: absolute;
+  white-space: nowrap;
+}
+
+.sticky-strip .tick.y {
+  transform: translateY(-50%);
+}
+
+.sticky-strip .tick.x,
+.sticky-strip .facet.col {
+  transform: translateX(-50%);
+}
+
+.sticky-strip .facet.row {
+  writing-mode: vertical-rl;
+  transform: translateY(-50%);
+}

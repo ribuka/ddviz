@@ -3,7 +3,8 @@
 The series images are not plotly traces: the page draws them on a canvas
 from the figure's axes (``static/js/layers.js``). The legend and the axis
 names are not plotly's either: the page shows them outside the scrolled
-figure (``static/js/legend.js`` and the drop zones).
+figure (``static/js/legend.js`` and the drop zones), and so are the tick
+labels and facet labels of a grid that scrolls (``static/js/sticky.js``).
 """
 
 from __future__ import annotations
@@ -37,45 +38,6 @@ def _label(column: str | None, level: object) -> str:
     return f"{column} = {level}"
 
 
-def _panel_titles(
-    spec: dict, levels: dict, layout: GridLayout, axes: AxisGrid
-) -> list[dict]:
-    """Return a title above each panel, for a grid that scrolls.
-
-    The title names the facet cell and, with several axis columns, the
-    panel's y and x columns.
-    """
-    titles = []
-    several = axes.nx > 1 or axes.ny > 1
-    for panel in range(layout.nrow * layout.ncol):
-        prow, pcol = divmod(panel, layout.ncol)
-        row, col = prow // axes.ny, pcol // axes.nx
-        xi, yj = axes.axes(panel)
-        parts = [
-            _label(spec[role], levels[role][i])
-            for role, i in (("row", row), ("col", col))
-            if spec[role] is not None
-        ]
-        if several:
-            parts.append(f"{spec['y'][yj]} × {spec['x'][xi]}")
-        if not parts:
-            continue
-        lo, hi = layout.x_domain(pcol)
-        titles.append(
-            {
-                "text": " / ".join(parts),
-                "x": (lo + hi) / 2,
-                "y": layout.y_domain(prow)[1],
-                "yanchor": "bottom",
-                "xref": "paper",
-                "yref": "paper",
-                "showarrow": False,
-                "font": {"size": 11},
-            }
-        )
-    return titles
-
-
 def _facet_labels(
     spec: dict, levels: dict, layout: GridLayout, axes: AxisGrid
 ) -> list[dict]:
@@ -90,6 +52,9 @@ def _facet_labels(
                     "text": _label(spec["col"], level),
                     "x": (lo + hi) / 2,
                     "y": 1,
+                    # plotly's "auto" anchors a label left of the middle
+                    # third by its left end, right of it by its right end.
+                    "xanchor": "center",
                     "yanchor": "bottom",
                     "xref": "paper",
                     "yref": "paper",
@@ -106,6 +71,7 @@ def _facet_labels(
                     "x": 1,
                     "y": (lo + hi) / 2,
                     "xanchor": "left",
+                    "yanchor": "middle",
                     "xshift": 4,
                     "textangle": 90,
                     "xref": "paper",
@@ -154,7 +120,9 @@ def build_figure(manifest: dict) -> dict:
         ``y_axes``), the bin grid, the data range of each column, where each
         series' PNG lies in the images file (`ddviz.manifest.IMAGES`; its
         panels are tiles, ``ncol`` to a row, as `ddviz.raster.atlas`),
-        whether the grid scrolls, and how the series are colored
+        whether the grid scrolls, its facet labels (plotly annotations in
+        paper coordinates; the figure has them only when the grid fits), and
+        how the series are colored
         (``color``: ``kind`` is ``"levels"``, ``"bins"`` for the intervals of
         a numeric column, or ``"gradient"``, whose single image holds grays
         from 1 to 255 over ``range``).
@@ -197,7 +165,7 @@ def build_figure(manifest: dict) -> dict:
             "domain": layout.x_domain(pcol),
             "anchor": y_axis,
             "range": list(x_ranges[xi]),
-            "showticklabels": layout.scroll or prow == layout.nrow - 1,
+            "showticklabels": not layout.scroll and prow == layout.nrow - 1,
             "zeroline": False,
             **_FRAME,
             **({"matches": x_axes[xi]} if x_axis != x_axes[xi] else {}),
@@ -206,7 +174,7 @@ def build_figure(manifest: dict) -> dict:
             "domain": layout.y_domain(prow),
             "anchor": x_axis,
             "range": list(y_ranges[yj]),
-            "showticklabels": layout.scroll or pcol == 0,
+            "showticklabels": not layout.scroll and pcol == 0,
             "zeroline": False,
             **_FRAME,
             **({"matches": y_axes[yj]} if y_axis != y_axes[yj] else {}),
@@ -218,10 +186,12 @@ def build_figure(manifest: dict) -> dict:
         panels.append(
             {"xaxis": x_axis, "yaxis": y_axis, "x": xi, "y": yj, "facet": facet}
         )
-    if layout.scroll:
-        fig_layout["annotations"] += _panel_titles(spec, levels, layout, axes)
-    else:
-        fig_layout["annotations"] += _facet_labels(spec, levels, layout, axes)
+    # A grid that scrolls has its tick labels and facet labels in strips
+    # along the edges of the area (``static/js/sticky.js``), so that they
+    # stay in sight: plotly draws neither.
+    labels = _facet_labels(spec, levels, layout, axes)
+    if not layout.scroll:
+        fig_layout["annotations"] += labels
     # plotly leaves out the axes of a subplot without traces.
     data = [
         {
@@ -252,5 +222,6 @@ def build_figure(manifest: dict) -> dict:
         "ncol": layout.ncol,
         "rows": manifest["rows"],
         "scroll": layout.scroll,
+        "facet_labels": labels,
     }
     return {"figure": {"data": data, "layout": fig_layout}, "meta": meta}

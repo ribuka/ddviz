@@ -81,19 +81,19 @@ def _overview_dir(tmp_path: Path, spec: ScatterSpec) -> Path:
     return out
 
 
-def test_a_scrolled_grid_labels_every_panel(
+def test_a_scrolled_grid_leaves_its_labels_to_the_page(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
-    """When the panels are too small for the size, each carries tick labels and a facet title."""
+    """When the panels are too small for the size, plotly draws no tick or facet labels; the meta has the facet labels."""
     small = replace(scatter_spec, width=300, height=200)
     result = _figure(small, tmp_path / "task")
     layout = result["figure"]["layout"]
     assert result["meta"]["scroll"]
     assert layout["width"] > 300
-    assert all(layout[a]["showticklabels"] for a in ("xaxis", "yaxis2"))
-    titles = [a["text"] for a in layout["annotations"]]
-    assert "facet = p" in titles
-    assert "facet = q" in titles
+    assert not any(layout[a]["showticklabels"] for a in ("xaxis", "yaxis", "xaxis2"))
+    assert layout["annotations"] == []
+    titles = [a["text"] for a in result["meta"]["facet_labels"]]
+    assert titles == ["facet = p", "facet = q"]
 
 
 def test_a_fitting_grid_labels_the_outer_panels(
@@ -106,6 +106,7 @@ def test_a_fitting_grid_labels_the_outer_panels(
     assert not result["meta"]["scroll"]
     assert layout["yaxis"]["showticklabels"]
     assert not layout["yaxis2"]["showticklabels"]
+    assert layout["annotations"] == result["meta"]["facet_labels"]
 
 
 def test_the_panels_of_one_axis_column_share_its_axis(
@@ -148,3 +149,15 @@ def test_every_panel_is_framed_on_a_gray_figure(
         assert layout[axis]["showline"]
         assert layout[axis]["mirror"] is True
         assert layout[axis]["linecolor"] == FRAME_COLOR
+
+
+def test_facet_labels_center_on_their_panels(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """Each facet label is centered over its panels, wherever it lies."""
+    big = replace(scatter_spec, width=800, height=400, row="color")
+    labels = _figure(big, tmp_path / "task")["meta"]["facet_labels"]
+    cols = [a for a in labels if a.get("textangle") != 90]
+    rows = [a for a in labels if a.get("textangle") == 90]
+    assert cols and all(a["xanchor"] == "center" for a in cols)
+    assert rows and all(a["yanchor"] == "middle" for a in rows)
