@@ -187,7 +187,7 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 
 | PNG を画面に渡す方法 | 図の JSON には画像を入れない。画面は `GET /api/images/<タスク番号>` で `images.bin` をそのまま受け取り、manifest の位置で切り出して `createImageBitmap` でデコードし、自前の canvas に描く（2026-10-28。「画像の層の持ち方の比較」） | plotly の image トレースは使わない（「インタラクションの設計案」の「画像の層」）。base64 と data URI が要らなくなり、10 × 10 パネル × 5 系列で図の JSON は 416KB → 65KB になった。以前は data URI で埋め込んでいた。plotly.js v4.1.1 の image トレースは、`source` が `data:image/...;base64,` に合わなければ消す（`IMAGE_URL_PREFIX`）ため |
 
-実装は `src/ddviz/workers` の `runner.py`、`jobs.py`、`worker.py`、`src/ddviz/compute/task.py`、`src/ddviz/server/app.py` にある。タスクの種類は `schema`（Load）、`nonnull`（列ごとの非 null の割合。Load の後に裏で 1 回）、`convert`（遅延変換）、`plot`（集約と画像化）。変換中に来た描画の要求は 409 で断る。描画のタスクを渡すと走っている子を kill するため、変換を守る（画面は変換中の編集を受け付けないので、通常は来ない）。
+実装は `src/ddviz/workers` の `runner.py`、`jobs.py`、`worker.py`、`src/ddviz/compute/task.py`、`src/ddviz/server/broker.py` にある。タスクの種類は `schema`（Load）、`nonnull`（列ごとの非 null の割合。Load の後に裏で 1 回）、`convert`（遅延変換）、`plot`（集約と画像化）。変換中に来た描画の要求は 409 で断る。描画のタスクを渡すと走っている子を kill するため、変換を守る（画面は変換中の編集を受け付けないので、通常は来ない）。
 
 #### パッケージ構成（2026-10-30 決定）
 
@@ -204,6 +204,22 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 - 理由：「UI のプロセスは polars を import しない」（「プロセス構成」）という一番大事な境界を、ファイルの置き場所で見えるようにする。境界と import の向きは `tests/test_layers.py` で確かめる（UI 側の全モジュールを新しいインタプリタで import して polars が読まれないこと、各パッケージが上の表の向きにしか import しないこと）。
 - サブパッケージの `__init__.py` は docstring だけにし、名前を再エクスポートしない。`compute` で再エクスポートすると、`ddviz.compute` を読むだけで polars が入るため。
 - テストは `tests/` の下に同じ名前のディレクトリを作って置く。
+
+`server` の中の分け方（2026-10-30 決定）：
+
+| モジュール | 中身 |
+| --- | --- |
+| `app.py` | `create_app`：下の部品を作って router をつなぎ、起動と終了（lifespan）を受け持つだけ |
+| `broker.py` | 3 つの worker のプール（`plot`、`table`、`summary`）にタスクを渡し、終わりを待つ（`TaskBroker`、`TaskEnd`）。plot のプールの進捗を `/api/events` に流す |
+| `source.py` | 元の Parquet ファイル：スキーマ、列のキャッシュと変換、非 null の割合、フィルタ欄の集計（`Source`） |
+| `results.py` | いま描いている結果：全体図、ズームした表示、範囲選択の層（`Results`、`Layer`） |
+| `derive.py` | 描いた結果の manifest から次のタスクの spec を作る純粋な関数（表示範囲・大きさ・フィルタを変えた spec、範囲選択） |
+| `api_source.py`、`api_plot.py`、`api_selection.py` | エンドポイント（列、描画とホバー、範囲選択と表）。部品を引数に取って `APIRouter` を返す |
+| `models.py`、`errors.py` | リクエストの型、終わらなかったタスクの HTTP エラー（取り消しは 409、失敗は 500） |
+
+- 理由：以前は `create_app` の 1 つの関数（約 600 行）の中に、状態・エンドポイント・内部の処理が閉じ込められていて、単体でテストできなかった。
+- HTTP の API は `tests/server/test_app.py` で実際の worker を使って通しで確かめる。TestClient のために、開発用の依存に `httpx2` を足した（Starlette の TestClient は `httpx` を非推奨にし、`httpx2` を求める）。
+- サーバーの終了時に kill された worker の読み取りスレッドが、閉じたイベントループに終わりを送って例外になっていた。`TaskBroker` で、閉じたループへの送信は捨てる（2026-10-30 確認）。
 
 ### インタラクションの設計案（未確定）
 
