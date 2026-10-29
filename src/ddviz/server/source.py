@@ -21,6 +21,7 @@ from ddviz.server.plan import parse_filters
 from ddviz.server.settings import Settings
 from ddviz.shared.cache import ColumnCache, evict
 from ddviz.shared.scatter import Filter
+from ddviz.shared.tasks import ConvertTask, NonnullTask, SchemaTask, SummaryTask
 
 # File in the column cache's directory of a source holding the share of
 # non-null values of each column, so that a later Load needs no task; the
@@ -74,7 +75,7 @@ class Source:
             ``{"name", "dtype", "numeric"}`` of each column in file order.
         """
         if self._schema is None:
-            end = await self._broker.run({"kind": "schema", "path": self.path})
+            end = await self._broker.run(SchemaTask(self.path))
             if end.type != "done":
                 raise HTTPException(500, end.error)
             columns = end.take()["columns"]
@@ -115,9 +116,7 @@ class Source:
         """
         names = [c["name"] for c in self._schema]
         async with self._summary_lock:
-            end = await self._broker.run(
-                {"kind": "nonnull", "path": self.path, "names": names}, "summary"
-            )
+            end = await self._broker.run(NonnullTask(self.path, names), "summary")
         if end.type != "done":
             self.shares_state = "failed"
             end.discard()
@@ -144,11 +143,7 @@ class Source:
         self.converting = True
         try:
             end = await self._broker.run(
-                {
-                    "kind": "convert",
-                    "path": self.path,
-                    "files": {c: self.file(c) for c in missing},
-                }
+                ConvertTask(self.path, {c: self.file(c) for c in missing})
             )
         finally:
             self.converting = False
@@ -197,9 +192,7 @@ class Source:
                 # same column.
                 missing = await asyncio.to_thread(self.cache.missing, [column])
                 file = self.path if missing else self.file(column)
-                end = await self._broker.run(
-                    {"kind": "summary", "file": file, "column": column}, "summary"
-                )
+                end = await self._broker.run(SummaryTask(file, column), "summary")
                 ensure_done(end)
                 self._summaries[column] = end.take()
         return self._summaries[column]

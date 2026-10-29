@@ -7,8 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ddviz.shared.keys import BinGrid
-from ddviz.shared.manifest import read_manifest
+from ddviz.shared.manifest import PlotManifest
 
 # Hover distance in screen pixels, as plotly's default `hoverdistance`.
 HOVER_DISTANCE = 20
@@ -28,15 +27,15 @@ class HoverIndex:
 
     def __init__(self, out: Path) -> None:
         self.out = out
-        self.manifest = read_manifest(out)
-        self.grid = BinGrid(**self.manifest["grid"])
+        self.manifest = PlotManifest.read(out)
+        self.grid = self.manifest.grid
         self._keys = np.load(out / "keys.npy", mmap_mode="r")
         self._count = np.load(out / "count.npy", mmap_mode="r")
         self._index = np.load(out / "index.npy", mmap_mode="r")
         self._occupancy = np.load(out / "occupancy.npy", mmap_mode="r")
         self._columns = [
-            (c["name"], np.load(out / c["file"], mmap_mode="r"), c["labels"])
-            for c in self.manifest["columns"]
+            (c.name, np.load(out / c.file, mmap_mode="r"), c.labels)
+            for c in self.manifest.columns
         ]
 
     def close(self) -> None:

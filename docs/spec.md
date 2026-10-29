@@ -223,9 +223,17 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 
 `compute` の中の分け方（2026-10-30 決定）：
 
-- `tasks/` に、worker が実行するタスクを種類ごとに置く。`run.py` は種類からタスクの関数を引く表（`KINDS`）と `run_task`、`columns.py` は schema・nonnull・summary、`plot.py` は plot と selection、`images.py` は系列の画像の書き出し、`table.py` は表のページ。
+- `tasks/` に、worker が実行するタスクを種類ごとに置く。`run.py` はタスクの型で関数を選ぶ `run_task`、`columns.py` は schema・nonnull・summary、`plot.py` は plot と selection、`images.py` は系列の画像の書き出し、`table.py` は表のページ。
 - `selection.py` に、描く行の条件（`drawn_conditions`）と範囲選択の条件（`selection_filter`、`selection_columns`）を置く。集約（`aggregate.py`）と表のタスクの両方が使うため、集約から切り出した。
 - 進捗のメッセージの型 `Emit` は `progress.py` の 1 か所に置く（以前は `task.py` と `convert.py` の 2 か所にあった）。
+
+タスクと manifest の型（2026-10-30 決定）：
+
+- タスクは種類ごとの dataclass にする（`shared/tasks.py` の `SchemaTask`、`PlotTask` など）。UI のサーバーはこの型で `TaskBroker.run` に渡し、worker には `task_to_dict` の JSON（`"kind"` 付き）で届く。worker は `task_from_dict` で戻し、型で関数を選ぶ（`compute/tasks/run.py`）。
+- UI のサーバーが自分で読む manifest だけ型にする：plot（`PlotManifest`。spec、`BinGrid`、`GridLayout`、`AxisGrid`、ホバーの列 `HoverColumn` などを型で持つ）と selection（`SelectionManifest`）。`write` と `read` で JSON にする。読み手は `figure.py`、`derive.py`、`hover.py` と API。
+- schema、nonnull、summary、table の manifest は dict のまま。UI のサーバーはほとんど中身を見ずに画面へ渡すため、型にしても得るものが少ない。
+- 理由：以前は manifest もタスクも文字列のキーで読み書きしていて（plot の manifest だけで約 36 か所）、キーの書き間違いが実行するまで分からなかった。
+- 型にする前と後で、画面が受け取る JSON（描画、ズーム、大きさの変更、範囲選択、表、ホバー。カテゴリの色・第 2 の Y・グラデーション・数値の facet・ローカルフィルタの 4 通り）が、時間の値を除いてバイト単位で同じことを確かめた（2026-10-30）。
 
 ### インタラクションの設計案（未確定）
 

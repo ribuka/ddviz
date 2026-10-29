@@ -1,4 +1,4 @@
-"""Tests of running a task by its kind."""
+"""Tests of running a task the UI server described."""
 
 from __future__ import annotations
 
@@ -6,29 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from ddviz.compute.tasks.run import KINDS, run_task
+from ddviz.compute.tasks.run import run_task
 from ddviz.shared.manifest import read_manifest
+from ddviz.shared.tasks import SchemaTask, task_to_dict
 
 
-def test_every_kind_of_the_server_has_a_task() -> None:
-    """Each kind the UI server submits has its function."""
-    assert set(KINDS) == {
-        "schema",
-        "nonnull",
-        "convert",
-        "plot",
-        "selection",
-        "table",
-        "summary",
-    }
-
-
-def test_run_task_makes_the_directory_and_runs_the_kind(
+def test_run_task_makes_the_directory_and_runs_the_task(
     tmp_path: Path, scatter_path: Path
 ) -> None:
     """A schema task writes its manifest into a directory it makes."""
     out = tmp_path / "tasks" / "1"
-    run_task({"kind": "schema", "path": str(scatter_path), "out": str(out)}, print)
+    run_task({**task_to_dict(SchemaTask(str(scatter_path))), "out": str(out)}, print)
     names = [c["name"] for c in read_manifest(out)["columns"]]
     assert names == ["x", "y", "label", "color", "facet"]
 
