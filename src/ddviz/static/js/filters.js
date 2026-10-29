@@ -3,7 +3,7 @@
 // two thumbs and two boxes), a categorical column its levels with their counts
 // to tick. The server summarizes a column over every row, once
 // (`GET /api/summary`). A row is drawn when it meets every card's condition
-// (`ddviz.rowfilter`); a card that keeps every row has no condition.
+// (`ddviz.compute.rowfilter`); a card that keeps every row has no condition.
 //
 // A condition goes to the plot when a slider is let go, a box is left or
 // Enter is pressed in it, or 0.4s after the last tick, so that a few ticks in
@@ -119,7 +119,7 @@ export class FilterPane {
   }
 
   // Returns the conditions of the cards that leave rows out, for the server
-  // (`ddviz.plan.parse_filters`).
+  // (`ddviz.server.plan.parse_filters`).
   conditions() {
     const out = [];
     for (const card of this.cards) {

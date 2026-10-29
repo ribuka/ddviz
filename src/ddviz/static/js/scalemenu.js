@@ -4,7 +4,7 @@
 // and reverse the scale's direction.
 import { COLOR_SETS, scale } from "./colorscale.js";
 
-// Numbers of intervals offered (`ddviz.plan.COLOR_BINS`).
+// Numbers of intervals offered (`ddviz.server.plan.COLOR_BINS`).
 const COUNTS = [2, 3, 5, 10];
 const BY = [
   ["values", "値の幅で等分"],

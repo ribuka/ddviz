@@ -1,7 +1,7 @@
 // Drop zones of the graph builder, laid out around the figure: Group X
 // above the figure, Y left of it, Group Y right of it, X below it, and Color
 // and Overlay beside it. They are outside the scrolled figure and name its
-// axes. The zones edit the graph (`ddviz.encoding.Encoding`):
+// axes. The zones edit the graph (`ddviz.server.encoding.Encoding`):
 // - A column dropped on a zone takes that role, replacing the column there.
 // - On X and Y, which hold several columns (the n-th axes), a column dropped
 //   on the leading quarter of a chip goes in before it, on the trailing
