@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from ddviz.compute.task import run_plot
+from ddviz.compute.tasks.plot import run_plot
 from ddviz.server.figure import FRAME_COLOR, PAPER_COLOR, PLOT_COLOR, build_figure
 from ddviz.shared.manifest import IMAGES, read_manifest
 from ddviz.shared.scatter import ScatterSpec, View

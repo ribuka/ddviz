@@ -37,7 +37,7 @@ def main() -> int:
     sys.stdout = sys.stderr
     emit = _emitter(protocol)
 
-    from ddviz.compute.task import run_task  # imports polars
+    from ddviz.compute.tasks.run import run_task  # imports polars
 
     emit({"type": "ready"})
     line = sys.stdin.readline()

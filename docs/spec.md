@@ -187,7 +187,7 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 
 | PNG を画面に渡す方法 | 図の JSON には画像を入れない。画面は `GET /api/images/<タスク番号>` で `images.bin` をそのまま受け取り、manifest の位置で切り出して `createImageBitmap` でデコードし、自前の canvas に描く（2026-10-28。「画像の層の持ち方の比較」） | plotly の image トレースは使わない（「インタラクションの設計案」の「画像の層」）。base64 と data URI が要らなくなり、10 × 10 パネル × 5 系列で図の JSON は 416KB → 65KB になった。以前は data URI で埋め込んでいた。plotly.js v4.1.1 の image トレースは、`source` が `data:image/...;base64,` に合わなければ消す（`IMAGE_URL_PREFIX`）ため |
 
-実装は `src/ddviz/workers` の `runner.py`、`jobs.py`、`worker.py`、`src/ddviz/compute/task.py`、`src/ddviz/server/broker.py` にある。タスクの種類は `schema`（Load）、`nonnull`（列ごとの非 null の割合。Load の後に裏で 1 回）、`convert`（遅延変換）、`plot`（集約と画像化）。変換中に来た描画の要求は 409 で断る。描画のタスクを渡すと走っている子を kill するため、変換を守る（画面は変換中の編集を受け付けないので、通常は来ない）。
+実装は `src/ddviz/workers` の `runner.py`、`jobs.py`、`worker.py`、`src/ddviz/compute/tasks/run.py`、`src/ddviz/server/broker.py` にある。タスクの種類は `schema`（Load）、`nonnull`（列ごとの非 null の割合。Load の後に裏で 1 回）、`convert`（遅延変換）、`plot`（集約と画像化）。変換中に来た描画の要求は 409 で断る。描画のタスクを渡すと走っている子を kill するため、変換を守る（画面は変換中の編集を受け付けないので、通常は来ない）。
 
 #### パッケージ構成（2026-10-30 決定）
 
@@ -220,6 +220,12 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 - 理由：以前は `create_app` の 1 つの関数（約 600 行）の中に、状態・エンドポイント・内部の処理が閉じ込められていて、単体でテストできなかった。
 - HTTP の API は `tests/server/test_app.py` で実際の worker を使って通しで確かめる。TestClient のために、開発用の依存に `httpx2` を足した（Starlette の TestClient は `httpx` を非推奨にし、`httpx2` を求める）。
 - サーバーの終了時に kill された worker の読み取りスレッドが、閉じたイベントループに終わりを送って例外になっていた。`TaskBroker` で、閉じたループへの送信は捨てる（2026-10-30 確認）。
+
+`compute` の中の分け方（2026-10-30 決定）：
+
+- `tasks/` に、worker が実行するタスクを種類ごとに置く。`run.py` は種類からタスクの関数を引く表（`KINDS`）と `run_task`、`columns.py` は schema・nonnull・summary、`plot.py` は plot と selection、`images.py` は系列の画像の書き出し、`table.py` は表のページ。
+- `selection.py` に、描く行の条件（`drawn_conditions`）と範囲選択の条件（`selection_filter`、`selection_columns`）を置く。集約（`aggregate.py`）と表のタスクの両方が使うため、集約から切り出した。
+- 進捗のメッセージの型 `Emit` は `progress.py` の 1 か所に置く（以前は `task.py` と `convert.py` の 2 か所にあった）。
 
 ### インタラクションの設計案（未確定）
 
@@ -346,7 +352,7 @@ plotly との分担：plotly.js はそのまま埋め込み、軸、ズーム・
     - 表を図と切り替えるタブにする：表を広く見られるが、図と表を同時に見られない。
     - 表の列をグラフの列と行番号だけにする：一番小さいが、選んだ行のほかの列を見たいという要件に足りない。
     - 表に awesome-datatable を流用する：上の理由で合わない。
-  - 実装（2026-10-29、`src/ddviz/shared/scatter.py` の `Selection`、`src/ddviz/compute/aggregate.py` の `selection_filter`、`task.py` の `run_selection` と `run_table`、`static/js/table.js`）：
+  - 実装（2026-10-29、`src/ddviz/shared/scatter.py` の `Selection`、`src/ddviz/compute/selection.py` の `selection_filter`、`tasks/plot.py` の `run_selection`、`tasks/table.py` の `run_table`、`static/js/table.js`）：
     - 画面は `plotly_selected` の `range`（キーは軸の id）から矩形のパネルと範囲を求め、`POST /api/selection` に描いている結果のタスク番号と一緒に送る。UI のサーバーは、結果の manifest（`AxisGrid`、水準、軸の列）から、そのパネルの facet の水準と x・y の列を求める。
     - 選択の層は、描いている結果の spec に、その結果の範囲と水準を `View` として付け、選択の条件で絞って、組ごとに順に集約する（`selection_only`。水準の段と代表行の段は飛ばす）。系列ごとの PNG を描いている結果と同じ形で書き、画面は結果の画像を不透明度 0.25 に下げてから、選択の層を上に描く（`static/js/layers.js`）。非アクティブの系列は、選んだ行も凡例と同じ 0.1。
     - 選んだ行の数は、選択の条件を満たす行の数（1 行は第 n 軸の組をまたいでも 1 回）。color、row、col が null の行は描かないので、選ばない。凡例で非アクティブの系列の行も選ぶ（表に出る）。ローカルフィルタで除いた行は選ばない（`selection_filter` がフィルタの条件も足す。2026-10-29）。

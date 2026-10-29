@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
 
+from ddviz.compute.progress import Emit
 from ddviz.shared.cache import PARTIAL
-
-Emit = Callable[[dict], None]
 
 
 def convert_columns(source: str, files: dict[str, str], emit: Emit) -> None:

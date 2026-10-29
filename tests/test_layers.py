@@ -26,11 +26,16 @@ EXCEPTIONS = {"ddviz.workers.worker": {"compute"}}
 
 
 def _modules() -> list[tuple[str, Path]]:
-    """Return the name and file of every module in the packages of `ALLOWED`."""
+    """Return the name and file of every module in the packages of `ALLOWED`, subpackages too."""
     return [
-        (f"ddviz.{p.parent.name}.{p.stem}".removesuffix(".__init__"), p)
+        (
+            ".".join(
+                ("ddviz", *p.relative_to(PACKAGE).with_suffix("").parts)
+            ).removesuffix(".__init__"),
+            p,
+        )
         for package in ALLOWED
-        for p in sorted((PACKAGE / package).glob("*.py"))
+        for p in sorted((PACKAGE / package).rglob("*.py"))
     ]
 
 

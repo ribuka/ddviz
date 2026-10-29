@@ -7,9 +7,15 @@ from dataclasses import dataclass, field
 
 import polars as pl
 
-from ddviz.compute.cuts import cut_index, cut_labels, find_cuts, in_level
+from ddviz.compute.cuts import cut_index, cut_labels, find_cuts
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.scan import scan_columns
+from ddviz.compute.selection import (
+    drawn_conditions,
+    numeric_roles,
+    selection_columns,
+    selection_filter,
+)
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import AxisGrid, GridLayout, grid_layout
 from ddviz.shared.scatter import ScatterSpec
@@ -81,85 +87,6 @@ class Aggregation:
     selected_rows: int | None = None
     cuts: dict[str, dict] = field(default_factory=dict)
     color_range: tuple[float, float] | None = None
-
-
-def selection_filter(spec: ScatterSpec) -> list[pl.Expr]:
-    """Return the conditions that pick the selected rows of a spec with a selection.
-
-    A row is selected when it is drawn in the panel the box was drawn on:
-    its facet levels are the panel's, its x and y are in the box, its
-    color, row and col are valid (`_valid`), and it passes the local filter.
-
-    Parameters
-    ----------
-    spec : ScatterSpec
-        A spec whose ``selection`` is set, with a view holding the levels
-        and cuts of the drawn result.
-
-    Returns
-    -------
-    list of polars.Expr
-        Conditions to filter on.
-    """
-    selection = spec.selection
-    x = pl.col(selection.x).cast(pl.Float64)
-    y = pl.col(selection.y).cast(pl.Float64)
-    conditions = [
-        x.is_finite(),
-        y.is_finite(),
-        x.is_between(*selection.x_range),
-        y.is_between(*selection.y_range),
-        *_valid(spec),
-    ]
-    for role, level in (("row", selection.row), ("col", selection.col)):
-        column = getattr(spec, role)
-        if column is None or level is None:
-            continue
-        if role in spec.binned:
-            index = spec.view.levels[role].index(level)
-            conditions.append(in_level(column, spec.view.cuts[role], index))
-        else:
-            conditions.append(pl.col(column).cast(pl.String) == level)
-    return conditions + filter_conditions(spec.filters)
-
-
-def _numeric_roles(spec: ScatterSpec) -> set[str]:
-    """Return the roles whose column is read as numbers: the binned ones and a gradient's color."""
-    return set(spec.binned) | ({"color"} if spec.gradient else set())
-
-
-def _valid(spec: ScatterSpec) -> list[pl.Expr]:
-    """Return the conditions a drawn row meets on its color, row and col columns.
-
-    A categorical column must not be null; a numeric one (`_numeric_roles`)
-    must be finite.
-    """
-    numeric = {getattr(spec, role) for role in _numeric_roles(spec)}
-    columns = dict.fromkeys(c for c in (spec.color, spec.row, spec.col) if c)
-    return [
-        pl.col(c).cast(pl.Float64).is_finite()
-        if c in numeric
-        else pl.col(c).is_not_null()
-        for c in columns
-    ]
-
-
-def selection_columns(spec: ScatterSpec) -> list[str]:
-    """Return the columns `selection_filter` reads.
-
-    Parameters
-    ----------
-    spec : ScatterSpec
-        A spec whose ``selection`` is set.
-
-    Returns
-    -------
-    list of str
-        The columns, once each.
-    """
-    columns = [spec.selection.x, spec.selection.y, spec.color, spec.row, spec.col]
-    columns += filter_columns(spec.filters)
-    return list(dict.fromkeys(c for c in columns if c is not None))
 
 
 def _padded(lo: float | None, hi: float | None) -> tuple[float, float]:
@@ -234,9 +161,7 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
     """
     numeric = list(dict.fromkeys([*spec.x, *spec.y]))
     used = list(
-        dict.fromkeys(
-            c for r, c in roles.items() if c and r not in _numeric_roles(spec)
-        )
+        dict.fromkeys(c for r, c in roles.items() if c and r not in numeric_roles(spec))
     )
     gradient = [spec.color] if spec.gradient else []
     # Levels and ranges come from the unfiltered scan: a row filter on the
@@ -349,7 +274,7 @@ def aggregate(
     view already knows the facet levels of its filter.
 
     With a selection, the selected rows are also aggregated into bins of
-    their own, in every panel (`selection_filter`).
+    their own, in every panel (`ddviz.compute.selection.selection_filter`).
 
     Parameters
     ----------
@@ -418,7 +343,7 @@ def aggregate(
         return _index_expr(roles[role], levels[role])
 
     row, col, series = index("row"), index("col"), index("color")
-    valid = _valid(spec)
+    valid = drawn_conditions(spec)
 
     def pair(
         xi: int, yj: int, extra: list[pl.Expr], extra_columns: list[str]

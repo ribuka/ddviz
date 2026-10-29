@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ddviz.compute.task import run_plot
+from ddviz.compute.tasks.plot import run_plot
 from ddviz.server.hover import HOVER_DISTANCE, HoverIndex
 from ddviz.shared.scatter import ScatterSpec
 
