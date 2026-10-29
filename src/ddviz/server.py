@@ -46,7 +46,13 @@ from ddviz.jobs import WorkerJob, physical_memory
 from ddviz.layout import AxisGrid, grid_layout
 from ddviz.manifest import IMAGES, read_manifest
 from ddviz.palette import DEFAULT_COLORS
-from ddviz.plan import drawn_columns, parse_filters, scatter_spec, undrawn
+from ddviz.plan import (
+    drawn_columns,
+    parse_color_bins,
+    parse_filters,
+    scatter_spec,
+    undrawn,
+)
 from ddviz.runner import WorkerPool
 from ddviz.scatter import Filter, ScatterSpec, Selection
 from ddviz.settings import Settings
@@ -69,6 +75,7 @@ class PlotRequest(BaseModel):
     width: int
     height: int
     filters: list[dict] = []
+    color_bins: dict | None = None
 
 
 class SizeRequest(BaseModel):
@@ -373,6 +380,10 @@ def create_app(
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         filters = await filters_of(request.filters)
+        try:
+            color_bins = parse_color_bins(request.color_bins)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
         numeric = {c["name"]: c["numeric"] for c in (await schema())}
         missing = [c for c in encoding.columns() if c not in numeric]
         if missing:
@@ -397,6 +408,8 @@ def create_app(
             request.height,
             DEFAULT_COLORS,
             filters,
+            numeric,
+            color_bins,
         )
         state.plot_id += 1
         index, timing = await run_plot(spec)
@@ -448,6 +461,8 @@ def create_app(
                     "y_ranges": [list(r) for r in y_ranges],
                     "levels": overview["all_levels"],
                     "facets": facets_of(overview) if same else None,
+                    "cuts": overview["cuts"],
+                    "color_range": overview["color_range"],
                 },
             }
         )
@@ -599,6 +614,8 @@ def create_app(
                     "y_ranges": manifest["y_ranges"],
                     "levels": manifest["all_levels"],
                     "facets": facets_of(manifest),
+                    "cuts": manifest["cuts"],
+                    "color_range": manifest["color_range"],
                 },
                 "selection": asdict(selection),
             }

@@ -5,28 +5,40 @@
 // and the hover follow its state. A series without rows in the drawn result
 // (left out by the filter, or outside the view) stays, marked as empty, so
 // that the colors of the others do not move.
+//
+// A numeric color column shows its scale instead (colorscale.js): a color
+// bar for a gradient, or its intervals in colors spread over the scale. A
+// right click on the bar or on the title opens the scale's menu.
+import { cssColor, seriesColors } from "./colorscale.js";
+
 export const INACTIVE_OPACITY = 0.1;
 
+const BY_TEXT = { rows: "行数", values: "値の幅" };
+
 export class Legend {
-  // `element` holds the items; `onChange` runs after each click.
-  constructor(element, onChange) {
+  // `element` holds the items; `onChange` runs after each click, `onMenu`
+  // with the right click's event on a numeric column's scale.
+  constructor(element, onChange, onMenu) {
     this.element = element;
     this.onChange = onChange;
+    this.onMenu = onMenu;
     this.series = [];
     this.inactive = new Set();
     this.empty = new Set();
   }
 
-  // Shows the series of a result: `title` is the color column (null for a
-  // single series). A result of the same series keeps their state.
-  // `images` (a result's, one per series) marks the series without rows.
-  set(title, series, colors, images) {
+  // Shows the series of a result (its meta): the color column is the title
+  // (none for a single series). A result of the same series keeps their
+  // state. Its images (one per series) mark the series without rows.
+  set(meta) {
+    const { series } = meta;
     const same = series.length === this.series.length && series.every((s, i) => s === this.series[i]);
     if (!same) this.inactive.clear();
-    this.title = title;
+    this.title = meta.color.column;
+    this.color = meta.color;
+    this.meta = meta;
     this.series = series;
-    this.colors = colors;
-    this.setEmpty(images);
+    this.setEmpty(meta.images);
   }
 
   // Marks the series whose image in a result is missing: they have no rows.
@@ -37,11 +49,22 @@ export class Legend {
 
   clear() {
     this.series = [];
+    this.color = null;
+    this.meta = null;
     this.inactive.clear();
     this.element.replaceChildren();
   }
 
   render() {
+    if (!this.meta) {
+      this.element.replaceChildren();
+      return;
+    }
+    if (this.color.kind === "gradient") {
+      this.renderBar();
+      return;
+    }
+    this.colors = this.meta ? seriesColors(this.meta) : [];
     const items = this.series.map((name, i) => {
       const item = document.createElement("div");
       item.className = "legend-item";
@@ -62,15 +85,64 @@ export class Legend {
     });
     const nodes = [];
     if (this.title !== null) {
-      const title = document.createElement("div");
-      title.className = "legend-title";
-      title.textContent = this.title;
+      const title = this.titleElement();
+      const { bins } = this.color;
+      if (bins) title.append(`（${BY_TEXT[bins.by]}で ${bins.n} 等分）`);
       nodes.push(title);
     }
     this.element.replaceChildren(...nodes, ...items);
   }
 
+  // The title; for a numeric column, a right click opens the scale's menu.
+  titleElement() {
+    const title = document.createElement("div");
+    title.className = "legend-title";
+    title.textContent = this.title;
+    if (this.color.kind !== "levels") {
+      title.classList.add("scale");
+      title.title = "右クリックで色の付け方を変える";
+      title.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        this.onMenu(event);
+      });
+    }
+    return title;
+  }
+
+  // A gradient's color bar: high values at the top.
+  renderBar() {
+    const [lo, hi] = this.color.range;
+    const bar = document.createElement("div");
+    bar.className = "colorbar";
+    const strip = document.createElement("div");
+    strip.className = "colorbar-strip";
+    const stops = [...Array(11).keys()].map((i) => cssColor(i / 10));
+    strip.style.background = `linear-gradient(to top, ${stops.join(", ")})`;
+    const ticks = document.createElement("div");
+    ticks.className = "colorbar-ticks";
+    for (const value of [hi, (lo + hi) / 2, lo]) {
+      const tick = document.createElement("span");
+      tick.textContent = formatTick(value);
+      ticks.append(tick);
+    }
+    bar.append(strip, ticks);
+    bar.title = "右クリックで色の付け方を変える";
+    bar.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      this.onMenu(event);
+    });
+    const nodes = [this.titleElement(), bar];
+    if (this.empty.has(0)) {
+      const note = document.createElement("div");
+      note.className = "legend-item empty";
+      note.textContent = "（行なし）";
+      nodes.push(note);
+    }
+    this.element.replaceChildren(...nodes);
+  }
+
   toggle(i) {
+    if (this.color?.kind === "gradient") return;
     if (!this.inactive.delete(i)) this.inactive.add(i);
     this.changed();
   }
@@ -93,4 +165,8 @@ export class Legend {
     const down = [...Array(nSeries).keys()].reverse();
     return [...down.filter((s) => !this.inactive.has(s)), ...down.filter((s) => this.inactive.has(s))];
   }
+}
+
+function formatTick(value) {
+  return Number.isInteger(value) ? String(value) : Number(value.toPrecision(4)).toString();
 }

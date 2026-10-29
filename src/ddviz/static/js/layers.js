@@ -1,6 +1,7 @@
 // Series image layers drawn on one canvas from plotly's axes, instead of an
 // image trace per panel and series: plotly then only draws the axes, and a
 // legend click redraws the canvas instead of the figure.
+import { decode } from "./colorscale.js";
 import { INACTIVE_OPACITY } from "./legend.js";
 
 // Opacity of every row while rows are selected; the selected rows are drawn
@@ -13,16 +14,16 @@ function axisKey(id) {
 }
 
 // Fetches the PNGs of a result (one file, sliced by `meta.images`) and decodes
-// them; returns per series an ImageBitmap whose tiles are the panels, or null.
-export async function loadImages(meta) {
+// them in the colors of `color` (a result's `meta.color`; colorscale.js);
+// returns per series an ImageBitmap whose tiles are the panels, or null.
+export async function loadImages(meta, color = meta.color) {
   const response = await fetch(`/api/images/${meta.task}`);
   if (!response.ok) throw new Error(`images of task ${meta.task}: ${response.status}`);
   const buffer = await response.arrayBuffer();
-  return Promise.all(
-    meta.images.map((span) =>
-      span ? createImageBitmap(new Blob([new Uint8Array(buffer, span[0], span[1])], { type: "image/png" })) : null,
-    ),
+  const blobs = meta.images.map((span) =>
+    span ? new Blob([new Uint8Array(buffer, span[0], span[1])], { type: "image/png" }) : null,
   );
+  return decode(blobs, color, meta.images.length);
 }
 
 // Frees the decoded images of a result.

@@ -116,6 +116,22 @@ def _facet_labels(
     return labels
 
 
+def _color_scale(spec: dict, manifest: dict) -> dict:
+    """Return how the page colors the series: by level, by intervals of a numeric column, or by a gradient."""
+    if spec.get("gradient"):
+        kind = "gradient"
+    elif "color" in spec.get("binned", {}):
+        kind = "bins"
+    else:
+        kind = "levels"
+    return {
+        "column": spec["color"],
+        "kind": kind,
+        "bins": spec.get("binned", {}).get("color"),
+        "range": manifest.get("color_range"),
+    }
+
+
 def build_figure(manifest: dict) -> dict:
     """Return the figure of a plot task and what the page needs to draw its images.
 
@@ -137,8 +153,11 @@ def build_figure(manifest: dict) -> dict:
         the axes that hold the range of each x and y column (``x_axes``,
         ``y_axes``), the bin grid, the data range of each column, where each
         series' PNG lies in the images file (`ddviz.manifest.IMAGES`; its
-        panels are tiles, ``ncol`` to a row, as `ddviz.raster.atlas`) and
-        whether the grid scrolls.
+        panels are tiles, ``ncol`` to a row, as `ddviz.raster.atlas`),
+        whether the grid scrolls, and how the series are colored
+        (``color``: ``kind`` is ``"levels"``, ``"bins"`` for the intervals of
+        a numeric column, or ``"gradient"``, whose single image holds grays
+        from 1 to 255 over ``range``).
     """
     spec = manifest["spec"]
     grid = manifest["grid"]
@@ -227,6 +246,7 @@ def build_figure(manifest: dict) -> dict:
         "x_ranges": [list(r) for r in x_ranges],
         "y_ranges": [list(r) for r in y_ranges],
         "series": [str(v) for v in levels["color"]],
+        "color": _color_scale(spec, manifest),
         "colors": manifest["colors"],
         "images": manifest["images"],
         "ncol": layout.ncol,

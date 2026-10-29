@@ -19,9 +19,10 @@ from ddviz.aggregate import (
     selection_filter,
 )
 from ddviz.convert import convert_columns
+from ddviz.keys import BinGrid
 from ddviz.manifest import IMAGES, write_manifest
 from ddviz.palette import series_color
-from ddviz.png import encode_mask
+from ddviz.png import encode_levels, encode_mask
 from ddviz.raster import atlas, masks, occupancy
 from ddviz.scan import scan_columns
 from ddviz.scatter import ScatterSpec
@@ -130,6 +131,54 @@ def _write_images(
     return images
 
 
+def _write_gradient(
+    out: Path,
+    keys: np.ndarray,
+    values: pl.Series,
+    grid: BinGrid,
+    ncol: int,
+    color_range: tuple[float, float],
+) -> list[list[int] | None]:
+    """Write the one PNG of a gradient into the images file; return where it lies.
+
+    Each pixel's gray is its representative row's color value over
+    `color_range`, from 1 to 255 (0 is an empty pixel); the page maps the
+    grays to the colors of its color scale.
+
+    Parameters
+    ----------
+    out : pathlib.Path
+        Directory of the task.
+    keys : numpy.ndarray
+        Keys of the non-empty bins of the single series.
+    values : polars.Series
+        Color value of each bin's representative row.
+    grid : BinGrid
+        Key space of the bins.
+    ncol : int
+        Panels to a row of tiles.
+    color_range : tuple of float
+        Values of gray 1 and gray 255.
+
+    Returns
+    -------
+    list
+        ``[[offset, length]]``, or ``[None]`` without bins.
+    """
+    if len(keys) == 0:
+        (out / IMAGES).write_bytes(b"")
+        return [None]
+    lo, hi = color_range
+    scaled = values.cast(pl.Float64).to_numpy()
+    scaled = (scaled - lo) / (hi - lo) if hi > lo else np.full_like(scaled, 0.5)
+    dense = np.zeros(grid.size, dtype=np.uint8)
+    dense[keys] = 1 + np.rint(np.clip(scaled, 0, 1) * 254).astype(np.uint8)
+    tiles = dense.reshape(grid.n_panels, grid.height, grid.width)
+    png = encode_levels(atlas(tiles, ncol))
+    (out / IMAGES).write_bytes(png)
+    return [[0, len(png)]]
+
+
 def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     """Aggregate a scatter plot and write its series images and hover files.
 
@@ -159,7 +208,12 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     bin_masks = masks(keys, agg.grid)
     np.save(out / "occupancy.npy", occupancy(bin_masks))
     colors = [series_color(spec.colors, s) for s in range(agg.grid.n_series)]
-    images = _write_images(out, bin_masks, agg.layout.ncol, colors)
+    if spec.gradient:
+        images = _write_gradient(
+            out, keys, bins[spec.color], agg.grid, agg.layout.ncol, agg.color_range
+        )
+    else:
+        images = _write_images(out, bin_masks, agg.layout.ncol, colors)
 
     write_manifest(
         out,
@@ -173,6 +227,8 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
             "y_ranges": agg.y_ranges,
             "levels": agg.levels,
             "all_levels": agg.all_levels,
+            "cuts": agg.cuts,
+            "color_range": agg.color_range,
             "colors": colors,
             "columns": columns,
             "images": images,
@@ -200,9 +256,19 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         selection_only=True,
     )
     emit({"type": "progress", "stage": "raster"})
-    bin_masks = masks(agg.selected[KEY].to_numpy(), agg.grid)
-    colors = [series_color(spec.colors, s) for s in range(agg.grid.n_series)]
-    images = _write_images(out, bin_masks, agg.layout.ncol, colors)
+    keys = agg.selected[KEY].to_numpy()
+    if spec.gradient:
+        images = _write_gradient(
+            out,
+            keys,
+            agg.selected[spec.color],
+            agg.grid,
+            agg.layout.ncol,
+            agg.color_range,
+        )
+    else:
+        colors = [series_color(spec.colors, s) for s in range(agg.grid.n_series)]
+        images = _write_images(out, masks(keys, agg.grid), agg.layout.ncol, colors)
     write_manifest(
         out,
         {

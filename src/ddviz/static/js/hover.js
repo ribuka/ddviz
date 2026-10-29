@@ -1,5 +1,6 @@
 // Row-level hover over the image layers: the server looks up the row of the
 // pixel under the cursor, and this module draws a plotly-like label.
+import { seriesColors, valueColor } from "./colorscale.js";
 
 const HOVER_DISTANCE = 20;
 
@@ -103,9 +104,15 @@ export function attachHover(gd, getMeta, legend, onTiming) {
       .filter(([k]) => !others.has(k))
       .map(([k, v]) => `${k}: ${formatValue(v)}`);
     lines.push(`行番号: ${hit.row}`);
-    lines.push(`このピクセル: ${hit.pixel_count} 行（${meta.series[hit.series]}: ${hit.count} 行）`);
+    // A gradient has one series, of no name.
+    const series = meta.color.kind === "gradient" ? "" : `（${meta.series[hit.series]}: ${hit.count} 行）`;
+    lines.push(`このピクセル: ${hit.pixel_count} 行${series}`);
     label.textContent = lines.join("\n");
-    label.style.background = meta.colors[hit.series];
+    const column = meta.color.column;
+    label.style.background =
+      meta.color.kind === "gradient" && typeof hit.values[column] === "number"
+        ? valueColor(meta, hit.values[column])
+        : seriesColors(meta)[hit.series];
     label.hidden = false;
     ring.hidden = false;
     ring.style.left = `${cx}px`;

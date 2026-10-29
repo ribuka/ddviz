@@ -49,3 +49,35 @@ def encode_mask(mask: np.ndarray, color: str, level: int = 1) -> bytes:
         + _chunk(b"IDAT", zlib.compress(raw, level))
         + _chunk(b"IEND", b"")
     )
+
+
+def encode_levels(levels: np.ndarray, level: int = 1) -> bytes:
+    """Encode 8-bit levels as a gray palette PNG: transparent at 0, gray `i` at `i`.
+
+    The page maps the grays to the colors of a color scale.
+
+    Parameters
+    ----------
+    levels : numpy.ndarray
+        uint8 array of shape ``(height, width)``; row 0 becomes the first row of the image.
+    level : int
+        zlib compression level.
+
+    Returns
+    -------
+    bytes
+        The PNG file.
+    """
+    height, width = levels.shape
+    palette = bytes(np.repeat(np.arange(256, dtype=np.uint8), 3))
+    raw = np.hstack(
+        [np.zeros((height, 1), np.uint8), levels.astype(np.uint8)]
+    ).tobytes()
+    return (
+        _SIGNATURE
+        + _chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 3, 0, 0, 0))
+        + _chunk(b"PLTE", palette)
+        + _chunk(b"tRNS", b"\x00")
+        + _chunk(b"IDAT", zlib.compress(raw, level))
+        + _chunk(b"IEND", b"")
+    )

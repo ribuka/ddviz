@@ -6,6 +6,27 @@ from dataclasses import asdict, dataclass, field
 
 
 @dataclass(frozen=True)
+class Binning:
+    """How a numeric column on the color, row or col role becomes levels of intervals (`ddviz.cuts`).
+
+    Parameters
+    ----------
+    n : int
+        Number of intervals.
+    by : str
+        ``"rows"`` for intervals of about the same number of rows (cut at
+        the quantiles), ``"values"`` for intervals of the same width.
+    values_up_to : int
+        A column with at most this many values gets one level per value
+        instead; 0 never does.
+    """
+
+    n: int
+    by: str = "rows"
+    values_up_to: int = 0
+
+
+@dataclass(frozen=True)
 class View:
     """Zoomed view of a scatter plot.
 
@@ -23,12 +44,20 @@ class View:
         Levels of the ``"row"`` and ``"col"`` roles drawn as panels
         (`ddviz.aggregate.Aggregation.levels`), known from a result with the
         same local filter; None to find them again from the filter.
+    cuts : dict
+        Cuts of each role in ``binned`` of the spec (`ddviz.cuts`), from the
+        overview.
+    color_range : list of float or None
+        Finite minimum and maximum of a gradient's color column, from the
+        overview.
     """
 
     x_ranges: list[list[float]]
     y_ranges: list[list[float]]
     levels: dict[str, list]
     facets: dict[str, list] | None = None
+    cuts: dict[str, dict] = field(default_factory=dict)
+    color_range: list[float] | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +143,12 @@ class ScatterSpec:
         the padded data range of each column.
     selection : Selection or None
         Rows chosen by a box, aggregated as a layer of their own.
+    binned : dict of str to Binning
+        Roles (``"color"``, ``"row"``, ``"col"``) whose numeric column is cut
+        into intervals, each a level (`ddviz.cuts`).
+    gradient : bool
+        Whether the color column is numeric and colors each pixel by the
+        value of its representative row, in a single series.
     filters : list of Filter
         Conditions of the local filter, all of which a row must meet to be
         drawn, hovered, selected or listed. They leave the series and the
@@ -133,6 +168,8 @@ class ScatterSpec:
     colors: list[str] = field(default_factory=list)
     view: View | None = None
     selection: Selection | None = None
+    binned: dict[str, Binning] = field(default_factory=dict)
+    gradient: bool = False
     filters: list[Filter] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -167,5 +204,8 @@ class ScatterSpec:
                 "view": View(**view) if view is not None else None,
                 "selection": Selection(**selection) if selection is not None else None,
                 "filters": [Filter(**f) for f in data.get("filters", [])],
+                "binned": {
+                    role: Binning(**b) for role, b in data.get("binned", {}).items()
+                },
             }
         )
