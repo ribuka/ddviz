@@ -257,6 +257,13 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 - 理由：以前は manifest もタスクも文字列のキーで読み書きしていて（plot の manifest だけで約 36 か所）、キーの書き間違いが実行するまで分からなかった。
 - 型にする前と後で、画面が受け取る JSON（描画、ズーム、大きさの変更、範囲選択、表、ホバー。カテゴリの色・第 2 の Y・グラデーション・数値の facet・ローカルフィルタの 4 通り）が、時間の値を除いてバイト単位で同じことを確かめた（2026-10-30）。
 
+E2E テスト（2026-10-30 決定）：
+
+- 範囲：画面の通しの動作を 1 本だけ確かめる。合成の小さな Parquet（`tests/conftest.py` の `scatter_path`、2003 行）を開き、列の欄から x と y を X と Y の欄へドラッグし、canvas の層（`canvas.image-layers`）に点が描かれること、描かれた画素にマウスを置くとホバーのラベルが出て、その行番号の行の x と y がファイルの値と一致することを見る（`tests/e2e/test_scatter.py`）。集約・ズーム・範囲選択・フィルタなどの中身は、サーバーと計算の単体テスト（`tests/server`、`tests/compute`）で確かめ、E2E には足さない。
+- 方式：playwright（Python、pytest-playwright）。UI のサーバーは `create_app` をテストのプロセスのスレッドで uvicorn に載せ、OS に選ばせたポートで待ち受ける（worker は実際の子プロセス）。ブラウザでは `/?token=<トークン>` を開いて cookie に移す（「認証」）。ページを閉じてからサーバーを止める。開いたままの SSE（`/api/events`）が uvicorn の終了を待たせ、teardown が約 30 秒延びたため。
+- どこで動かすか：`e2e` の印を付け、既定の `uv run -m pytest` からは外す（`pyproject.toml` の `addopts` の `-m "not e2e"`）。`uv run -m pytest -m e2e` で動かす。CI では E2E の job（ubuntu-latest）で動かし、失敗したら playwright の trace（`test-results/`）を artifact に上げる。ブラウザはインストール済みの Chrome（`--browser-channel chrome`）を使う。ubuntu-latest の runner には入っていて、playwright の Chromium を取ってくる時間が要らない。手元（Windows 11）では 1 本で約 5 秒。1 本なので `-n` で並べない。
+- 画面を変えたときの手での確かめ方は `.agents/docs/browser.md` に書く。
+
 #### 版（2026-10-30 決定）
 
 - 版はリポジトリの直下の `VERSION` の 1 か所にだけ書く。`pyproject.toml` は `dynamic = ["version"]` にし、hatch が `VERSION` から読む。
@@ -1340,7 +1347,7 @@ B の細かい集約（全体図の集約に足す分。代表行の値は含め
 ## 次のアクション
 
 1. Windows 10 系（Server 2016）で WebView2 の固定版 120 以降を動かすための権限（`icacls` で ALL APPLICATION PACKAGES と ALL RESTRICTED APPLICATION PACKAGES に読み取りを付ける）を、だれがいつ付けるかを決める（配布の手順に入れる、初回の起動でアプリが付ける、など。「最小構成の exe」）。Windows 11 では要らないので、手元では確かめられない
-2. UI を実装し始めたら、CI の E2E ジョブとブラウザ確認手順を戻す。リモートを設定して push する
+2. リモートを設定して push する
 3. ホバー用のファイルが一時フォルダを使う量の扱いを決める。空でないビンに比例し、4K の全画面で深くズームすると全体図と表示範囲の 2 つで最大約 1.5GB になる（「描画領域の大きさを変えたときの集約」）。共有サーバーなどディスクの空きが少ない環境での上限や、超えたときの振る舞いを、実データの点の散らばり方がわかってから決める
 4. Color、Group X、Group Y に置いたカテゴリの列の水準の上限（今は仮に 50）を決める（「D&D の画面の配置」の実装）。数値の列の扱いは決めた（「数値の列の色と facet」）。X / Y のカテゴリの軸も同じ上限を使う（「カテゴリの軸と箱ひげ図」）
 5. 図の右上の角（Group X の右、Group Y の上）に、折り返しの facet（`facet_col_wrap`）のドロップ先を作る（「要件」）。`Encoding` に役割（例 `wrap`）を足すこと、Group X / Group Y と同時に置けるか（置き換えるか断るか）、1 行あたりのパネルの数（描画領域の縦横比から決めるか、利用者が選ぶか）、見出しの付け方、第 n 軸との組み合わせ、数値の列を置いたときは Group X / Group Y と同じ区間にするか（「数値の列の色と facet」）を、実装のときに決める
