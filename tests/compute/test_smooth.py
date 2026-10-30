@@ -10,7 +10,7 @@ import polars as pl
 import pytest
 
 from ddviz.compute.aggregate import aggregate
-from ddviz.compute.smooth import SMOOTH_BINS, fit
+from ddviz.compute.smooth import SMOOTH_BINS, fit, fit_lines
 from ddviz.shared.scatter import Filter, ScatterSpec, Selection, Smoothing, View
 
 
@@ -224,3 +224,26 @@ def test_bins_on_either_side_of_a_border_keep_a_straight_line(
     ((_, _, _, xs, ys),) = aggregate(spec).smooths[0].lines
     assert len(xs) == 4
     np.testing.assert_allclose(ys, [2 * v + 1 for v in xs], atol=1e-6)
+
+
+@pytest.mark.parametrize("gap", [1.002e-6, 1.01e-4])
+def test_gcv_draws_a_line_with_close_bins_and_weights_far_apart(gap: float) -> None:
+    """Pairs of close bins with rows from 1 to 1e6 still make a finite line: a penalty whose factorization fails is never picked."""
+    k = np.arange(1, 64) / 64
+    x = np.sort(np.r_[0.0, k - gap / 2, k + gap / 2, 1.0])
+    w = 10.0 ** np.random.default_rng(11).integers(0, 7, x.size)
+    y = np.sin(7 * x)
+    bins = pl.DataFrame(
+        {
+            "__cell": np.zeros(128, dtype=int),
+            "__series": np.zeros(128, dtype=int),
+            "__xbin": np.arange(128),
+            "__n": w.astype(int),
+            "__sx": w * x,
+            "__sy": w * y,
+        }
+    )
+    ((_, _, xs, line),) = fit_lines(bins, Smoothing("gcv"))
+    assert len(xs) == 128
+    assert np.isfinite(line).all()
+    assert np.abs(np.array(line) - np.sin(7 * np.array(xs))).max() < 0.1

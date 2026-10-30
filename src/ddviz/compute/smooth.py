@@ -43,7 +43,7 @@ _GCV_GRID = 81
 # Penalties of the fine grid, over a step of the coarse grid on each side.
 _GCV_FINE = 41
 # Points of a spline closer than this, with x scaled to [0, 1], make one.
-_MERGE = 1e-6
+_MERGE = 1e-4
 
 CELL = "__cell"
 SERIES = "__series"
@@ -165,18 +165,28 @@ def _splines(
     return fitted, y.size - lams * trace
 
 
-def _gcv_lambda(b: _Bands, y: np.ndarray, w: np.ndarray) -> float:
-    """Return the penalty with the least GCV score, ``n * RSS / (n - tr A)^2`` with the residuals weighted: the best of a coarse grid, then of a fine one around it."""
+def _gcv_lambda(b: _Bands, y: np.ndarray, w: np.ndarray) -> float | None:
+    """Return the penalty with the least GCV score, ``n * RSS / (n - tr A)^2`` with the residuals weighted: the best of a coarse grid, then of a fine one around it.
+
+    A penalty whose factorization lost its precision (a score that is not
+    finite) is never the best; None when no penalty has a finite score.
+    """
     n = y.size
 
-    def best(log_lams: np.ndarray) -> float:
+    def best(log_lams: np.ndarray) -> float | None:
         fitted, trace = _splines(b, y, 10.0**log_lams)
         rss = ((y - fitted) ** 2 * w).sum(axis=1)
-        return float(log_lams[np.argmin(n * rss / (n - trace) ** 2)])
+        scores = n * rss / (n - trace) ** 2
+        finite = np.isfinite(scores)
+        if not finite.any():
+            return None
+        return float(log_lams[finite][np.argmin(scores[finite])])
 
     coarse = np.linspace(*_GCV_LOG_RANGE, _GCV_GRID)
     step = coarse[1] - coarse[0]
     middle = best(coarse)
+    if middle is None:
+        return None
     return 10 ** best(np.linspace(middle - step, middle + step, _GCV_FINE))
 
 
@@ -254,9 +264,10 @@ def fit(
         return _lowess(x, y, w, smoothing.frac)
     xs = (x - x[0]) / (x[-1] - x[0])
     # Points closer than `_MERGE` make one, their weighted mean, which the
-    # line's value there stands for: the factorization of the splines lost
-    # its precision (gave NaN) for points 1e-8 of the range apart, but kept
-    # a straight line to 1e-15 for points 1e-6 apart.
+    # line's value there stands for (under half a pixel of a 4K-wide panel):
+    # the factorization of the splines lost its precision (gave NaN) for
+    # points 1e-6 of the range apart with weights 1 to 1e8, but not once for
+    # points 1e-4 apart.
     group = np.r_[0, np.cumsum(np.diff(xs) >= _MERGE)]
     if group[-1] + 1 == xs.size:
         return _spline(xs, y, w, smoothing)
@@ -277,10 +288,13 @@ def _spline(
         lam = _gcv_lambda(bands, y, ws)
     else:
         p = _csaps_p(ws, x) if smoothing.p is None else smoothing.p
-        if p <= 0:
-            return _line(x, y, ws)
-        lam = (1 - p) / p
-    return _splines(bands, y, np.array([lam]))[0][0]
+        lam = None if p <= 0 else (1 - p) / p
+    fitted = None if lam is None else _splines(bands, y, np.array([lam]))[0][0]
+    # p = 0, or a factorization that lost its precision: the weighted
+    # least-squares line, which an infinite penalty tends to.
+    if fitted is None or not np.isfinite(fitted).all():
+        return _line(x, y, ws)
+    return fitted
 
 
 def bin_query(
