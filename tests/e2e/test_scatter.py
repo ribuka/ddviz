@@ -33,6 +33,29 @@ PAINTED_PIXEL = """() => {
 }"""
 
 
+# Whether the status shows a result: no plot is being aggregated.
+SETTLED = """() => {
+  const text = document.querySelector("#status").textContent;
+  return text.includes("行") && !text.includes("集約中");
+}"""
+
+
+def place(page: Page, column: str, role: str, plots: bool = True) -> None:
+    """Drag a column onto a role's zone, check that it landed, and wait for the plot it starts.
+
+    A plot drawn during the next drag moves the zones (on the CI runner, the
+    drop then missed its zone).
+    """
+    source = page.locator("#columns .column").filter(
+        has=page.get_by_text(column, exact=True)
+    )
+    zone = page.locator(f'.zone[data-role="{role}"]')
+    source.drag_to(zone)
+    expect(zone.locator(".chip-name")).to_have_text(column)
+    if plots:
+        page.wait_for_function(SETTLED)
+
+
 def test_a_scatter_plot_draws_and_hovers(
     app_page: Page, scatter_frame: pl.DataFrame
 ) -> None:
@@ -68,11 +91,10 @@ def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    for column, role in [("x", "x"), ("y", "y"), ("facet", "col"), ("color", "wrap")]:
-        source = columns.filter(has=page.get_by_text(column, exact=True))
-        source.drag_to(page.locator(f'.zone[data-role="{role}"]'))
+    place(page, "x", "x", plots=False)
+    for column, role in [("y", "y"), ("facet", "col"), ("color", "wrap")]:
+        place(page, column, role)
     wrap = page.locator('.zone[data-role="wrap"]')
-    expect(wrap.locator(".chip-name")).to_have_text("color")
     expect(page.locator('.zone[data-role="col"] .chip')).to_have_count(0)
     page.wait_for_function(PAINTED_PIXEL)
     labels = page.locator("#plot .annotation-text")
@@ -185,9 +207,9 @@ def test_smoothing_lines_draw_alone_and_change_their_method(app_page: Page) -> N
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    for column, role in [("x", "x"), ("y", "y"), ("color", "color")]:
-        source = columns.filter(has=page.get_by_text(column, exact=True))
-        source.drag_to(page.locator(f'.zone[data-role="{role}"]'))
+    place(page, "x", "x", plots=False)
+    for column, role in [("y", "y"), ("color", "color")]:
+        place(page, column, role)
     page.wait_for_function(PAINTED_PIXEL)
     icons = page.locator("#elements .element")
     points, smooth = icons.nth(0), icons.nth(2)
