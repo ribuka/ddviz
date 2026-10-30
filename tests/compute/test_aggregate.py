@@ -106,6 +106,14 @@ def test_a_role_with_too_many_levels_is_refused(scatter_spec: ScatterSpec) -> No
         aggregate(replace(scatter_spec, color="x"))
 
 
+def test_the_level_limit_comes_from_the_spec(scatter_spec: ScatterSpec) -> None:
+    """``max_levels`` refuses a color column with more levels and lets one with as many through."""
+    assert aggregate(replace(scatter_spec, max_levels=3)).grid.n_series == 3
+    spec = ScatterSpec.from_dict(replace(scatter_spec, max_levels=2).to_dict())
+    with pytest.raises(ValueError, match=r"at most 2\): color has 3"):
+        aggregate(spec)
+
+
 def test_each_pair_of_axis_columns_is_a_panel(tmp_path: Path) -> None:
     """Every pair of an x and a y column bins the rows that have both, in its own panel and ranges."""
     rng = np.random.default_rng(1)
