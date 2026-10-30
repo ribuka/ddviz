@@ -1,4 +1,4 @@
-"""Routes that draw: a plot, its zoomed view, its overview at another size, and hovers.
+"""Routes that draw: a plot, its zoomed view, its overview at another size, hovers, and the plot's data.
 
 The hover files of the open results (the overview and the view) keep
 within ``max_hover_bytes`` together: a new result gets what the results
@@ -18,9 +18,11 @@ import json
 import time
 from collections.abc import AsyncIterator
 from dataclasses import asdict, replace
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from ddviz.server.broker import TaskBroker
 from ddviz.server.derive import resized_spec, unchanged
@@ -39,12 +41,13 @@ from ddviz.server.plan import (
     scatter_spec,
     undrawn,
 )
+from ddviz.server.plotdata import FORMATS, file_name
 from ddviz.server.results import Results, drop
 from ddviz.server.source import Source
-from ddviz.shared.manifest import IMAGES
+from ddviz.shared.manifest import IMAGES, read_manifest
 from ddviz.shared.palette import DEFAULT_COLORS
 from ddviz.shared.scatter import ScatterSpec
-from ddviz.shared.tasks import PlotTask
+from ddviz.shared.tasks import PlotDataTask, PlotTask
 
 
 def plot_router(
@@ -258,6 +261,34 @@ def plot_router(
             return {"stale": True}
         series = [int(s) for s in order.split(",") if s]
         return {"hit": index.lookup(panel, fx, fy, sx, sy, series)}
+
+    @router.get("/api/plot-data/{task}")
+    async def plot_data(task: int, format: str) -> FileResponse:
+        """Return the bins of the overview as a CSV or Parquet file (`ddviz.compute.tasks.plotdata`).
+
+        The overview, not the view: the file holds the whole plot whatever
+        the zoom. A worker of the table's pool writes it; its name comes in
+        ``Content-Disposition``.
+        """
+        if format not in FORMATS:
+            raise HTTPException(400, f"format: {format!r}")
+        index = results.overview
+        if index is None or index.out.name != str(task):
+            raise HTTPException(404, "stale")
+        if not index.manifest.hover_files:
+            raise HTTPException(
+                409,
+                "ホバー用のファイルが上限を超えたため、この図のデータは残っていない",
+            )
+        end = await broker.run(PlotDataTask(str(index.out), format), "table")
+        ensure_done(end)
+        file = read_manifest(end.out)["file"]
+        return FileResponse(
+            end.out / file,
+            media_type=FORMATS[format],
+            filename=file_name(source.path, format, datetime.now().astimezone()),
+            background=BackgroundTask(end.discard),
+        )
 
     @router.get("/api/events")
     async def events() -> StreamingResponse:

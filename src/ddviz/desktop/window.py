@@ -278,6 +278,9 @@ def _run(
     """Show the window until it closes; return whether everything went well."""
     webview.settings["SHOW_DEFAULT_MENUS"] = False
     webview.settings["ALLOW_FILE_URLS"] = False
+    # The plot's data is saved as a download; pywebview cancels downloads
+    # unless allowed, and asks where to save them with the OS dialog.
+    webview.settings["ALLOW_DOWNLOADS"] = True
     chooser = _Chooser()
     window = webview.create_window(
         "ddviz",

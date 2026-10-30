@@ -212,7 +212,7 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 
 | PNG を画面に渡す方法 | 図の JSON には画像を入れない。画面は `GET /api/images/<タスク番号>` で `images.bin` をそのまま受け取り、manifest の位置で切り出して `createImageBitmap` でデコードし、自前の canvas に描く（2026-10-28。「画像の層の持ち方の比較」） | plotly の image トレースは使わない（「インタラクションの設計案」の「画像の層」）。base64 と data URI が要らなくなり、10 × 10 パネル × 5 系列で図の JSON は 416KB → 65KB になった。以前は data URI で埋め込んでいた。plotly.js v4.1.1 の image トレースは、`source` が `data:image/...;base64,` に合わなければ消す（`IMAGE_URL_PREFIX`）ため |
 
-実装は `src/ddviz/workers` の `runner.py`、`jobs.py`、`worker.py`、`src/ddviz/compute/tasks/run.py`、`src/ddviz/server/broker.py` にある。タスクの種類は `schema`（Load）、`nonnull`（列ごとの非 null の割合。Load の後に裏で 1 回）、`convert`（遅延変換）、`plot`（集約と画像化）。変換中に来た描画の要求は 409 で断る。描画のタスクを渡すと走っている子を kill するため、変換を守る（画面は変換中の編集を受け付けないので、通常は来ない）。
+実装は `src/ddviz/workers` の `runner.py`、`jobs.py`、`worker.py`、`src/ddviz/compute/tasks/run.py`、`src/ddviz/server/broker.py` にある。タスクの種類は `schema`（Load）、`nonnull`（列ごとの非 null の割合。Load の後に裏で 1 回）、`convert`（遅延変換）、`plot`（集約と画像化）、`plot_data`（保存する図のデータ。「データの保存」）。変換中に来た描画の要求は 409 で断る。描画のタスクを渡すと走っている子を kill するため、変換を守る（画面は変換中の編集を受け付けないので、通常は来ない）。
 
 #### パッケージ構成（2026-10-30 決定）
 
@@ -235,7 +235,7 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 | モジュール | 中身 |
 | --- | --- |
 | `app.py` | `create_app`：下の部品を作って router をつなぎ、起動と終了（lifespan）を受け持つだけ |
-| `broker.py` | 3 つの worker のプール（`plot`、`table`、`summary`）にタスクを渡し、終わりを待つ（`TaskBroker`、`TaskEnd`）。plot のプールの進捗を `/api/events` に流す |
+| `broker.py` | 3 つの worker のプール（`plot`、`table`（表のページとデータの保存）、`summary`）にタスクを渡し、終わりを待つ（`TaskBroker`、`TaskEnd`）。plot のプールの進捗を `/api/events` に流す |
 | `source.py` | 入力（Parquet ファイルかフォルダ）：スキーマ、列のキャッシュと変換、非 null の割合、フィルタ欄の集計（`Source`） |
 | `results.py` | いま描いている結果：全体図、ズームした表示、範囲選択の層（`Results`、`Layer`） |
 | `derive.py` | 描いた結果の manifest から次のタスクの spec を作る純粋な関数（表示範囲・大きさ・フィルタを変えた spec、範囲選択） |
@@ -248,7 +248,7 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 
 `compute` の中の分け方（2026-10-30 決定）：
 
-- `tasks/` に、worker が実行するタスクを種類ごとに置く。`run.py` はタスクの型で関数を選ぶ `run_task`、`columns.py` は schema・nonnull・summary、`plot.py` は plot と selection、`images.py` は系列の画像の書き出し、`table.py` は表のページ。
+- `tasks/` に、worker が実行するタスクを種類ごとに置く。`run.py` はタスクの型で関数を選ぶ `run_task`、`columns.py` は schema・nonnull・summary、`plot.py` は plot と selection、`images.py` は系列の画像の書き出し、`table.py` は表のページ、`plotdata.py` は保存する図のデータ（plot_data）。
 - `selection.py` に、描く行の条件（`drawn_conditions`）と範囲選択の条件（`selection_filter`、`selection_columns`）を置く。集約（`aggregate.py`）と表のタスクの両方が使うため、集約から切り出した。
 - 進捗のメッセージの型 `Emit` は `progress.py` の 1 か所に置く（以前は `task.py` と `convert.py` の 2 か所にあった）。
 
@@ -317,9 +317,17 @@ plotly との分担：plotly.js はそのまま埋め込み、軸、ズーム・
   - 最初の集約（データ全体の範囲。以下「全体図」）の結果は、別のグラフを描くまで消さずに持つ。ダブルクリックやモードバーの自動範囲で全体に戻すときは、それを即座に描き直し、集約しない（2026-10-27 ユーザー判断）。ディスクは数十 MB、UI のサーバーのメモリは memmap だけ。
   - 表示範囲の集約は、全体図の水準（color、row、col）とグラフの大きさを使い回す。levels の段（約 0.8〜1 秒）を飛ばし、パネルと系列の並びや色も全体図と同じに保つ。範囲の外の行は集約から除く（`ScatterSpec` の `view`）。
   - 同じ x の列のパネルの x 軸、同じ y の列のパネルの y 軸は `matches` で揃っているので、表示範囲は x と y の列ごとに 1 つ（その列の最初のパネルの軸の範囲。`POST /api/view` の `x_ranges`、`y_ranges`）。第 n 軸が無ければ、x と y の 1 つずつ（「第 n 軸」）。
-  - plotly のモードバーは、Zoom、Pan、Box Select、Reset axes の 4 つだけを出し、ドラッグの初期は Pan にする（2026-10-28 ユーザー判断）。Reset axes で全体図の範囲に戻ると、全体図を集約せずに描き直す。
+  - plotly のモードバーは、Zoom、Pan、Box Select、Reset axes と、データの保存（下記）の 5 つだけを出し、ドラッグの初期は Pan にする（2026-10-28 ユーザー判断。保存は 2026-10-30 に足した、Issue #19）。Reset axes で全体図の範囲に戻ると、全体図を集約せずに描き直す。
+    - データの保存：保存するのは図の画像（PNG）ではなく、集約結果のデータ（2026-10-30 ユーザー判断）。モードバーのボタン（`static/js/datamenu.js`）を押すと、ボタンの下に `CSV`・`Parquet` の小さなメニューが出る（形式は flat-pca の `Download data` にそろえた）。形式を選ぶとファイルを保存してメニューを閉じる。メニューの外のクリックか Esc でも閉じる。失敗したら、メニューを開いたまま理由を出す。
+      - 中身は全体図の結果のビン（`ddviz.server.plotdata`）。ズームの範囲や凡例で非アクティブにした系列によらず、図の全体を保存する（flat-pca と同じ）。全体図は描画領域の大きさで集約したビンなので、表示範囲の細かいビンではない。ローカルフィルタは効いたまま（フィルタ後の行のビン）。
+      - 1 行が空でない 1 つのビン（パネル × 系列 × ピクセル）。列は `x_column`（パネルの x の列。X が空のときは null）、`x_lo`・`x_hi`（ビンの x の範囲。半開区間）、カテゴリの x の列があれば `x_level`（ビンの中心が入る帯の水準。数値の列のパネルでは null）、y も同じ、使っている役割の水準 `group_y`（Group Y）・`group_x`（Group X。Wrap では `wrap`）・`color`・`overlay`、最後に `count`（ビンの行数）。水準は図の凡例・ラベルと同じ文字列。カテゴリの軸の範囲は軸の位置（水準 i の帯の中心が i）。数値の列の色（グラデーション）は系列でないので `color` の列を出さない。
+      - 理由：結果は行を持たず、ピクセルのビンとその行数だけを持つ（「画像の層」「ホバー」）。ビンはホバー用のファイル（`keys.npy`、`count.npy`）から読むので、元の Parquet を読み直さない。比べた案：表示範囲のビン（ズームによって中身が変わる）、元の行（1 億行では保存の意味が薄く、集約結果でもない）。
+      - 箱ひげ図の要約（四分位など）と平滑線の点は含めない。箱ひげ図だけのパネルは外れ値のビン、平滑線だけのパネルはビンが無い。
+      - ホバー用のファイルを上限（`[hover] max_temp_gb`）のために書かなかった結果は、ビンが残っていないので保存を断り、メニューにその理由を出す（HTTP 409）。
+      - 使い捨てプロセスのタスク（`PlotDataTask`、`ddviz.compute.tasks.plotdata`）が、表を CSV（UTF-8 の BOM 付き。Excel が UTF-8 と読むように）か Parquet に書き、UI のサーバーが返して（`GET /api/plot-data/{task}?format=csv|parquet`）、送り終えたらタスクのディレクトリを消す。理由：表を組むのに polars を使い、UI のプロセスは polars を import しない（「プロセス構成」）。タスクは table のプールで走らせる。プールを足すと待機プロセス（約 50MB）が 1 つ常駐するため。保存の途中で表のページを読むと、保存は取り消される（メニューに理由が出る）。ページの全体図の task でなければ 404（もう一度選んでもらう）。ファイル名は `<入力のファイル名（.parquet を除く）かフォルダ名>_<YYYYMMDD-HHMMSS>.<csv|parquet>` で、`Content-Disposition` で渡す（`ddviz.server.plotdata`）。ファイル名に使えない文字と空白は `_` にする。
+      - ページは受け取ったファイルを `<a download>` で保存する。pywebview は既定でダウンロードを取り消すので、`ALLOW_DOWNLOADS` を有効にした。WebView2 では OS の保存のダイアログが出て、場所と名前を選べる（pywebview 6.2.1 の `edgechromium.py` の `on_download_starting`）。
     - モードバーは、ホバーしたときだけでなく常に出す（`displayModeBar: true`。2026-10-30 ユーザー判断、Issue #20）。理由：既定では図にホバーしたときだけ出るので、操作のたびにホバーしないとボタンが見えず、今のドラッグのモード（Pan / Zoom / Box Select）も分からなかった。
-    - モードバー（高さ 22px、上から 2px、右端に幅約 104px）は図の右上の余白に出る。上の余白が 30px のままだと、Group X や Wrap のラベル（余白の下端に揃う）と、パネルが狭いとき（窓幅 900px で 2 パネルなど）に重なった（2026-10-30 に Chrome で確認）。上の余白を 54px（30 + 24）に広げ、モードバーの段をラベルの上に分けた。比べた案：ラベルと重なるときだけ余白を広げる（配置の分岐が増える）、モードバーを図の外（ドロップ先の並び）へ移す（plotly の DOM を動かすことになる）。
+    - モードバー（高さ 22px、上から 2px、右端に幅約 104px。保存のボタンを足して 5 つで 128px、2026-10-30 に Chrome で確認）は図の右上の余白に出る。上の余白が 30px のままだと、Group X や Wrap のラベル（余白の下端に揃う）と、パネルが狭いとき（窓幅 900px で 2 パネルなど）に重なった（2026-10-30 に Chrome で確認）。上の余白を 54px（30 + 24）に広げ、モードバーの段をラベルの上に分けた。比べた案：ラベルと重なるときだけ余白を広げる（配置の分岐が増える）、モードバーを図の外（ドロップ先の並び）へ移す（plotly の DOM を動かすことになる）。
     - スクロールする図では、モードバーは図の右上（スクロールの外）に出て見えなくなっていた。上の帯（`static/js/sticky.js`）と同じくスクロールに合わせて動かし（`transform`）、描画領域の右上に留める。帯より手前に出す（`z-index: 1`）。
   - 画面は `plotly_relayout` で範囲の変化を受け、`POST /api/view` に範囲を送る。新しい要求は走っている集約の子を kill する。古い要求への応答は捨てる。画像を差し替えている最中（約 0.5 秒）に来た `plotly_relayout` も無視しない。最初の実装は無視していたので、その間に離したパンが失われ、軸と画像の範囲が食い違うおそれがあった（2026-10-27 修正）。ドラッグ中に前の要求の結果が届いたら、離すまで差し替えない。結果は canvas の画像だけを差し替え（「画像の層」）、軸は利用者が動かした範囲のままにする。凡例の状態（非アクティブの系列）は差し替えの前後で引き継ぐ。
   - ホバーは、画面に描いている結果（全体図か表示範囲か）のタスク番号で引く。UI のサーバーは全体図と最新の表示範囲の 2 つの結果を開いておく。

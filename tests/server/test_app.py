@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import re
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -519,3 +521,80 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
 
     bad = {"encoding": encoding, **SIZE, "shape_size": 8}
     assert client.post("/api/plot", json=bad).status_code == 400
+
+
+def test_plot_data_saves_the_overview_bins(client: TestClient) -> None:
+    """The data of a plot is its overview's bins, as CSV or Parquet, whatever the zoom."""
+    meta = _plot(client)["meta"]
+    url = f"/api/plot-data/{meta['task']}"
+    response = client.get(url, params={"format": "parquet"})
+    assert response.status_code == 200, response.text
+    assert re.fullmatch(
+        r'attachment; filename="scatter_\d{8}-\d{6}\.parquet"',
+        response.headers["content-disposition"],
+    )
+    table = pl.read_parquet(io.BytesIO(response.content))
+    assert table.columns == [
+        "x_column",
+        "x_lo",
+        "x_hi",
+        "y_column",
+        "y_lo",
+        "y_hi",
+        "group_x",
+        "color",
+        "count",
+    ]
+    assert table["count"].sum() == meta["rows"]
+    assert set(table["x_column"]) == {"x"}
+    assert set(table["group_x"]) == {"p", "q"}
+    assert set(table["color"]) == {"a", "b", "c"}
+    assert (table["x_lo"] < table["x_hi"]).all()
+    (lo, hi), width = meta["x_ranges"][0], SIZE["width"]
+    assert table["x_lo"].min() >= lo
+    assert table["x_hi"].max() <= hi + (hi - lo) / width
+
+    # A zoom does not change it; the CSV holds the same table.
+    view = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
+    assert client.post("/api/view", json=view).status_code == 200
+    csv = client.get(url, params={"format": "csv"})
+    assert csv.content.startswith("﻿".encode())
+    assert csv.headers["content-disposition"].endswith('.csv"')
+    assert pl.read_csv(io.BytesIO(csv.content)).equals(table)
+
+    assert client.get(url, params={"format": "xlsx"}).status_code == 400
+    stale = f"/api/plot-data/{meta['task'] + 99}"
+    assert client.get(stale, params={"format": "csv"}).status_code == 404
+
+
+def test_plot_data_of_a_categorical_axis_has_its_levels(client: TestClient) -> None:
+    """A categorical x gives each bin's level; a wrapped grid names its levels wrap."""
+    encoding = {"x": ["color"], "y": ["y"], "color": "color", "wrap": "facet"}
+    meta = client.post("/api/plot", json={"encoding": encoding, **SIZE}).json()["meta"]
+    response = client.get(
+        f"/api/plot-data/{meta['task']}", params={"format": "parquet"}
+    )
+    table = pl.read_parquet(io.BytesIO(response.content))
+    assert "x_level" in table.columns
+    assert "y_level" not in table.columns
+    assert set(table["wrap"]) == {"p", "q"}
+    assert (table["x_level"] == table["color"]).all()
+    assert table["count"].sum() == meta["rows"]
+
+
+def test_plot_data_needs_the_hover_files(tmp_path: Path, scatter_path: Path) -> None:
+    """A result without hover files kept no bins: its data is refused with the reason."""
+    settings = Settings(hover=HoverSettings(max_temp_bytes=1))
+    app = create_app(
+        str(scatter_path), False, tmp_path / "run", tmp_path / "cache", settings, TOKEN
+    )
+    (tmp_path / "run").mkdir()
+    with TestClient(app) as limited:
+        limited.get("/", params={"token": TOKEN})
+        meta = _plot(limited)["meta"]
+        assert meta["hover"]["files"] is False
+        response = limited.get(
+            f"/api/plot-data/{meta['task']}", params={"format": "csv"}
+        )
+        assert response.status_code == 409
+        assert "ホバー" in response.json()["detail"]

@@ -2,9 +2,9 @@
 
 The server has three pools, so that one kind of task never kills another:
 ``"plot"`` (schema, conversion, plots and selections), ``"table"`` (pages of
-the selection table) and ``"summary"`` (the filter pane's summaries and the
-share of non-null values). Submitting a task to a pool kills the task
-running in it.
+the selection table, and the plot's data to save) and ``"summary"`` (the
+filter pane's summaries and the share of non-null values). Submitting a task
+to a pool kills the task running in it.
 """
 
 from __future__ import annotations
