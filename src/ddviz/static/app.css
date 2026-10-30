@@ -299,6 +299,19 @@ button {
   padding: 1px 3px;
 }
 
+.filter-contains {
+  display: flex;
+  margin-top: 4px;
+}
+
+.filter-contains input {
+  width: 0;
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 1px 3px;
+}
+
 .filter-levels {
   max-height: 180px;
   overflow: auto;

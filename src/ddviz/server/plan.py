@@ -116,7 +116,8 @@ def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
     ----------
     raw : list of dict
         ``{"column", "range"}`` for a numeric column, ``{"column",
-        "levels"}`` for a categorical one; one per column.
+        "levels"}`` or ``{"column", "contains"}`` (a non-empty text) for a
+        categorical one; one per column.
     numeric : dict of str to bool
         Whether each column of the data is numeric.
 
@@ -133,15 +134,20 @@ def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
     """
     filters = []
     for item in raw:
-        if not isinstance(item, dict) or not set(item) <= {"column", "range", "levels"}:
-            raise ValueError(f"a filter has a column and a range or levels: {item}")
+        keys = {"column", "range", "levels", "contains"}
+        if not isinstance(item, dict) or not set(item) <= keys:
+            raise ValueError(
+                f"a filter has a column and a range, levels or contains: {item}"
+            )
         column = item.get("column")
         if column not in numeric:
             raise ValueError(f"unknown filter column: {column}")
         bounds, levels = item.get("range"), item.get("levels")
+        contains = item.get("contains")
         if numeric[column]:
             ok = (
                 levels is None
+                and contains is None
                 and isinstance(bounds, list)
                 and len(bounds) == 2
                 and all(isinstance(b, int | float) and math.isfinite(b) for b in bounds)
@@ -150,6 +156,16 @@ def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
             if not ok:
                 raise ValueError(f"{column} needs a range [lo, hi]")
             filters.append(Filter(column, range=[float(b) for b in bounds]))
+        elif contains is not None:
+            ok = (
+                bounds is None
+                and levels is None
+                and isinstance(contains, str)
+                and contains
+            )
+            if not ok:
+                raise ValueError(f"{column} needs a non-empty text to contain")
+            filters.append(Filter(column, contains=contains))
         else:
             ok = (
                 bounds is None
