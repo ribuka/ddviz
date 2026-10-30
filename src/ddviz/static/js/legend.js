@@ -38,12 +38,18 @@ export class Legend {
     this.color = meta.color;
     this.meta = meta;
     this.series = series;
-    this.setEmpty(meta.images);
+    this.setEmpty(meta);
   }
 
-  // Marks the series whose image in a result is missing: they have no rows.
-  setEmpty(images) {
-    this.empty = new Set(images.flatMap((image, i) => (image === null ? [i] : [])));
+  // Marks the series of a result (its meta) that draw nothing: no image,
+  // box plot or smoothing line. They have no rows.
+  setEmpty(meta) {
+    const drawn = new Set(meta.images.flatMap((image, i) => (image === null ? [] : [i])));
+    for (const panel of meta.panels) {
+      for (const box of panel.boxes) drawn.add(box[1]);
+      for (const line of panel.smooths) drawn.add(line[0]);
+    }
+    this.empty = new Set(meta.images.flatMap((_, i) => (drawn.has(i) ? [] : [i])));
     this.render();
   }
 

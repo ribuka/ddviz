@@ -109,6 +109,7 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         axis_levels=agg.axis_levels,
         spreads=agg.spreads,
         boxes=agg.boxes,
+        smooths=agg.smooths,
     ).write(out)
 
 

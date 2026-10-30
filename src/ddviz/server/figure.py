@@ -151,6 +151,17 @@ def _panel_boxes(manifest: PlotManifest) -> dict[tuple, list[list[float]]]:
     return boxes
 
 
+def _panel_smooths(manifest: PlotManifest) -> dict[tuple, list[list]]:
+    """Return the smoothing lines of each pair of axis columns and facet cell, as the page draws them."""
+    smooths: dict[tuple, list[list]] = {}
+    for pair in manifest.smooths:
+        for row, col, series, xs, ys in pair.lines:
+            smooths.setdefault((pair.x, pair.y, int(row), int(col)), []).append(
+                [int(series), xs, ys]
+            )
+    return smooths
+
+
 def build_figure(manifest: PlotManifest) -> dict:
     """Return the figure of a plot task and what the page needs to draw its images.
 
@@ -172,7 +183,9 @@ def build_figure(manifest: PlotManifest) -> dict:
         levels (``facet``: row and col as text, or None), whether the
         points of every row are drawn (``points``) and the box plots
         (``boxes``: ``[level, series, n, low, q1, median, q3, high]`` each,
-        `ddviz.shared.scatter.Boxes`) of each panel, the levels of each
+        `ddviz.shared.scatter.Boxes`) and smoothing lines (``smooths``:
+        ``[series, xs, ys]`` each, `ddviz.shared.scatter.Smooths`) of each
+        panel, the levels of each
         categorical axis column (``axis_levels``),
         the axes that hold the range of each x and y column (``x_axes``,
         ``y_axes``), the bin grid, the data range of each column, where each
@@ -213,6 +226,7 @@ def build_figure(manifest: PlotManifest) -> dict:
     }
     panels = []
     boxes = _panel_boxes(manifest)
+    smooths = _panel_smooths(manifest)
     for panel in range(axes.panels):
         prow, pcol = divmod(panel, layout.ncol)
         xi, yj = axes.axes(panel)
@@ -255,6 +269,7 @@ def build_figure(manifest: PlotManifest) -> dict:
                 "facet": facet,
                 "points": spec.draws_points(spec.x[xi], spec.y[yj]),
                 "boxes": boxes.get((spec.x[xi], spec.y[yj], row, col), []),
+                "smooths": smooths.get((spec.x[xi], spec.y[yj], row, col), []),
             }
         )
     # A grid that scrolls has its tick labels and facet labels in strips

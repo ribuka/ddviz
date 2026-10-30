@@ -121,7 +121,7 @@ def test_plot_draws_and_serves_images(client: TestClient) -> None:
     ("encoding", "detail"),
     [
         ({"x": ["nope"], "y": ["y"]}, "unknown columns"),
-        ({"x": ["x"], "y": ["y"], "elements": ["smooth"]}, "elements"),
+        ({"x": ["x"], "y": ["y"], "elements": []}, "elements"),
         ({"x": ["x"], "y": ["y"], "elements": "points"}, "elements"),
         ({"x": ["x"]}, "x and y"),
         ({"x": "x", "y": ["y"]}, "list"),
@@ -132,7 +132,7 @@ def test_plot_draws_and_serves_images(client: TestClient) -> None:
 def test_plot_refuses_bad_encodings(
     client: TestClient, encoding: dict, detail: str
 ) -> None:
-    """A plot with an unknown or missing axis column, no drawable element, or wrap beside a facet or an n-th axis, is refused."""
+    """A plot with an unknown or missing axis column, no element, or wrap beside a facet or an n-th axis, is refused."""
     response = client.post("/api/plot", json={"encoding": encoding, **SIZE})
     assert response.status_code == 400
     assert detail in response.json()["detail"]
@@ -384,4 +384,52 @@ def test_box_plots_plot_zoom_filter_and_select(client: TestClient) -> None:
     numeric_x = {"x": ["x"], "y": ["y"], "elements": ["box"]}
     plotted = client.post("/api/plot", json={"encoding": numeric_x, **SIZE}).json()
     assert plotted["meta"]["undrawn"] == ["box"]
+    assert plotted["meta"]["panels"][0]["points"] is True
+
+
+def test_smoothing_lines_plot_zoom_filter_and_select(client: TestClient) -> None:
+    """Smoothing lines of y on x: one per facet cell and series, kept by a zoom, fitted again for a filter, and of the method asked for."""
+    encoding = {**ENCODING, "elements": ["smooth"]}
+    plotted = client.post("/api/plot", json={"encoding": encoding, **SIZE}).json()
+    meta = plotted["meta"]
+    assert meta["undrawn"] == []
+    assert [p["points"] for p in meta["panels"]] == [False, False]
+    # Without points, no row is drawn as one.
+    assert meta["rows"] == 0
+    for panel in meta["panels"]:
+        assert sorted(line[0] for line in panel["smooths"]) == [0, 1, 2]
+        for _, xs, ys in panel["smooths"]:
+            assert len(xs) == len(ys) > 2
+            assert xs == sorted(xs)
+    lines = meta["panels"][0]["smooths"]
+    box = {"task": meta["task"], "panel": 0, "x_range": [-9, 9], "y_range": [-9, 9]}
+    selected = client.post("/api/selection", json=box).json()
+    assert 0 < selected["rows"] < 2002
+
+    view = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": meta["y_ranges"]}
+    zoomed = client.post("/api/view", json=view).json()["meta"]
+    assert zoomed["panels"][0]["smooths"] == lines
+    filters = [{"column": "x", "range": [0, 5]}]
+    narrowed = client.post("/api/overview", json={**SIZE, "filters": filters})
+    narrowed_lines = narrowed.json()["meta"]["panels"][0]["smooths"]
+    assert min(x for _, xs, _ in narrowed_lines for x in xs) >= 0
+
+    lowess = client.post(
+        "/api/plot",
+        json={
+            "encoding": {**encoding, "elements": ["points", "smooth"]},
+            **SIZE,
+            "smooth": {"method": "lowess", "frac": 0.3},
+        },
+    ).json()["meta"]
+    assert lowess["rows"] == 2000
+    assert lowess["panels"][0]["smooths"] != lines
+    bad = client.post(
+        "/api/plot",
+        json={"encoding": encoding, **SIZE, "smooth": {"method": "spline"}},
+    )
+    assert bad.status_code == 400
+    banded = {"x": ["color"], "y": ["y"], "elements": ["smooth"]}
+    plotted = client.post("/api/plot", json={"encoding": banded, **SIZE}).json()
+    assert plotted["meta"]["undrawn"] == ["smooth"]
     assert plotted["meta"]["panels"][0]["points"] is True
