@@ -3,7 +3,8 @@
 This process never imports polars; it only reads the files the workers
 write. The routes live in `ddviz.server.api_source` (the columns),
 `ddviz.server.api_plot` (drawing and hovers) and `ddviz.server.api_selection`
-(the selection and its table).
+(the selection and its table). Every request needs the token of the run
+(`ddviz.server.auth`).
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from ddviz.server.api_plot import plot_router
 from ddviz.server.api_selection import selection_router
 from ddviz.server.api_source import source_router
+from ddviz.server.auth import TokenAuth
 from ddviz.server.broker import TaskBroker
 from ddviz.server.results import Results
 from ddviz.server.settings import Settings
@@ -30,7 +32,7 @@ STATIC = Path(__file__).parents[1] / "static"
 
 
 def create_app(
-    data_path: str, root: Path, cache_root: Path, settings: Settings
+    data_path: str, root: Path, cache_root: Path, settings: Settings, token: str
 ) -> FastAPI:
     """Create the UI server for one Parquet file.
 
@@ -44,6 +46,8 @@ def create_app(
         Directory of the column cache; kept across runs.
     settings : Settings
         Limits of the column cache.
+    token : str
+        Secret of this run; requests without it are refused with 403.
 
     Returns
     -------
@@ -70,6 +74,7 @@ def create_app(
             shutil.rmtree(root, ignore_errors=True)
 
     app = FastAPI(lifespan=lifespan)
+    app.add_middleware(TokenAuth, token=token)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     @app.get("/")

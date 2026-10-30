@@ -9,21 +9,61 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ddviz.server.app import create_app
+from ddviz.server.auth import COOKIE
 from ddviz.server.settings import Settings
 
 ENCODING = {"x": ["x"], "y": ["y"], "color": "color", "col": "facet"}
 SIZE = {"width": 400, "height": 300}
+TOKEN = "secret-of-the-run"
 
 
 @pytest.fixture
-def client(tmp_path: Path, scatter_path: Path) -> Iterator[TestClient]:
-    """Serve `scatter_path` with its task outputs and column cache under `tmp_path`."""
+def server(tmp_path: Path, scatter_path: Path) -> Iterator[TestClient]:
+    """Serve `scatter_path` with its task outputs and column cache under `tmp_path`; no token yet."""
     app = create_app(
-        str(scatter_path), tmp_path / "run", tmp_path / "cache", Settings()
+        str(scatter_path), tmp_path / "run", tmp_path / "cache", Settings(), TOKEN
     )
     (tmp_path / "run").mkdir()
     with TestClient(app) as started:
         yield started
+
+
+@pytest.fixture
+def client(server: TestClient) -> TestClient:
+    """Open the first URL on the server, which moves the token into a cookie."""
+    assert server.get("/", params={"token": TOKEN}).status_code == 200
+    return server
+
+
+@pytest.mark.parametrize(
+    "path", ["/", "/static/js/app.js", "/api/schema", "/api/events", "/api/images/1"]
+)
+def test_requests_without_the_token_are_refused(server: TestClient, path: str) -> None:
+    """Without the cookie, every page, file and API answers 403, SSE included."""
+    assert server.get(path).status_code == 403
+    server.cookies.set(COOKIE, "wrong")
+    assert server.get(path).status_code == 403
+    assert server.post("/api/plot", json={}).status_code == 403
+
+
+def test_the_token_only_opens_the_first_page(server: TestClient) -> None:
+    """The token is accepted only on `/`, and only when it is right."""
+    assert server.get("/api/schema", params={"token": TOKEN}).status_code == 403
+    assert server.get("/", params={"token": "wrong"}).status_code == 403
+    assert server.get("/", params={"token": "é"}).status_code == 403
+
+
+def test_the_token_moves_into_a_strict_httponly_cookie(server: TestClient) -> None:
+    """The first URL sets the cookie and redirects to `/` without the token."""
+    response = server.get("/", params={"token": TOKEN}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    cookie = response.headers["set-cookie"].lower()
+    assert f"{COOKIE}={TOKEN}" in cookie
+    assert "httponly" in cookie
+    assert "samesite=strict" in cookie
+    assert server.get("/").status_code == 200
+    assert server.get("/api/schema").status_code == 200
 
 
 def _plot(client: TestClient, **extra: object) -> dict:

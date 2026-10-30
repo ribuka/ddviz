@@ -2,14 +2,16 @@
 
 The server and the window live and die together: closing the window stops the
 server, and a server that stops by itself closes the window. The server
-listens on a port the OS picks, and the window has no address bar, so the
-user sees an app, not a web page.
+listens on a port the OS picks and serves only clients with the token of the
+run, which the window hands over in the first URL it opens. The window has no
+address bar, so the user sees an app, not a web page.
 """
 
 from __future__ import annotations
 
 import ctypes
 import logging
+import secrets
 import socket
 import sys
 import threading
@@ -65,7 +67,7 @@ class _App:
         self,
         window: webview.Window,
         path: str | None,
-        make_app: Callable[[str], object],
+        make_app: Callable[[str, str], object],
     ) -> None:
         self._window = window
         self._path = path
@@ -96,8 +98,9 @@ class _App:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
+            token = secrets.token_urlsafe(32)
             config = uvicorn.Config(
-                self._make_app(path), log_config=None, access_log=False
+                self._make_app(path, token), log_config=None, access_log=False
             )
             self._server = uvicorn.Server(config)
             self._thread = threading.Thread(
@@ -108,7 +111,7 @@ class _App:
                 self._thread.join(0.02)
             if self._server.started:
                 _log.info("serving on port %d", port)
-                self._window.load_url(f"http://127.0.0.1:{port}/")
+                self._window.load_url(f"http://127.0.0.1:{port}/?token={token}")
         except Exception:  # noqa: BLE001 - logged; the run fails and the window closes
             _log.exception("failed to start")
             self.failed = True
@@ -135,7 +138,7 @@ class _App:
             self._thread.join()
 
 
-def run_window(path: str | None, make_app: Callable[[str], object]) -> int:
+def run_window(path: str | None, make_app: Callable[[str, str], object]) -> int:
     """Run the app in its own window until the window closes.
 
     Parameters
@@ -143,7 +146,8 @@ def run_window(path: str | None, make_app: Callable[[str], object]) -> int:
     path : str or None
         Parquet file to plot; None asks for it with a file dialog.
     make_app : callable
-        Builds the ASGI app of the UI server for a Parquet file.
+        Builds the ASGI app of the UI server for a Parquet file and the
+        token that requests must carry.
 
     Returns
     -------
@@ -166,7 +170,7 @@ def run_window(path: str | None, make_app: Callable[[str], object]) -> int:
         log.close()
 
 
-def _run(path: str | None, make_app: Callable[[str], object]) -> bool:
+def _run(path: str | None, make_app: Callable[[str, str], object]) -> bool:
     """Show the window until it closes; return whether everything went well."""
     runtime = bundled_runtime()
     if runtime is not None:

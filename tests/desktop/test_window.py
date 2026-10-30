@@ -31,13 +31,13 @@ class _FakeWindow:
         self.destroyed = True
 
 
-def _hello(path: str) -> FastAPI:
-    """Return an app that answers with the path it was built for."""
+def _hello(path: str, token: str) -> FastAPI:
+    """Return an app that answers with the path and token it was built for."""
     app = FastAPI()
 
     @app.get("/")
-    async def index() -> str:
-        return path
+    async def index(token: str) -> list[str]:
+        return [path, token]
 
     return app
 
@@ -51,7 +51,10 @@ def test_the_window_shows_the_server_and_closing_stops_it(tmp_path: Path) -> Non
         assert window.url is not None
         assert window.url.startswith("http://127.0.0.1:")
         with urllib.request.urlopen(window.url) as response:
-            assert json.load(response) == str(tmp_path)
+            path, token = json.load(response)
+        assert path == str(tmp_path)
+        assert window.url.endswith(f"/?token={token}")
+        assert len(token) >= 32
         assert window.title == f"ddviz - {tmp_path.name}"
     finally:
         app.stop()
@@ -62,7 +65,7 @@ def test_the_window_shows_the_server_and_closing_stops_it(tmp_path: Path) -> Non
 def test_a_server_that_stops_by_itself_closes_the_window() -> None:
     """A server that fails to start fails the run and closes the window."""
 
-    def broken(_: str) -> Callable:
+    def broken(*_: str) -> Callable:
         async def app(scope: dict, receive: Callable, send: Callable) -> None:
             if scope["type"] == "lifespan":
                 await receive()
