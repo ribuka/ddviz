@@ -32,6 +32,7 @@ from ddviz.compute.selection import (
     selection_columns,
     selection_filter,
 )
+from ddviz.compute.smooth import bin_query, fit_lines
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import (
     GAP,
@@ -41,7 +42,7 @@ from ddviz.shared.layout import (
     facet_grid,
     grid_layout,
 )
-from ddviz.shared.scatter import Boxes, ScatterSpec, Spread
+from ddviz.shared.scatter import Boxes, ScatterSpec, Smooths, Spread
 
 KEY = "__key"
 COUNT = "__n"
@@ -93,6 +94,9 @@ class Aggregation:
         with a categorical axis whose panels draw points.
     boxes : list of Boxes
         Box plots of each pair of `ddviz.shared.scatter.ScatterSpec.box_pairs`.
+    smooths : list of Smooths
+        Smoothing lines of each pair of
+        `ddviz.shared.scatter.ScatterSpec.smooth_pairs`.
     bins : polars.DataFrame or None
         One row per non-empty bin, sorted by `KEY`: the key, the number of
         rows in the bin (`COUNT`), the representative row's index (`INDEX`,
@@ -121,6 +125,7 @@ class Aggregation:
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
     spreads: list[Spread] = field(default_factory=list)
     boxes: list[Boxes] = field(default_factory=list)
+    smooths: list[Smooths] = field(default_factory=list)
 
 
 def _padded(lo: float | None, hi: float | None) -> tuple[float, float]:
@@ -399,6 +404,7 @@ def aggregate(
         axis_levels = spec.view.axis_levels
         known = spec.view.spreads
         known_boxes = spec.view.boxes
+        known_smooths = spec.view.smooths
     else:
         progress("levels")
         found = _overview(spec, roles)
@@ -407,6 +413,7 @@ def aggregate(
         axis_levels = found.axis_levels
         known = []
         known_boxes = []
+        known_smooths = []
     if spec.view is not None and spec.view.facets is not None:
         levels = {**all_levels, **spec.view.facets}
     else:
@@ -492,13 +499,51 @@ def aggregate(
             )
     boxes_of = {(b.x, b.y): b for b in boxes}
 
+    known_smooths_of = {(k.x, k.y): k for k in known_smooths}
+    smooths = []
+    pairs_with_smooths = spec.smooth_pairs()
+    if pairs_with_smooths:
+        progress("smooth")
+    for y_col in spec.y:
+        for xi, x_col in enumerate(spec.x):
+            if (x_col, y_col) not in pairs_with_smooths:
+                continue
+            if (x_col, y_col) in known_smooths_of:
+                smooths.append(known_smooths_of[x_col, y_col])
+                continue
+            # The overview's range, whose bins a view's lines keep: a view
+            # with another filter fits them again over the whole range.
+            if spec.view is None:
+                bounds = x_ranges[xi]
+            else:
+                bounds = _overview_range(spec, x_col)
+            smooths.append(
+                _smooths(
+                    spec,
+                    x_col,
+                    y_col,
+                    used,
+                    valid,
+                    row_level,
+                    col_level,
+                    series,
+                    levels,
+                    bounds,
+                )
+            )
+
     def pair(
         xi: int, yj: int, extra: list[pl.Expr], extra_columns: list[str]
     ) -> pl.LazyFrame:
         """Return the bins of the panels of one pair of axis columns, of the rows `extra` keeps."""
         x_col, y_col = spec.x[xi], spec.y[yj]
         outlier = pl.lit(True)
-        if spec.draws_points(x_col, y_col):
+        if (x_col, y_col) in pairs_with_smooths and not spec.draws_points(x_col, y_col):
+            # Only the smoothing lines: no row is drawn as a point.
+            x = pl.col(x_col).cast(pl.Float64)
+            y = pl.col(y_col).cast(pl.Float64)
+            outlier = pl.lit(False)
+        elif spec.draws_points(x_col, y_col):
             x, y = pair_positions(
                 x_col,
                 y_col,
@@ -612,7 +657,42 @@ def aggregate(
         axis_levels=axis_levels,
         spreads=spreads,
         boxes=boxes,
+        smooths=smooths,
     )
+
+
+def _overview_range(spec: ScatterSpec, column: str) -> tuple[float, float]:
+    """Return the padded finite range of a numeric column over every row, as the overview's axis has it."""
+    return _padded(*_range_query(spec, column).collect(engine="streaming").row(0))
+
+
+def _smooths(
+    spec: ScatterSpec,
+    x_col: str,
+    y_col: str,
+    used: list[str],
+    valid: list[pl.Expr],
+    row: pl.Expr,
+    col: pl.Expr,
+    series: pl.Expr,
+    levels: dict[str, list],
+    bounds: tuple[float, float],
+) -> Smooths:
+    """Return the smoothing lines of a pair over the drawn rows that pass the local filter, one per facet cell and series (`ddviz.compute.smooth`)."""
+    x = pl.col(x_col).cast(pl.Float64)
+    y = pl.col(y_col).cast(pl.Float64)
+    frame = _scan(spec, [x_col, y_col, *used, *filter_columns(spec.filters)]).filter(
+        x.is_finite(), y.is_finite(), *valid, *filter_conditions(spec.filters)
+    )
+    n_col = len(levels["col"])
+    bins = bin_query(frame, x, y, row * n_col + col, series, bounds).collect(
+        engine="streaming"
+    )
+    lines = [
+        [cell // n_col, cell % n_col, s, xs, ys]
+        for cell, s, xs, ys in fit_lines(bins, spec.smooth)
+    ]
+    return Smooths(x=x_col, y=y_col, lines=lines)
 
 
 def _boxes(

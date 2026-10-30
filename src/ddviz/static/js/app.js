@@ -10,6 +10,7 @@ import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { openScaleMenu } from "./scalemenu.js";
+import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
 
@@ -100,6 +101,9 @@ function filtersKey(list) {
 // column. The graph last plotted, to plot again with another cutting.
 let colorBins = null;
 let plottedEncoding = null;
+// How the smoothing lines are fitted (`ddviz.server.plan.parse_smoothing`),
+// picked in the menu of their element icon; kept for every graph.
+let smoothing = DEFAULT_SMOOTHING;
 // Wrapped panels to a row, or null to make them closest to square
 // (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
 // The user sets it in the Wrap zone, beside its chip.
@@ -166,7 +170,7 @@ const PLOT_CONFIG = {
 // would otherwise leave scroll bars over a grid that fits.
 function setCurrent(meta) {
   current = meta;
-  legend.setEmpty(meta.images);
+  legend.setEmpty(meta);
   stage.classList.toggle("scrolls", meta.scroll);
   // The number to a row the size made, while the user sets none.
   wrapColsInput.placeholder = `自動（${meta.ncol}）`;
@@ -230,7 +234,7 @@ async function plot(encoding) {
   clearSelection(false);
   const size = stageSize();
   plottedEncoding = encoding;
-  const body = { encoding, ...size, filters, color_bins: colorBins, wrap_cols: wrapCols };
+  const body = { encoding, ...size, filters, color_bins: colorBins, wrap_cols: wrapCols, smooth: smoothing };
   requestedSize = size;
   status.textContent = "集約中…";
   const mine = ++generation;
@@ -305,9 +309,13 @@ async function plot(encoding) {
 // Returns the status of a result: its rows, and whether the filter left rows out.
 function rowsText(meta, where = "") {
   const filtered = meta.filters.length ? "（フィルタ後）" : "";
-  // Box plots without points draw only their outliers as points.
-  const outliers = meta.panels.every((p) => !p.points) ? "（外れ値）" : "";
-  return `task ${meta.task}: ${where}${meta.rows.toLocaleString()} 行${outliers}${filtered}`;
+  // Box plots without points draw only their outliers as points; smoothing
+  // lines without points draw none.
+  let drawn = "";
+  if (meta.panels.every((p) => !p.points)) {
+    drawn = meta.panels.some((p) => p.boxes.length) ? "（外れ値）" : "（点は描いていない）";
+  }
+  return `task ${meta.task}: ${where}${meta.rows.toLocaleString()} 行${drawn}${filtered}`;
 }
 
 // Returns whether two ranges are equal up to a small part of their span.
@@ -792,6 +800,20 @@ function hasBoxPair(encoding) {
   return encoding.x.some((x) => !numeric(x)) && encoding.y.some(numeric);
 }
 
+// Whether a pair of the graph's axis columns can have smoothing lines: a
+// numeric x and a numeric y (`ddviz.server.plan.has_smooth_pair`).
+function hasSmoothPair(encoding) {
+  const numeric = (name) => builder.numeric.get(name) !== false;
+  return encoding.x.some(numeric) && encoding.y.some(numeric);
+}
+
+// Fits the smoothing lines another way: a graph with them is plotted again.
+function setSmoothing(picked) {
+  smoothing = picked;
+  elementBar.setSmoothText(smoothingText(smoothing));
+  if (plottedEncoding?.elements.includes("smooth")) plot(plottedEncoding);
+}
+
 let drawnRolesKey = drawnRoles({ x: [], y: [], color: null, row: null, col: null, wrap: null, elements: ["points"] });
 // Cuts a numeric color column another way, or draws it as a gradient (null):
 // the series change, so the graph is plotted again.
@@ -841,8 +863,8 @@ const builder = new Builder(
   document.getElementById("builder"),
   document.getElementById("columns"),
   (encoding) => {
-    // Box plots no longer possible are turned off; that edit comes back here.
-    if (elementBar?.allowBox(hasBoxPair(encoding))) return;
+    // Elements no longer possible are turned off; that edit comes back here.
+    if (elementBar?.allow({ box: hasBoxPair(encoding), smooth: hasSmoothPair(encoding) })) return;
     const key = drawnRoles(encoding);
     if (key === drawnRolesKey) return;
     const drawn = JSON.parse(drawnRolesKey);
@@ -858,8 +880,11 @@ const builder = new Builder(
   },
   { wrap: wrapColsInput },
 );
-elementBar = new ElementBar(document.getElementById("elements"), (elements) =>
-  builder.setElements(elements),
+elementBar = new ElementBar(
+  document.getElementById("elements"),
+  (elements) => builder.setElements(elements),
+  (event) => openSmoothMenu(event, smoothing, setSmoothing),
 );
+elementBar.setSmoothText(smoothingText(smoothing));
 await attachColumnList(document.getElementById("columns"));
 showCasts(document.getElementById("casts"));

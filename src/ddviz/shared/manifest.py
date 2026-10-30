@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import AxisGrid, GridLayout
-from ddviz.shared.scatter import Boxes, ScatterSpec, Selection, Spread
+from ddviz.shared.scatter import Boxes, ScatterSpec, Selection, Smooths, Spread
 
 MANIFEST = "manifest.json"
 # File of a plot task holding the PNG of every panel and series one after
@@ -124,6 +124,9 @@ class PlotManifest:
     boxes : list of Boxes
         Box plots of the pairs of a categorical x and a numeric y
         (`ddviz.compute.aggregate.Aggregation.boxes`).
+    smooths : list of Smooths
+        Smoothing lines of the pairs of a numeric x and a numeric y
+        (`ddviz.compute.aggregate.Aggregation.smooths`).
     """
 
     spec: ScatterSpec
@@ -146,6 +149,7 @@ class PlotManifest:
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
     spreads: list[Spread] = field(default_factory=list)
     boxes: list[Boxes] = field(default_factory=list)
+    smooths: list[Smooths] = field(default_factory=list)
 
     def write(self, out: Path) -> None:
         """Write the manifest into a task's directory (`write_manifest`)."""
@@ -188,6 +192,7 @@ class PlotManifest:
             axis_levels=data["axis_levels"],
             spreads=[Spread(**k) for k in data["spreads"]],
             boxes=[Boxes(**b) for b in data["boxes"]],
+            smooths=[Smooths(**k) for k in data["smooths"]],
         )
 
 

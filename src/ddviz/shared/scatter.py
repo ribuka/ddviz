@@ -77,6 +77,50 @@ class Boxes:
 
 
 @dataclass(frozen=True)
+class Smoothing:
+    """How the smoothing lines are fitted (`ddviz.compute.smooth`).
+
+    Parameters
+    ----------
+    method : str
+        ``"gcv"`` (a smoothing spline whose penalty generalized
+        cross-validation picks), ``"csaps"`` (a smoothing spline of the
+        parameter ``p``) or ``"lowess"``.
+    p : float or None
+        For csaps, the smoothing parameter from 0 (a straight line) to 1
+        (through the points), with x scaled to [0, 1]; None picks it from
+        the data, as the ``csaps`` package does.
+    frac : float
+        For lowess, the part of the rows each local fit uses, above 0 and
+        at most 1.
+    """
+
+    method: str = "gcv"
+    p: float | None = None
+    frac: float = 2 / 3
+
+
+@dataclass(frozen=True)
+class Smooths:
+    """Smoothing lines of a pair of numeric axis columns (`ddviz.compute.smooth`).
+
+    Parameters
+    ----------
+    x, y : str
+        The pair's x and y columns.
+    lines : list of list
+        One line per facet cell and series with rows:
+        ``[row, col, series, xs, ys]``, where ``row`` and ``col`` index the
+        drawn facet levels, and ``xs`` and ``ys`` are the points of the
+        line, increasing in x.
+    """
+
+    x: str
+    y: str
+    lines: list[list]
+
+
+@dataclass(frozen=True)
 class View:
     """Zoomed view of a scatter plot.
 
@@ -108,6 +152,9 @@ class View:
     boxes : list of Boxes
         Box plots of each pair, from a result with the same local filter; a
         pair without them has them found again.
+    smooths : list of Smooths
+        Smoothing lines of each pair, from a result with the same local
+        filter; a pair without them has them fitted again.
     """
 
     x_ranges: list[list[float]]
@@ -119,6 +166,7 @@ class View:
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
     spreads: list[Spread] = field(default_factory=list)
     boxes: list[Boxes] = field(default_factory=list)
+    smooths: list[Smooths] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -241,6 +289,10 @@ class ScatterSpec:
         Whether the panels of a categorical x and a numeric y have box plots
         (`box_pairs`); without points, such a panel draws only the outliers
         as points (`ddviz.compute.boxes`).
+    smooth : Smoothing or None
+        How the panels of a numeric x and a numeric y fit smoothing lines
+        (`smooth_pairs`), or None for none; without points, such a panel
+        draws only the lines.
     """
 
     files: dict[str, list[str]]
@@ -265,6 +317,7 @@ class ScatterSpec:
     categorical: list[str] = field(default_factory=list)
     points: bool = True
     box: bool = False
+    smooth: Smoothing | None = None
 
     def box_pairs(self) -> set[tuple[str, str]]:
         """Return the pairs of axis columns whose panels have box plots.
@@ -285,8 +338,27 @@ class ScatterSpec:
             if x in categorical and y not in categorical
         }
 
+    def smooth_pairs(self) -> set[tuple[str, str]]:
+        """Return the pairs of axis columns whose panels have smoothing lines.
+
+        Returns
+        -------
+        set of tuple of str
+            Each ``(x, y)`` with a numeric x and a numeric y, when the spec
+            draws smoothing lines; none otherwise.
+        """
+        if self.smooth is None:
+            return set()
+        categorical = set(self.categorical)
+        return {
+            (x, y)
+            for x in self.x
+            for y in self.y
+            if x not in categorical and y not in categorical
+        }
+
     def draws_points(self, x: str, y: str) -> bool:
-        """Return whether the panels of a pair draw the points of every row, not only the outliers.
+        """Return whether the panels of a pair draw the points of every row, not only the outliers or none.
 
         Parameters
         ----------
@@ -296,9 +368,10 @@ class ScatterSpec:
         Returns
         -------
         bool
-            True with the points element, or for a pair without box plots.
+            True with the points element, or for a pair with neither box
+            plots nor smoothing lines.
         """
-        return self.points or (x, y) not in self.box_pairs()
+        return self.points or (x, y) not in self.box_pairs() | self.smooth_pairs()
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.
@@ -326,11 +399,13 @@ class ScatterSpec:
         """
         view = data.get("view")
         selection = data.get("selection")
+        smooth = data.get("smooth")
         return cls(
             **{
                 **data,
                 "view": _view(view) if view is not None else None,
                 "selection": Selection(**selection) if selection is not None else None,
+                "smooth": Smoothing(**smooth) if smooth is not None else None,
                 "filters": [Filter(**f) for f in data.get("filters", [])],
                 "binned": {
                     role: Binning(**b) for role, b in data.get("binned", {}).items()
@@ -346,5 +421,6 @@ def _view(data: dict) -> View:
             **data,
             "spreads": [Spread(**s) for s in data.get("spreads", [])],
             "boxes": [Boxes(**b) for b in data.get("boxes", [])],
+            "smooths": [Smooths(**s) for s in data.get("smooths", [])],
         }
     )

@@ -4,6 +4,7 @@
 import { POINTS_UNDER_BOXES, drawBoxes } from "./boxes.js";
 import { decode, seriesColors } from "./colorscale.js";
 import { INACTIVE_OPACITY } from "./legend.js";
+import { drawSmooths } from "./smooth.js";
 
 // Opacity of every row while rows are selected; the selected rows are drawn
 // again at full opacity. Above the legend's inactive opacity, so that a
@@ -113,7 +114,10 @@ export class ImageLayers {
     // The points under box plots fade, so that the boxes stand out.
     this.drawLayer(ctx, full, dpr, meta, bitmaps, (s) => alpha(s) * dim, null, true);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawBoxes(ctx, full, meta, seriesColors(meta), alpha, this.legend.order(meta.series.length).reverse());
+    const order = this.legend.order(meta.series.length).reverse();
+    drawBoxes(ctx, full, meta, seriesColors(meta), alpha, order);
+    // The smoothing lines, like the boxes, stay at full opacity over a selection.
+    drawSmooths(ctx, full, meta, seriesColors(meta), alpha, order);
     if (selection?.bitmaps) {
       this.drawLayer(ctx, full, dpr, selection.meta, selection.bitmaps, alpha);
     } else if (selection?.box) {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 from ddviz.server.encoding import Encoding
-from ddviz.shared.scatter import MAX_LEVELS, Binning, Filter, ScatterSpec
+from ddviz.shared.scatter import MAX_LEVELS, Binning, Filter, ScatterSpec, Smoothing
 
 # A numeric column on Group X or Group Y is cut into this many intervals of
 # about the same number of rows, unless it has at most this many values,
@@ -13,10 +13,8 @@ from ddviz.shared.scatter import MAX_LEVELS, Binning, Filter, ScatterSpec
 FACET_BINS = 5
 # Numbers of intervals a numeric color column can be cut into.
 COLOR_BINS = (2, 3, 5, 10)
-
-
-# Elements of a graph (`ddviz.server.encoding.ELEMENTS`) that can be drawn.
-DRAWN_ELEMENTS = ("points", "box")
+# Methods of the smoothing lines (`ddviz.compute.smooth`).
+SMOOTH_METHODS = ("gcv", "csaps", "lowess")
 
 
 def has_box_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
@@ -39,6 +37,26 @@ def has_box_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
     )
 
 
+def has_smooth_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
+    """Return whether a pair of the graph's axis columns can have smoothing lines: a numeric x and a numeric y.
+
+    Parameters
+    ----------
+    encoding : Encoding
+        The graph.
+    numeric : dict of str to bool
+        Whether each column is numeric; a missing one is numeric.
+
+    Returns
+    -------
+    bool
+        Whether such a pair exists.
+    """
+    return any(numeric.get(x, True) for x in encoding.x) and any(
+        numeric.get(y, True) for y in encoding.y
+    )
+
+
 def undrawn(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
     """Return the roles and elements that are placed but cannot be drawn.
 
@@ -52,16 +70,17 @@ def undrawn(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
     Returns
     -------
     list of str
-        ``"overlay"`` when overlay has a column, each chosen element not
-        in `DRAWN_ELEMENTS`, and ``"box"`` without a pair of a categorical
-        x and a numeric y (`has_box_pair`).
+        ``"overlay"`` when overlay has a column, ``"box"`` without a pair
+        of a categorical x and a numeric y (`has_box_pair`), and
+        ``"smooth"`` without a pair of a numeric x and a numeric y
+        (`has_smooth_pair`).
     """
     roles = ["overlay"] if encoding.overlay is not None else []
     return roles + [
         e
         for e in encoding.elements
-        if e not in DRAWN_ELEMENTS
-        or (e == "box" and not has_box_pair(encoding, numeric))
+        if (e == "box" and not has_box_pair(encoding, numeric))
+        or (e == "smooth" and not has_smooth_pair(encoding, numeric))
     ]
 
 
@@ -158,14 +177,16 @@ def scatter_spec(
     color_bins: Binning | None = None,
     max_levels: int = MAX_LEVELS,
     wrap_cols: int | None = None,
+    smoothing: Smoothing | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
     Every pair of an x and a y column is drawn in a panel of each facet
     cell, colored by color and faceted by row and col; overlay is left out
     (`undrawn`). The panels of a categorical x and a numeric y have box
-    plots when the elements have them (`ScatterSpec.box`); the other panels
-    draw the points even without the points element. A categorical x or y column is drawn in bands, one per
+    plots when the elements have them (`ScatterSpec.box`), and those of a
+    numeric x and a numeric y smoothing lines (`ScatterSpec.smooth`); the
+    other panels draw the points even without the points element. A categorical x or y column is drawn in bands, one per
     level (`ScatterSpec.categorical`). A wrap column takes the col role of the spec, its levels
     wrapping into rows (`ScatterSpec.wrap`). The hover shows the drawn
     columns. The local filter's columns are read too.
@@ -196,6 +217,9 @@ def scatter_spec(
     wrap_cols : int, optional
         Wrapped panels to a row (`parse_wrap_cols`); None to make them
         closest to square.
+    smoothing : Smoothing, optional
+        How to fit the smoothing lines (`parse_smoothing`); None for the
+        default.
 
     Returns
     -------
@@ -205,13 +229,11 @@ def scatter_spec(
     Raises
     ------
     ValueError
-        When x or y has no column, wrap has one beside row, col or the
-        n-th axes, or the elements have none that can be drawn.
+        When x or y has no column, or wrap has one beside row, col or the
+        n-th axes.
     """
     if not encoding.x or not encoding.y:
         raise ValueError("x and y need a column")
-    if not set(encoding.elements) & set(DRAWN_ELEMENTS):
-        raise ValueError(f"elements need one of {DRAWN_ELEMENTS}")
     wrap = encoding.wrap is not None
     if wrap and (encoding.row is not None or encoding.col is not None):
         raise ValueError("wrap cannot be placed with row or col")
@@ -255,6 +277,9 @@ def scatter_spec(
         ],
         points="points" in encoding.elements,
         box="box" in encoding.elements and has_box_pair(encoding, numeric),
+        smooth=(smoothing or Smoothing())
+        if "smooth" in encoding.elements and has_smooth_pair(encoding, numeric)
+        else None,
     )
 
 
@@ -288,6 +313,48 @@ def parse_color_bins(raw: dict | None) -> Binning | None:
             f"color bins are n in {COLOR_BINS} and by rows or values: {raw}"
         )
     return Binning(raw["n"], raw["by"])
+
+
+def parse_smoothing(raw: dict | None) -> Smoothing | None:
+    """Return how the page asks to fit the smoothing lines, checked.
+
+    Parameters
+    ----------
+    raw : dict or None
+        ``{"method": "gcv"}``, ``{"method": "csaps", "p": float | None}``
+        or ``{"method": "lowess", "frac": float}``; None for the default.
+
+    Returns
+    -------
+    Smoothing or None
+        The smoothing.
+
+    Raises
+    ------
+    ValueError
+        When `raw` has another form, ``p`` is not from 0 to 1 or ``frac``
+        not above 0 and at most 1.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or raw.get("method") not in SMOOTH_METHODS:
+        raise ValueError(f"smooth needs a method in {SMOOTH_METHODS}: {raw}")
+    method = raw["method"]
+    allowed = {"gcv": set(), "csaps": {"p"}, "lowess": {"frac"}}[method]
+    if not set(raw) - {"method"} <= allowed:
+        raise ValueError(f"{method} takes only {sorted(allowed)}: {raw}")
+    p, frac = raw.get("p"), raw.get("frac", Smoothing.frac)
+
+    def number(v: object) -> bool:
+        return (
+            isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
+        )
+
+    if p is not None and not (number(p) and 0 <= p <= 1):
+        raise ValueError(f"p is from 0 to 1 or null: {p}")
+    if not (number(frac) and 0 < frac <= 1):
+        raise ValueError(f"frac is above 0 and at most 1: {frac}")
+    return Smoothing(method, None if p is None else float(p), float(frac))
 
 
 def parse_wrap_cols(raw: object) -> int | None:

@@ -49,6 +49,8 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
     In a panel of box plots without the points
     (`ddviz.shared.scatter.ScatterSpec.draws_points`), its level's band
     overlaps the box and its y is in the box, inside a box plot or not.
+    In a panel of smoothing lines without the points, its x and y are in
+    the box, as if the points were drawn.
 
     Parameters
     ----------
@@ -70,7 +72,7 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
         spread = {(k.x, k.y): k for k in spec.view.spreads}.get(
             (selection.x, selection.y)
         )
-    if spec.draws_points(selection.x, selection.y):
+    if spec.points or (selection.x, selection.y) not in spec.box_pairs():
         x, y = pair_positions(
             selection.x, selection.y, set(spec.categorical), axis_levels, spread, index
         )

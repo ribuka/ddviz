@@ -10,11 +10,12 @@ from ddviz.server.plan import (
     drawn_columns,
     has_box_pair,
     parse_filters,
+    parse_smoothing,
     parse_wrap_cols,
     scatter_spec,
     undrawn,
 )
-from ddviz.shared.scatter import Binning, Filter
+from ddviz.shared.scatter import Binning, Filter, Smoothing
 
 
 def test_scatter_draws_every_axis_and_leaves_out_overlay() -> None:
@@ -147,20 +148,64 @@ def test_categorical_axis_columns_are_drawn_in_bands() -> None:
     assert scatter_spec(encoding, files, 400, 300, ["#000000"]).categorical == []
 
 
-def test_elements_that_cannot_be_drawn_are_undrawn() -> None:
-    """Smoothing lines are not drawn yet; a graph needs points or box plots."""
-    files = {c: [f"{c}.parquet"] for c in ("a", "b")}
-    smooth = Encoding(x=("a",), y=("b",), elements=("points", "smooth"))
-    assert undrawn(smooth, {}) == ["smooth"]
-    scatter_spec(smooth, files, 400, 300, ["#000000"])
-    with pytest.raises(ValueError, match="elements"):
-        scatter_spec(
-            Encoding(x=("a",), y=("b",), elements=("smooth",)),
-            files,
-            400,
-            300,
-            ["#000000"],
-        )
+def test_smoothing_lines_need_a_numeric_x_and_a_numeric_y() -> None:
+    """Smoothing lines are drawn with a numeric x and a numeric y; otherwise they are undrawn and the points stay."""
+    files = {c: [f"{c}.parquet"] for c in ("g", "a", "b")}
+    numeric = {"g": False, "a": True, "b": True}
+    smooth = Encoding(x=("a",), y=("b",), elements=("smooth",))
+    assert undrawn(smooth, numeric) == []
+    spec = scatter_spec(smooth, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.smooth == Smoothing()
+    assert spec.smooth_pairs() == {("a", "b")}
+    assert not spec.draws_points("a", "b")
+    lowess = Smoothing("lowess", frac=0.3)
+    spec = scatter_spec(
+        smooth, files, 400, 300, ["#000000"], numeric=numeric, smoothing=lowess
+    )
+    assert spec.smooth == lowess
+    banded = Encoding(x=("g",), y=("b",), elements=("smooth",))
+    assert undrawn(banded, numeric) == ["smooth"]
+    spec = scatter_spec(banded, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.smooth is None
+    assert spec.draws_points("g", "b")
+    both = Encoding(x=("g", "a"), y=("b",), elements=("smooth",))
+    spec = scatter_spec(both, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.smooth_pairs() == {("a", "b")}
+    assert spec.draws_points("g", "b")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, None),
+        ({"method": "gcv"}, Smoothing("gcv")),
+        ({"method": "csaps", "p": 0.9}, Smoothing("csaps", p=0.9)),
+        ({"method": "csaps", "p": None}, Smoothing("csaps")),
+        ({"method": "lowess", "frac": 0.25}, Smoothing("lowess", frac=0.25)),
+    ],
+)
+def test_parse_smoothing(raw: dict | None, expected: Smoothing | None) -> None:
+    """The page's smoothing is a method with its own parameter."""
+    assert parse_smoothing(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"method": "spline"},
+        {"p": 0.5},
+        {"method": "gcv", "p": 0.5},
+        {"method": "csaps", "p": 1.5},
+        {"method": "csaps", "p": True},
+        {"method": "lowess", "frac": 0},
+        {"method": "lowess", "frac": 1.2},
+        [],
+    ],
+)
+def test_parse_smoothing_refuses_bad_values(raw: object) -> None:
+    """An unknown method, a parameter of another method, or one out of range is refused."""
+    with pytest.raises(ValueError):
+        parse_smoothing(raw)
 
 
 def test_box_plots_need_a_categorical_x_and_a_numeric_y() -> None:
