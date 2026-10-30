@@ -401,3 +401,27 @@ def test_the_mode_bar_shows_without_hover_and_stays_in_sight(app_page: Page) -> 
             page.evaluate("document.getElementById('plot').layout.dragmode") == "zoom"
         )
         mode_bar.locator('[data-val="pan"]').click()
+
+
+def test_the_mode_bar_saves_the_plot_data(app_page: Page) -> None:
+    """The mode bar's download button opens a menu that saves the overview's bins as CSV; Esc closes it."""
+    page = app_page
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    button = page.locator('#plot .modebar-btn[data-title^="データを保存"]')
+    button.click()
+    menu = page.locator(".data-menu")
+    expect(menu).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
+
+    button.click()
+    with page.expect_download() as info:
+        menu.get_by_role("button", name="CSV").click()
+    download = info.value
+    assert re.fullmatch(r"scatter_\d{8}-\d{6}\.csv", download.suggested_filename)
+    table = pl.read_csv(download.path())
+    assert table.columns[:3] == ["x_column", "x_lo", "x_hi"]
+    status = page.locator("#status").text_content()
+    assert f" {table['count'].sum():,} 行" in status
+    expect(menu).to_have_count(0)

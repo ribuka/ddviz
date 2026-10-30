@@ -3,6 +3,7 @@
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
 import { attachColumnList } from "./columns.js";
+import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
 import { FilterPane } from "./filters.js";
 import { attachHover } from "./hover.js";
@@ -162,14 +163,22 @@ const hideHover = attachHover(gd, () => current, legend, (ms) => {
   if (timings.hover.length % 20 === 0) setInfo();
 });
 
-// The mode bar holds only zoom, pan, box select and reset; pan is the
-// starting drag mode (`dragmode` in the figure). It shows always, not only on
-// hover, so that the drag mode in use is in sight.
+// The mode bar holds zoom, pan, box select and reset, and a button that saves
+// the plot's data (`datamenu.js`); pan is the starting drag mode (`dragmode` in
+// the figure). It shows always, not only on hover, so that the drag mode in
+// use is in sight.
+const DOWNLOAD_DATA = {
+  name: "downloadData",
+  title: "データを保存（CSV / Parquet）",
+  icon: Plotly.Icons.disk,
+  click: (_, event) =>
+    openDataMenu(event.currentTarget ?? event.target.closest(".modebar-btn"), () => overview?.meta.task ?? null),
+};
 const PLOT_CONFIG = {
   displayModeBar: true,
   displaylogo: false,
   scrollZoom: false,
-  modeBarButtons: [["zoom2d", "pan2d", "select2d", "resetScale2d"]],
+  modeBarButtons: [["zoom2d", "pan2d", "select2d", "resetScale2d", DOWNLOAD_DATA]],
 };
 
 // Sets the meta of the result whose images are drawn. Only a grid laid out

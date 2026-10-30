@@ -162,6 +162,23 @@ class SummaryTask:
     column: str
 
 
+@dataclass(frozen=True)
+class PlotDataTask:
+    """Write the bins of a plot's result as a file to save (`ddviz.compute.tasks.plotdata`).
+
+    Parameters
+    ----------
+    result : str
+        The plot task's output directory.
+    file_format : str
+        ``"csv"`` or ``"parquet"``.
+    """
+
+    KIND: ClassVar[str] = "plot_data"
+    result: str
+    file_format: str
+
+
 Task = (
     SchemaTask
     | NonnullTask
@@ -170,6 +187,7 @@ Task = (
     | SelectionTask
     | TableTask
     | SummaryTask
+    | PlotDataTask
 )
 TASKS: dict[str, type[Task]] = {
     t.KIND: t
@@ -181,6 +199,7 @@ TASKS: dict[str, type[Task]] = {
         SelectionTask,
         TableTask,
         SummaryTask,
+        PlotDataTask,
     )
 }
 

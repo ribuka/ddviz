@@ -11,6 +11,7 @@ from ddviz.shared.tasks import (
     TASKS,
     ConvertTask,
     NonnullTask,
+    PlotDataTask,
     PlotTask,
     SchemaTask,
     SelectionTask,
@@ -47,6 +48,7 @@ def _every_task(spec: ScatterSpec) -> list[Task]:
             ),
         ),
         SummaryTask(["a/x.parquet", "b/x.parquet"], "x"),
+        PlotDataTask("tasks/1", "csv"),
     ]
 
 
