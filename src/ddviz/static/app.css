@@ -475,6 +475,36 @@ button {
   min-width: 0;
 }
 #top > [data-role="col"] { flex: 1; min-width: 0; }
+
+/* Icons of the graph's elements, left of Group X (`static/js/elements.js`). */
+#elements {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.element {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  color: #555;
+  cursor: pointer;
+}
+.element.on {
+  border-color: #4a7bd0;
+  background: #e5eefc;
+  color: #1f4f9f;
+}
+.element:disabled {
+  color: #c4c4c4;
+  border-style: dashed;
+  cursor: not-allowed;
+}
 #top > [data-role="wrap"] { flex: 0 0 30px; }
 #top > [data-role="wrap"].filled { flex: 0 1 auto; max-width: 60%; flex-wrap: nowrap; }
 

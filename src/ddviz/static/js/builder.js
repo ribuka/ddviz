@@ -13,6 +13,8 @@
 //   zone holds a column, the two swap roles.
 // - A chip's × button, or dropping it on the column list or outside every
 //   zone, removes it.
+// - Every role takes numeric and categorical columns alike: a categorical
+//   column on X or Y is drawn in a band per level.
 // - Wrap and the facets replace each other: a column placed on Wrap removes
 //   those of Group X and Group Y, and one placed on either removes Wrap's.
 //   Wrap is refused while X or Y has an n-th axis, and an n-th axis while
@@ -58,8 +60,8 @@ export class Builder {
     this.zones = [...root.querySelectorAll(".zone[data-role]")];
     this.onChange = onChange;
     this.extras = extras;
-    this.encoding = { x: [], y: [], color: null, overlay: null, row: null, col: null, wrap: null };
-    // Whether each placed column is numeric, for moves between roles.
+    this.encoding = { x: [], y: [], color: null, overlay: null, row: null, col: null, wrap: null, elements: ["points"] };
+    // Whether each placed column is numeric, for the filter pane a chip is dragged to.
     this.numeric = new Map();
     this.tip = document.getElementById("drop-tip");
     this.line = document.getElementById("drop-line");
@@ -146,9 +148,6 @@ export class Builder {
   action(zone, event) {
     const role = zone.dataset.role;
     const column = dragged;
-    if (AXES.includes(role) && !column.numeric) {
-      return { refused: `${LABELS[role]} には数値の列だけを置ける` };
-    }
     if (role === "wrap" && AXES.some((axis) => this.placed(axis).length - (column.from === axis ? 1 : 0) > 1)) {
       return { refused: "第 n 軸があると Wrap に置けない" };
     }
@@ -180,9 +179,7 @@ export class Builder {
     } else if (column.from === role) {
       text = `${label} の ${target} と順番を入れ替える`;
     } else if (column.from) {
-      text = this.canTake(column.from, target)
-        ? `${label} の ${target} と入れ替える`
-        : `${label} の ${target} を置き換える（${target} は ${LABELS[column.from]} に置けないので外す）`;
+      text = `${label} の ${target} と入れ替える`;
     } else {
       text = `${label} の ${target} を置き換える`;
     }
@@ -212,11 +209,6 @@ export class Builder {
     const removed = others.filter((r) => r !== from && this.encoding[r] !== null);
     if (!removed.length) return "";
     return `（${removed.map((r) => LABELS[r]).join(" と ")} の列を外す）`;
-  }
-
-  // Whether `column` (a placed one) may take `role`.
-  canTake(role, column) {
-    return !AXES.includes(role) || this.numeric.get(column);
   }
 
   attachZone(zone) {
@@ -268,12 +260,18 @@ export class Builder {
     this.setRole(role, list);
     if (column.from) {
       const source = this.placed(column.from).slice();
-      if (displaced !== undefined && this.canTake(column.from, displaced)) source[column.index] = displaced;
+      if (displaced !== undefined) source[column.index] = displaced;
       else source.splice(column.index, 1);
       this.setRole(column.from, source);
     }
     if (role === "wrap") for (const facet of FACETS) this.encoding[facet] = null;
     if (FACETS.includes(role)) this.encoding.wrap = null;
+    this.changed();
+  }
+
+  // Sets the elements drawn (`ddviz.server.encoding.ELEMENTS`), in their order.
+  setElements(elements) {
+    this.encoding.elements = elements;
     this.changed();
   }
 

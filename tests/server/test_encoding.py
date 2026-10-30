@@ -28,9 +28,20 @@ def test_columns_lists_each_placed_column_once() -> None:
         ({"y": [1]}, "y must be a list"),
         ({"color": ["a"]}, "color must be a column name"),
         ({"wrap": 1}, "wrap must be a column name"),
+        ({"elements": []}, "elements must be"),
+        ({"elements": ["bars"]}, "elements must be"),
+        ({"elements": "points"}, "elements must be"),
     ],
 )
 def test_from_dict_refuses_bad_roles(data: dict, message: str) -> None:
     """Unknown roles and values of the wrong type are refused."""
     with pytest.raises(ValueError, match=message):
         Encoding.from_dict(data)
+
+
+def test_elements_default_to_points_in_their_order() -> None:
+    """Missing elements are points; the elements given are kept once, in the order of ELEMENTS."""
+    assert Encoding.from_dict({}).elements == ("points",)
+    chosen = Encoding.from_dict({"elements": ["smooth", "points", "smooth"]})
+    assert chosen.elements == ("points", "smooth")
+    assert chosen.to_dict()["elements"] == ["points", "smooth"]

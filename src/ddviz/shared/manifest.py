@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import AxisGrid, GridLayout
-from ddviz.shared.scatter import ScatterSpec, Selection
+from ddviz.shared.scatter import ScatterSpec, Selection, Spread
 
 MANIFEST = "manifest.json"
 # File of a plot task holding the PNG of every panel and series one after
@@ -115,6 +115,12 @@ class PlotManifest:
         Hover columns of the spec left out to keep within ``spec.hover_bytes``.
     hover_bytes : int
         Bytes of the hover files written.
+    axis_levels : dict
+        Levels of each categorical axis column
+        (`ddviz.compute.aggregate.Aggregation.axis_levels`).
+    spreads : list of Spread
+        How the points spread in the bands of the categorical axes
+        (`ddviz.compute.aggregate.Aggregation.spreads`).
     """
 
     spec: ScatterSpec
@@ -134,6 +140,8 @@ class PlotManifest:
     hover_files: bool = True
     hover_dropped: list[str] = field(default_factory=list)
     hover_bytes: int = 0
+    axis_levels: dict[str, list[str]] = field(default_factory=dict)
+    spreads: list[Spread] = field(default_factory=list)
 
     def write(self, out: Path) -> None:
         """Write the manifest into a task's directory (`write_manifest`)."""
@@ -173,6 +181,8 @@ class PlotManifest:
             hover_files=data["hover_files"],
             hover_dropped=data["hover_dropped"],
             hover_bytes=data["hover_bytes"],
+            axis_levels=data["axis_levels"],
+            spreads=[Spread(**k) for k in data["spreads"]],
         )
 
 

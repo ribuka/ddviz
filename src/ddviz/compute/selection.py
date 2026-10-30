@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from ddviz.compute.bands import pair_positions
 from ddviz.compute.cuts import in_level
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.shared.scatter import ScatterSpec
@@ -35,18 +36,22 @@ def drawn_conditions(spec: ScatterSpec) -> list[pl.Expr]:
     ]
 
 
-def selection_filter(spec: ScatterSpec) -> list[pl.Expr]:
+def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
     """Return the conditions that pick the selected rows of a spec with a selection.
 
     A row is selected when it is drawn in the panel the box was drawn on:
     its facet levels are the panel's, its x and y are in the box, its
     color, row and col are valid (`drawn_conditions`), and it passes the local filter.
+    On a categorical axis, its position in the band is in the box
+    (`ddviz.compute.bands.pair_positions`): the rows of the points drawn in it.
 
     Parameters
     ----------
     spec : ScatterSpec
-        A spec whose ``selection`` is set, with a view holding the levels
-        and cuts of the drawn result.
+        A spec whose ``selection`` is set, with a view holding the levels,
+        cuts, axis levels and spreads of the drawn result.
+    index : str
+        Column of the row index, which the positions in a band read.
 
     Returns
     -------
@@ -54,8 +59,15 @@ def selection_filter(spec: ScatterSpec) -> list[pl.Expr]:
         Conditions to filter on.
     """
     selection = spec.selection
-    x = pl.col(selection.x).cast(pl.Float64)
-    y = pl.col(selection.y).cast(pl.Float64)
+    axis_levels, spread = {}, None
+    if spec.categorical:
+        axis_levels = spec.view.axis_levels
+        spread = {(k.x, k.y): k for k in spec.view.spreads}.get(
+            (selection.x, selection.y)
+        )
+    x, y = pair_positions(
+        selection.x, selection.y, set(spec.categorical), axis_levels, spread, index
+    )
     conditions = [
         x.is_finite(),
         y.is_finite(),

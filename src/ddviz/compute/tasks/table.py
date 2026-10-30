@@ -112,7 +112,7 @@ def run_table(task: TableTask, out: Path, emit: Emit) -> None:
     emit({"type": "progress", "stage": "rows"})
     index = (
         scan_columns({c: spec.files[c] for c in selection_columns(spec)}, INDEX)
-        .filter(*selection_filter(spec))
+        .filter(*selection_filter(spec, INDEX))
         .select(INDEX)
         .slice(task.offset, task.limit)
         .collect(engine="streaming")[INDEX]

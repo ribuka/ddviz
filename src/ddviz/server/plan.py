@@ -15,8 +15,12 @@ FACET_BINS = 5
 COLOR_BINS = (2, 3, 5, 10)
 
 
+# Elements of a graph (`ddviz.server.encoding.ELEMENTS`) that can be drawn.
+DRAWN_ELEMENTS = ("points",)
+
+
 def undrawn(encoding: Encoding) -> list[str]:
-    """Return the roles that are placed but cannot be drawn yet.
+    """Return the roles and elements that are placed but cannot be drawn yet.
 
     Parameters
     ----------
@@ -26,9 +30,11 @@ def undrawn(encoding: Encoding) -> list[str]:
     Returns
     -------
     list of str
-        ``["overlay"]`` when overlay has a column, else empty.
+        ``"overlay"`` when overlay has a column, and each chosen element
+        not in `DRAWN_ELEMENTS`.
     """
-    return ["overlay"] if encoding.overlay is not None else []
+    roles = ["overlay"] if encoding.overlay is not None else []
+    return roles + [e for e in encoding.elements if e not in DRAWN_ELEMENTS]
 
 
 def drawn_columns(encoding: Encoding) -> list[str]:
@@ -129,7 +135,8 @@ def scatter_spec(
 
     Every pair of an x and a y column is drawn in a panel of each facet
     cell, colored by color and faceted by row and col; overlay is left out
-    (`undrawn`). A wrap column takes the col role of the spec, its levels
+    (`undrawn`). A categorical x or y column is drawn in bands, one per
+    level (`ScatterSpec.categorical`). A wrap column takes the col role of the spec, its levels
     wrapping into rows (`ScatterSpec.wrap`). The hover shows the drawn
     columns. The local filter's columns are read too.
 
@@ -149,11 +156,13 @@ def scatter_spec(
     numeric : dict of str to bool, optional
         Whether each column is numeric. A numeric row, col or wrap column is
         cut into `FACET_BINS` intervals (`ddviz.compute.cuts`); a numeric color
-        column is a gradient, or cut by `color_bins`.
+        column is a gradient, or cut by `color_bins`. An x or y column
+        missing is numeric; the others, categorical.
     color_bins : Binning, optional
         How to cut a numeric color column; None draws it as a gradient.
     max_levels : int, optional
-        Most levels a categorical color, row, col or wrap column may have.
+        Most levels a categorical x, y, color, row, col or wrap column may
+        have.
     wrap_cols : int, optional
         Wrapped panels to a row (`parse_wrap_cols`); None to make them
         closest to square.
@@ -166,11 +175,13 @@ def scatter_spec(
     Raises
     ------
     ValueError
-        When x or y has no column, or wrap has one beside row, col or the
-        n-th axes.
+        When x or y has no column, wrap has one beside row, col or the
+        n-th axes, or the elements have none that can be drawn.
     """
     if not encoding.x or not encoding.y:
         raise ValueError("x and y need a column")
+    if not set(encoding.elements) & set(DRAWN_ELEMENTS):
+        raise ValueError(f"elements need one of {DRAWN_ELEMENTS}")
     wrap = encoding.wrap is not None
     if wrap and (encoding.row is not None or encoding.col is not None):
         raise ValueError("wrap cannot be placed with row or col")
@@ -207,6 +218,11 @@ def scatter_spec(
         max_levels=max_levels,
         wrap=wrap,
         wrap_cols=wrap_cols if wrap else None,
+        categorical=[
+            c
+            for c in dict.fromkeys([*encoding.x, *encoding.y])
+            if not numeric.get(c, True)
+        ],
     )
 
 
