@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+# Default of the most levels a color, row or col column may have
+# (`ScatterSpec.max_levels`).
+MAX_LEVELS = 50
+
 
 @dataclass(frozen=True)
 class Binning:
@@ -154,6 +158,10 @@ class ScatterSpec:
         drawn, hovered, selected or listed. They leave the series and the
         overview's ranges as they are without them, and drop the facet
         panels left without rows (`ddviz.compute.aggregate.aggregate`).
+    max_levels : int
+        Most levels a color, row or col column may have; more are refused
+        before binning. A numeric column on these roles has about one level
+        per row: its masks would not fit in memory.
     """
 
     files: dict[str, list[str]]
@@ -171,6 +179,7 @@ class ScatterSpec:
     binned: dict[str, Binning] = field(default_factory=dict)
     gradient: bool = False
     filters: list[Filter] = field(default_factory=list)
+    max_levels: int = MAX_LEVELS
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.

@@ -32,7 +32,9 @@ from ddviz.shared.scatter import ScatterSpec
 from ddviz.shared.tasks import PlotTask
 
 
-def plot_router(source: Source, results: Results, broker: TaskBroker) -> APIRouter:
+def plot_router(
+    source: Source, results: Results, broker: TaskBroker, max_levels: int
+) -> APIRouter:
     """Return the routes that draw.
 
     Parameters
@@ -43,6 +45,8 @@ def plot_router(source: Source, results: Results, broker: TaskBroker) -> APIRout
         The drawn results, which the routes replace.
     broker : TaskBroker
         Runs the plot tasks.
+    max_levels : int
+        Most levels a categorical color, Group X or Group Y column may have.
 
     Returns
     -------
@@ -141,6 +145,7 @@ def plot_router(source: Source, results: Results, broker: TaskBroker) -> APIRout
             filters,
             numeric,
             color_bins,
+            max_levels,
         )
         results.plot_id += 1
         index, timing = await run_plot(spec)

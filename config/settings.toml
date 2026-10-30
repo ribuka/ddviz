@@ -7,3 +7,8 @@
 max_gb = 10
 # この日数のあいだ使わなかった列のキャッシュを消す。
 max_unused_days = 30
+
+[plot]
+# Color・Group X・Group Y に置くカテゴリの列の水準の上限。
+# 超える列は、集約の前に断る。X / Y のカテゴリの軸も同じ上限を使う。
+max_levels = 50

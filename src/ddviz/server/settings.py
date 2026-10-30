@@ -7,6 +7,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from ddviz.shared.scatter import MAX_LEVELS
+
 
 @dataclass(frozen=True)
 class CacheSettings:
@@ -25,6 +27,19 @@ class CacheSettings:
 
 
 @dataclass(frozen=True)
+class PlotSettings:
+    """Limits of a plot.
+
+    Parameters
+    ----------
+    max_levels : int
+        Most levels a categorical column on color, Group X or Group Y may have.
+    """
+
+    max_levels: int = MAX_LEVELS
+
+
+@dataclass(frozen=True)
 class Settings:
     """All settings of ddviz.
 
@@ -32,9 +47,12 @@ class Settings:
     ----------
     cache : CacheSettings
         Limits of the column cache.
+    plot : PlotSettings
+        Limits of a plot.
     """
 
     cache: CacheSettings = CacheSettings()
+    plot: PlotSettings = PlotSettings()
 
 
 def settings_path() -> Path:
@@ -64,11 +82,23 @@ def load_settings(path: Path | None = None) -> Settings:
     -------
     Settings
         The settings.
+
+    Raises
+    ------
+    ValueError
+        When ``plot.max_levels`` is not a positive integer.
     """
     path = path or settings_path()
     data = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     cache = data.get("cache", {})
     default = CacheSettings()
+    max_levels = data.get("plot", {}).get("max_levels", MAX_LEVELS)
+    if (
+        isinstance(max_levels, bool)
+        or not isinstance(max_levels, int)
+        or max_levels < 1
+    ):
+        raise ValueError(f"plot.max_levels needs a positive integer: {max_levels!r}")
     return Settings(
         cache=CacheSettings(
             max_bytes=int(cache["max_gb"] * 2**30)
@@ -77,5 +107,6 @@ def load_settings(path: Path | None = None) -> Settings:
             max_unused_days=float(
                 cache.get("max_unused_days", default.max_unused_days)
             ),
-        )
+        ),
+        plot=PlotSettings(max_levels=max_levels),
     )

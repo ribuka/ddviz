@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 from ddviz.server.encoding import Encoding
-from ddviz.shared.scatter import Binning, Filter, ScatterSpec
+from ddviz.shared.scatter import MAX_LEVELS, Binning, Filter, ScatterSpec
 
 # A numeric column on Group X or Group Y is cut into this many intervals of
 # about the same number of rows, unless it has at most this many values,
@@ -114,6 +114,7 @@ def scatter_spec(
     filters: list[Filter] | None = None,
     numeric: dict[str, bool] | None = None,
     color_bins: Binning | None = None,
+    max_levels: int = MAX_LEVELS,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -141,6 +142,8 @@ def scatter_spec(
         is a gradient, or cut by `color_bins`.
     color_bins : Binning, optional
         How to cut a numeric color column; None draws it as a gradient.
+    max_levels : int, optional
+        Most levels a categorical color, row or col column may have.
 
     Returns
     -------
@@ -181,6 +184,7 @@ def scatter_spec(
         binned=binned,
         gradient=gradient,
         filters=filters,
+        max_levels=max_levels,
     )
 
 
