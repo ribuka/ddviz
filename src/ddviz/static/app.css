@@ -843,6 +843,10 @@ button {
   font-size: 12px;
 }
 
+#hover-warning {
+  color: #b45309;
+}
+
 #statusbar details {
   margin-left: auto;
 }

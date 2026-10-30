@@ -19,6 +19,8 @@ _MAX_WINDOW = 256
 class HoverIndex:
     """Memory-mapped hover files of one plot task.
 
+    A result without hover files (`PlotManifest.hover_files`) finds no row.
+
     Parameters
     ----------
     out : pathlib.Path
@@ -29,6 +31,10 @@ class HoverIndex:
         self.out = out
         self.manifest = PlotManifest.read(out)
         self.grid = self.manifest.grid
+        self._columns = []
+        if not self.manifest.hover_files:
+            self._keys = self._count = self._index = self._occupancy = None
+            return
         self._keys = np.load(out / "keys.npy", mmap_mode="r")
         self._count = np.load(out / "count.npy", mmap_mode="r")
         self._index = np.load(out / "index.npy", mmap_mode="r")
@@ -112,6 +118,8 @@ class HoverIndex:
             The series, the bin, the row index, the rows in the bin and in
             the whole pixel, and the hover values; None when no point is near.
         """
+        if self._occupancy is None:
+            return None
         pixel = self._nearest_pixel(panel, fx, fy, sx, sy)
         if pixel is None:
             return None

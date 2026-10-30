@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from ddviz.server.app import create_app
 from ddviz.server.auth import COOKIE
-from ddviz.server.settings import Settings
+from ddviz.server.settings import HoverSettings, Settings
 
 ENCODING = {"x": ["x"], "y": ["y"], "color": "color", "col": "facet"}
 SIZE = {"width": 400, "height": 300}
@@ -264,3 +264,43 @@ def test_a_folder_plots_selects_and_lists_as_one_table(
     assert columns["n"] == rows["n"].to_list()
     summary = client.get("/api/summary", params={"column": "n"}).json()
     assert summary["nulls"] == folder_frame["n"].null_count()
+
+
+def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
+    client: TestClient, tmp_path: Path, scatter_path: Path
+) -> None:
+    """A view gets the room the overview leaves; without room for x and y it has no hover.
+
+    The results a task replaces count too: they go only once the new one
+    is open, so they are on disk while it is written.
+    """
+    unlimited = _plot(client)["meta"]["hover"]
+    assert unlimited["files"] and unlimited["dropped"] == []
+    settings = Settings(hover=HoverSettings(max_temp_bytes=unlimited["bytes"] + 1000))
+    app = create_app(
+        str(scatter_path),
+        False,
+        tmp_path / "limited",
+        tmp_path / "cache",
+        settings,
+        TOKEN,
+    )
+    (tmp_path / "limited").mkdir()
+    with TestClient(app) as limited:
+        limited.get("/", params={"token": TOKEN})
+        meta = _plot(limited)["meta"]
+        assert meta["hover"]["files"] and meta["hover"]["dropped"] == []
+        assert meta["hover"]["kept"] == ["x", "y", "color", "facet"]
+        body = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
+        view = limited.post("/api/view", json=body).json()["meta"]
+        assert view["hover"]["files"] is False
+        assert view["hover"]["dropped"] == ["x", "y", "color", "facet"]
+        assert view["hover"]["limit_gb"] == settings.hover.max_temp_bytes / 2**30
+        params = {"task": view["task"], "panel": 0, "fx": 0, "fy": 0, "sx": 1, "sy": 1}
+        assert limited.get("/api/hover", params=params).json() == {"hit": None}
+        # A new plot is written beside the old overview, which leaves no room.
+        again = _plot(limited)["meta"]["hover"]
+        assert again["files"] is False
+        assert meta["hover"]["bytes"] + again["bytes"] <= settings.hover.max_temp_bytes
+        # The old results are gone now, so the next plot has the whole limit.
+        assert _plot(limited)["meta"]["hover"]["files"]

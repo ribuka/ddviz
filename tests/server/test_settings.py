@@ -8,6 +8,7 @@ import pytest
 
 from ddviz.server.settings import (
     CacheSettings,
+    HoverSettings,
     PlotSettings,
     load_settings,
     settings_path,
@@ -36,6 +37,7 @@ def test_the_repository_settings_load() -> None:
     assert settings_path().exists()
     assert load_settings().cache == CacheSettings()
     assert load_settings().plot == PlotSettings()
+    assert load_settings().hover == HoverSettings()
 
 
 def test_max_levels_is_read(tmp_path: Path) -> None:
@@ -52,4 +54,21 @@ def test_max_levels_must_be_a_positive_integer(tmp_path: Path, value: str) -> No
     path = tmp_path / "settings.toml"
     path.write_text(f"[plot]\nmax_levels = {value}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="max_levels"):
+        load_settings(path)
+
+
+def test_hover_limit_is_read_in_gigabytes(tmp_path: Path) -> None:
+    """``hover.max_temp_gb`` becomes bytes; without it the default is 2GB."""
+    path = tmp_path / "settings.toml"
+    path.write_text("[hover]\nmax_temp_gb = 0.5\n", encoding="utf-8")
+    assert load_settings(path).hover.max_temp_bytes == 2**29
+    assert HoverSettings().max_temp_bytes == 2 * 2**30
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "true", '"2"', "inf", "nan"])
+def test_hover_limit_must_be_a_positive_number(tmp_path: Path, value: str) -> None:
+    """A max_temp_gb that is not a positive finite number is refused."""
+    path = tmp_path / "settings.toml"
+    path.write_text(f"[hover]\nmax_temp_gb = {value}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="max_temp_gb"):
         load_settings(path)

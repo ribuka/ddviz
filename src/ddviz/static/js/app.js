@@ -13,6 +13,7 @@ import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
 
 const status = document.getElementById("status");
+const hoverWarning = document.getElementById("hover-warning");
 const info = document.getElementById("info");
 const gd = document.getElementById("plot");
 const stage = document.getElementById("stage");
@@ -148,6 +149,17 @@ function setCurrent(meta) {
   legend.setEmpty(meta.images);
   stage.classList.toggle("scrolls", meta.scroll);
   sticky.set(meta);
+  showHoverWarning(meta.hover);
+}
+
+// Tells, in the status bar, which hover columns a result left out to keep its
+// hover files within the limit of the settings, or that it has no hover.
+function showHoverWarning({ files, dropped, kept, limit_gb: limit }) {
+  hoverWarning.hidden = files && !dropped.length;
+  const why = `ホバー用のファイルが上限（${Number(limit.toPrecision(3))}GB）を超えるため、`;
+  hoverWarning.textContent = files
+    ? `${why}ホバーに出す列を ${kept.join("、")} だけにした`
+    : `${why}この表示ではホバーを出さない`;
 }
 
 // Draws the images of a result on the canvas and frees the ones it replaces.
@@ -737,6 +749,7 @@ function clearPlot() {
   sticky.set(null);
   empty.hidden = false;
   status.textContent = "";
+  hoverWarning.hidden = true;
 }
 
 // The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`): placing

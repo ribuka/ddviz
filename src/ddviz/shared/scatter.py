@@ -162,6 +162,9 @@ class ScatterSpec:
         Most levels a color, row or col column may have; more are refused
         before binning. A numeric column on these roles has about one level
         per row: its masks would not fit in memory.
+    hover_bytes : int or None
+        Most bytes the result's hover files may take
+        (`ddviz.compute.hoverfit`); None for no limit.
     """
 
     files: dict[str, list[str]]
@@ -180,6 +183,7 @@ class ScatterSpec:
     gradient: bool = False
     filters: list[Filter] = field(default_factory=list)
     max_levels: int = MAX_LEVELS
+    hover_bytes: int | None = None
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.

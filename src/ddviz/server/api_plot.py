@@ -1,5 +1,11 @@
 """Routes that draw: a plot, its zoomed view, its overview at another size, and hovers.
 
+The hover files of the open results (the overview and the view) keep
+within ``max_hover_bytes`` together: a new result gets what the results
+open while it is written leave, those it replaces included, as they go only
+once it is open (`ddviz.compute.hoverfit`); its figure tells the page which
+hover columns were left out.
+
 Every plot, view and overview request carries the conditions of the local
 filter (`ddviz.server.plan.parse_filters`); the result's spec keeps them, so
 the selection and the table of a result follow its filter.
@@ -11,7 +17,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -33,7 +39,11 @@ from ddviz.shared.tasks import PlotTask
 
 
 def plot_router(
-    source: Source, results: Results, broker: TaskBroker, max_levels: int
+    source: Source,
+    results: Results,
+    broker: TaskBroker,
+    max_levels: int,
+    max_hover_bytes: int,
 ) -> APIRouter:
     """Return the routes that draw.
 
@@ -47,6 +57,8 @@ def plot_router(
         Runs the plot tasks.
     max_levels : int
         Most levels a categorical color, Group X or Group Y column may have.
+    max_hover_bytes : int
+        Most bytes the hover files of the overview and the view take together.
 
     Returns
     -------
@@ -56,7 +68,10 @@ def plot_router(
     router = APIRouter()
 
     async def run_plot(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
-        """Run a plot task; return its opened result, or None when a newer task killed it."""
+        """Run a plot task beside the open results; return its result, or None when a newer task killed it."""
+        opened = (results.overview, results.view)
+        used = sum(i.manifest.hover_bytes for i in opened if i is not None)
+        spec = replace(spec, hover_bytes=max(max_hover_bytes - used, 0))
         started = time.perf_counter()
         end = await broker.run(PlotTask(spec))
         if end.type == "cancelled":
@@ -81,6 +96,13 @@ def plot_router(
         result = build_figure(index.manifest)
         result["meta"]["task"] = int(index.out.name)
         result["meta"]["filters"] = [asdict(f) for f in index.manifest.spec.filters]
+        result["meta"]["hover"] = {
+            "files": index.manifest.hover_files,
+            "dropped": index.manifest.hover_dropped,
+            "bytes": index.manifest.hover_bytes,
+            "kept": [c.name for c in index.manifest.columns],
+            "limit_gb": max_hover_bytes / 2**30,
+        }
         result["meta"].update(timing)
         return JSONResponse(result)
 
