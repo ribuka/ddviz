@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ddviz.shared.manifest import PlotManifest
+from ddviz.shared.manifest import GRAYS, PlotManifest
 from ddviz.shared.shapes import kernel
 
 # Hover distance in screen pixels, as plotly's default `hoverdistance`.
@@ -53,19 +53,17 @@ class HoverIndex:
             self._shapes = [
                 kernel(i, spec.shape_size)[::-1] for i in range(len(levels))
             ]
-        # A gradient's color values, whose grays decide which of a series'
-        # overlapping shapes shows; None without them in the hover files.
-        self._color = None
-        if spec.gradient:
-            self._color = next(
-                (a for name, a, _ in self._columns if name == spec.color), None
-            )
+        # A gradient's grays, which decide which of a series' overlapping
+        # shapes shows.
+        self._grays = None
+        if (out / GRAYS).exists():
+            self._grays = np.load(out / GRAYS, mmap_mode="r")
 
     def close(self) -> None:
         """Drop the memory maps, so that the files can be deleted."""
         self._keys = self._count = self._index = self._occupancy = None
         self._columns = []
-        self._color = None
+        self._grays = None
 
     def _series_at(self, panel: int, by: int, bx: int) -> dict[int, int]:
         """Return the position of the key of each series with rows at an occupied pixel."""
@@ -116,14 +114,8 @@ class HoverIndex:
         return None if best is None else best[1:]
 
     def _gray(self, i: int) -> int:
-        """Return the gray a gradient's bin is drawn in (`ddviz.compute.tasks.images.write_gradient`), or 0."""
-        if self._color is None:
-            return 0
-        lo, hi = self.manifest.color_range
-        if hi <= lo:
-            return 128
-        scaled = min(max((float(self._color[i]) - lo) / (hi - lo), 0.0), 1.0)
-        return 1 + int(np.rint(scaled * 254))
+        """Return the gray a gradient's bin is drawn in (`ddviz.compute.tasks.images.gradient_grays`), or 0."""
+        return 0 if self._grays is None else int(self._grays[i])
 
     def _nearest_pixel(
         self, panel: int, fx: float, fy: float, sx: float, sy: float

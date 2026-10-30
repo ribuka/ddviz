@@ -20,6 +20,9 @@ MANIFEST = "manifest.json"
 # File of a plot task holding the PNG of every panel and series one after
 # another; the manifest gives the offset and length of each.
 IMAGES = "images.bin"
+# Hover file of a plot task with a gradient and an overlay: the gray each
+# bin is drawn in, by which the hover picks among overlapping shapes.
+GRAYS = "gray.npy"
 
 
 def write_manifest(out: Path, manifest: dict) -> None:

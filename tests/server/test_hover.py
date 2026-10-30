@@ -5,12 +5,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
+import polars as pl
 import pytest
 
 from ddviz.compute.raster import occupancy
+from ddviz.compute.tasks.images import gradient_grays
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.server.hover import HOVER_DISTANCE, HoverIndex
 from ddviz.shared.keys import BinGrid
@@ -160,10 +161,9 @@ def _overlay_index(
     index._occupancy = occupancy(index._keys, index.grid)
     index._columns = []
     index._shapes = [kernel(i, 7)[::-1] for i in range(2)]
-    index._color = None
+    index._grays = None
     if colors is not None:
-        index.manifest = SimpleNamespace(color_range=[0.0, 1.0])
-        index._color = np.array(colors)[order]
+        index._grays = gradient_grays(pl.Series(colors), (0.0, 1.0))[order]
     return index
 
 
@@ -192,3 +192,57 @@ def test_lookup_of_overlapping_shapes_of_one_series_finds_the_one_drawn() -> Non
     assert (hit["row"], hit["bx"]) == (0, 7)
     index = _overlay_index([(1, 7, 10), (1, 13, 10)], colors=[0.04, 0.8])
     assert index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])["row"] == 1
+
+
+def test_lookup_picks_the_drawn_gray_without_the_color_column(tmp_path: Path) -> None:
+    """With the color column left out of the hover files, the larger gray still shows where two shapes of a series overlap."""
+
+    def plot(x: list[float], name: str, hover_bytes: int | None = None) -> Path:
+        """Plot two squares of a series (rows 0 and 1, the first grayer) at `x`, and two corner points."""
+        path = tmp_path / f"{name}.parquet"
+        pl.DataFrame(
+            {
+                "x": [*x, 0.0, 29.0],
+                "y": [10.0, 10.0, 0.0, 19.0],
+                "c": [0.8, 0.04, 0.5, 0.5],
+                # Level q is the second shape, a square outline.
+                "o": ["q", "q", "p", "p"],
+            }
+        ).write_parquet(path)
+        # The last hover column goes first.
+        columns = ["x", "y", "o", "c"]
+        spec = ScatterSpec(
+            files={c: [str(path)] for c in columns},
+            x=["x"],
+            y=["y"],
+            color="c",
+            row=None,
+            col=None,
+            width=400,
+            height=300,
+            hover=columns,
+            gradient=True,
+            overlay="o",
+            hover_bytes=hover_bytes,
+        )
+        out = tmp_path / name
+        out.mkdir()
+        run_plot(spec, out, lambda _: None)
+        return out
+
+    first = PlotManifest.read(plot([7.0, 8.0], "first"))
+    (lo, hi), width = first.x_ranges[0], first.grid.width
+    # Squares 3 bins to a side, 6 bins apart: their sides share bin 103.
+    x = [lo + (b + 0.5) * (hi - lo) / width for b in (100, 106)]
+    full = PlotManifest.read(plot(x, "full"))
+    # Too little room for every column: the color column is left out.
+    index = HoverIndex(plot(x, "task", full.hover_bytes - 1))
+    try:
+        assert index.manifest.hover_dropped == ["c"]
+        _, _, by, bx = index.grid.unpack(np.asarray(index._keys))
+        assert sorted(bx.tolist())[1:3] == [100, 106]
+        y0 = int(by[bx == 100][0])
+        hit = index.lookup(0, 103.5, y0 + 0.5, 1.0, 1.0, [1, 0])
+        assert (hit["row"], hit["bx"]) == (0, 100)
+    finally:
+        index.close()

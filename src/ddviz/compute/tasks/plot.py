@@ -8,11 +8,11 @@ import numpy as np
 import polars as pl
 
 from ddviz.compute.aggregate import COUNT, INDEX, KEY, aggregate
-from ddviz.compute.hoverfit import fit_hover
+from ddviz.compute.hoverfit import NPY_HEADER, fit_hover
 from ddviz.compute.progress import Emit
 from ddviz.compute.raster import occupancy
-from ddviz.compute.tasks.images import write_gradient, write_images
-from ddviz.shared.manifest import HoverColumn, PlotManifest, SelectionManifest
+from ddviz.compute.tasks.images import gradient_grays, write_gradient, write_images
+from ddviz.shared.manifest import GRAYS, HoverColumn, PlotManifest, SelectionManifest
 from ddviz.shared.palette import series_color
 from ddviz.shared.scatter import ScatterSpec
 
@@ -89,8 +89,14 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     emit({"type": "progress", "stage": "write"})
     hover = list(dict.fromkeys(spec.hover))
     sizes = {name: _column_bytes(bins[name].dtype) for name in hover}
+    # A gradient's shapes overlap by their grays: the hover picks the shape
+    # drawn by them, whether the color column is hovered or not.
+    grays = None
+    if spec.gradient and spec.overlay is not None:
+        grays = gradient_grays(bins[spec.color], agg.color_range)
+    extra = 0 if grays is None else grays.nbytes + NPY_HEADER
     kept = fit_hover(
-        sizes, [*spec.x, *spec.y], len(bins), bitmask.nbytes, spec.hover_bytes
+        sizes, [*spec.x, *spec.y], len(bins), bitmask.nbytes + extra, spec.hover_bytes
     )
     columns = []
     files = []
@@ -101,6 +107,8 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
             "index.npy": bins[INDEX].cast(pl.Int64).to_numpy(),
             "occupancy.npy": bitmask,
         }
+        if grays is not None:
+            arrays[GRAYS] = grays
         for i, name in enumerate(kept):
             arrays[f"col{i}.npy"], labels = _column_array(bins[name])
             columns.append(HoverColumn(name, f"col{i}.npy", labels))

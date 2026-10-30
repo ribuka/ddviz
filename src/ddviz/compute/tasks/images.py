@@ -77,6 +77,27 @@ def write_images(
     return images
 
 
+def gradient_grays(values: pl.Series, color_range: tuple[float, float]) -> np.ndarray:
+    """Return the gray of each value of a gradient's color column, from 1 to 255 over `color_range`.
+
+    Parameters
+    ----------
+    values : polars.Series
+        Color values.
+    color_range : tuple of float
+        Values of gray 1 and gray 255; the middle gray for all when empty.
+
+    Returns
+    -------
+    numpy.ndarray
+        uint8 grays.
+    """
+    lo, hi = color_range
+    scaled = values.cast(pl.Float64).to_numpy()
+    scaled = (scaled - lo) / (hi - lo) if hi > lo else np.full_like(scaled, 0.5)
+    return 1 + np.rint(np.clip(scaled, 0, 1) * 254).astype(np.uint8)
+
+
 def write_gradient(
     out: Path,
     keys: np.ndarray,
@@ -118,10 +139,7 @@ def write_gradient(
         ``[offset, length]`` of each series' PNG, or None for one without
         bins.
     """
-    lo, hi = color_range
-    scaled = values.cast(pl.Float64).to_numpy()
-    scaled = (scaled - lo) / (hi - lo) if hi > lo else np.full_like(scaled, 0.5)
-    grays = 1 + np.rint(np.clip(scaled, 0, 1) * 254).astype(np.uint8)
+    grays = gradient_grays(values, color_range)
     images: list[list[int] | None] = [None] * grid.n_series
     pixel = pixels(keys, grid)
     offset = 0
