@@ -22,6 +22,7 @@ import uvicorn
 import webview
 
 from ddviz.desktop.runlog import RunLog, app_data_dir
+from ddviz.desktop.webview2_access import denied_message, ensure_access, windows_build
 
 _log = logging.getLogger(__name__)
 
@@ -214,6 +215,9 @@ def run_window(
     int
         Exit code: 0 when the run ended normally.
     """
+    # Before the run log: a run that stops here did not end abnormally.
+    if not _use_bundled_runtime():
+        return 1
     log = RunLog()
     try:
         if log.start():
@@ -228,6 +232,29 @@ def run_window(
         return 0
     finally:
         log.close()
+
+
+def _use_bundled_runtime() -> bool:
+    """Point pywebview at the bundled WebView2 runtime, readable by its renderers.
+
+    Returns
+    -------
+    bool
+        False when the runtime is missing, or lacks the access that the
+        Windows 10 line needs and the user cannot grant it; the user has
+        been told why. True in development, where nothing is bundled.
+    """
+    runtime = bundled_runtime()
+    if runtime is None:
+        return True
+    if not runtime.is_dir():
+        show_warning(f"WebView2 のランタイムが見つかりません：{runtime}")
+        return False
+    if not ensure_access(runtime, windows_build()):
+        show_warning(denied_message(runtime))
+        return False
+    webview.settings["WEBVIEW2_RUNTIME_PATH"] = str(runtime)
+    return True
 
 
 class _Chooser:
@@ -249,12 +276,6 @@ def _run(
     path: str | None, recursive: bool, make_app: Callable[[str, bool, str], object]
 ) -> bool:
     """Show the window until it closes; return whether everything went well."""
-    runtime = bundled_runtime()
-    if runtime is not None:
-        if not runtime.is_dir():
-            show_warning(f"WebView2 のランタイムが見つかりません：{runtime}")
-            return False
-        webview.settings["WEBVIEW2_RUNTIME_PATH"] = str(runtime)
     webview.settings["SHOW_DEFAULT_MENUS"] = False
     webview.settings["ALLOW_FILE_URLS"] = False
     chooser = _Chooser()
