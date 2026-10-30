@@ -121,7 +121,7 @@ def test_plot_draws_and_serves_images(client: TestClient) -> None:
     ("encoding", "detail"),
     [
         ({"x": ["nope"], "y": ["y"]}, "unknown columns"),
-        ({"x": ["x"], "y": ["y"], "elements": ["box"]}, "elements"),
+        ({"x": ["x"], "y": ["y"], "elements": ["smooth"]}, "elements"),
         ({"x": ["x"], "y": ["y"], "elements": "points"}, "elements"),
         ({"x": ["x"]}, "x and y"),
         ({"x": "x", "y": ["y"]}, "list"),
@@ -354,3 +354,34 @@ def test_a_categorical_axis_plots_zooms_filters_and_selects(client: TestClient) 
     assert {
         v for c in table["columns"] if c["name"] == "color" for v in c["values"]
     } == {"b"}
+
+
+def test_box_plots_plot_zoom_filter_and_select(client: TestClient) -> None:
+    """Box plots of y by a text column: the figure holds them, a zoom keeps them, a filter finds them again, and a box selects by level."""
+    encoding = {"x": ["color"], "y": ["y"], "elements": ["box"]}
+    plotted = client.post("/api/plot", json={"encoding": encoding, **SIZE}).json()
+    meta = plotted["meta"]
+    assert meta["undrawn"] == []
+    (panel,) = meta["panels"]
+    assert panel["points"] is False
+    assert [b[0] for b in panel["boxes"]] == [0, 1, 2]
+    assert sum(b[2] for b in panel["boxes"]) == 2002
+    # Only the outliers are drawn as points.
+    assert 0 < meta["rows"] < 2002
+    # A box over part of the band of b selects its rows, inside the box plot too.
+    box = {"task": meta["task"], "panel": 0, "x_range": [0.7, 1.1], "y_range": [-9, 9]}
+    selected = client.post("/api/selection", json=box).json()
+    assert selected["rows"] == panel["boxes"][1][2]
+
+    view = {**SIZE, "x_ranges": [[0.5, 2.5]], "y_ranges": meta["y_ranges"]}
+    zoomed = client.post("/api/view", json=view).json()["meta"]
+    assert zoomed["panels"][0]["boxes"] == panel["boxes"]
+    filters = [{"column": "facet", "levels": ["p"]}]
+    narrowed = client.post("/api/overview", json={**SIZE, "filters": filters})
+    boxes = narrowed.json()["meta"]["panels"][0]["boxes"]
+    assert 0 < sum(b[2] for b in boxes) < 2002
+
+    numeric_x = {"x": ["x"], "y": ["y"], "elements": ["box"]}
+    plotted = client.post("/api/plot", json={"encoding": numeric_x, **SIZE}).json()
+    assert plotted["meta"]["undrawn"] == ["box"]
+    assert plotted["meta"]["panels"][0]["points"] is True

@@ -108,6 +108,7 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         hover_bytes=sum(f.stat().st_size for f in files),
         axis_levels=agg.axis_levels,
         spreads=agg.spreads,
+        boxes=agg.boxes,
     ).write(out)
 
 

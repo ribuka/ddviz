@@ -305,7 +305,9 @@ async function plot(encoding) {
 // Returns the status of a result: its rows, and whether the filter left rows out.
 function rowsText(meta, where = "") {
   const filtered = meta.filters.length ? "（フィルタ後）" : "";
-  return `task ${meta.task}: ${where}${meta.rows.toLocaleString()} 行${filtered}`;
+  // Box plots without points draw only their outliers as points.
+  const outliers = meta.panels.every((p) => !p.points) ? "（外れ値）" : "";
+  return `task ${meta.task}: ${where}${meta.rows.toLocaleString()} 行${outliers}${filtered}`;
 }
 
 // Returns whether two ranges are equal up to a small part of their span.
@@ -783,6 +785,13 @@ function drawnRoles(encoding) {
   return JSON.stringify([x, y, color, row, col, wrap, elements]);
 }
 
+// Whether a pair of the graph's axis columns can have box plots: a
+// categorical x and a numeric y (`ddviz.server.plan.has_box_pair`).
+function hasBoxPair(encoding) {
+  const numeric = (name) => builder.numeric.get(name) !== false;
+  return encoding.x.some((x) => !numeric(x)) && encoding.y.some(numeric);
+}
+
 let drawnRolesKey = drawnRoles({ x: [], y: [], color: null, row: null, col: null, wrap: null, elements: ["points"] });
 // Cuts a numeric color column another way, or draws it as a gradient (null):
 // the series change, so the graph is plotted again.
@@ -826,10 +835,14 @@ async function recolor() {
   }
 }
 
+// The element icons, made after the builder whose elements they set.
+let elementBar = null;
 const builder = new Builder(
   document.getElementById("builder"),
   document.getElementById("columns"),
   (encoding) => {
+    // Box plots no longer possible are turned off; that edit comes back here.
+    if (elementBar?.allowBox(hasBoxPair(encoding))) return;
     const key = drawnRoles(encoding);
     if (key === drawnRolesKey) return;
     const drawn = JSON.parse(drawnRolesKey);
@@ -845,6 +858,8 @@ const builder = new Builder(
   },
   { wrap: wrapColsInput },
 );
-new ElementBar(document.getElementById("elements"), (elements) => builder.setElements(elements));
+elementBar = new ElementBar(document.getElementById("elements"), (elements) =>
+  builder.setElements(elements),
+);
 await attachColumnList(document.getElementById("columns"));
 showCasts(document.getElementById("casts"));

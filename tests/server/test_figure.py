@@ -225,3 +225,32 @@ def test_a_categorical_axis_ticks_the_middle_of_each_band(
         assert axis["tickvals"] == [0, 1, 2]
         assert axis["ticktext"] == ["a", "b", "c"]
     assert "tickvals" not in layout["yaxis"]
+
+
+def test_box_plots_lie_in_the_meta_of_their_panels(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """Each panel holds the boxes of its facet cell, and whether it draws every row's point."""
+    spec = replace(
+        scatter_spec,
+        x=["color"],
+        y=["y", "x"],
+        color=None,
+        categorical=["color"],
+        hover=["color", "y"],
+        points=False,
+        box=True,
+    )
+    meta = _figure(spec, tmp_path / "task")["meta"]
+    assert meta["axis_levels"] == {"color": ["a", "b", "c"]}
+    assert len(meta["panels"]) == 4
+    for panel in meta["panels"]:
+        assert panel["points"] is False
+        assert [b[:2] for b in panel["boxes"]] == [[0, 0], [1, 0], [2, 0]]
+        for _, _, n, low, q1, median, q3, high in panel["boxes"]:
+            assert n > 0
+            assert low <= q1 <= median <= q3 <= high
+    # The two facet cells differ in their rows, so in their boxes.
+    first, second = meta["panels"][0], meta["panels"][1]
+    assert first["facet"] != second["facet"]
+    assert first["boxes"] != second["boxes"]

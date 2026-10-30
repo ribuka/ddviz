@@ -1,7 +1,8 @@
 // Series image layers drawn on one canvas from plotly's axes, instead of an
 // image trace per panel and series: plotly then only draws the axes, and a
 // legend click redraws the canvas instead of the figure.
-import { decode } from "./colorscale.js";
+import { POINTS_UNDER_BOXES, drawBoxes } from "./boxes.js";
+import { decode, seriesColors } from "./colorscale.js";
 import { INACTIVE_OPACITY } from "./legend.js";
 
 // Opacity of every row while rows are selected; the selected rows are drawn
@@ -109,7 +110,10 @@ export class ImageLayers {
     // With a selection every row fades, and the selected rows are drawn
     // again on top, in every panel.
     const dim = selection ? SELECTION_DIM : 1;
-    this.drawLayer(ctx, full, dpr, meta, bitmaps, (s) => alpha(s) * dim);
+    // The points under box plots fade, so that the boxes stand out.
+    this.drawLayer(ctx, full, dpr, meta, bitmaps, (s) => alpha(s) * dim, null, true);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawBoxes(ctx, full, meta, seriesColors(meta), alpha, this.legend.order(meta.series.length).reverse());
     if (selection?.bitmaps) {
       this.drawLayer(ctx, full, dpr, selection.meta, selection.bitmaps, alpha);
     } else if (selection?.box) {
@@ -120,8 +124,8 @@ export class ImageLayers {
 
   // Draws one layer: an image per series whose tiles are the panels that
   // `meta` places. With `box` ({panel, x_range, y_range}), only that panel,
-  // clipped to the box.
-  drawLayer(ctx, full, dpr, meta, bitmaps, alpha, box = null) {
+  // clipped to the box. With `fade`, the points under box plots fade.
+  drawLayer(ctx, full, dpr, meta, bitmaps, alpha, box = null, fade = false) {
     const nSeries = meta.series.length;
     // Bottom layer first: inactive series behind, later series above earlier ones.
     const order = this.legend.order(nSeries).reverse();
@@ -154,10 +158,11 @@ export class ImageLayers {
       ctx.translate(left, bottom);
       // Row 0 of a tile is the bottom bin.
       ctx.scale((right - left) / w, (top - bottom) / h);
+      const under = fade && panel.points && panel.boxes?.length ? POINTS_UNDER_BOXES : 1;
       for (const s of order) {
         const bitmap = bitmaps[s];
         if (!bitmap) continue;
-        ctx.globalAlpha = alpha(s);
+        ctx.globalAlpha = alpha(s) * under;
         ctx.drawImage(bitmap, sx, sy, w, h, 0, 0, w, h);
       }
       ctx.restore();

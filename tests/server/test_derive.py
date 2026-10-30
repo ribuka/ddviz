@@ -15,7 +15,7 @@ from ddviz.server.derive import (
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import WRAP_GAP, AxisGrid, facet_grid, grid_layout
 from ddviz.shared.manifest import PlotManifest
-from ddviz.shared.scatter import Filter, ScatterSpec, Spread
+from ddviz.shared.scatter import Boxes, Filter, ScatterSpec, Spread
 
 
 @pytest.fixture
@@ -180,3 +180,24 @@ def test_spreads_are_kept_for_the_same_filter_only(manifest: PlotManifest) -> No
     assert other.view.spreads == [replace(spread, widths=None)]
     box = box_selection(banded, 0, (0.5, 1.5), (0, 1))
     assert selection_spec(banded, box).view.spreads == [spread]
+
+
+def test_boxes_are_kept_for_the_same_filter_only(manifest: PlotManifest) -> None:
+    """A view and a selection reuse the boxes; another filter finds them again."""
+    boxes = Boxes(x="color", y="y", stats=[[0, 0, 0, 0, 3, 0.0, 1.0, 2.0, 3.0, 4.0]])
+    boxed = replace(
+        manifest,
+        spec=replace(manifest.spec, x=["color"], categorical=["color"], box=True),
+        axis_levels={"color": ["a", "b", "c"]},
+        boxes=[boxes],
+    )
+    assert resized_spec(boxed, 400, 300, [], {}, [[0, 1]], [[0, 1]]).view.boxes == [
+        boxes
+    ]
+    filters = [Filter(column="label", levels=["r1"])]
+    other = resized_spec(
+        boxed, 400, 300, filters, {"label": ["label.parquet"]}, [[0, 1]], [[0, 1]]
+    )
+    assert other.view.boxes == []
+    box = box_selection(boxed, 0, (0.5, 1.5), (0, 1))
+    assert selection_spec(boxed, box).view.boxes == [boxes]

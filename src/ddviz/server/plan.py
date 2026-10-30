@@ -16,25 +16,53 @@ COLOR_BINS = (2, 3, 5, 10)
 
 
 # Elements of a graph (`ddviz.server.encoding.ELEMENTS`) that can be drawn.
-DRAWN_ELEMENTS = ("points",)
+DRAWN_ELEMENTS = ("points", "box")
 
 
-def undrawn(encoding: Encoding) -> list[str]:
-    """Return the roles and elements that are placed but cannot be drawn yet.
+def has_box_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
+    """Return whether a pair of the graph's axis columns can have box plots: a categorical x and a numeric y.
 
     Parameters
     ----------
     encoding : Encoding
         The graph.
+    numeric : dict of str to bool
+        Whether each column is numeric; a missing one is numeric.
+
+    Returns
+    -------
+    bool
+        Whether such a pair exists.
+    """
+    return any(not numeric.get(x, True) for x in encoding.x) and any(
+        numeric.get(y, True) for y in encoding.y
+    )
+
+
+def undrawn(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
+    """Return the roles and elements that are placed but cannot be drawn.
+
+    Parameters
+    ----------
+    encoding : Encoding
+        The graph.
+    numeric : dict of str to bool
+        Whether each column is numeric.
 
     Returns
     -------
     list of str
-        ``"overlay"`` when overlay has a column, and each chosen element
-        not in `DRAWN_ELEMENTS`.
+        ``"overlay"`` when overlay has a column, each chosen element not
+        in `DRAWN_ELEMENTS`, and ``"box"`` without a pair of a categorical
+        x and a numeric y (`has_box_pair`).
     """
     roles = ["overlay"] if encoding.overlay is not None else []
-    return roles + [e for e in encoding.elements if e not in DRAWN_ELEMENTS]
+    return roles + [
+        e
+        for e in encoding.elements
+        if e not in DRAWN_ELEMENTS
+        or (e == "box" and not has_box_pair(encoding, numeric))
+    ]
 
 
 def drawn_columns(encoding: Encoding) -> list[str]:
@@ -135,7 +163,9 @@ def scatter_spec(
 
     Every pair of an x and a y column is drawn in a panel of each facet
     cell, colored by color and faceted by row and col; overlay is left out
-    (`undrawn`). A categorical x or y column is drawn in bands, one per
+    (`undrawn`). The panels of a categorical x and a numeric y have box
+    plots when the elements have them (`ScatterSpec.box`); the other panels
+    draw the points even without the points element. A categorical x or y column is drawn in bands, one per
     level (`ScatterSpec.categorical`). A wrap column takes the col role of the spec, its levels
     wrapping into rows (`ScatterSpec.wrap`). The hover shows the drawn
     columns. The local filter's columns are read too.
@@ -223,6 +253,8 @@ def scatter_spec(
             for c in dict.fromkeys([*encoding.x, *encoding.y])
             if not numeric.get(c, True)
         ],
+        points="points" in encoding.elements,
+        box="box" in encoding.elements and has_box_pair(encoding, numeric),
     )
 
 

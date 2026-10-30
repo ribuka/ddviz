@@ -8,6 +8,7 @@ from ddviz.server.encoding import Encoding
 from ddviz.server.plan import (
     FACET_BINS,
     drawn_columns,
+    has_box_pair,
     parse_filters,
     parse_wrap_cols,
     scatter_spec,
@@ -34,7 +35,7 @@ def test_scatter_draws_every_axis_and_leaves_out_overlay() -> None:
     assert spec.hover == drawn_columns(encoding)
     assert sorted(spec.files) == spec.hover
     assert spec.view is None
-    assert undrawn(encoding) == ["overlay"]
+    assert undrawn(encoding, {}) == ["overlay"]
 
 
 def test_a_column_on_several_roles_is_read_once() -> None:
@@ -147,16 +148,42 @@ def test_categorical_axis_columns_are_drawn_in_bands() -> None:
 
 
 def test_elements_that_cannot_be_drawn_are_undrawn() -> None:
-    """Box plots and smoothing lines are not drawn yet; a graph needs points."""
+    """Smoothing lines are not drawn yet; a graph needs points or box plots."""
     files = {c: [f"{c}.parquet"] for c in ("a", "b")}
-    both = Encoding(x=("a",), y=("b",), elements=("points", "box"))
-    assert undrawn(both) == ["box"]
-    scatter_spec(both, files, 400, 300, ["#000000"])
+    smooth = Encoding(x=("a",), y=("b",), elements=("points", "smooth"))
+    assert undrawn(smooth, {}) == ["smooth"]
+    scatter_spec(smooth, files, 400, 300, ["#000000"])
     with pytest.raises(ValueError, match="elements"):
         scatter_spec(
-            Encoding(x=("a",), y=("b",), elements=("box",)),
+            Encoding(x=("a",), y=("b",), elements=("smooth",)),
             files,
             400,
             300,
             ["#000000"],
         )
+
+
+def test_box_plots_need_a_categorical_x_and_a_numeric_y() -> None:
+    """Box plots are drawn with a categorical x and a numeric y; otherwise they are undrawn and the points stay."""
+    files = {c: [f"{c}.parquet"] for c in ("g", "a", "b")}
+    numeric = {"g": False, "a": True, "b": True}
+    boxed = Encoding(x=("g",), y=("b",), elements=("box",))
+    assert has_box_pair(boxed, numeric)
+    assert undrawn(boxed, numeric) == []
+    spec = scatter_spec(boxed, files, 400, 300, ["#000000"], numeric=numeric)
+    assert (spec.points, spec.box) == (False, True)
+    assert spec.box_pairs() == {("g", "b")}
+    assert not spec.draws_points("g", "b")
+
+    numeric_x = Encoding(x=("a",), y=("b",), elements=("box",))
+    assert not has_box_pair(numeric_x, numeric)
+    assert undrawn(numeric_x, numeric) == ["box"]
+    spec = scatter_spec(numeric_x, files, 400, 300, ["#000000"], numeric=numeric)
+    assert (spec.points, spec.box) == (False, False)
+    assert spec.draws_points("a", "b")
+
+    # With n-th axes, only the pairs of a categorical x and a numeric y have boxes.
+    mixed = Encoding(x=("g", "a"), y=("b",), elements=("box",))
+    spec = scatter_spec(mixed, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.box_pairs() == {("g", "b")}
+    assert spec.draws_points("a", "b")

@@ -189,7 +189,7 @@ def plot_router(
                 **timing,
                 "convert_seconds": convert_seconds,
                 "encoding": encoding.to_dict(),
-                "undrawn": undrawn(encoding),
+                "undrawn": undrawn(encoding, numeric),
             },
         )
 
