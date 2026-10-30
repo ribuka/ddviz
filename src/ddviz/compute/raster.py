@@ -1,17 +1,21 @@
-"""Rasterization of aggregated bins into series masks and a pixel occupancy map."""
+"""Rasterization of aggregated bins into series layers and a pixel occupancy map.
+
+Nothing here holds every series at once: with an overlay, the series are the
+pairs of a color level and an overlay level, up to thousands of them, and a
+4K plot area takes 8MB per series.
+"""
 
 from __future__ import annotations
+
+from collections.abc import Iterator
 
 import numpy as np
 
 from ddviz.shared.keys import BinGrid
 
-# Occupancy bitmask dtypes by the largest number of series they hold.
-_OCCUPANCY_DTYPES = [(8, np.uint8), (16, np.uint16), (32, np.uint32), (64, np.uint64)]
 
-
-def masks(keys: np.ndarray, grid: BinGrid) -> np.ndarray:
-    """Return which bins hold rows.
+def pixels(keys: np.ndarray, grid: BinGrid) -> np.ndarray:
+    """Return the pixel of each key in a panel-major array of every panel's pixels.
 
     Parameters
     ----------
@@ -23,11 +27,62 @@ def masks(keys: np.ndarray, grid: BinGrid) -> np.ndarray:
     Returns
     -------
     numpy.ndarray
-        Boolean array of shape ``(n_panels, n_series, height, width)``.
+        ``(panel * height + by) * width + bx`` of each key: its index in an
+        array of shape ``(n_panels, height, width)`` flattened.
     """
-    dense = np.zeros(grid.size, dtype=bool)
-    dense[keys] = True
-    return dense.reshape(grid.n_panels, grid.n_series, grid.height, grid.width)
+    panel, _, by, bx = grid.unpack(keys)
+    return (panel * grid.height + by) * grid.width + bx
+
+
+def by_series(keys: np.ndarray, grid: BinGrid) -> Iterator[tuple[int, np.ndarray]]:
+    """Yield the positions of the keys of each series with bins, in series order.
+
+    Parameters
+    ----------
+    keys : numpy.ndarray
+        Keys of the non-empty bins.
+    grid : BinGrid
+        Key space of the bins.
+
+    Yields
+    ------
+    tuple of int and numpy.ndarray
+        A series and the positions in `keys` of its keys.
+    """
+    if len(keys) == 0:
+        return
+    _, series, _, _ = grid.unpack(keys)
+    order = np.argsort(series, kind="stable")
+    ordered = series[order]
+    starts = np.flatnonzero(np.diff(ordered, prepend=-1))
+    ends = np.append(starts[1:], len(order))
+    for start, end in zip(starts, ends, strict=True):
+        yield int(ordered[start]), order[start:end]
+
+
+def series_layer(
+    pixel: np.ndarray, grid: BinGrid, values: np.ndarray | None = None
+) -> np.ndarray:
+    """Return a layer of every panel with the given pixels set.
+
+    Parameters
+    ----------
+    pixel : numpy.ndarray
+        Pixels (`pixels`) of one series' keys.
+    grid : BinGrid
+        Key space of the bins.
+    values : numpy.ndarray, optional
+        uint8 value of each pixel; True without.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean (or uint8) array of shape ``(n_panels, height, width)``.
+    """
+    dtype = bool if values is None else np.uint8
+    dense = np.zeros(grid.n_panels * grid.height * grid.width, dtype=dtype)
+    dense[pixel] = True if values is None else values
+    return dense.reshape(grid.n_panels, grid.height, grid.width)
 
 
 def atlas(panel_masks: np.ndarray, ncol: int) -> np.ndarray:
@@ -36,7 +91,7 @@ def atlas(panel_masks: np.ndarray, ncol: int) -> np.ndarray:
     Parameters
     ----------
     panel_masks : numpy.ndarray
-        Array of shape ``(n_panels, height, width)``, such as ``masks(...)[:, s]``.
+        Array of shape ``(n_panels, height, width)``, such as a `series_layer`.
     ncol : int
         Tiles per row; panel ``p`` is the tile at row ``p // ncol``, column
         ``p % ncol``. A short last row is filled with empty tiles.
@@ -58,30 +113,22 @@ def atlas(panel_masks: np.ndarray, ncol: int) -> np.ndarray:
     )
 
 
-def occupancy(bin_masks: np.ndarray) -> np.ndarray:
-    """Return, per pixel, a bitmask of the series with rows there.
+def occupancy(keys: np.ndarray, grid: BinGrid) -> np.ndarray:
+    """Return which pixels hold rows of any series.
+
+    The hover finds the series of an occupied pixel among the keys
+    (`ddviz.server.hover.HoverIndex`).
 
     Parameters
     ----------
-    bin_masks : numpy.ndarray
-        Output of `masks`.
+    keys : numpy.ndarray
+        Keys of the non-empty bins.
+    grid : BinGrid
+        Key space of the bins.
 
     Returns
     -------
     numpy.ndarray
-        Array of shape ``(n_panels, height, width)`` whose bit ``s`` is set
-        where series ``s`` has rows.
-
-    Raises
-    ------
-    ValueError
-        With more than 64 series.
+        Boolean array of shape ``(n_panels, height, width)``.
     """
-    n_series = bin_masks.shape[1]
-    dtype = next((t for n, t in _OCCUPANCY_DTYPES if n_series <= n), None)
-    if dtype is None:
-        raise ValueError(f"at most 64 series are supported, got {n_series}")
-    out = np.zeros((bin_masks.shape[0], *bin_masks.shape[2:]), dtype=dtype)
-    for s in range(n_series):
-        out |= bin_masks[:, s].astype(dtype) << dtype(s)
-    return out
+    return series_layer(pixels(keys, grid), grid)

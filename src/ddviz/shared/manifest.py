@@ -20,6 +20,9 @@ MANIFEST = "manifest.json"
 # File of a plot task holding the PNG of every panel and series one after
 # another; the manifest gives the offset and length of each.
 IMAGES = "images.bin"
+# Hover file of a plot task with a gradient and an overlay: the gray each
+# bin is drawn in, by which the hover picks among overlapping shapes.
+GRAYS = "gray.npy"
 
 
 def write_manifest(out: Path, manifest: dict) -> None:
@@ -90,7 +93,7 @@ class PlotManifest:
     x_ranges, y_ranges : list of list of float
         Data range of each x and each y column the bins cover.
     levels : dict
-        Levels of the color, row and col roles as drawn
+        Levels of the color, overlay, row and col roles as drawn
         (`ddviz.compute.aggregate.Aggregation.levels`).
     all_levels : dict
         Levels of the roles over every row

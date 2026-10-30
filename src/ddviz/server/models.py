@@ -15,6 +15,7 @@ class PlotRequest(BaseModel):
     color_bins: dict | None = None
     wrap_cols: int | None = None
     smooth: dict | None = None
+    shape_size: int | None = None
 
 
 class SizeRequest(BaseModel):

@@ -114,7 +114,7 @@ export class ImageLayers {
     // The points under box plots fade, so that the boxes stand out.
     this.drawLayer(ctx, full, dpr, meta, bitmaps, (s) => alpha(s) * dim, null, true);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const order = this.legend.order(meta.series.length).reverse();
+    const order = this.legend.order(meta.grid.n_series).reverse();
     drawBoxes(ctx, full, meta, seriesColors(meta), alpha, order);
     // The smoothing lines, like the boxes, stay at full opacity over a selection.
     drawSmooths(ctx, full, meta, seriesColors(meta), alpha, order);
@@ -130,7 +130,7 @@ export class ImageLayers {
   // `meta` places. With `box` ({panel, x_range, y_range}), only that panel,
   // clipped to the box. With `fade`, the points under box plots fade.
   drawLayer(ctx, full, dpr, meta, bitmaps, alpha, box = null, fade = false) {
-    const nSeries = meta.series.length;
+    const nSeries = meta.grid.n_series;
     // Bottom layer first: inactive series behind, later series above earlier ones.
     const order = this.legend.order(nSeries).reverse();
     const { width: w, height: h } = meta.grid;

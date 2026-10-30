@@ -5,7 +5,14 @@ from __future__ import annotations
 import math
 
 from ddviz.server.encoding import Encoding
-from ddviz.shared.scatter import MAX_LEVELS, Binning, Filter, ScatterSpec, Smoothing
+from ddviz.shared.scatter import (
+    MAX_LEVELS,
+    SHAPE_SIZE,
+    Binning,
+    Filter,
+    ScatterSpec,
+    Smoothing,
+)
 
 # A numeric column on Group X or Group Y is cut into this many intervals of
 # about the same number of rows, unless it has at most this many values,
@@ -15,6 +22,8 @@ FACET_BINS = 5
 COLOR_BINS = (2, 3, 5, 10)
 # Methods of the smoothing lines (`ddviz.compute.smooth`).
 SMOOTH_METHODS = ("gcv", "csaps", "lowess")
+# Sizes in pixels the marker shapes of the overlay levels can take.
+SHAPE_SIZES = (3, 5, 7, 9, 11, 15)
 
 
 def has_box_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
@@ -70,13 +79,11 @@ def undrawn(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
     Returns
     -------
     list of str
-        ``"overlay"`` when overlay has a column, ``"box"`` without a pair
-        of a categorical x and a numeric y (`has_box_pair`), and
-        ``"smooth"`` without a pair of a numeric x and a numeric y
-        (`has_smooth_pair`).
+        ``"box"`` without a pair of a categorical x and a numeric y
+        (`has_box_pair`), and ``"smooth"`` without a pair of a numeric x
+        and a numeric y (`has_smooth_pair`).
     """
-    roles = ["overlay"] if encoding.overlay is not None else []
-    return roles + [
+    return [
         e
         for e in encoding.elements
         if (e == "box" and not has_box_pair(encoding, numeric))
@@ -95,13 +102,14 @@ def drawn_columns(encoding: Encoding) -> list[str]:
     Returns
     -------
     list of str
-        The x and y columns and the color, row, col and wrap columns, once
-        each.
+        The x and y columns and the color, overlay, row, col and wrap
+        columns, once each.
     """
     columns = [
         *encoding.x,
         *encoding.y,
         encoding.color,
+        encoding.overlay,
         encoding.row,
         encoding.col,
         encoding.wrap,
@@ -194,12 +202,15 @@ def scatter_spec(
     max_levels: int = MAX_LEVELS,
     wrap_cols: int | None = None,
     smoothing: Smoothing | None = None,
+    shape_size: int = SHAPE_SIZE,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
     Every pair of an x and a y column is drawn in a panel of each facet
-    cell, colored by color and faceted by row and col; overlay is left out
-    (`undrawn`). The panels of a categorical x and a numeric y have box
+    cell, colored by color and faceted by row and col. Overlay draws the
+    points in a marker shape per level (`ScatterSpec.overlay`) beside a
+    color column; alone, it colors the series as color would, without
+    shapes (as JMP does). The panels of a categorical x and a numeric y have box
     plots when the elements have them (`ScatterSpec.box`), and those of a
     numeric x and a numeric y smoothing lines (`ScatterSpec.smooth`); the
     other panels draw the points even without the points element. A categorical x or y column is drawn in bands, one per
@@ -221,21 +232,24 @@ def scatter_spec(
     filters : list of Filter, optional
         Conditions of the local filter.
     numeric : dict of str to bool, optional
-        Whether each column is numeric. A numeric row, col or wrap column is
-        cut into `FACET_BINS` intervals (`ddviz.compute.cuts`); a numeric color
-        column is a gradient, or cut by `color_bins`. An x or y column
+        Whether each column is numeric. A numeric row, col, wrap or
+        overlay (beside color) column is cut into `FACET_BINS` intervals
+        (`ddviz.compute.cuts`); a numeric color column is a gradient, or cut
+        by `color_bins`. An x or y column
         missing is numeric; the others, categorical.
     color_bins : Binning, optional
         How to cut a numeric color column; None draws it as a gradient.
     max_levels : int, optional
-        Most levels a categorical x, y, color, row, col or wrap column may
-        have.
+        Most levels a categorical x, y, color, overlay, row, col or wrap
+        column may have.
     wrap_cols : int, optional
         Wrapped panels to a row (`parse_wrap_cols`); None to make them
         closest to square.
     smoothing : Smoothing, optional
         How to fit the smoothing lines (`parse_smoothing`); None for the
         default.
+    shape_size : int, optional
+        Size of the marker shapes in pixels (`parse_shape_size`).
 
     Returns
     -------
@@ -256,15 +270,19 @@ def scatter_spec(
     if wrap and (len(encoding.x) > 1 or len(encoding.y) > 1):
         raise ValueError("wrap cannot be placed with the n-th axes")
     col = encoding.wrap if wrap else encoding.col
+    color, overlay = encoding.color, encoding.overlay
+    if color is None:
+        # Overlay alone colors the series, without shapes.
+        color, overlay = overlay, None
     hover = drawn_columns(encoding)
     filters = list(filters or [])
     numeric = numeric or {}
     binned = {
         role: Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
-        for role, column in (("row", encoding.row), ("col", col))
+        for role, column in (("overlay", overlay), ("row", encoding.row), ("col", col))
         if numeric.get(column)
     }
-    gradient = bool(numeric.get(encoding.color))
+    gradient = bool(numeric.get(color))
     if gradient and color_bins is not None:
         binned["color"] = color_bins
         gradient = False
@@ -273,7 +291,7 @@ def scatter_spec(
         files={c: files[c] for c in read},
         x=list(encoding.x),
         y=list(encoding.y),
-        color=encoding.color,
+        color=color,
         row=encoding.row,
         col=col,
         width=width,
@@ -296,6 +314,8 @@ def scatter_spec(
         smooth=(smoothing or Smoothing())
         if "smooth" in encoding.elements and has_smooth_pair(encoding, numeric)
         else None,
+        overlay=overlay,
+        shape_size=shape_size,
     )
 
 
@@ -371,6 +391,31 @@ def parse_smoothing(raw: dict | None) -> Smoothing | None:
     if not (number(frac) and 0 < frac <= 1):
         raise ValueError(f"frac is above 0 and at most 1: {frac}")
     return Smoothing(method, None if p is None else float(p), float(frac))
+
+
+def parse_shape_size(raw: object) -> int:
+    """Return the size of the marker shapes the page asks for, checked.
+
+    Parameters
+    ----------
+    raw : object
+        One of `SHAPE_SIZES`, or None for the default.
+
+    Returns
+    -------
+    int
+        The size in pixels.
+
+    Raises
+    ------
+    ValueError
+        For anything else.
+    """
+    if raw is None:
+        return SHAPE_SIZE
+    if isinstance(raw, bool) or raw not in SHAPE_SIZES:
+        raise ValueError(f"shape_size is one of {SHAPE_SIZES} or null: {raw}")
+    return int(raw)
 
 
 def parse_wrap_cols(raw: object) -> int | None:

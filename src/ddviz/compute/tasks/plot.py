@@ -8,11 +8,11 @@ import numpy as np
 import polars as pl
 
 from ddviz.compute.aggregate import COUNT, INDEX, KEY, aggregate
-from ddviz.compute.hoverfit import fit_hover
+from ddviz.compute.hoverfit import NPY_HEADER, fit_hover
 from ddviz.compute.progress import Emit
-from ddviz.compute.raster import masks, occupancy
-from ddviz.compute.tasks.images import write_gradient, write_images
-from ddviz.shared.manifest import HoverColumn, PlotManifest, SelectionManifest
+from ddviz.compute.raster import occupancy
+from ddviz.compute.tasks.images import gradient_grays, write_gradient, write_images
+from ddviz.shared.manifest import GRAYS, HoverColumn, PlotManifest, SelectionManifest
 from ddviz.shared.palette import series_color
 from ddviz.shared.scatter import ScatterSpec
 
@@ -36,6 +36,17 @@ def _column_bytes(dtype: pl.DataType) -> int:
     return 8 if dtype.is_numeric() else 4
 
 
+def _shapes(spec: ScatterSpec, levels: dict[str, list]) -> int:
+    """Return the number of overlay levels, whose shapes the series take; 0 without an overlay."""
+    return len(levels["overlay"]) if spec.overlay is not None else 0
+
+
+def _colors(spec: ScatterSpec, n_series: int, levels: dict[str, list]) -> list[str]:
+    """Return the color of each series: that of its color level (`ScatterSpec.overlay`)."""
+    shapes = max(_shapes(spec, levels), 1)
+    return [series_color(spec.colors, s // shapes) for s in range(n_series)]
+
+
 def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     """Aggregate a scatter plot and write its series images and hover files.
 
@@ -56,21 +67,36 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     bins = agg.bins
     keys = bins[KEY].to_numpy()
     emit({"type": "progress", "stage": "raster"})
-    bin_masks = masks(keys, agg.grid)
-    bitmask = occupancy(bin_masks)
-    colors = [series_color(spec.colors, s) for s in range(agg.grid.n_series)]
+    bitmask = occupancy(keys, agg.grid)
+    colors = _colors(spec, agg.grid.n_series, agg.levels)
+    shapes = _shapes(spec, agg.levels)
     if spec.gradient:
         images = write_gradient(
-            out, keys, bins[spec.color], agg.grid, agg.layout.ncol, agg.color_range
+            out,
+            keys,
+            bins[spec.color],
+            agg.grid,
+            agg.layout.ncol,
+            agg.color_range,
+            shapes,
+            spec.shape_size,
         )
     else:
-        images = write_images(out, bin_masks, agg.layout.ncol, colors)
+        images = write_images(
+            out, keys, agg.grid, agg.layout.ncol, colors, shapes, spec.shape_size
+        )
 
     emit({"type": "progress", "stage": "write"})
     hover = list(dict.fromkeys(spec.hover))
     sizes = {name: _column_bytes(bins[name].dtype) for name in hover}
+    # A gradient's shapes overlap by their grays: the hover picks the shape
+    # drawn by them, whether the color column is hovered or not.
+    grays = None
+    if spec.gradient and spec.overlay is not None:
+        grays = gradient_grays(bins[spec.color], agg.color_range)
+    extra = 0 if grays is None else grays.nbytes + NPY_HEADER
     kept = fit_hover(
-        sizes, [*spec.x, *spec.y], len(bins), bitmask.nbytes, spec.hover_bytes
+        sizes, [*spec.x, *spec.y], len(bins), bitmask.nbytes + extra, spec.hover_bytes
     )
     columns = []
     files = []
@@ -81,6 +107,8 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
             "index.npy": bins[INDEX].cast(pl.Int64).to_numpy(),
             "occupancy.npy": bitmask,
         }
+        if grays is not None:
+            arrays[GRAYS] = grays
         for i, name in enumerate(kept):
             arrays[f"col{i}.npy"], labels = _column_array(bins[name])
             columns.append(HoverColumn(name, f"col{i}.npy", labels))
@@ -133,6 +161,7 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     )
     emit({"type": "progress", "stage": "raster"})
     keys = agg.selected[KEY].to_numpy()
+    shapes = _shapes(spec, agg.levels)
     if spec.gradient:
         images = write_gradient(
             out,
@@ -141,10 +170,14 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
             agg.grid,
             agg.layout.ncol,
             agg.color_range,
+            shapes,
+            spec.shape_size,
         )
     else:
-        colors = [series_color(spec.colors, s) for s in range(agg.grid.n_series)]
-        images = write_images(out, masks(keys, agg.grid), agg.layout.ncol, colors)
+        colors = _colors(spec, agg.grid.n_series, agg.levels)
+        images = write_images(
+            out, keys, agg.grid, agg.layout.ncol, colors, shapes, spec.shape_size
+        )
     SelectionManifest(
         selection=spec.selection,
         grid=agg.grid,

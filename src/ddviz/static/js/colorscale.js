@@ -46,9 +46,18 @@ export function intervalColors(n) {
   return [...Array(n).keys()].map((i) => cssColor(n === 1 ? 0.5 : i / (n - 1)));
 }
 
-// Returns the colors the series of a result are drawn in.
+// Returns the colors of the color levels of a result (`meta.series`).
+export function levelColors(meta) {
+  if (meta.color.kind === "bins") return intervalColors(meta.series.length);
+  return meta.series.map((_, i) => meta.colors[i * meta.color.shapes]);
+}
+
+// Returns the colors the series of a result are drawn in: series `s` is
+// color level `s // shapes` with overlay level `s % shapes`.
 export function seriesColors(meta) {
-  return meta.color.kind === "bins" ? intervalColors(meta.series.length) : meta.colors;
+  if (meta.color.kind !== "bins") return meta.colors;
+  const levels = levelColors(meta);
+  return [...Array(meta.grid.n_series).keys()].map((s) => levels[Math.floor(s / meta.color.shapes)]);
 }
 
 // Returns the color of a value of a gradient's column.
@@ -89,7 +98,8 @@ function tint(bitmap, color) {
 }
 
 // Decodes the PNGs of a result or layer for the scale (`color` is the
-// result's `meta.color`, `n` its number of series).
+// result's `meta.color`, `n` its number of series: pairs of a color level and
+// one of `color.shapes` overlay levels).
 export async function decode(blobs, color, n) {
   if (color?.kind === "gradient") {
     return Promise.all(
@@ -103,13 +113,14 @@ export async function decode(blobs, color, n) {
       }),
     );
   }
-  const colors = color?.kind === "bins" ? intervalColors(n) : null;
+  const shapes = color?.shapes ?? 1;
+  const colors = color?.kind === "bins" ? intervalColors(n / shapes) : null;
   return Promise.all(
     blobs.map(async (blob, i) => {
       if (!blob) return null;
       const mask = await createImageBitmap(blob);
       if (!colors) return mask;
-      const painted = tint(mask, colors[i]);
+      const painted = tint(mask, colors[Math.floor(i / shapes)]);
       mask.close();
       return painted;
     }),

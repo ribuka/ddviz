@@ -10,33 +10,68 @@ from ddviz.server.plan import (
     drawn_columns,
     has_box_pair,
     parse_filters,
+    parse_shape_size,
     parse_smoothing,
     parse_wrap_cols,
     scatter_spec,
     undrawn,
 )
-from ddviz.shared.scatter import Binning, Filter, Smoothing
+from ddviz.shared.scatter import SHAPE_SIZE, Binning, Filter, Smoothing
 
 
-def test_scatter_draws_every_axis_and_leaves_out_overlay() -> None:
-    """The n-th axes are drawn, read and hovered; overlay is not."""
+def test_scatter_draws_every_axis_and_overlay_as_shapes() -> None:
+    """The n-th axes are drawn, read and hovered; overlay beside color draws shapes."""
     encoding = Encoding(
         x=("a", "a2"), y=("b", "b2", "b3"), color="g", overlay="o", col="h"
     )
     files = {c: [f"{c}.parquet"] for c in encoding.columns()}
-    spec = scatter_spec(encoding, files, 400, 300, ["#000000"])
-    assert (spec.x, spec.y, spec.color, spec.row, spec.col) == (
+    spec = scatter_spec(encoding, files, 400, 300, ["#000000"], shape_size=9)
+    assert (spec.x, spec.y, spec.color, spec.overlay, spec.row, spec.col) == (
         ["a", "a2"],
         ["b", "b2", "b3"],
         "g",
+        "o",
         None,
         "h",
     )
-    assert spec.hover == ["a", "a2", "b", "b2", "b3", "g", "h"]
+    assert spec.shape_size == 9
+    assert spec.hover == ["a", "a2", "b", "b2", "b3", "g", "o", "h"]
     assert spec.hover == drawn_columns(encoding)
-    assert sorted(spec.files) == spec.hover
+    assert sorted(spec.files) == sorted(spec.hover)
     assert spec.view is None
-    assert undrawn(encoding, {}) == ["overlay"]
+    assert undrawn(encoding, {}) == []
+
+
+def test_overlay_alone_colors_the_series() -> None:
+    """Without a color column, overlay takes its place, without shapes; a numeric one is a gradient."""
+    encoding = Encoding(x=("a",), y=("b",), overlay="o")
+    files = {c: [f"{c}.parquet"] for c in encoding.columns()}
+    spec = scatter_spec(encoding, files, 400, 300, ["#000000"])
+    assert (spec.color, spec.overlay, spec.gradient) == ("o", None, False)
+    numeric = {"a": True, "b": True, "o": True}
+    spec = scatter_spec(encoding, files, 400, 300, ["#000000"], numeric=numeric)
+    assert (spec.color, spec.overlay, spec.gradient) == ("o", None, True)
+
+
+def test_a_numeric_overlay_beside_color_is_cut_into_intervals() -> None:
+    """A numeric overlay column takes shapes by intervals of about the same rows, as a facet."""
+    encoding = Encoding(x=("a",), y=("b",), color="g", overlay="o")
+    files = {c: [f"{c}.parquet"] for c in encoding.columns()}
+    numeric = {"a": True, "b": True, "g": False, "o": True}
+    spec = scatter_spec(encoding, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.overlay == "o"
+    assert spec.binned == {
+        "overlay": Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
+    }
+
+
+def test_parse_shape_size() -> None:
+    """The size is one of `SHAPE_SIZES`, the default for null."""
+    assert parse_shape_size(None) == SHAPE_SIZE
+    assert parse_shape_size(11) == 11
+    for bad in (4, 0, True, "7", 7.5):
+        with pytest.raises(ValueError, match="shape_size"):
+            parse_shape_size(bad)
 
 
 def test_a_column_on_several_roles_is_read_once() -> None:

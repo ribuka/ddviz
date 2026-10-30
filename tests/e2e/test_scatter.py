@@ -273,3 +273,35 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
     ).height
     expect(status).to_contain_text(f": {kept:,} 行")
     expect(page.locator(".filter-summary")).to_have_text("（1）label: 「r12」を含む")
+
+
+def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
+    """Overlay beside color shows a legend of shapes, toggled on its own; a marker's menu changes their size, which plots again."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    for column, role in [("y", "y"), ("color", "color"), ("facet", "overlay")]:
+        place(page, column, role)
+    page.wait_for_function(PAINTED_PIXEL)
+    legend = page.locator("#legend")
+    expect(legend.locator(".legend-title")).to_have_text(["color", "facet"])
+    shapes = legend.locator(".legend-item").filter(has=page.locator("canvas"))
+    expect(shapes).to_have_count(2)
+    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
+
+    shapes.first.click()
+    expect(shapes.first).to_have_class(re.compile("inactive"))
+    expect(legend.locator(".legend-item.inactive")).to_have_count(1)
+
+    status = page.locator("#status")
+    task = status.inner_text()
+    shapes.nth(1).locator(".legend-marker").click(button="right")
+    menu = page.locator(".shape-menu")
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
+    menu.get_by_text("11 px", exact=True).click()
+    expect(menu).to_have_count(0)
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    expect(shapes.first.locator("canvas")).to_have_attribute("width", "11")
+    page.wait_for_function(PAINTED_PIXEL)

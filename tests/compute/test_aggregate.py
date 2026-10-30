@@ -19,7 +19,12 @@ def test_aggregate_matches_brute_force(
     """Counts, representative rows (largest index) and hover values match numpy."""
     agg = aggregate(scatter_spec)
     grid = agg.grid
-    assert agg.levels == {"color": ["a", "b", "c"], "row": [None], "col": ["p", "q"]}
+    assert agg.levels == {
+        "color": ["a", "b", "c"],
+        "overlay": [None],
+        "row": [None],
+        "col": ["p", "q"],
+    }
     assert (grid.n_panels, grid.n_series) == (2, 3)
     assert (grid.width, grid.height) == (
         agg.layout.panel_width,

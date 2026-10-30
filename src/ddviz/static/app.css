@@ -615,12 +615,6 @@ button {
   outline: 2px solid #2a6fdb;
 }
 
-.chip.undrawn {
-  outline: 1px dashed #999;
-  background: #f3f3f3;
-  color: #666;
-}
-
 .chip-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -699,11 +693,39 @@ button {
   color: #999;
 }
 
+/* The marker of an item; while shapes are drawn, a right click on it opens
+   the markers' menu, so it reaches the item's left edge (24px) to be easy to hit. */
+.legend-marker {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  width: 20px;
+  margin: -2px 0 -2px -4px;
+  padding-left: 4px;
+}
+
+.legend-marker.menu {
+  cursor: context-menu;
+}
+
 .swatch {
   flex: none;
   width: 10px;
   height: 10px;
   border-radius: 50%;
+}
+
+.swatch.shape {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  line-height: 0;
+}
+
+.legend-title.shapes {
+  margin-top: 10px;
 }
 
 /* ---- plot area ---- */

@@ -22,6 +22,7 @@ from ddviz.shared.layout import (
 )
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import ScatterSpec
+from ddviz.shared.shapes import kernel
 
 # Each plot area is white with a frame line around it, on a light gray
 # figure, so neighboring panels stand apart. The frame lies just outside the
@@ -137,6 +138,24 @@ def _color_scale(manifest: PlotManifest) -> dict:
         "kind": kind,
         "bins": None if bins is None else asdict(bins),
         "range": manifest.color_range,
+        # Series per color level: one per overlay level.
+        "shapes": len(manifest.levels["overlay"]),
+    }
+
+
+def _overlay(manifest: PlotManifest) -> dict | None:
+    """Return the overlay levels and their marker shapes (`ddviz.shared.shapes.kernel`, rows from the top), or None without an overlay."""
+    spec = manifest.spec
+    if spec.overlay is None:
+        return None
+    levels = manifest.levels["overlay"]
+    return {
+        "column": spec.overlay,
+        "levels": [str(v) for v in levels],
+        "size": spec.shape_size,
+        "kernels": [
+            kernel(i, spec.shape_size).astype(int).tolist() for i in range(len(levels))
+        ],
     }
 
 
@@ -196,8 +215,11 @@ def build_figure(manifest: PlotManifest) -> dict:
         a wrapped grid has them in the figure only), and
         how the series are colored
         (``color``: ``kind`` is ``"levels"``, ``"bins"`` for the intervals of
-        a numeric column, or ``"gradient"``, whose single image holds grays
-        from 1 to 255 over ``range``).
+        a numeric column, or ``"gradient"``, whose images hold grays
+        from 1 to 255 over ``range``; ``shapes`` series per color level),
+        and the overlay levels with their marker shapes (``overlay``, or
+        None): series ``s`` is color level ``s // shapes`` (of ``series``)
+        and overlay level ``s % shapes``.
     """
     spec, layout, axes = manifest.spec, manifest.layout, manifest.axes
     x_ranges, y_ranges = manifest.x_ranges, manifest.y_ranges
@@ -308,6 +330,7 @@ def build_figure(manifest: PlotManifest) -> dict:
         "y_ranges": [list(r) for r in y_ranges],
         "series": [str(v) for v in levels["color"]],
         "color": _color_scale(manifest),
+        "overlay": _overlay(manifest),
         "colors": manifest.colors,
         "images": manifest.images,
         "ncol": layout.ncol,
