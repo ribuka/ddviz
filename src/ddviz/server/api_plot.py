@@ -1,7 +1,8 @@
 """Routes that draw: a plot, its zoomed view, its overview at another size, hovers, and the plot's data.
 
-The hover files of the open results (the overview and the view) keep
-within ``max_hover_bytes`` together: a new result gets what the results
+The hover files of the open results (the overview and the view), and of
+replaced ones a worker still reads (`Results.hold`), keep within
+``max_hover_bytes`` together: a new result gets what the results
 open while it is written leave, those it replaces included, as they go only
 once it is open (`ddviz.compute.hoverfit`); its figure tells the page which
 hover columns were left out.
@@ -84,6 +85,8 @@ def plot_router(
         """Run a plot task beside the open results; return its result, or None when a newer task killed it."""
         opened = (results.overview, results.view)
         used = sum(i.manifest.hover_bytes for i in opened if i is not None)
+        # Replaced results that a worker still reads are on disk too.
+        used += results.held_bytes
         spec = replace(spec, hover_bytes=max(max_hover_bytes - used, 0))
         started = time.perf_counter()
         end = await broker.run(PlotTask(spec))

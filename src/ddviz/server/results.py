@@ -60,9 +60,10 @@ class Results:
         self.selection: Selection | None = None
         self.layer: Layer | None = None
         # Directories of results that workers read, with how many read each,
-        # and those of them already replaced, removed when the last is done.
+        # and the bytes of the hover files of those already replaced, which
+        # stay on disk until the last reader is done.
         self._held: dict[Path, int] = {}
-        self._replaced: set[Path] = set()
+        self._replaced: dict[Path, int] = {}
 
     def opened(self, task: int) -> HoverIndex | None:
         """Return the open result (the overview or the view) of a task, if any."""
@@ -101,7 +102,15 @@ class Results:
             drop(index)
             return
         index.close()
-        self._replaced.add(index.out)
+        self._replaced[index.out] = index.manifest.hover_bytes
+
+    @property
+    def held_bytes(self) -> int:
+        """Bytes of the hover files of replaced results still on disk for their readers.
+
+        They count toward the limit of the hover files beside the open results.
+        """
+        return sum(self._replaced.values())
 
     @contextmanager
     def hold(self, index: HoverIndex) -> Iterator[None]:
@@ -120,8 +129,7 @@ class Results:
             self._held[out] -= 1
             if not self._held[out]:
                 del self._held[out]
-                if out in self._replaced:
-                    self._replaced.discard(out)
+                if self._replaced.pop(out, None) is not None:
                     shutil.rmtree(out, ignore_errors=True)
 
     def set_layer(self, layer: Layer, selection: Selection) -> None:
