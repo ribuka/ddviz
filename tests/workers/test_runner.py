@@ -109,3 +109,16 @@ def test_convert_task_writes_each_column(
     assert message == {"type": "done"}
     assert seen == ["x", "label"]
     assert all(Path(f).exists() for f in files.values())
+
+
+def test_a_new_task_keeps_the_output_of_a_finished_one(
+    pool: tuple, scatter_spec: ScatterSpec, tmp_path: Path
+) -> None:
+    """A task submitted right after another's done, while its worker still exits, leaves that output and gets no cancel."""
+    workers, events = pool
+    first = workers.submit({"kind": "plot", "spec": scatter_spec.to_dict()})
+    assert _until_end(events, first) == {"type": "done"}
+    second = workers.submit({"kind": "plot", "spec": scatter_spec.to_dict()})
+    assert read_manifest(tmp_path / "tasks" / str(first))["kind"] == "plot"
+    assert _until_end(events, second) == {"type": "done"}
+    assert (tmp_path / "tasks" / str(first)).exists()

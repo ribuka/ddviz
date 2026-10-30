@@ -39,6 +39,12 @@ class _Running:
         self.out = out
         self.process = process
         self.cancelled = False
+        # Whether it reported done or error: its worker may still be exiting.
+        self.finished = False
+
+    def live(self) -> bool:
+        """Return whether the task is still running: not finished, and its worker alive."""
+        return not self.finished and self.process.poll() is None
 
 
 class WorkerPool:
@@ -109,7 +115,7 @@ class WorkerPool:
     def cancel(self) -> None:
         """Kill the running task, if any; its waiter gets ``{"type": "cancelled"}``."""
         with self._lock:
-            if self._running is not None and self._running.process.poll() is None:
+            if self._running is not None and self._running.live():
                 self._cancel(self._running)
 
     def submit(self, task: dict) -> int:
@@ -126,7 +132,8 @@ class WorkerPool:
             The task id; the task writes into ``root / str(id)``.
         """
         with self._lock:
-            if self._running is not None and self._running.process.poll() is None:
+            # A finished task keeps its output, though its worker still exits.
+            if self._running is not None and self._running.live():
                 self._cancel(self._running)
             self._next_id += 1
             task_id = self._next_id
@@ -141,15 +148,16 @@ class WorkerPool:
 
     def _read(self, running: _Running) -> None:
         """Forward the protocol messages of a task until its worker exits."""
-        finished = False
         for line in running.process.stdout:
             message = json.loads(line)
-            if message["type"] == "ready" or running.cancelled:
-                continue
-            finished |= message["type"] in ("done", "error")
-            self._on_event(running.task_id, message)
+            # Under the lock, so that a task is either cancelled or finished.
+            with self._lock:
+                if message["type"] == "ready" or running.cancelled:
+                    continue
+                running.finished |= message["type"] in ("done", "error")
+                self._on_event(running.task_id, message)
         code = running.process.wait()
-        if not finished and not running.cancelled:
+        if not running.finished and not running.cancelled:
             self._on_event(
                 running.task_id,
                 {"type": "error", "message": f"worker exited with code {code}"},
