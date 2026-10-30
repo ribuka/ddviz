@@ -5,8 +5,15 @@ from __future__ import annotations
 import pytest
 
 from ddviz.server.encoding import Encoding
-from ddviz.server.plan import drawn_columns, parse_filters, scatter_spec, undrawn
-from ddviz.shared.scatter import Filter
+from ddviz.server.plan import (
+    FACET_BINS,
+    drawn_columns,
+    parse_filters,
+    parse_wrap_cols,
+    scatter_spec,
+    undrawn,
+)
+from ddviz.shared.scatter import Binning, Filter
 
 
 def test_scatter_draws_every_axis_and_leaves_out_overlay() -> None:
@@ -82,3 +89,48 @@ def test_parse_filters_refuses_what_does_not_fit(raw: list) -> None:
     """Unknown columns, mismatched conditions and repeated columns are refused."""
     with pytest.raises(ValueError):
         parse_filters(raw, NUMERIC)
+
+
+def test_wrap_takes_the_col_role_of_the_scatter() -> None:
+    """A wrap column is drawn as col, wrapped; a numeric one is cut like Group X."""
+    encoding = Encoding(x=("a",), y=("b",), wrap="w")
+    files = {c: [f"{c}.parquet"] for c in encoding.columns()}
+    spec = scatter_spec(encoding, files, 400, 300, ["#000000"], wrap_cols=3)
+    assert (spec.row, spec.col, spec.wrap, spec.wrap_cols) == (None, "w", True, 3)
+    assert spec.hover == ["a", "b", "w"]
+    assert spec.binned == {}
+    numeric = {"a": True, "b": True, "w": True}
+    spec = scatter_spec(encoding, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.binned == {"col": Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)}
+    assert spec.wrap_cols is None
+    # The number to a row is kept only for a wrapped grid.
+    plain = Encoding(x=("a",), y=("b",), col="w")
+    spec = scatter_spec(plain, files, 400, 300, ["#000000"], wrap_cols=3)
+    assert (spec.col, spec.wrap, spec.wrap_cols) == ("w", False, None)
+
+
+@pytest.mark.parametrize(
+    ("encoding", "match"),
+    [
+        (Encoding(x=("a",), y=("b",), wrap="w", row="r"), "row or col"),
+        (Encoding(x=("a",), y=("b",), wrap="w", col="r"), "row or col"),
+        (Encoding(x=("a", "c"), y=("b",), wrap="w"), "n-th axes"),
+        (Encoding(x=("a",), y=("b", "c"), wrap="w"), "n-th axes"),
+    ],
+)
+def test_wrap_is_refused_beside_facets_and_nth_axes(
+    encoding: Encoding, match: str
+) -> None:
+    """Wrap replaces Group X and Group Y and takes no n-th axes."""
+    files = {c: [f"{c}.parquet"] for c in encoding.columns()}
+    with pytest.raises(ValueError, match=match):
+        scatter_spec(encoding, files, 400, 300, ["#000000"])
+
+
+def test_parse_wrap_cols() -> None:
+    """The number to a row is a positive int, or None for square panels."""
+    assert parse_wrap_cols(None) is None
+    assert parse_wrap_cols(4) == 4
+    for raw in (0, -1, 1.5, "2", True):
+        with pytest.raises(ValueError, match="wrap_cols"):
+            parse_wrap_cols(raw)

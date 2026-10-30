@@ -8,7 +8,7 @@ from dataclasses import dataclass
 # others are the n-th axes.
 AXES = ("x", "y")
 # Roles that hold one column or none.
-SINGLES = ("color", "overlay", "row", "col")
+SINGLES = ("color", "overlay", "row", "col", "wrap")
 ROLES = AXES + SINGLES
 
 
@@ -31,6 +31,10 @@ class Encoding:
     row, col : str or None
         Columns whose levels make the facet rows and columns (Group Y and
         Group X).
+    wrap : str or None
+        Column whose levels make panels side by side that wrap into rows
+        (``facet_col_wrap`` of plotly express); the plan refuses it beside
+        row, col or the n-th axes (`ddviz.server.plan.scatter_spec`).
     """
 
     x: tuple[str, ...] = ()
@@ -39,6 +43,7 @@ class Encoding:
     overlay: str | None = None
     row: str | None = None
     col: str | None = None
+    wrap: str | None = None
 
     def columns(self) -> list[str]:
         """Return every placed column once, in role order.

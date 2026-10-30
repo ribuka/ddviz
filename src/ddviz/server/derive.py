@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ddviz.shared.layout import grid_layout
+from ddviz.shared.layout import GAP, WRAP_GAP, facet_grid, grid_layout
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
 
@@ -99,7 +99,8 @@ def unchanged(manifest: PlotManifest | None, spec: ScatterSpec) -> bool:
     """Whether a result already has the panels, ranges and filter of `spec`.
 
     A new size often keeps the layout: a grid that scrolls in both
-    directions keeps its panels at their smallest size.
+    directions keeps its panels at their smallest size. A wrapped grid may
+    put another number of panels to a row.
 
     Parameters
     ----------
@@ -115,8 +116,19 @@ def unchanged(manifest: PlotManifest | None, spec: ScatterSpec) -> bool:
     """
     if manifest is None:
         return False
-    axes = manifest.axes
-    layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols)
+    levels = manifest.levels
+    axes = facet_grid(
+        len(levels["row"]),
+        len(levels["col"]),
+        len(spec.x),
+        len(spec.y),
+        spec.wrap,
+        spec.wrap_cols,
+        spec.width,
+        spec.height,
+    )
+    row_gap = WRAP_GAP if spec.wrap else GAP
+    layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols, row_gap)
     return (
         layout == manifest.layout
         and manifest.x_ranges == spec.view.x_ranges
@@ -153,19 +165,19 @@ def box_selection(
         For a panel the result does not have, or a box without both ranges.
     """
     spec, levels, axes = manifest.spec, manifest.levels, manifest.axes
-    if not 0 <= panel < axes.rows * axes.cols:
+    if not 0 <= panel < axes.panels:
         raise ValueError("no such panel")
     if x_range is None or y_range is None:
         raise ValueError("a box needs x_range and y_range")
     xi, yj = axes.axes(panel)
-    prow, pcol = divmod(panel, axes.cols)
+    row, col = axes.facet(panel)
     return Selection(
         x=spec.x[xi],
         y=spec.y[yj],
         x_range=sorted(x_range),
         y_range=sorted(y_range),
-        row=levels["row"][prow // axes.ny] if spec.row else None,
-        col=levels["col"][pcol // axes.nx] if spec.col else None,
+        row=levels["row"][row] if spec.row else None,
+        col=levels["col"][col] if spec.col else None,
     )
 
 

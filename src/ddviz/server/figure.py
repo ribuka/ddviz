@@ -45,8 +45,29 @@ def _label(column: str | None, level: object) -> str:
 def _facet_labels(
     spec: ScatterSpec, levels: dict, layout: GridLayout, axes: AxisGrid
 ) -> list[dict]:
-    """Return the facet labels above the grid and right of it, each over its panels."""
+    """Return the facet labels above the grid and right of it, each over its panels.
+
+    A wrapped grid has its labels above each panel instead, the level alone:
+    the column's name is on the chip of its drop zone.
+    """
     labels = []
+    if spec.wrap:
+        for panel, level in enumerate(levels["col"]):
+            prow, pcol = divmod(panel, layout.ncol)
+            lo, hi = layout.x_domain(pcol)
+            labels.append(
+                {
+                    "text": str(level),
+                    "x": (lo + hi) / 2,
+                    "y": layout.y_domain(prow)[1],
+                    "xanchor": "center",
+                    "yanchor": "bottom",
+                    "xref": "paper",
+                    "yref": "paper",
+                    "showarrow": False,
+                }
+            )
+        return labels
     if spec.col is not None:
         for col, level in enumerate(levels["col"]):
             lo = layout.x_domain(col * axes.nx)[0]
@@ -127,7 +148,8 @@ def build_figure(manifest: PlotManifest) -> dict:
         series' PNG lies in the images file (`ddviz.shared.manifest.IMAGES`; its
         panels are tiles, ``ncol`` to a row, as `ddviz.compute.raster.atlas`),
         whether the grid scrolls, its facet labels (plotly annotations in
-        paper coordinates; the figure has them only when the grid fits), and
+        paper coordinates; the figure has them only when the grid fits, and
+        a wrapped grid has them in the figure only), and
         how the series are colored
         (``color``: ``kind`` is ``"levels"``, ``"bins"`` for the intervals of
         a numeric column, or ``"gradient"``, whose single image holds grays
@@ -159,16 +181,19 @@ def build_figure(manifest: PlotManifest) -> dict:
         "annotations": [],
     }
     panels = []
-    for panel in range(layout.nrow * layout.ncol):
+    for panel in range(axes.panels):
         prow, pcol = divmod(panel, layout.ncol)
         xi, yj = axes.axes(panel)
         suffix = _axis_suffix(panel)
         x_axis, y_axis = f"x{suffix}", f"y{suffix}"
+        # The bottom panel of each panel column, above the empty cells of a
+        # wrapped grid, shows the x ticks.
+        bottom = panel + layout.ncol >= axes.panels
         fig_layout[f"xaxis{suffix}"] = {
             "domain": layout.x_domain(pcol),
             "anchor": y_axis,
             "range": list(x_ranges[xi]),
-            "showticklabels": not layout.scroll and prow == layout.nrow - 1,
+            "showticklabels": not layout.scroll and bottom,
             "zeroline": False,
             **_FRAME,
             **({"matches": x_axes[xi]} if x_axis != x_axes[xi] else {}),
@@ -184,7 +209,7 @@ def build_figure(manifest: PlotManifest) -> dict:
         }
         facet = [
             None if getattr(spec, role) is None else str(levels[role][i])
-            for role, i in (("row", prow // axes.ny), ("col", pcol // axes.nx))
+            for role, i in zip(("row", "col"), axes.facet(panel), strict=True)
         ]
         panels.append(
             {"xaxis": x_axis, "yaxis": y_axis, "x": xi, "y": yj, "facet": facet}
@@ -193,7 +218,12 @@ def build_figure(manifest: PlotManifest) -> dict:
     # along the edges of the area (``static/js/sticky.js``), so that they
     # stay in sight: plotly draws neither.
     labels = _facet_labels(spec, levels, layout, axes)
-    if not layout.scroll:
+    if spec.wrap:
+        # A wrapped grid's labels lie between its panels: plotly draws them,
+        # and they scroll with their panels.
+        fig_layout["annotations"] += labels
+        labels = []
+    elif not layout.scroll:
         fig_layout["annotations"] += labels
     # plotly leaves out the axes of a subplot without traces.
     data = [

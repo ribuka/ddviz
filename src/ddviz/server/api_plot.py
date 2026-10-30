@@ -29,7 +29,13 @@ from ddviz.server.errors import ensure_done
 from ddviz.server.figure import build_figure
 from ddviz.server.hover import HoverIndex
 from ddviz.server.models import PlotRequest, SizeRequest, ViewRequest
-from ddviz.server.plan import drawn_columns, parse_color_bins, scatter_spec, undrawn
+from ddviz.server.plan import (
+    drawn_columns,
+    parse_color_bins,
+    parse_wrap_cols,
+    scatter_spec,
+    undrawn,
+)
 from ddviz.server.results import Results, drop
 from ddviz.server.source import Source
 from ddviz.shared.manifest import IMAGES
@@ -139,6 +145,7 @@ def plot_router(
         filters = await source.filters(request.filters)
         try:
             color_bins = parse_color_bins(request.color_bins)
+            wrap_cols = parse_wrap_cols(request.wrap_cols)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         numeric = await source.numeric()
@@ -158,17 +165,21 @@ def plot_router(
         columns += [f.column for f in filters if f.column not in columns]
         await source.convert(columns)
         convert_seconds = time.perf_counter() - started
-        spec = scatter_spec(
-            encoding,
-            {c: source.parts(c) for c in columns},
-            request.width,
-            request.height,
-            DEFAULT_COLORS,
-            filters,
-            numeric,
-            color_bins,
-            max_levels,
-        )
+        try:
+            spec = scatter_spec(
+                encoding,
+                {c: source.parts(c) for c in columns},
+                request.width,
+                request.height,
+                DEFAULT_COLORS,
+                filters,
+                numeric,
+                color_bins,
+                max_levels,
+                wrap_cols,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
         results.plot_id += 1
         index, timing = await run_plot(spec)
         if index is None:

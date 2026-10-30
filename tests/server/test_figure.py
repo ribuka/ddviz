@@ -161,3 +161,50 @@ def test_facet_labels_center_on_their_panels(
     rows = [a for a in labels if a.get("textangle") == 90]
     assert cols and all(a["xanchor"] == "center" for a in cols)
     assert rows and all(a["yanchor"] == "middle" for a in rows)
+
+
+def test_a_wrapped_grid_labels_each_panel_with_its_level(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """Three wrapped levels two to a row: three panels, each labeled above by its level alone."""
+    wrapped = replace(
+        scatter_spec, col="color", wrap=True, wrap_cols=2, width=800, height=600
+    )
+    result = _figure(wrapped, tmp_path / "task")
+    layout, meta = result["figure"]["layout"], result["meta"]
+    assert [p["facet"] for p in meta["panels"]] == [
+        [None, "a"],
+        [None, "b"],
+        [None, "c"],
+    ]
+    assert meta["ncol"] == 2
+    assert len(result["figure"]["data"]) == 3
+    assert "xaxis4" not in layout
+    # The panel above the empty cell shows the x ticks, as the bottom row does.
+    assert [layout[a]["showticklabels"] for a in ("xaxis", "xaxis2", "xaxis3")] == [
+        False,
+        True,
+        True,
+    ]
+    labels = layout["annotations"]
+    assert [a["text"] for a in labels] == ["a", "b", "c"]
+    assert labels[2]["y"] == layout["yaxis3"]["domain"][1]
+    assert layout["yaxis3"]["domain"][1] < layout["yaxis"]["domain"][0]
+    assert meta["facet_labels"] == []
+
+
+def test_a_scrolled_wrapped_grid_keeps_its_labels_in_the_figure(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """The labels between wrapped panels scroll with them: plotly draws them."""
+    wrapped = replace(
+        scatter_spec, col="color", wrap=True, wrap_cols=1, width=300, height=200
+    )
+    result = _figure(wrapped, tmp_path / "task")
+    assert result["meta"]["scroll"]
+    assert [a["text"] for a in result["figure"]["layout"]["annotations"]] == [
+        "a",
+        "b",
+        "c",
+    ]
+    assert result["meta"]["facet_labels"] == []

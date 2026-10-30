@@ -291,3 +291,19 @@ def test_selection_bins_the_selected_rows_in_every_panel(tmp_path: Path) -> None
     assert agg.selected[KEY].to_list() == expected.tolist()
     panels, *_ = grid.unpack(agg.selected[KEY].to_numpy())
     assert set(panels.tolist()) == {axes.panel(0, 0, 0, 0), axes.panel(0, 0, 1, 0)}
+
+
+def test_wrapped_levels_are_panels_in_rows(
+    scatter_spec: ScatterSpec, scatter_frame: pl.DataFrame
+) -> None:
+    """Each wrapped level is the panel of its index, two to a row."""
+    wrapped = replace(scatter_spec, col="color", wrap=True, wrap_cols=2)
+    agg = aggregate(wrapped)
+    assert agg.levels["col"] == ["a", "b", "c"]
+    assert (agg.axes.nrow, agg.axes.ncol, agg.axes.panels) == (2, 2, 3)
+    assert (agg.layout.nrow, agg.layout.ncol) == (2, 2)
+    assert agg.grid.n_panels == 4
+    panels, *_ = agg.grid.unpack(agg.bins[KEY].to_numpy())
+    levels = scatter_frame[agg.bins[INDEX].to_list()]["color"].to_list()
+    assert [agg.levels["col"][p] for p in panels] == levels
+    assert sorted(set(panels.tolist())) == [0, 1, 2]

@@ -99,6 +99,25 @@ function filtersKey(list) {
 // column. The graph last plotted, to plot again with another cutting.
 let colorBins = null;
 let plottedEncoding = null;
+// Wrapped panels to a row, or null to make them closest to square
+// (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
+// The user sets it in the Wrap zone, beside its chip.
+let wrapCols = null;
+const wrapColsInput = document.createElement("input");
+Object.assign(wrapColsInput, {
+  type: "number",
+  min: 1,
+  step: 1,
+  className: "wrap-cols",
+  placeholder: "自動",
+  title: "1 行のパネルの数。空なら描画領域の縦横比から、パネルが正方形に近くなる数",
+});
+wrapColsInput.addEventListener("change", () => {
+  const n = Number(wrapColsInput.value);
+  wrapCols = wrapColsInput.value !== "" && Number.isInteger(n) && n >= 1 ? n : null;
+  if (wrapCols === null) wrapColsInput.value = "";
+  if (plottedEncoding?.wrap) plot(plottedEncoding);
+});
 // Generation of the plot request in flight, or 0. A new size waits for it:
 // a request for the old plot would kill its aggregation (or its conversion).
 let plotting = 0;
@@ -148,6 +167,8 @@ function setCurrent(meta) {
   current = meta;
   legend.setEmpty(meta.images);
   stage.classList.toggle("scrolls", meta.scroll);
+  // The number to a row the size made, while the user sets none.
+  wrapColsInput.placeholder = `自動（${meta.ncol}）`;
   sticky.set(meta);
   showHoverWarning(meta.hover);
 }
@@ -208,7 +229,7 @@ async function plot(encoding) {
   clearSelection(false);
   const size = stageSize();
   plottedEncoding = encoding;
-  const body = { encoding, ...size, filters, color_bins: colorBins };
+  const body = { encoding, ...size, filters, color_bins: colorBins, wrap_cols: wrapCols };
   requestedSize = size;
   status.textContent = "集約中…";
   const mine = ++generation;
@@ -736,6 +757,8 @@ function clearPlot() {
   clearSelection();
   generation++;
   plotting = 0;
+  // A new cutting or number to a row has no graph to plot again.
+  plottedEncoding = null;
   setPending(false);
   hideHover();
   Plotly.purge(gd);
@@ -755,11 +778,11 @@ function clearPlot() {
 // The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`): placing
 // overlay changes nothing drawn, so it aggregates nothing.
 function drawnRoles(encoding) {
-  const { x, y, color, row, col } = encoding;
-  return JSON.stringify([x, y, color, row, col]);
+  const { x, y, color, row, col, wrap } = encoding;
+  return JSON.stringify([x, y, color, row, col, wrap]);
 }
 
-let drawnRolesKey = drawnRoles({ x: [], y: [], color: null, row: null, col: null });
+let drawnRolesKey = drawnRoles({ x: [], y: [], color: null, row: null, col: null, wrap: null });
 // Cuts a numeric color column another way, or draws it as a gradient (null):
 // the series change, so the graph is plotted again.
 function setColorBins(bins) {
@@ -802,13 +825,24 @@ async function recolor() {
   }
 }
 
-new Builder(document.getElementById("builder"), document.getElementById("columns"), (encoding) => {
-  const key = drawnRoles(encoding);
-  if (key === drawnRolesKey) return;
-  if (encoding.color !== JSON.parse(drawnRolesKey)[2]) colorBins = null;
-  drawnRolesKey = key;
-  if (encoding.x.length && encoding.y.length) plot(encoding);
-  else clearPlot();
-});
+new Builder(
+  document.getElementById("builder"),
+  document.getElementById("columns"),
+  (encoding) => {
+    const key = drawnRoles(encoding);
+    if (key === drawnRolesKey) return;
+    const drawn = JSON.parse(drawnRolesKey);
+    if (encoding.color !== drawn[2]) colorBins = null;
+    if (encoding.wrap !== drawn[5]) {
+      wrapCols = null;
+      wrapColsInput.value = "";
+      wrapColsInput.placeholder = "自動";
+    }
+    drawnRolesKey = key;
+    if (encoding.x.length && encoding.y.length) plot(encoding);
+    else clearPlot();
+  },
+  { wrap: wrapColsInput },
+);
 await attachColumnList(document.getElementById("columns"));
 showCasts(document.getElementById("casts"));

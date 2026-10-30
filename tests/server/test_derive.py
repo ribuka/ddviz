@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from ddviz.server.derive import (
@@ -11,7 +13,7 @@ from ddviz.server.derive import (
     unchanged,
 )
 from ddviz.shared.keys import BinGrid
-from ddviz.shared.layout import AxisGrid, grid_layout
+from ddviz.shared.layout import WRAP_GAP, AxisGrid, facet_grid, grid_layout
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import Filter, ScatterSpec
 
@@ -126,3 +128,34 @@ def test_selection_spec(manifest: PlotManifest) -> None:
     assert spec.selection == selection
     assert spec.view.x_ranges == manifest.x_ranges
     assert spec.view.facets == {"row": [None], "col": ["p", "q"]}
+
+
+@pytest.fixture
+def wrapped(manifest: PlotManifest) -> PlotManifest:
+    """Return `manifest` with three wrapped levels, two to a row."""
+    levels = {"row": [None], "col": ["p", "q", "r"], "color": ["a", "b", "c"]}
+    spec = replace(manifest.spec, wrap=True, wrap_cols=None, width=1000, height=400)
+    axes = facet_grid(1, 3, 1, 1, True, None, 1000, 400)
+    return replace(
+        manifest,
+        spec=spec,
+        layout=grid_layout(1000, 400, axes.rows, axes.cols, WRAP_GAP),
+        axes=axes,
+        levels=levels,
+        all_levels=levels,
+    )
+
+
+def test_box_selection_on_a_wrapped_grid(wrapped: PlotManifest) -> None:
+    """A box on a wrapped panel selects its level; the empty cells are no panels."""
+    assert wrapped.axes.ncol == 3
+    assert box_selection(wrapped, 2, (0.0, 1.0), (0.0, 1.0)).col == "r"
+    with pytest.raises(ValueError, match="no such panel"):
+        box_selection(wrapped, 3, (0.0, 1.0), (0.0, 1.0))
+
+
+def test_a_wrapped_grid_changes_with_the_size(wrapped: PlotManifest) -> None:
+    """A tall size puts fewer wrapped panels to a row, so the result no longer stands."""
+    ranges = (wrapped.x_ranges, wrapped.y_ranges)
+    assert unchanged(wrapped, resized_spec(wrapped, 1000, 400, [], {}, *ranges))
+    assert not unchanged(wrapped, resized_spec(wrapped, 400, 1000, [], {}, *ranges))

@@ -124,15 +124,32 @@ def test_plot_draws_and_serves_images(client: TestClient) -> None:
         ({"x": ["label"], "y": ["y"]}, "numeric"),
         ({"x": ["x"]}, "x and y"),
         ({"x": "x", "y": ["y"]}, "list"),
+        ({"x": ["x"], "y": ["y"], "wrap": "facet", "col": "color"}, "wrap"),
+        ({"x": ["x", "y"], "y": ["y"], "wrap": "facet"}, "n-th axes"),
     ],
 )
 def test_plot_refuses_bad_encodings(
     client: TestClient, encoding: dict, detail: str
 ) -> None:
-    """A plot with an unknown, text or missing axis column is refused."""
+    """A plot with an unknown, text or missing axis column, or wrap beside a facet or an n-th axis, is refused."""
     response = client.post("/api/plot", json={"encoding": encoding, **SIZE})
     assert response.status_code == 400
     assert detail in response.json()["detail"]
+
+
+def test_plot_wraps_a_column_and_refuses_a_bad_wrap_cols(client: TestClient) -> None:
+    """A wrapped column makes a panel per level; wrap_cols must be a positive int."""
+    encoding = {"x": ["x"], "y": ["y"], "wrap": "facet"}
+    response = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, "wrap_cols": 1}
+    )
+    assert response.status_code == 200
+    meta = response.json()["meta"]
+    assert [p["facet"] for p in meta["panels"]] == [[None, "p"], [None, "q"]]
+    assert meta["ncol"] == 1
+    assert meta["encoding"]["wrap"] == "facet"
+    bad = client.post("/api/plot", json={"encoding": encoding, **SIZE, "wrap_cols": 0})
+    assert bad.status_code == 400
 
 
 def test_view_and_overview_need_a_plot(client: TestClient) -> None:

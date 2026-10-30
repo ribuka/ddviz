@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -20,6 +21,9 @@ MARGIN_BOTTOM = 30
 # around each plot area (`ddviz.server.figure`) just outside it, so with one pixel
 # neighboring panels share one line.
 GAP = 1
+# Gap between the panel rows of a wrapped grid, in pixels: room for the label
+# above each panel. The first row's label is in the top margin.
+WRAP_GAP = 18
 # Smallest plot area of a panel in pixels. A grid whose panels would be
 # smaller grows past the given size, and the page scrolls it.
 MIN_PANEL_WIDTH = 160
@@ -43,6 +47,9 @@ class GridLayout:
     scroll : bool
         Whether the panels did not fit the given size at their smallest, so
         the figure is larger than the area and scrolls in it.
+    row_gap : int
+        Gap between panel rows in pixels: `GAP`, or `WRAP_GAP` for a
+        wrapped grid.
     """
 
     width: int
@@ -52,6 +59,7 @@ class GridLayout:
     panel_width: int
     panel_height: int
     scroll: bool = False
+    row_gap: int = GAP
 
     def x_domain(self, col: int) -> tuple[float, float]:
         """Return the plotly x domain of a facet column.
@@ -84,7 +92,7 @@ class GridLayout:
             Start and end as fractions of the plot area height, from the bottom.
         """
         area = self.height - MARGIN_TOP - MARGIN_BOTTOM
-        top = row * (self.panel_height + GAP)
+        top = row * (self.panel_height + self.row_gap)
         return (1 - (top + self.panel_height) / area, 1 - top / area)
 
 
@@ -97,18 +105,26 @@ class AxisGrid:
     x columns side by side from the left and the y columns stacked from the
     top. Panels count row by row from the top left.
 
+    A wrapped grid (``facet_col_wrap`` of plotly express) lays out the col
+    levels alone, `ncol` to a row from the top left, with one pair of axis
+    columns: the panel of a level is its index, and the cells after the
+    last level are empty.
+
     Parameters
     ----------
     nrow, ncol : int
         Facet rows and columns.
     nx, ny : int
         Numbers of x and y columns.
+    wrap : int
+        Number of wrapped col levels, or 0 for a grid of row and col levels.
     """
 
     nrow: int
     ncol: int
     nx: int = 1
     ny: int = 1
+    wrap: int = 0
 
     @property
     def rows(self) -> int:
@@ -119,6 +135,11 @@ class AxisGrid:
     def cols(self) -> int:
         """Panel columns of the figure."""
         return self.ncol * self.nx
+
+    @property
+    def panels(self) -> int:
+        """Panels drawn: the cells before the empty ones of a wrapped grid."""
+        return self.wrap or self.rows * self.cols
 
     def panel(self, row: T, col: T, xi: T, yj: T) -> T:
         """Return the panel of a facet cell and axis pair; works on ints or polars expressions.
@@ -153,6 +174,89 @@ class AxisGrid:
         prow, pcol = divmod(panel, self.cols)
         return pcol % self.nx, prow % self.ny
 
+    def facet(self, panel: int) -> tuple[int, int]:
+        """Return the indices of the row and the col level of a panel.
+
+        Parameters
+        ----------
+        panel : int
+            Panel.
+
+        Returns
+        -------
+        tuple of int
+            ``(row, col)``; in a wrapped grid, the row is 0 and the col is
+            the panel's facet cell.
+        """
+        prow, pcol = divmod(panel, self.cols)
+        row, col = prow // self.ny, pcol // self.nx
+        if self.wrap:
+            return 0, row * self.ncol + col
+        return row, col
+
+
+def wrap_columns(n: int, width: int, height: int) -> int:
+    """Return how many of `n` wrapped panels go to a row so that they are closest to square.
+
+    Parameters
+    ----------
+    n : int
+        Number of panels, at least 1.
+    width, height : int
+        Size of the area that shows the figure, in pixels.
+
+    Returns
+    -------
+    int
+        Panels to a row, from 1 to `n`.
+    """
+
+    def skew(ncol: int) -> float:
+        nrow = math.ceil(n / ncol)
+        w = _split(width, MARGIN_LEFT + MARGIN_RIGHT, ncol, GAP)
+        h = _split(height, MARGIN_TOP + MARGIN_BOTTOM, nrow, WRAP_GAP)
+        return abs(math.log(w / h))
+
+    return min(range(1, n + 1), key=skew)
+
+
+def facet_grid(
+    nrow: int,
+    ncol: int,
+    nx: int,
+    ny: int,
+    wrap: bool,
+    wrap_cols: int | None,
+    width: int,
+    height: int,
+) -> AxisGrid:
+    """Return the panels of a figure for its facet levels and axis columns.
+
+    Parameters
+    ----------
+    nrow, ncol : int
+        Numbers of row and col levels.
+    nx, ny : int
+        Numbers of x and y columns.
+    wrap : bool
+        Whether the col levels wrap into rows (`AxisGrid`); `nrow`, `nx`
+        and `ny` are then 1.
+    wrap_cols : int or None
+        Wrapped panels to a row, at most `ncol` of them; None for
+        `wrap_columns`.
+    width, height : int
+        Size of the area that shows the figure, in pixels.
+
+    Returns
+    -------
+    AxisGrid
+        The panels.
+    """
+    if not wrap:
+        return AxisGrid(nrow=nrow, ncol=ncol, nx=nx, ny=ny)
+    per_row = min(wrap_cols or wrap_columns(ncol, width, height), ncol)
+    return AxisGrid(nrow=math.ceil(ncol / per_row), ncol=per_row, wrap=ncol)
+
 
 def _split(size: int, margins: int, n: int, gap: int) -> int:
     """Return the panel size that fills `size` with `n` panels, at least one pixel."""
@@ -164,6 +268,7 @@ def grid_layout(
     height: int,
     nrow: int,
     ncol: int,
+    row_gap: int = GAP,
 ) -> GridLayout:
     """Split a figure into a facet grid of equal panels.
 
@@ -178,6 +283,8 @@ def grid_layout(
         Size of the area that shows the figure, in pixels.
     nrow, ncol : int
         Panel rows and columns.
+    row_gap : int, optional
+        Gap between panel rows: `WRAP_GAP` for a wrapped grid.
 
     Returns
     -------
@@ -187,19 +294,22 @@ def grid_layout(
     margins_x = MARGIN_LEFT + MARGIN_RIGHT
     margins_y = MARGIN_TOP + MARGIN_BOTTOM
     panel_width = _split(width, margins_x, ncol, GAP)
-    panel_height = _split(height, margins_y, nrow, GAP)
+    panel_height = _split(height, margins_y, nrow, row_gap)
     if panel_width >= MIN_PANEL_WIDTH and panel_height >= MIN_PANEL_HEIGHT:
-        return GridLayout(width, height, nrow, ncol, panel_width, panel_height)
+        return GridLayout(
+            width, height, nrow, ncol, panel_width, panel_height, row_gap=row_gap
+        )
     panel_width = max(_split(width - SCROLLBAR, margins_x, ncol, GAP), MIN_PANEL_WIDTH)
     panel_height = max(
-        _split(height - SCROLLBAR, margins_y, nrow, GAP), MIN_PANEL_HEIGHT
+        _split(height - SCROLLBAR, margins_y, nrow, row_gap), MIN_PANEL_HEIGHT
     )
     return GridLayout(
         width=margins_x + ncol * panel_width + (ncol - 1) * GAP,
-        height=margins_y + nrow * panel_height + (nrow - 1) * GAP,
+        height=margins_y + nrow * panel_height + (nrow - 1) * row_gap,
         nrow=nrow,
         ncol=ncol,
         panel_width=panel_width,
         panel_height=panel_height,
         scroll=True,
+        row_gap=row_gap,
     )

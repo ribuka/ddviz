@@ -11,8 +11,11 @@ from ddviz.shared.layout import (
     MIN_PANEL_HEIGHT,
     MIN_PANEL_WIDTH,
     SCROLLBAR,
+    WRAP_GAP,
     AxisGrid,
+    facet_grid,
     grid_layout,
+    wrap_columns,
 )
 
 
@@ -92,3 +95,39 @@ def test_axis_columns_and_facets_share_one_gap() -> None:
         area = layout.width - MARGIN_LEFT - MARGIN_RIGHT
         gap = (layout.x_domain(1)[0] - layout.x_domain(0)[1]) * area
         assert round(gap) == GAP
+
+
+def test_wrap_columns_makes_the_panels_closest_to_square() -> None:
+    """A wide area puts more wrapped panels in a row than a tall one."""
+    assert wrap_columns(1, 1000, 500) == 1
+    assert wrap_columns(6, 2000, 400) == 6
+    assert wrap_columns(6, 680, 960) == 2
+    assert wrap_columns(4, 1000, 1000) == 2
+
+
+def test_a_wrapped_grid_lays_out_the_col_levels_in_rows() -> None:
+    """Five levels three to a row make two rows; the sixth cell is empty."""
+    axes = facet_grid(1, 5, 1, 1, True, 3, 900, 600)
+    assert axes == AxisGrid(nrow=2, ncol=3, wrap=5)
+    assert axes.panels == 5
+    assert [axes.facet(p) for p in range(5)] == [(0, i) for i in range(5)]
+    assert axes.panel(1, 1, 0, 0) == 4
+    # More to a row than levels puts them all in one row.
+    assert facet_grid(1, 2, 1, 1, True, 5, 900, 600) == AxisGrid(1, 2, wrap=2)
+    # Without wrap, the levels make the grid as they are.
+    assert facet_grid(2, 3, 1, 2, False, 3, 900, 600) == AxisGrid(2, 3, 1, 2)
+    assert AxisGrid(2, 3, 1, 2).facet(4) == (0, 1)
+
+
+def test_a_wrapped_grid_leaves_room_between_its_rows() -> None:
+    """Panel rows are WRAP_GAP apart, for the labels above the panels."""
+    layout = grid_layout(1000, 700, nrow=2, ncol=3, row_gap=WRAP_GAP)
+    area_h = 700 - MARGIN_TOP - MARGIN_BOTTOM
+    assert layout.panel_height == (area_h - WRAP_GAP) // 2
+    gap = layout.y_domain(0)[0] - layout.y_domain(1)[1]
+    assert round(gap * area_h) == WRAP_GAP
+    scrolled = grid_layout(400, 300, nrow=3, ncol=1, row_gap=WRAP_GAP)
+    assert scrolled.scroll
+    assert scrolled.height == (
+        MARGIN_TOP + MARGIN_BOTTOM + 3 * scrolled.panel_height + 2 * WRAP_GAP
+    )
