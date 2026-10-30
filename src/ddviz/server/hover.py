@@ -49,12 +49,15 @@ class HoverIndex:
         self._keys = self._count = self._index = self._occupancy = None
         self._columns = []
 
-    def _find(self, key: int) -> int | None:
-        """Return the position of a key, or None if its bin is empty."""
-        i = int(np.searchsorted(self._keys, key))
-        if i < len(self._keys) and self._keys[i] == key:
-            return i
-        return None
+    def _series_at(self, panel: int, by: int, bx: int) -> dict[int, int]:
+        """Return the position of the key of each series with rows at an occupied pixel."""
+        series = np.arange(self.grid.n_series)
+        keys = self.grid.pack(panel, series, by, bx)
+        found = np.searchsorted(self._keys, keys)
+        inside = found < len(self._keys)
+        hit = np.zeros(len(keys), dtype=bool)
+        hit[inside] = self._keys[found[inside]] == keys[inside]
+        return {int(s): int(i) for s, i in zip(series[hit], found[hit], strict=True)}
 
     def _nearest_pixel(
         self, panel: int, fx: float, fy: float, sx: float, sy: float
@@ -124,12 +127,8 @@ class HoverIndex:
         if pixel is None:
             return None
         bx, by = pixel
-        bits = int(self._occupancy[panel, by, bx])
-        present = [s for s in order if bits >> s & 1]
-        if not present:
-            present = [s for s in reversed(range(self.grid.n_series)) if bits >> s & 1]
-        series = present[0]
-        found = {s: self._find(self.grid.pack(panel, s, by, bx)) for s in present}
+        found = self._series_at(panel, by, bx)
+        series = next((s for s in order if s in found), max(found))
         i = found[series]
         return {
             "series": series,

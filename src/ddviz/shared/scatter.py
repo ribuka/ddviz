@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
-# Default of the most levels a color, row or col column may have
+# Default of the most levels a color, overlay, row or col column may have
 # (`ScatterSpec.max_levels`).
 MAX_LEVELS = 50
+# Default size in pixels of the marker shapes of the overlay levels
+# (`ScatterSpec.shape_size`).
+SHAPE_SIZE = 7
 
 
 @dataclass(frozen=True)
 class Binning:
-    """How a numeric column on the color, row or col role becomes levels of intervals (`ddviz.compute.cuts`).
+    """How a numeric column on the color, overlay, row or col role becomes levels of intervals (`ddviz.compute.cuts`).
 
     Parameters
     ----------
@@ -243,7 +246,8 @@ class ScatterSpec:
         A column in ``categorical`` is drawn by its levels, in bands
         (`ddviz.compute.bands`).
     color : str or None
-        Column whose levels make the series, or None for a single series.
+        Column whose levels make the series' colors, or None for a single
+        color.
     row, col : str or None
         Columns whose levels make the facet rows and columns.
     width, height : int
@@ -267,7 +271,7 @@ class ScatterSpec:
     selection : Selection or None
         Rows chosen by a box, aggregated as a layer of their own.
     binned : dict of str to Binning
-        Roles (``"color"``, ``"row"``, ``"col"``) whose numeric column is cut
+        Roles (``"color"``, ``"overlay"``, ``"row"``, ``"col"``) whose numeric column is cut
         into intervals, each a level (`ddviz.compute.cuts`).
     gradient : bool
         Whether the color column is numeric and colors each pixel by the
@@ -278,7 +282,7 @@ class ScatterSpec:
         overview's ranges as they are without them, and drop the facet
         panels left without rows (`ddviz.compute.aggregate.aggregate`).
     max_levels : int
-        Most levels a color, row or col column may have; more are refused
+        Most levels a color, overlay, row or col column may have; more are refused
         before binning. A numeric column on these roles has about one level
         per row: its masks would not fit in memory.
     hover_bytes : int or None
@@ -298,6 +302,14 @@ class ScatterSpec:
         How the panels of a numeric x and a numeric y fit smoothing lines
         (`smooth_pairs`), or None for none; without points, such a panel
         draws only the lines.
+    overlay : str or None
+        Column whose levels draw the points in marker shapes
+        (`ddviz.shared.shapes`), or None for plain pixels. The series are
+        then the pairs of a color level and an overlay level: series ``s``
+        has color level ``s // n`` and overlay level ``s % n``, where ``n``
+        counts the overlay levels.
+    shape_size : int
+        Width and height in pixels of the marker shapes, odd.
     """
 
     files: dict[str, list[str]]
@@ -323,6 +335,8 @@ class ScatterSpec:
     points: bool = True
     box: bool = False
     smooth: Smoothing | None = None
+    overlay: str | None = None
+    shape_size: int = SHAPE_SIZE
 
     def box_pairs(self) -> set[tuple[str, str]]:
         """Return the pairs of axis columns whose panels have box plots.

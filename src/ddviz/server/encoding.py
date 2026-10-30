@@ -19,9 +19,8 @@ ELEMENTS = ("points", "box", "smooth")
 class Encoding:
     """Columns placed on each role of a graph.
 
-    A column may take several roles (for example color and col). Roles that
-    cannot be drawn yet (the n-th axes and overlay) are kept as placed; the
-    plan of a graph (`ddviz.server.plan`) leaves them out.
+    A column may take several roles (for example color and col). The plan
+    of a graph (`ddviz.server.plan`) turns them into what a worker draws.
 
     Parameters
     ----------
@@ -30,7 +29,8 @@ class Encoding:
     color : str or None
         Column whose levels color the series.
     overlay : str or None
-        Column whose levels overlay the series with marker shapes.
+        Column whose levels draw the points in marker shapes beside a color
+        column; alone, its levels color the series.
     row, col : str or None
         Columns whose levels make the facet rows and columns (Group Y and
         Group X).

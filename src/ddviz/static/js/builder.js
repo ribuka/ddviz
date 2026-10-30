@@ -27,8 +27,6 @@ const AXES = ["x", "y"];
 const LABELS = { x: "X", y: "Y", col: "Group X", row: "Group Y", wrap: "Wrap", color: "Color", overlay: "Overlay" };
 // Roles that wrap replaces.
 const FACETS = ["row", "col"];
-// Roles placed but not drawn yet.
-const UNDRAWN_NOTE = "（まだ描かない）";
 // Part of a chip at each end, along its axis, where a drop goes in beside
 // it instead of replacing it.
 const INSERT_EDGE = 0.25;
@@ -298,7 +296,7 @@ export class Builder {
       const chips = placed.map((name, index) => this.chip(role, name, index));
       const label = document.createElement("span");
       label.className = "zone-label";
-      label.textContent = LABELS[role] + (role === "overlay" ? UNDRAWN_NOTE : "");
+      label.textContent = LABELS[role];
       const extra = placed.length && this.extras[role] ? [this.extras[role]] : [];
       zone.replaceChildren(label, ...chips, ...extra);
       zone.classList.toggle("filled", placed.length > 0);
@@ -307,10 +305,9 @@ export class Builder {
 
   chip(role, name, index) {
     const chip = document.createElement("span");
-    const undrawn = role === "overlay";
-    chip.className = "chip" + (undrawn ? " undrawn" : "");
+    chip.className = "chip";
     chip.draggable = true;
-    chip.title = (undrawn ? `${name}${UNDRAWN_NOTE}。` : `${name}。`) + "ドラッグで別の役割へ移す。× か、枠の外に落とすと外す";
+    chip.title = `${name}。ドラッグで別の役割へ移す。× か、枠の外に落とすと外す`;
     const text = document.createElement("span");
     text.className = "chip-name";
     text.textContent = name;

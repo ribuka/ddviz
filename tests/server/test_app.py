@@ -433,3 +433,48 @@ def test_smoothing_lines_plot_zoom_filter_and_select(client: TestClient) -> None
     plotted = client.post("/api/plot", json={"encoding": banded, **SIZE}).json()
     assert plotted["meta"]["undrawn"] == ["smooth"]
     assert plotted["meta"]["panels"][0]["points"] is True
+
+
+def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
+    """Overlay beside color draws a series per pair of levels in the size asked; alone, it colors the series."""
+    encoding = {"x": ["x"], "y": ["y"], "color": "color", "overlay": "facet"}
+    plotted = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, "shape_size": 9}
+    ).json()
+    meta = plotted["meta"]
+    assert meta["undrawn"] == []
+    assert meta["series"] == ["a", "b", "c"]
+    assert meta["color"]["shapes"] == 2
+    assert meta["overlay"]["column"] == "facet"
+    assert meta["overlay"]["levels"] == ["p", "q"]
+    assert meta["overlay"]["size"] == 9
+    assert [len(k) for k in meta["overlay"]["kernels"]] == [9, 9]
+    assert len(meta["images"]) == 6 and all(meta["images"])
+    assert meta["grid"]["n_series"] == 6
+    hover = client.get(
+        "/api/hover",
+        params={
+            "task": meta["task"],
+            "panel": 0,
+            "fx": meta["grid"]["width"] / 2,
+            "fy": meta["grid"]["height"] / 2,
+            "sx": 1,
+            "sy": 1,
+            "order": ",".join(str(s) for s in range(5, -1, -1)),
+        },
+    ).json()["hit"]
+    assert hover["values"]["color"] == "abc"[hover["series"] // 2]
+    assert hover["values"]["facet"] == "pq"[hover["series"] % 2]
+    box = {"task": meta["task"], "panel": 0, "x_range": [-5, 5], "y_range": [-5, 5]}
+    selected = client.post("/api/selection", json=box).json()
+    assert 0 < selected["rows"] <= meta["rows"]
+    assert len(selected["images"]) == 6
+
+    alone = {"x": ["x"], "y": ["y"], "overlay": "facet"}
+    meta = client.post("/api/plot", json={"encoding": alone, **SIZE}).json()["meta"]
+    assert meta["series"] == ["p", "q"]
+    assert meta["color"]["column"] == "facet"
+    assert meta["overlay"] is None
+
+    bad = {"encoding": encoding, **SIZE, "shape_size": 8}
+    assert client.post("/api/plot", json=bad).status_code == 400

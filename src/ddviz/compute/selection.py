@@ -23,13 +23,15 @@ def numeric_roles(spec: ScatterSpec) -> set[str]:
 
 
 def drawn_conditions(spec: ScatterSpec) -> list[pl.Expr]:
-    """Return the conditions a drawn row meets on its color, row and col columns.
+    """Return the conditions a drawn row meets on its color, overlay, row and col columns.
 
     A categorical column must not be null; a numeric one (`numeric_roles`)
     must be finite.
     """
     numeric = {getattr(spec, role) for role in numeric_roles(spec)}
-    columns = dict.fromkeys(c for c in (spec.color, spec.row, spec.col) if c)
+    columns = dict.fromkeys(
+        c for c in (spec.color, spec.overlay, spec.row, spec.col) if c
+    )
     return [
         pl.col(c).cast(pl.Float64).is_finite()
         if c in numeric
@@ -43,7 +45,7 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
 
     A row is selected when it is drawn in the panel the box was drawn on:
     its facet levels are the panel's, its x and y are in the box, its
-    color, row and col are valid (`drawn_conditions`), and it passes the local filter.
+    color, overlay, row and col are valid (`drawn_conditions`), and it passes the local filter.
     On a categorical axis, its position in the band is in the box
     (`ddviz.compute.bands.pair_positions`): the rows of the points drawn in it.
     In a panel of box plots without the points
@@ -117,6 +119,13 @@ def selection_columns(spec: ScatterSpec) -> list[str]:
     list of str
         The columns, once each.
     """
-    columns = [spec.selection.x, spec.selection.y, spec.color, spec.row, spec.col]
+    columns = [
+        spec.selection.x,
+        spec.selection.y,
+        spec.color,
+        spec.overlay,
+        spec.row,
+        spec.col,
+    ]
     columns += filter_columns(spec.filters)
     return list(dict.fromkeys(c for c in columns if c is not None))

@@ -16,6 +16,16 @@ function formatValue(value) {
   return String(value);
 }
 
+// Returns the name of a series in the hover label: its color level and its
+// overlay level, those that have names. A gradient's single color has none.
+function seriesName(meta, s) {
+  const shapes = meta.color.shapes;
+  const names = [];
+  if (meta.color.kind !== "gradient") names.push(meta.series[Math.floor(s / shapes)]);
+  if (meta.overlay) names.push(meta.overlay.levels[s % shapes]);
+  return names.join(", ");
+}
+
 // Returns where the cursor is: its panel, its position in bins, and the
 // screen pixels per bin, or null away from every panel.
 function locate(gd, meta, event) {
@@ -81,7 +91,7 @@ export function attachHover(gd, getMeta, legend, onTiming) {
       showBox(meta, at.panel, box, event);
       return;
     }
-    const order = legend.order(meta.series.length);
+    const order = legend.order(meta.grid.n_series);
     const query = new URLSearchParams({
       task: meta.task,
       panel: at.panel,
@@ -110,9 +120,9 @@ export function attachHover(gd, getMeta, legend, onTiming) {
       .filter(([k]) => !others.has(k))
       .map(([k, v]) => `${k}: ${formatValue(v)}`);
     lines.push(`行番号: ${hit.row}`);
-    // A gradient has one series, of no name.
-    const series = meta.color.kind === "gradient" ? "" : `（${meta.series[hit.series]}: ${hit.count} 行）`;
-    lines.push(`このピクセル: ${hit.pixel_count} 行${series}`);
+    const series = seriesName(meta, hit.series);
+    const ofSeries = series === "" ? "" : `（${series}: ${hit.count} 行）`;
+    lines.push(`このピクセル: ${hit.pixel_count} 行${ofSeries}`);
     label.textContent = lines.join("\n");
     const column = meta.color.column;
     label.style.background =
@@ -135,9 +145,11 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     const [level, series, n, low, q1, median, q3, high] = box;
     const x = meta.x_columns[meta.panels[p].x];
     const lines = [`${x}: ${meta.axis_levels[x][level]}`];
+    const shapes = meta.color.shapes;
     if (meta.color.column !== null && meta.color.kind !== "gradient") {
-      lines.push(`${meta.color.column}: ${meta.series[series]}`);
+      lines.push(`${meta.color.column}: ${meta.series[Math.floor(series / shapes)]}`);
     }
+    if (meta.overlay) lines.push(`${meta.overlay.column}: ${meta.overlay.levels[series % shapes]}`);
     lines.push(
       `ひげの上端: ${formatValue(high)}`,
       `75%: ${formatValue(q3)}`,

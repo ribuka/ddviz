@@ -90,7 +90,7 @@ class PlotManifest:
     x_ranges, y_ranges : list of list of float
         Data range of each x and each y column the bins cover.
     levels : dict
-        Levels of the color, row and col roles as drawn
+        Levels of the color, overlay, row and col roles as drawn
         (`ddviz.compute.aggregate.Aggregation.levels`).
     all_levels : dict
         Levels of the roles over every row

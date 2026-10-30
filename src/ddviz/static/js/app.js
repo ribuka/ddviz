@@ -10,6 +10,7 @@ import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { openScaleMenu } from "./scalemenu.js";
+import { DEFAULT_SHAPE_SIZE, openShapeMenu } from "./shapemenu.js";
 import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
@@ -79,6 +80,7 @@ const legend = new Legend(
   document.getElementById("legend"),
   () => layers.draw(),
   (event) => openScaleMenu(event, colorBins, setColorBins, recolor),
+  (event) => openShapeMenu(event, shapeSize, setShapeSize),
 );
 const layers = new ImageLayers(gd, legend);
 const sticky = new StickyLabels(document.getElementById("scroller"), gd);
@@ -104,6 +106,9 @@ let plottedEncoding = null;
 // How the smoothing lines are fitted (`ddviz.server.plan.parse_smoothing`),
 // picked in the menu of their element icon; kept for every graph.
 let smoothing = DEFAULT_SMOOTHING;
+// Size in pixels of the overlay's marker shapes (`ddviz.server.plan.parse_shape_size`),
+// picked in the menu of the legend's markers; kept for every graph.
+let shapeSize = DEFAULT_SHAPE_SIZE;
 // Wrapped panels to a row, or null to make them closest to square
 // (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
 // The user sets it in the Wrap zone, beside its chip.
@@ -234,7 +239,15 @@ async function plot(encoding) {
   clearSelection(false);
   const size = stageSize();
   plottedEncoding = encoding;
-  const body = { encoding, ...size, filters, color_bins: colorBins, wrap_cols: wrapCols, smooth: smoothing };
+  const body = {
+    encoding,
+    ...size,
+    filters,
+    color_bins: colorBins,
+    wrap_cols: wrapCols,
+    smooth: smoothing,
+    shape_size: shapeSize,
+  };
   requestedSize = size;
   status.textContent = "集約中…";
   const mine = ++generation;
@@ -787,10 +800,10 @@ function clearPlot() {
 }
 
 // The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`) and
-// its elements: placing overlay changes nothing drawn, so it aggregates nothing.
+// its elements. Overlay alone takes the place of color.
 function drawnRoles(encoding) {
-  const { x, y, color, row, col, wrap, elements } = encoding;
-  return JSON.stringify([x, y, color, row, col, wrap, elements]);
+  const { x, y, color, row, col, wrap, elements, overlay } = encoding;
+  return JSON.stringify([x, y, color ?? overlay, row, col, wrap, elements, overlay]);
 }
 
 // Whether a pair of the graph's axis columns can have box plots: a
@@ -807,6 +820,12 @@ function hasSmoothPair(encoding) {
   return encoding.x.some(numeric) && encoding.y.some(numeric);
 }
 
+// Draws the overlay's shapes in another size: a graph with them is plotted again.
+function setShapeSize(size) {
+  shapeSize = size;
+  if (plottedEncoding?.color && plottedEncoding.overlay) plot(plottedEncoding);
+}
+
 // Fits the smoothing lines another way: a graph with them is plotted again.
 function setSmoothing(picked) {
   smoothing = picked;
@@ -814,7 +833,16 @@ function setSmoothing(picked) {
   if (plottedEncoding?.elements.includes("smooth")) plot(plottedEncoding);
 }
 
-let drawnRolesKey = drawnRoles({ x: [], y: [], color: null, row: null, col: null, wrap: null, elements: ["points"] });
+let drawnRolesKey = drawnRoles({
+  x: [],
+  y: [],
+  color: null,
+  row: null,
+  col: null,
+  wrap: null,
+  elements: ["points"],
+  overlay: null,
+});
 // Cuts a numeric color column another way, or draws it as a gradient (null):
 // the series change, so the graph is plotted again.
 function setColorBins(bins) {
@@ -868,7 +896,7 @@ const builder = new Builder(
     const key = drawnRoles(encoding);
     if (key === drawnRolesKey) return;
     const drawn = JSON.parse(drawnRolesKey);
-    if (encoding.color !== drawn[2]) colorBins = null;
+    if ((encoding.color ?? encoding.overlay) !== drawn[2]) colorBins = null;
     if (encoding.wrap !== drawn[5]) {
       wrapCols = null;
       wrapColsInput.value = "";

@@ -23,7 +23,7 @@ function span(box, nSeries) {
 // Returns the box plot of panel `p` of `meta` at data position (x, y): over
 // its box or its whiskers, else null.
 export function boxAt(meta, p, x, y) {
-  const nSeries = meta.series.length;
+  const nSeries = meta.grid.n_series;
   for (const box of meta.panels[p]?.boxes ?? []) {
     const { middle, half } = span(box, nSeries);
     if (Math.abs(x - middle) <= half && y >= box[3] && y <= box[7]) return box;
@@ -35,7 +35,7 @@ export function boxAt(meta, p, x, y) {
 // colors and `alpha(s)` the opacity of series `s`. Earlier series in
 // `order` are drawn first.
 export function drawBoxes(ctx, full, meta, colors, alpha, order) {
-  const nSeries = meta.series.length;
+  const nSeries = meta.grid.n_series;
   const rank = new Map(order.map((s, i) => [s, i]));
   for (const panel of meta.panels) {
     if (!panel.boxes?.length) continue;

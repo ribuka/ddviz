@@ -28,17 +28,16 @@ def index(tmp_path: Path, scatter_spec: ScatterSpec) -> Iterator[HoverIndex]:
 
 def _occupied(index: HoverIndex, panel: int, min_series: int) -> tuple[int, int]:
     """Return a pixel of a panel with at least `min_series` series."""
-    occ = index._occupancy[panel]
-    counts = np.vectorize(lambda v: int(v).bit_count())(occ)
-    by, bx = np.argwhere(counts >= min_series)[0]
-    return int(bx), int(by)
+    for by, bx in np.argwhere(index._occupancy[panel]):
+        if len(index._series_at(panel, int(by), int(bx))) >= min_series:
+            return int(bx), int(by)
+    raise AssertionError(f"no pixel with {min_series} series")
 
 
 def test_lookup_on_a_point_follows_the_layer_order(index: HoverIndex) -> None:
     """On a shared pixel the first series of `order` wins, with the pixel's total count."""
     bx, by = _occupied(index, 0, 2)
-    bits = int(index._occupancy[0, by, bx])
-    present = [s for s in range(3) if bits >> s & 1]
+    present = list(index._series_at(0, by, bx))
     for order in ([2, 1, 0], [0, 1, 2]):
         hit = index.lookup(0, bx + 0.5, by + 0.5, 1.0, 1.0, order)
         assert hit["series"] == next(s for s in order if s in present)
