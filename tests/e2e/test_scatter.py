@@ -112,8 +112,8 @@ def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:
     )
     expect(labels).to_have_text(["a", "b", "c"])
 
-    # Without X, a new number to a row draws nothing.
-    page.locator('.zone[data-role="x"] .chip-remove').click()
+    # Without Y, a new number to a row draws nothing.
+    page.locator('.zone[data-role="y"] .chip-remove').click()
     expect(page.locator("#empty")).to_be_visible()
     wrap.locator(".wrap-cols").fill("2")
     wrap.locator(".wrap-cols").press("Enter")
@@ -200,6 +200,53 @@ def test_box_plots_draw_over_the_bands_and_hover(
     expect(box).to_be_disabled()
     expect(box).to_have_attribute("aria-pressed", "false")
     expect(points).to_have_attribute("aria-pressed", "true")
+
+
+def test_box_plots_without_x_lie_in_one_band(
+    app_page: Page, scatter_frame: pl.DataFrame
+) -> None:
+    """With Y alone, points lie in one band; box plots side by side are ticked by series and hover without an x line."""
+    page = app_page
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    place(page, "y", "y")
+    place(page, "color", "color")
+    page.wait_for_function(PAINTED_PIXEL)
+    expect(page.locator("#plot .xtick text")).to_have_count(0)
+    icons = page.locator("#elements .element")
+    points, box = icons.nth(0), icons.nth(1)
+    expect(box).to_be_enabled()
+    expect(icons.nth(2)).to_be_disabled()
+    box.click()
+    expect(page.locator("#plot .xtick text")).to_have_text(["a", "b", "c"])
+    points.click()
+    expect(points).to_have_attribute("aria-pressed", "false")
+
+    values = scatter_frame.filter(pl.col("color") == "b", pl.col("y").is_finite())["y"]
+    median = float(values.median())
+    # The box of b, the middle one of three, lies in the middle of the band.
+    at = page.wait_for_function(
+        """(median) => {
+          const gd = document.getElementById("plot");
+          const full = gd._fullLayout;
+          const status = document.querySelector("#status").textContent;
+          if (!full?.xaxis || !status.includes("外れ値")) return null;
+          const rect = gd.getBoundingClientRect();
+          return {
+            x: rect.left + full.xaxis._offset + full.xaxis.l2p(0),
+            y: rect.top + full.yaxis._offset + full.yaxis.l2p(median),
+          };
+        }""",
+        arg=median,
+    ).json_value()
+    label = page.locator("#hover-label")
+    page.mouse.move(at["x"], at["y"])
+    expect(label).to_be_visible()
+    lines = dict(line.split(": ", 1) for line in label.inner_text().splitlines())
+    # The one band is no column: the series comes first.
+    assert next(iter(lines)) == "color"
+    assert lines["color"] == "b"
+    assert int(lines["行数"].replace(",", "")) == values.len()
+    assert float(lines["50%"]) == pytest.approx(median, rel=1e-5)
 
 
 def test_smoothing_lines_draw_alone_and_change_their_method(app_page: Page) -> None:

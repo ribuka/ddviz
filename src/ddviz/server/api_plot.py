@@ -30,6 +30,7 @@ from ddviz.server.figure import build_figure
 from ddviz.server.hover import HoverIndex
 from ddviz.server.models import PlotRequest, SizeRequest, ViewRequest
 from ddviz.server.plan import (
+    drawable,
     drawn_columns,
     parse_color_bins,
     parse_shape_size,
@@ -157,8 +158,10 @@ def plot_router(
         missing = [c for c in encoding.columns() if c not in numeric]
         if missing:
             raise HTTPException(400, f"unknown columns: {missing}")
-        if not encoding.x or not encoding.y:
-            raise HTTPException(400, "x and y need a column")
+        if not drawable(encoding, numeric):
+            raise HTTPException(
+                400, "x and y need a column, or y numeric columns alone"
+            )
         # The page refuses edits while converting; a plot now would kill the conversion.
         if source.converting:
             raise HTTPException(409, "converting")

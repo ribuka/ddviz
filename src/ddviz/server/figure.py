@@ -21,7 +21,7 @@ from ddviz.shared.layout import (
     GridLayout,
 )
 from ddviz.shared.manifest import PlotManifest
-from ddviz.shared.scatter import ScatterSpec
+from ddviz.shared.scatter import ONE_BAND, ScatterSpec
 from ddviz.shared.shapes import kernel
 
 # Each plot area is white with a frame line around it, on a light gray
@@ -32,6 +32,8 @@ FRAME_COLOR = "#aaa"
 PAPER_COLOR = "#f5f5f5"
 PLOT_COLOR = "#fff"
 _FRAME = {"showline": True, "mirror": True, "linecolor": FRAME_COLOR, "linewidth": 1}
+# Half the width of a band of a categorical axis (`ddviz.compute.bands.BAND`).
+BAND = 0.4
 
 
 def _axis_suffix(panel: int) -> str:
@@ -114,13 +116,37 @@ def _band_ticks(manifest: PlotManifest, column: str) -> dict:
     levels = manifest.axis_levels.get(column)
     if levels is None:
         return {}
+    if column == ONE_BAND:
+        ticks = _series_ticks(manifest)
+    else:
+        ticks = dict(enumerate(levels))
     # plotly reads tick text as its own markup; the levels are the data's.
     return {
         "tickmode": "array",
-        "tickvals": list(range(len(levels))),
-        "ticktext": [html.escape(str(v), quote=False) for v in levels],
+        "tickvals": list(ticks),
+        "ticktext": [html.escape(str(v), quote=False) for v in ticks.values()],
         "showgrid": False,
     }
+
+
+def _series_ticks(manifest: PlotManifest) -> dict[float, str]:
+    """Return the ticks of the one band (`ddviz.shared.scatter.ONE_BAND`): each series' name under its box.
+
+    Without box plots or series (no color column, or a gradient) it has
+    none. A series of a color level and an overlay level is named by both.
+    """
+    spec, levels = manifest.spec, manifest.levels
+    colors, overlays = levels["color"], levels["overlay"]
+    if not spec.box or colors == [None]:
+        return {}
+    names = [
+        str(c) if spec.overlay is None else f"{c} / {o}"
+        for c in colors
+        for o in overlays
+    ]
+    # The boxes split the band into a slot per series (``static/js/boxes.js``).
+    slot = 2 * BAND / len(names)
+    return {-BAND + slot * (s + 0.5): name for s, name in enumerate(names)}
 
 
 def _color_scale(manifest: PlotManifest) -> dict:
@@ -205,7 +231,8 @@ def build_figure(manifest: PlotManifest) -> dict:
         `ddviz.shared.scatter.Boxes`) and smoothing lines (``smooths``:
         ``[series, xs, ys]`` each, `ddviz.shared.scatter.Smooths`) of each
         panel, the levels of each
-        categorical axis column (``axis_levels``),
+        categorical axis column (``axis_levels``), whether the x axis is
+        the one band (``one_band``, `ddviz.shared.scatter.ONE_BAND`),
         the axes that hold the range of each x and y column (``x_axes``,
         ``y_axes``), the bin grid, the data range of each column, where each
         series' PNG lies in the images file (`ddviz.shared.manifest.IMAGES`; its
@@ -338,5 +365,6 @@ def build_figure(manifest: PlotManifest) -> dict:
         "scroll": layout.scroll,
         "facet_labels": labels,
         "axis_levels": manifest.axis_levels,
+        "one_band": spec.x == [ONE_BAND],
     }
     return {"figure": {"data": data, "layout": fig_layout}, "meta": meta}

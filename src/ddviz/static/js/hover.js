@@ -144,7 +144,8 @@ export function attachHover(gd, getMeta, legend, onTiming) {
   function showBox(meta, p, box, event) {
     const [level, series, n, low, q1, median, q3, high] = box;
     const x = meta.x_columns[meta.panels[p].x];
-    const lines = [`${x}: ${meta.axis_levels[x][level]}`];
+    // The one band is no column of the data.
+    const lines = meta.one_band ? [] : [`${x}: ${meta.axis_levels[x][level]}`];
     const shapes = meta.color.shapes;
     if (meta.color.column !== null && meta.color.kind !== "gradient") {
       lines.push(`${meta.color.column}: ${meta.series[Math.floor(series / shapes)]}`);

@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.server.figure import FRAME_COLOR, PAPER_COLOR, PLOT_COLOR, build_figure
 from ddviz.shared.manifest import IMAGES, PlotManifest
-from ddviz.shared.scatter import ScatterSpec, View
+from ddviz.shared.scatter import ONE_BAND, ScatterSpec, View
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
@@ -254,3 +256,53 @@ def test_box_plots_lie_in_the_meta_of_their_panels(
     first, second = meta["panels"][0], meta["panels"][1]
     assert first["facet"] != second["facet"]
     assert first["boxes"] != second["boxes"]
+
+
+def _one_band(spec: ScatterSpec, **changes: object) -> ScatterSpec:
+    """Return `spec` without an x column: y over the one band, with box plots and no facets."""
+    return replace(
+        spec,
+        files={**spec.files, ONE_BAND: []},
+        x=[ONE_BAND],
+        col=None,
+        categorical=[ONE_BAND],
+        hover=["y", "color", "facet"],
+        **{"box": True, **changes},
+    )
+
+
+@pytest.mark.parametrize(
+    ("changes", "ticks"),
+    [
+        ({}, ["a", "b", "c"]),
+        (
+            {"overlay": "facet"},
+            ["a / p", "a / q", "b / p", "b / q", "c / p", "c / q"],
+        ),
+        ({"color": None}, []),
+        ({"box": False}, []),
+    ],
+)
+def test_the_one_band_ticks_each_series_under_its_box(
+    tmp_path: Path, scatter_spec: ScatterSpec, changes: dict, ticks: list[str]
+) -> None:
+    """The one band names each box by its series, a color and an overlay level by both; without boxes or series it has no ticks."""
+    result = _figure(_one_band(scatter_spec, **changes), tmp_path / "task")
+    axis = result["figure"]["layout"]["xaxis"]
+    assert axis["range"] == [-0.5, 0.5]
+    assert axis["ticktext"] == ticks
+    slot = 0.8 / max(len(ticks), 1)
+    assert axis["tickvals"] == pytest.approx(
+        [-0.4 + slot * (s + 0.5) for s in range(len(ticks))]
+    )
+    meta = result["meta"]
+    assert meta["one_band"] is True
+    if changes.get("box", True):
+        assert {b[0] for b in meta["panels"][0]["boxes"]} == {0}
+
+
+def test_a_categorical_x_is_not_the_one_band(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """A graph with an x column says so in its meta."""
+    assert _figure(scatter_spec, tmp_path / "task")["meta"]["one_band"] is False
