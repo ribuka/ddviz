@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -176,3 +177,50 @@ def test_a_selection_without_points_takes_the_rows_in_the_box(
     ).height
     assert selected.selected_rows == expected
     assert selected.selected.height == 0
+
+
+@pytest.mark.parametrize(
+    "smoothing",
+    [Smoothing("gcv"), Smoothing("csaps"), Smoothing("csaps", p=0.5)],
+    ids=["gcv", "csaps-auto", "csaps-p"],
+)
+@pytest.mark.parametrize(
+    ("x", "w"),
+    [
+        (np.array([0, 0.4999999999, 0.5000000001, 1]), np.ones(4)),
+        (np.r_[np.linspace(0, 0.5, 30), 0.5 + 1e-7, np.linspace(0.6, 1, 30)], None),
+        (np.linspace(0, 1, 128), np.r_[1.0, np.full(126, 1e8), 1.0]),
+    ],
+    ids=["close-pair", "close-in-many", "tiny-weights"],
+)
+def test_splines_keep_a_straight_line(
+    x: np.ndarray, w: np.ndarray | None, smoothing: Smoothing
+) -> None:
+    """A straight line has no roughness and no residual: the splines keep it, even with points almost together or weights far apart."""
+    w = np.ones_like(x) if w is None else w
+    line = fit(x, 2 * x + 1, w, smoothing)
+    np.testing.assert_allclose(line, 2 * x + 1, atol=1e-6)
+
+
+def test_bins_on_either_side_of_a_border_keep_a_straight_line(
+    tmp_path: Path,
+) -> None:
+    """Rows a hair apart across a bin border are two bins whose line is still the rows' straight line."""
+    x = [0.0, 0.4999999999, 0.5000000001, 1.0]
+    path = tmp_path / "line.parquet"
+    pl.DataFrame({"x": x, "y": [2 * v + 1 for v in x]}).write_parquet(path)
+    spec = ScatterSpec(
+        files={c: [str(path)] for c in ["x", "y"]},
+        x=["x"],
+        y=["y"],
+        color=None,
+        row=None,
+        col=None,
+        width=400,
+        height=300,
+        hover=["x", "y"],
+        smooth=Smoothing("csaps", p=0.5),
+    )
+    ((_, _, _, xs, ys),) = aggregate(spec).smooths[0].lines
+    assert len(xs) == 4
+    np.testing.assert_allclose(ys, [2 * v + 1 for v in xs], atol=1e-6)

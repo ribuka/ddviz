@@ -27,6 +27,7 @@ of 1, so that a ``p`` means the same whatever the units and the rows.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 import polars as pl
@@ -38,7 +39,11 @@ SMOOTH_BINS = 128
 # Range of log10 of the penalty searched by generalized cross-validation,
 # with x scaled to [0, 1] and weights to a mean of 1.
 _GCV_LOG_RANGE = (-12.0, 4.0)
-_GCV_GRID = 65
+_GCV_GRID = 81
+# Penalties of the fine grid, over a step of the coarse grid on each side.
+_GCV_FINE = 41
+# Points of a spline closer than this, with x scaled to [0, 1], make one.
+_MERGE = 1e-6
 
 CELL = "__cell"
 SERIES = "__series"
@@ -48,75 +53,139 @@ _SX = "__sx"
 _SY = "__sy"
 
 
-def _basis(x: np.ndarray, w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Return the Demmler-Reinsch basis of the smoothing splines at weighted knots.
+@dataclass(frozen=True)
+class _Bands:
+    """The banded matrices of Reinsch's smoothing spline at weighted knots.
 
-    With ``K`` the matrix of the roughness penalty (``g @ K @ g`` is the
-    integral of the squared second derivative of the natural cubic spline
-    through the values ``g`` at the strictly increasing knots ``x``) and
-    ``W`` the diagonal of the weights, the eigenvectors ``U`` and eigenvalues
-    ``d`` of ``W^-1/2 K W^-1/2`` make the spline of any penalty ``lam``:
-    ``W^1/2 g = U diag(1 / (1 + lam d)) U.T W^1/2 y``.
-
-    Only `numpy.linalg.eigh` and products: on Windows, OpenBLAS's threads
-    made each `numpy.linalg.solve` of a 128-square matrix take about 0.2s,
-    against 0.1ms with one thread, while ``eigh`` took 2.6ms.
+    The spline through the values ``g`` at the strictly increasing knots
+    has the second derivatives ``gamma`` at the inner knots, with
+    ``Q.T g = R gamma``. For a penalty ``lam``, ``gamma`` solves
+    ``(R + lam Q.T W^-1 Q) gamma = Q.T y`` and ``g = y - lam W^-1 Q gamma``.
+    ``R`` and ``T = Q.T W^-1 Q`` are symmetric with 3 and 5 bands; the
+    columns of ``Q`` are ``q0``, ``q1``, ``q2`` on rows ``k``, ``k + 1``,
+    ``k + 2``.
     """
+
+    q0: np.ndarray
+    q1: np.ndarray
+    q2: np.ndarray
+    r: tuple[np.ndarray, np.ndarray]
+    t: tuple[np.ndarray, np.ndarray, np.ndarray]
+    v: np.ndarray
+    qty: np.ndarray
+
+
+def _bands(x: np.ndarray, w: np.ndarray, y: np.ndarray) -> _Bands:
+    """Return the banded matrices of the smoothing splines of y at weighted knots x."""
     h = np.diff(x)
-    n = x.size
-    q = np.zeros((n, n - 2))
-    r = np.zeros((n - 2, n - 2))
-    for k in range(n - 2):
-        q[k, k] = 1 / h[k]
-        q[k + 1, k] = -1 / h[k] - 1 / h[k + 1]
-        q[k + 2, k] = 1 / h[k + 1]
-        r[k, k] = (h[k] + h[k + 1]) / 3
-        if k + 1 < n - 2:
-            r[k, k + 1] = r[k + 1, k] = h[k + 1] / 6
-    # K = Q R^-1 Q.T, with R^-1 from its eigenvectors (R is positive definite).
-    e, v = np.linalg.eigh(r)
-    qv = (q / np.sqrt(w)[:, None]) @ v / np.sqrt(e)
-    d, u = np.linalg.eigh(qv @ qv.T)
-    # The straight lines have no roughness: the two smallest eigenvalues
-    # (eigh sorts them) are 0, which rounding would leave a little off.
-    d[:2] = 0.0
-    return d, u
+    q0, q2 = 1 / h[:-1], 1 / h[1:]
+    q1 = -q0 - q2
+    v = 1 / w
+    t0 = q0**2 * v[:-2] + q1**2 * v[1:-1] + q2**2 * v[2:]
+    t1 = q1[:-1] * q0[1:] * v[1:-2] + q2[:-1] * q1[1:] * v[2:-1]
+    t2 = q2[:-2] * q0[2:] * v[2:-2]
+    # The differences of the slopes keep a straight line's at about 0, as
+    # Q.T y summed term by term would not for knots close together.
+    slopes = np.diff(y) / h
+    return _Bands(
+        q0,
+        q1,
+        q2,
+        ((h[:-1] + h[1:]) / 3, h[1:-1] / 6),
+        (t0, t1, t2),
+        v,
+        np.diff(slopes),
+    )
 
 
-def _shrink(d: np.ndarray, lam: float) -> np.ndarray:
-    """Return the factor ``1 / (1 + lam d)`` of each eigenvector; an infinite penalty keeps only the straight lines."""
-    if math.isinf(lam):
-        return (d == 0).astype(float)
-    return 1 / (1 + lam * d)
+def _splines(
+    b: _Bands, y: np.ndarray, lams: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the fitted values of the smoothing spline of each penalty, and the trace of each hat matrix.
 
-
-def _gcv_lambda(d: np.ndarray, z: np.ndarray) -> float:
-    """Return the penalty with the least GCV score: the best of a grid, refined by golden-section search.
-
-    The score is ``n * RSS / (n - tr A)^2`` with the residuals weighted
-    (``RSS = sum((lam d / (1 + lam d))^2 z^2)``, ``z = U.T W^1/2 y``), and
-    ``tr A = sum(1 / (1 + lam d))``.
+    Factors ``M = R + lam T = L D L.T`` (L unit lower, 2 bands) for all the
+    penalties at once, one knot after another. The trace of the hat matrix
+    ``A`` is ``n - lam tr(M^-1 T)``, from the central 5 bands of ``M^-1``
+    (Hutchinson and de Hoog, 1985). No LAPACK: on Windows, OpenBLAS's
+    threads made each `numpy.linalg.solve` of a 128-square matrix take
+    about 0.2s.
     """
-    n = d.size
+    m = b.qty.size
+    lam = lams[:, None]
+    a0 = b.r[0] + lam * b.t[0]
+    a1 = b.r[1] + lam * b.t[1]
+    a2 = lam * b.t[2]
+    shape = (lams.size, m)
+    d, l1, l2 = np.zeros(shape), np.zeros(shape), np.zeros(shape)
+    for k in range(m):
+        d[:, k] = a0[:, k]
+        if k >= 1:
+            d[:, k] -= l1[:, k - 1] ** 2 * d[:, k - 1]
+        if k >= 2:
+            d[:, k] -= l2[:, k - 2] ** 2 * d[:, k - 2]
+        if k + 1 < m:
+            l1[:, k] = a1[:, k]
+            if k >= 1:
+                l1[:, k] -= l1[:, k - 1] * d[:, k - 1] * l2[:, k - 1]
+            l1[:, k] /= d[:, k]
+        if k + 2 < m:
+            l2[:, k] = a2[:, k] / d[:, k]
+    z = np.zeros(shape)
+    for k in range(m):
+        z[:, k] = b.qty[k]
+        if k >= 1:
+            z[:, k] -= l1[:, k - 1] * z[:, k - 1]
+        if k >= 2:
+            z[:, k] -= l2[:, k - 2] * z[:, k - 2]
+    z /= d
+    gamma = np.zeros((lams.size, m + 2))
+    # Central bands of M^-1, padded with zeros past the last knot.
+    b0, b1, b2 = (
+        np.zeros((lams.size, m + 2)),
+        np.zeros((lams.size, m + 2)),
+        np.zeros((lams.size, m + 2)),
+    )
+    for k in range(m - 1, -1, -1):
+        gamma[:, k] = z[:, k] - l1[:, k] * gamma[:, k + 1] - l2[:, k] * gamma[:, k + 2]
+        b1[:, k] = -(l1[:, k] * b0[:, k + 1] + l2[:, k] * b1[:, k + 1])
+        b2[:, k] = -(l1[:, k] * b1[:, k + 1] + l2[:, k] * b0[:, k + 2])
+        b0[:, k] = 1 / d[:, k] - l1[:, k] * b1[:, k] - l2[:, k] * b2[:, k]
+    gamma = gamma[:, :m]
+    q_gamma = np.zeros((lams.size, m + 2))
+    q_gamma[:, :m] += b.q0 * gamma
+    q_gamma[:, 1 : m + 1] += b.q1 * gamma
+    q_gamma[:, 2:] += b.q2 * gamma
+    fitted = y - lam * b.v * q_gamma
+    t0, t1, t2 = b.t
+    trace = (
+        (b0[:, :m] * t0).sum(axis=1)
+        + 2 * (b1[:, : m - 1] * t1).sum(axis=1)
+        + 2 * (b2[:, : max(m - 2, 0)] * t2).sum(axis=1)
+    )
+    return fitted, y.size - lams * trace
 
-    def score(log_lam: np.ndarray) -> np.ndarray:
-        shrink = 1 / (1 + np.multiply.outer(10.0**log_lam, d))
-        rss = ((1 - shrink) ** 2 * z**2).sum(axis=-1)
-        return n * rss / (n - shrink.sum(axis=-1)) ** 2
 
-    grid = np.linspace(*_GCV_LOG_RANGE, _GCV_GRID)
-    best = int(np.argmin(score(grid)))
-    lo = grid[max(best - 1, 0)]
-    hi = grid[min(best + 1, grid.size - 1)]
-    ratio = (math.sqrt(5) - 1) / 2
-    for _ in range(40):
-        a = hi - ratio * (hi - lo)
-        b = lo + ratio * (hi - lo)
-        if score(np.array(a)) < score(np.array(b)):
-            hi = b
-        else:
-            lo = a
-    return 10 ** ((lo + hi) / 2)
+def _gcv_lambda(b: _Bands, y: np.ndarray, w: np.ndarray) -> float:
+    """Return the penalty with the least GCV score, ``n * RSS / (n - tr A)^2`` with the residuals weighted: the best of a coarse grid, then of a fine one around it."""
+    n = y.size
+
+    def best(log_lams: np.ndarray) -> float:
+        fitted, trace = _splines(b, y, 10.0**log_lams)
+        rss = ((y - fitted) ** 2 * w).sum(axis=1)
+        return float(log_lams[np.argmin(n * rss / (n - trace) ** 2)])
+
+    coarse = np.linspace(*_GCV_LOG_RANGE, _GCV_GRID)
+    step = coarse[1] - coarse[0]
+    middle = best(coarse)
+    return 10 ** best(np.linspace(middle - step, middle + step, _GCV_FINE))
+
+
+def _line(x: np.ndarray, y: np.ndarray, w: np.ndarray) -> np.ndarray:
+    """Return the weighted least-squares line's values at x."""
+    mx, my = w @ x / w.sum(), w @ y / w.sum()
+    sxx = w @ (x - mx) ** 2
+    slope = 0.0 if sxx <= 0 else float(w @ ((x - mx) * (y - my)) / sxx)
+    return my + slope * (x - mx)
 
 
 def _csaps_p(w: np.ndarray, x: np.ndarray) -> float:
@@ -184,16 +253,34 @@ def fit(
     if smoothing.method == "lowess":
         return _lowess(x, y, w, smoothing.frac)
     xs = (x - x[0]) / (x[-1] - x[0])
+    # Points closer than `_MERGE` make one, their weighted mean, which the
+    # line's value there stands for: the factorization of the splines lost
+    # its precision (gave NaN) for points 1e-8 of the range apart, but kept
+    # a straight line to 1e-15 for points 1e-6 apart.
+    group = np.r_[0, np.cumsum(np.diff(xs) >= _MERGE)]
+    if group[-1] + 1 == xs.size:
+        return _spline(xs, y, w, smoothing)
+    sw = np.bincount(group, w)
+    merged = np.bincount(group, w * xs) / sw, np.bincount(group, w * y) / sw
+    return _spline(*merged, sw, smoothing)[group]
+
+
+def _spline(
+    x: np.ndarray, y: np.ndarray, w: np.ndarray, smoothing: Smoothing
+) -> np.ndarray:
+    """Return the values of a smoothing spline (``"gcv"`` or ``"csaps"``) at weighted points x in [0, 1]; with fewer than three points, y itself."""
+    if x.size < 3:
+        return y.astype(float)
     ws = w / w.mean()
-    d, u = _basis(xs, ws)
-    root = np.sqrt(ws)
-    z = u.T @ (root * y)
+    bands = _bands(x, ws, y)
     if smoothing.method == "gcv":
-        lam = _gcv_lambda(d, z)
+        lam = _gcv_lambda(bands, y, ws)
     else:
-        p = _csaps_p(ws, xs) if smoothing.p is None else smoothing.p
-        lam = math.inf if p <= 0 else (1 - p) / p
-    return u @ (_shrink(d, lam) * z) / root
+        p = _csaps_p(ws, x) if smoothing.p is None else smoothing.p
+        if p <= 0:
+            return _line(x, y, ws)
+        lam = (1 - p) / p
+    return _splines(bands, y, np.array([lam]))[0][0]
 
 
 def bin_query(
