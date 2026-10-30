@@ -1,9 +1,9 @@
-"""Share of non-null values per column, from the statistics in the Parquet footer.
+"""Non-null values per column, from the statistics in the Parquet footer.
 
 No data is read: each column chunk's statistics hold its null count. polars
 has no API for them (a null count over a column reads all its data), so the
 footer is read with pyarrow. A column without a null count in every chunk,
-or a nested one, gets no share.
+or a nested one, gets no count.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ import gc
 import pyarrow.parquet as pq
 
 
-def nonnull_shares(paths: list[str], names: list[str]) -> list[float | None]:
-    """Return the share of non-null values of each column over files read as one table.
+def nonnull_counts(paths: list[str], names: list[str]) -> tuple[list[int | None], int]:
+    """Return the non-null values of each column over files read as one table.
 
     The footers are read one after another, so that only one is in memory.
 
@@ -27,10 +27,11 @@ def nonnull_shares(paths: list[str], names: list[str]) -> list[float | None]:
 
     Returns
     -------
-    list of float or None
-        Per name, the non-null values over the rows, from 0 to 1; None for a
-        column some chunk of which has no null count, a nested column, or
-        files without rows.
+    counts : list of int or None
+        Per name, the rows with a value; None for a column some chunk of
+        which has no null count, a nested column, or files without rows.
+    rows : int
+        The rows of all files.
     """
     values: dict[str, int | None] = dict.fromkeys(names, 0)
     rows = 0
@@ -76,7 +77,4 @@ def nonnull_shares(paths: list[str], names: list[str]) -> list[float | None]:
         # 100k column chunks peaked at 939MiB, against 180MiB for one.
         del metadata, schema
         gc.collect()
-    return [
-        None if value is None or rows == 0 else value / rows
-        for value in values.values()
-    ]
+    return [None if rows == 0 else value for value in values.values()], rows

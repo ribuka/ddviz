@@ -11,7 +11,7 @@ def search_columns(
     query: str,
     kind: str | None,
     limit: int,
-    shares: list[float | None] | None = None,
+    nonnull: dict | None = None,
     min_share: float | None = None,
     order: str = "file",
 ) -> dict:
@@ -19,8 +19,10 @@ def search_columns(
 
     Words are separated by white space and matched case-insensitively, in any
     order. The page shows only the first `limit` matches, with their count.
-    A column whose share of non-null values is unknown passes `min_share`
-    and comes last in the order of shares.
+    Filters and order use the share of non-null values: every column shares
+    the rows of the whole input, so it ranks and bounds the columns as their
+    counts do. A column whose count is unknown passes `min_share` and comes
+    last in the order of shares.
 
     Parameters
     ----------
@@ -32,9 +34,10 @@ def search_columns(
         ``"numeric"`` or ``"categorical"`` to keep only that kind, or None.
     limit : int
         Largest number of columns to return.
-    shares : list of float or None, optional
-        Share of non-null values per column (`ddviz.compute.nonnull`), None for
-        unknown; without it, every share is unknown.
+    nonnull : dict, optional
+        ``{"counts", "rows"}`` (`ddviz.compute.nonnull`): the non-null values
+        per column, None for unknown, and the rows of the input; without it,
+        every count is unknown.
     min_share : float, optional
         Keep only the columns with at least this share; 0 is taken as more
         than 0, so that it drops the columns of nulls only.
@@ -44,9 +47,10 @@ def search_columns(
     Returns
     -------
     dict
-        ``{"total", "matched", "columns"}``: the number of columns, the
-        number of matches and the first `limit` matches, each with its
-        ``"nonnull"`` share.
+        ``{"total", "matched", "rows", "columns"}``: the number of columns,
+        the number of matches, the rows of the input (None without
+        `nonnull`) and the first `limit` matches, each with its ``"nonnull"``
+        count and ``"share"``.
 
     Raises
     ------
@@ -58,8 +62,12 @@ def search_columns(
     if order not in ORDERS:
         raise ValueError(f"unknown order: {order}")
     words = query.casefold().split()
-    if shares is None:
-        shares = [None] * len(columns)
+    if nonnull is None:
+        counts = [None] * len(columns)
+    else:
+        counts = nonnull["counts"]
+    # A known count implies rows: `nonnull_counts` gives none without rows.
+    shares = [None if c is None else c / nonnull["rows"] for c in counts]
     found = []
     for i, column in enumerate(columns):
         if kind is not None and column["numeric"] != (kind == "numeric"):
@@ -80,5 +88,9 @@ def search_columns(
     return {
         "total": len(columns),
         "matched": len(found),
-        "columns": [{**columns[i], "nonnull": shares[i]} for i in found[:limit]],
+        "rows": None if nonnull is None else nonnull["rows"],
+        "columns": [
+            {**columns[i], "nonnull": counts[i], "share": shares[i]}
+            for i in found[:limit]
+        ],
     }

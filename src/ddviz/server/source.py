@@ -80,10 +80,10 @@ class Source:
         self.casts: list[dict] = []
         self._dtypes: dict[str, str] = {}
         self.cache: ColumnCache | None = None
-        # Share of non-null values per column (`ddviz.compute.nonnull`),
-        # measured after Load; "pending" until then, "failed" when the task
-        # failed.
-        self.shares: list | None = None
+        # Non-null values per column and the rows, ``{"counts", "rows"}``
+        # (`ddviz.compute.nonnull`), measured after Load; "pending" until
+        # then, "failed" when the task failed.
+        self.nonnull: dict | None = None
         self.shares_state = "pending"
         self._shares_task: asyncio.Task | None = None
         # True while a conversion for a plot runs; plots are refused meanwhile.
@@ -127,7 +127,7 @@ class Source:
             self._schema = found["columns"]
             stored = self.cache.dir / NONNULL
             if stored.exists():
-                self.shares = json.loads(stored.read_text(encoding="utf-8"))
+                self.nonnull = json.loads(stored.read_text(encoding="utf-8"))
                 self.shares_state = "done"
             else:
                 self._shares_task = asyncio.create_task(self._measure_shares())
@@ -187,7 +187,7 @@ class Source:
         evict(self._cache_root, limits.max_bytes, limits.max_unused_days, keep)
 
     async def _measure_shares(self) -> None:
-        """Measure the share of non-null values of each column after Load and keep it in the cache.
+        """Count the non-null values of each column after Load and keep them in the cache.
 
         The task runs in the summary pool, under its lock, since a new task
         in a pool kills the running one.
@@ -200,9 +200,10 @@ class Source:
             self.shares_state = "failed"
             end.discard()
             return
-        shares = end.take()["shares"]
-        _write_json(self.cache.dir / NONNULL, shares)
-        self.shares = shares
+        manifest = end.take()
+        nonnull = {k: manifest[k] for k in ("counts", "rows")}
+        _write_json(self.cache.dir / NONNULL, nonnull)
+        self.nonnull = nonnull
         self.shares_state = "done"
 
     async def convert(self, columns: list[str], pool: Pool = "plot") -> None:

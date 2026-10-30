@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -86,6 +87,24 @@ def test_schema_and_columns(client: TestClient) -> None:
     found = client.get("/api/columns", params={"q": "co"}).json()
     assert "color" in [c["name"] for c in found["columns"]]
     assert found["shares"] in ("pending", "done")
+
+
+def test_columns_carry_their_non_null_rows(
+    client: TestClient, scatter_frame: pl.DataFrame
+) -> None:
+    """Once counted after Load, each column carries its rows with a value and their share."""
+    deadline = time.monotonic() + 30
+    found = client.get("/api/columns").json()
+    while found["shares"] == "pending" and time.monotonic() < deadline:
+        time.sleep(0.1)
+        found = client.get("/api/columns").json()
+    assert found["shares"] == "done"
+    rows = scatter_frame.height
+    assert found["rows"] == rows
+    counts = {c: rows - scatter_frame[c].null_count() for c in scatter_frame.columns}
+    for column in found["columns"]:
+        assert column["nonnull"] == counts[column["name"]]
+        assert column["share"] == counts[column["name"]] / rows
 
 
 def test_plot_draws_and_serves_images(client: TestClient) -> None:
