@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -140,17 +141,29 @@ def test_without_room_for_the_axes_no_hover_files_are_written(
     index.close()
 
 
-def _overlay_index(points: list[tuple[int, int, int]]) -> HoverIndex:
-    """Return an index of one panel of 30 x 20 bins, one color and two overlay levels (a circle and a square of 7px), with a row per point ``(series, bx, by)``."""
+def _overlay_index(
+    points: list[tuple[int, int, int]], colors: list[float] | None = None
+) -> HoverIndex:
+    """Return an index of one panel of 30 x 20 bins, one color and two overlay levels (a circle and a square of 7px).
+
+    Each point ``(series, bx, by)`` is a bin of one row, whose index is the
+    point's position in `points`; with `colors`, a gradient over [0, 1]
+    colors them.
+    """
     index = HoverIndex.__new__(HoverIndex)
     index.grid = BinGrid(n_panels=1, n_series=2, width=30, height=20)
-    keys = np.array(sorted(index.grid.pack(0, s, by, bx) for s, bx, by in points))
-    index._keys = keys
-    index._count = np.ones(len(keys), dtype=np.uint32)
-    index._index = np.arange(len(keys), dtype=np.int64)
-    index._occupancy = occupancy(keys, index.grid)
+    packed = [index.grid.pack(0, s, by, bx) for s, bx, by in points]
+    order = np.argsort(packed)
+    index._keys = np.array(packed)[order]
+    index._count = np.ones(len(points), dtype=np.uint32)
+    index._index = order.astype(np.int64)
+    index._occupancy = occupancy(index._keys, index.grid)
     index._columns = []
     index._shapes = [kernel(i, 7)[::-1] for i in range(2)]
+    index._color = None
+    if colors is not None:
+        index.manifest = SimpleNamespace(color_range=[0.0, 1.0])
+        index._color = np.array(colors)[order]
     return index
 
 
@@ -166,3 +179,16 @@ def test_lookup_finds_the_topmost_marker_shape_over_the_cursor() -> None:
     # Inside the square's outline, no shape covers the cursor: the nearest point answers.
     hit = index.lookup(0, 12.5, 10.5, 1.0, 1.0, [1, 0])
     assert (hit["bx"], hit["by"]) == (13, 10)
+
+
+def test_lookup_of_overlapping_shapes_of_one_series_finds_the_one_drawn() -> None:
+    """Of one series, a point's own bin shows over a neighbor's shape, and else a gradient's larger gray does."""
+    index = _overlay_index([(1, 10, 10), (1, 13, 10)], colors=[0.8, 0.04])
+    hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])
+    assert (hit["row"], hit["bx"]) == (0, 10)
+    # Two squares cover the empty bin (10, 10): the larger gray shows there.
+    index = _overlay_index([(1, 7, 10), (1, 13, 10)], colors=[0.8, 0.04])
+    hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])
+    assert (hit["row"], hit["bx"]) == (0, 7)
+    index = _overlay_index([(1, 7, 10), (1, 13, 10)], colors=[0.04, 0.8])
+    assert index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])["row"] == 1

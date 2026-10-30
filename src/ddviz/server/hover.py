@@ -53,11 +53,19 @@ class HoverIndex:
             self._shapes = [
                 kernel(i, spec.shape_size)[::-1] for i in range(len(levels))
             ]
+        # A gradient's color values, whose grays decide which of a series'
+        # overlapping shapes shows; None without them in the hover files.
+        self._color = None
+        if spec.gradient:
+            self._color = next(
+                (a for name, a, _ in self._columns if name == spec.color), None
+            )
 
     def close(self) -> None:
         """Drop the memory maps, so that the files can be deleted."""
         self._keys = self._count = self._index = self._occupancy = None
         self._columns = []
+        self._color = None
 
     def _series_at(self, panel: int, by: int, bx: int) -> dict[int, int]:
         """Return the position of the key of each series with rows at an occupied pixel."""
@@ -75,8 +83,10 @@ class HoverIndex:
         """Return the bin and series of the topmost marker shape that covers the cursor's bin, or None.
 
         Of the series whose shapes cover it, the first in `order` (else the
-        last series) wins, and of its bins, the one whose row has the largest
-        index.
+        last series) wins, and of its bins, the one drawn there
+        (`ddviz.compute.shapes.spread`): the cursor's own bin, else for a
+        gradient the one of the largest gray; then the one whose row has the
+        largest index.
         """
         grid = self.grid
         cx, cy = math.floor(fx), math.floor(fy)
@@ -97,11 +107,23 @@ class HoverIndex:
                     continue
                 score = (
                     -rank.get(s, len(order) + grid.n_series - s),
+                    own,
+                    self._gray(i),
                     int(self._index[i]),
                 )
                 if best is None or score > best[0]:
                     best = (score, bx, by, s)
         return None if best is None else best[1:]
+
+    def _gray(self, i: int) -> int:
+        """Return the gray a gradient's bin is drawn in (`ddviz.compute.tasks.images.write_gradient`), or 0."""
+        if self._color is None:
+            return 0
+        lo, hi = self.manifest.color_range
+        if hi <= lo:
+            return 128
+        scaled = min(max((float(self._color[i]) - lo) / (hi - lo), 0.0), 1.0)
+        return 1 + int(np.rint(scaled * 254))
 
     def _nearest_pixel(
         self, panel: int, fx: float, fy: float, sx: float, sy: float
