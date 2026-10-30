@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -12,7 +13,7 @@ from ddviz.compute import boxes
 from ddviz.compute.aggregate import COUNT, INDEX, aggregate
 from ddviz.compute.boxes import GROUP, VALUE, box_stats
 from ddviz.compute.selection import selection_filter
-from ddviz.shared.scatter import ScatterSpec, Selection, View
+from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
 
 
 def _expected(values: np.ndarray) -> list[float]:
@@ -37,9 +38,7 @@ def _groups(n: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
 
 
 @pytest.mark.parametrize("cell_rows", [boxes.CELL_ROWS, 5])
-def test_box_stats_match_numpy(
-    monkeypatch: pytest.MonkeyPatch, cell_rows: int
-) -> None:
+def test_box_stats_match_numpy(monkeypatch: pytest.MonkeyPatch, cell_rows: int) -> None:
     """The quartiles are exact, also when a group's values gather in one cell and its cells are cut again."""
     monkeypatch.setattr(boxes, "CELL_ROWS", cell_rows)
     group, value = _groups(5000)
@@ -164,3 +163,37 @@ def test_a_selection_without_points_takes_the_rows_of_the_bands_it_covers(
     assert found[INDEX].to_list() == expected[INDEX].to_list()
     agg = aggregate(spec, selection_only=True)
     assert agg.selected_rows == expected.height
+
+
+def test_box_plots_follow_a_filter_that_drops_facet_levels(
+    box_spec: ScatterSpec, scatter_frame: pl.DataFrame
+) -> None:
+    """A filter that leaves a Group X level without rows drops its panel; the other's outliers are found."""
+    spec = replace(
+        box_spec,
+        x=["color"],
+        col="facet",
+        color=None,
+        categorical=["color"],
+        filters=[Filter(column="facet", levels=["p"])],
+    )
+    agg = aggregate(spec)
+    assert agg.levels["col"] == ["p"]
+    (pair,) = agg.boxes
+    assert {tuple(b[:4]) for b in pair.stats} == {(0, 0, i, 0) for i in range(3)}
+    assert agg.bins[COUNT].sum() > 0
+
+
+def test_box_plots_without_series_draw_nothing(
+    box_spec: ScatterSpec, tmp_path: Path, scatter_frame: pl.DataFrame
+) -> None:
+    """A color column with no values makes no series: no boxes and no outliers, and no error."""
+    path = tmp_path / "nulls.parquet"
+    scatter_frame.with_columns(pl.lit(None, pl.String).alias("color")).write_parquet(
+        path
+    )
+    spec = replace(box_spec, files={**box_spec.files, "color": [str(path)]})
+    agg = aggregate(spec)
+    assert agg.grid.n_series == 0
+    assert agg.boxes[0].stats == []
+    assert agg.bins.height == 0

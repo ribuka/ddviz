@@ -64,7 +64,8 @@ def slot_center(series: pl.Expr | int, n_series: int) -> pl.Expr | float:
     polars.Expr or float
         The offset along the axis.
     """
-    slot = 2 * BAND / n_series
+    # Without series, no row is drawn; the slot only has to exist.
+    slot = 2 * BAND / max(n_series, 1)
     return -BAND + slot * (series + 0.5)
 
 
@@ -91,7 +92,7 @@ def outlier_position(
     polars.Expr
         The position as Float64.
     """
-    slot = 2 * BAND / n_series
+    slot = 2 * BAND / max(n_series, 1)
     center = level_index(x, levels).cast(pl.Float64)
     return center + slot_center(series, n_series) + slot * OUTLIER_SPREAD * jitter
 

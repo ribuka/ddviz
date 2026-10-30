@@ -46,6 +46,9 @@ from ddviz.shared.scatter import Boxes, ScatterSpec, Spread
 KEY = "__key"
 COUNT = "__n"
 INDEX = "__idx"
+# Whether a row is an outlier of its box plot, or any row of a pair whose
+# panels draw points.
+_OUTLIER = "__outlier"
 
 # Margin added on each side of the data range, as a fraction of the range.
 RANGE_PADDING = 0.02
@@ -494,6 +497,7 @@ def aggregate(
     ) -> pl.LazyFrame:
         """Return the bins of the panels of one pair of axis columns, of the rows `extra` keeps."""
         x_col, y_col = spec.x[xi], spec.y[yj]
+        outlier = pl.lit(True)
         if spec.draws_points(x_col, y_col):
             x, y = pair_positions(
                 x_col,
@@ -516,7 +520,7 @@ def aggregate(
             n_groups = len(levels["row"]) * len(levels["col"])
             n_groups *= len(axis_levels[x_col]) * grid.n_series
             stats = _group_stats(boxes_of[x_col, y_col], levels, axis_levels, grid)
-            extra = [*extra, is_outlier(y, group(x_col), fences(stats, n_groups))]
+            outlier = is_outlier(y, group(x_col), fences(stats, n_groups))
         key = grid.pack(
             axes.panel(row, col, xi, yj),
             series,
@@ -533,7 +537,10 @@ def aggregate(
                 *valid,
                 *extra,
             )
-            .select(key.alias(KEY), pl.col(INDEX))
+            # The group, like the key, reads the drawn facet levels: only the
+            # rows kept above have one.
+            .select(key.alias(KEY), pl.col(INDEX), outlier.alias(_OUTLIER))
+            .filter(pl.col(_OUTLIER))
             .group_by(KEY)
             .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
         )
