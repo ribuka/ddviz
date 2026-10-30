@@ -757,6 +757,8 @@ function clearPlot() {
   clearSelection();
   generation++;
   plotting = 0;
+  // A new cutting or number to a row has no graph to plot again.
+  plottedEncoding = null;
   setPending(false);
   hideHover();
   Plotly.purge(gd);

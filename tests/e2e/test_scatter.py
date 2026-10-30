@@ -87,3 +87,12 @@ def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:
         }"""
     )
     expect(labels).to_have_text(["a", "b", "c"])
+
+    # Without X, a new number to a row draws nothing.
+    page.locator('.zone[data-role="x"] .chip-remove').click()
+    expect(page.locator("#empty")).to_be_visible()
+    wrap.locator(".wrap-cols").fill("2")
+    wrap.locator(".wrap-cols").press("Enter")
+    page.wait_for_timeout(1000)
+    expect(page.locator("#empty")).to_be_visible()
+    expect(labels).to_have_count(0)
