@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 
 from ddviz.compute.aggregate import COUNT, INDEX, KEY, aggregate
+from ddviz.compute.hoverfit import fit_hover
 from ddviz.compute.progress import Emit
 from ddviz.compute.raster import masks, occupancy
 from ddviz.compute.tasks.images import write_gradient, write_images
@@ -30,8 +31,17 @@ def _column_array(series: pl.Series) -> tuple[np.ndarray, list | None]:
     return codes.to_numpy(), labels.to_list()
 
 
+def _column_bytes(dtype: pl.DataType) -> int:
+    """Return the bytes per bin of a hover column as `_column_array` writes it."""
+    return 8 if dtype.is_numeric() else 4
+
+
 def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     """Aggregate a scatter plot and write its series images and hover files.
+
+    The hover files keep within ``spec.hover_bytes`` (`ddviz.compute.hoverfit`):
+    columns off the axes are left out, or all the files when even the axis
+    columns do not fit.
 
     Parameters
     ----------
@@ -43,21 +53,11 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         Receives progress messages.
     """
     agg = aggregate(spec, lambda stage: emit({"type": "progress", "stage": stage}))
-    emit({"type": "progress", "stage": "write"})
     bins = agg.bins
     keys = bins[KEY].to_numpy()
-    np.save(out / "keys.npy", keys)
-    np.save(out / "count.npy", bins[COUNT].cast(pl.UInt32).to_numpy())
-    np.save(out / "index.npy", bins[INDEX].cast(pl.Int64).to_numpy())
-    columns = []
-    for i, name in enumerate(dict.fromkeys(spec.hover)):
-        array, labels = _column_array(bins[name])
-        np.save(out / f"col{i}.npy", array)
-        columns.append(HoverColumn(name, f"col{i}.npy", labels))
-
     emit({"type": "progress", "stage": "raster"})
     bin_masks = masks(keys, agg.grid)
-    np.save(out / "occupancy.npy", occupancy(bin_masks))
+    bitmask = occupancy(bin_masks)
     colors = [series_color(spec.colors, s) for s in range(agg.grid.n_series)]
     if spec.gradient:
         images = write_gradient(
@@ -65,6 +65,28 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         )
     else:
         images = write_images(out, bin_masks, agg.layout.ncol, colors)
+
+    emit({"type": "progress", "stage": "write"})
+    hover = list(dict.fromkeys(spec.hover))
+    sizes = {name: _column_bytes(bins[name].dtype) for name in hover}
+    kept = fit_hover(
+        sizes, [*spec.x, *spec.y], len(bins), bitmask.nbytes, spec.hover_bytes
+    )
+    columns = []
+    files = []
+    if kept is not None:
+        arrays = {
+            "keys.npy": keys,
+            "count.npy": bins[COUNT].cast(pl.UInt32).to_numpy(),
+            "index.npy": bins[INDEX].cast(pl.Int64).to_numpy(),
+            "occupancy.npy": bitmask,
+        }
+        for i, name in enumerate(kept):
+            arrays[f"col{i}.npy"], labels = _column_array(bins[name])
+            columns.append(HoverColumn(name, f"col{i}.npy", labels))
+        for file, array in arrays.items():
+            np.save(out / file, array)
+            files.append(out / file)
 
     PlotManifest(
         spec=spec,
@@ -81,6 +103,9 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         columns=columns,
         images=images,
         rows=int(bins[COUNT].sum()),
+        hover_files=kept is not None,
+        hover_dropped=[c for c in hover if kept is None or c not in kept],
+        hover_bytes=sum(f.stat().st_size for f in files),
     ).write(out)
 
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from ddviz.shared.keys import BinGrid
@@ -108,6 +108,13 @@ class PlotManifest:
         (`IMAGES`), or None for a series without bins.
     rows : int
         Number of rows drawn.
+    hover_files : bool
+        Whether the hover files were written; not when even the axis columns
+        passed ``spec.hover_bytes``.
+    hover_dropped : list of str
+        Hover columns of the spec left out to keep within ``spec.hover_bytes``.
+    hover_bytes : int
+        Bytes of the hover files written.
     """
 
     spec: ScatterSpec
@@ -124,6 +131,9 @@ class PlotManifest:
     columns: list[HoverColumn]
     images: list[list[int] | None]
     rows: int
+    hover_files: bool = True
+    hover_dropped: list[str] = field(default_factory=list)
+    hover_bytes: int = 0
 
     def write(self, out: Path) -> None:
         """Write the manifest into a task's directory (`write_manifest`)."""
@@ -160,6 +170,9 @@ class PlotManifest:
             columns=[HoverColumn(**c) for c in data["columns"]],
             images=data["images"],
             rows=data["rows"],
+            hover_files=data["hover_files"],
+            hover_dropped=data["hover_dropped"],
+            hover_bytes=data["hover_bytes"],
         )
 
 

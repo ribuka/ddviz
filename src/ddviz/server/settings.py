@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -40,6 +41,20 @@ class PlotSettings:
 
 
 @dataclass(frozen=True)
+class HoverSettings:
+    """Limits of the hover files.
+
+    Parameters
+    ----------
+    max_temp_bytes : int
+        Most bytes the hover files of the open results (the overview and the
+        view) take together in the temporary folder.
+    """
+
+    max_temp_bytes: int = 2 * 2**30
+
+
+@dataclass(frozen=True)
 class Settings:
     """All settings of ddviz.
 
@@ -49,10 +64,13 @@ class Settings:
         Limits of the column cache.
     plot : PlotSettings
         Limits of a plot.
+    hover : HoverSettings
+        Limits of the hover files.
     """
 
     cache: CacheSettings = CacheSettings()
     plot: PlotSettings = PlotSettings()
+    hover: HoverSettings = HoverSettings()
 
 
 def settings_path() -> Path:
@@ -86,7 +104,8 @@ def load_settings(path: Path | None = None) -> Settings:
     Raises
     ------
     ValueError
-        When ``plot.max_levels`` is not a positive integer.
+        When ``plot.max_levels`` is not a positive integer, or
+        ``hover.max_temp_gb`` is not a positive number.
     """
     path = path or settings_path()
     data = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -99,6 +118,14 @@ def load_settings(path: Path | None = None) -> Settings:
         or max_levels < 1
     ):
         raise ValueError(f"plot.max_levels needs a positive integer: {max_levels!r}")
+    hover = data.get("hover", {})
+    max_temp_gb = hover.get("max_temp_gb")
+    if max_temp_gb is not None and (
+        isinstance(max_temp_gb, bool)
+        or not isinstance(max_temp_gb, int | float)
+        or not 0 < max_temp_gb < math.inf
+    ):
+        raise ValueError(f"hover.max_temp_gb needs a positive number: {max_temp_gb!r}")
     return Settings(
         cache=CacheSettings(
             max_bytes=int(cache["max_gb"] * 2**30)
@@ -109,4 +136,7 @@ def load_settings(path: Path | None = None) -> Settings:
             ),
         ),
         plot=PlotSettings(max_levels=max_levels),
+        hover=HoverSettings()
+        if max_temp_gb is None
+        else HoverSettings(max_temp_bytes=int(max_temp_gb * 2**30)),
     )

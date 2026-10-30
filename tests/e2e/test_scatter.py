@@ -48,6 +48,8 @@ def test_a_scatter_plot_draws_and_hovers(
 
     pixel = page.wait_for_function(PAINTED_PIXEL).json_value()
     expect(page.locator("#empty")).to_be_hidden()
+    # The default limit of the hover files leaves every column in.
+    expect(page.locator("#hover-warning")).to_be_hidden()
 
     page.mouse.move(pixel["x"], pixel["y"])
     label = page.locator("#hover-label")

@@ -1,5 +1,10 @@
 """Routes that draw: a plot, its zoomed view, its overview at another size, and hovers.
 
+The hover files of the open results (the overview and the view) keep
+within ``max_hover_bytes`` together: a new result gets what the one kept
+beside it leaves (`ddviz.compute.hoverfit`), and its figure tells the page
+which hover columns were left out.
+
 Every plot, view and overview request carries the conditions of the local
 filter (`ddviz.server.plan.parse_filters`); the result's spec keeps them, so
 the selection and the table of a result follow its filter.
@@ -11,7 +16,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -33,7 +38,11 @@ from ddviz.shared.tasks import PlotTask
 
 
 def plot_router(
-    source: Source, results: Results, broker: TaskBroker, max_levels: int
+    source: Source,
+    results: Results,
+    broker: TaskBroker,
+    max_levels: int,
+    max_hover_bytes: int,
 ) -> APIRouter:
     """Return the routes that draw.
 
@@ -47,6 +56,8 @@ def plot_router(
         Runs the plot tasks.
     max_levels : int
         Most levels a categorical color, Group X or Group Y column may have.
+    max_hover_bytes : int
+        Most bytes the hover files of the overview and the view take together.
 
     Returns
     -------
@@ -55,8 +66,12 @@ def plot_router(
     """
     router = APIRouter()
 
-    async def run_plot(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
-        """Run a plot task; return its opened result, or None when a newer task killed it."""
+    async def run_plot(
+        spec: ScatterSpec, kept: HoverIndex | None
+    ) -> tuple[HoverIndex | None, dict]:
+        """Run a plot task beside the result `kept` open; return its result, or None when a newer task killed it."""
+        used = kept.manifest.hover_bytes if kept is not None else 0
+        spec = replace(spec, hover_bytes=max(max_hover_bytes - used, 0))
         started = time.perf_counter()
         end = await broker.run(PlotTask(spec))
         if end.type == "cancelled":
@@ -67,10 +82,12 @@ def plot_router(
         index = await asyncio.to_thread(HoverIndex, end.out)
         return index, timing
 
-    async def run_again(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
+    async def run_again(
+        spec: ScatterSpec, kept: HoverIndex | None
+    ) -> tuple[HoverIndex | None, dict]:
         """Run a plot task of the current plot; None when it was cancelled or the plot changed."""
         plot_id = results.plot_id
-        index, timing = await run_plot(spec)
+        index, timing = await run_plot(spec, kept)
         if index is None or results.plot_id != plot_id:
             drop(index)
             return None, {}
@@ -81,6 +98,13 @@ def plot_router(
         result = build_figure(index.manifest)
         result["meta"]["task"] = int(index.out.name)
         result["meta"]["filters"] = [asdict(f) for f in index.manifest.spec.filters]
+        result["meta"]["hover"] = {
+            "files": index.manifest.hover_files,
+            "dropped": index.manifest.hover_dropped,
+            "bytes": index.manifest.hover_bytes,
+            "kept": [c.name for c in index.manifest.columns],
+            "limit_gb": max_hover_bytes / 2**30,
+        }
         result["meta"].update(timing)
         return JSONResponse(result)
 
@@ -148,7 +172,7 @@ def plot_router(
             max_levels,
         )
         results.plot_id += 1
-        index, timing = await run_plot(spec)
+        index, timing = await run_plot(spec, None)
         if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
         results.set_plot(index)
@@ -170,7 +194,7 @@ def plot_router(
             # A task for another size must not replace the result drawn now.
             await broker.cancel()
             return figure(results.view, {"task_seconds": 0.0})
-        index, timing = await run_again(spec)
+        index, timing = await run_again(spec, results.overview)
         if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
         results.set_view(index)
@@ -184,7 +208,7 @@ def plot_router(
         if unchanged(results.overview.manifest, spec):
             await broker.cancel()
             return figure(results.overview, {"task_seconds": 0.0})
-        index, timing = await run_again(spec)
+        index, timing = await run_again(spec, results.view)
         if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
         results.set_overview(index)

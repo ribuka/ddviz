@@ -89,6 +89,14 @@ def create_app(
         return FileResponse(STATIC / "index.html")
 
     app.include_router(source_router(source))
-    app.include_router(plot_router(source, results, broker, settings.plot.max_levels))
+    app.include_router(
+        plot_router(
+            source,
+            results,
+            broker,
+            settings.plot.max_levels,
+            settings.hover.max_temp_bytes,
+        )
+    )
     app.include_router(selection_router(source, results, broker))
     return app

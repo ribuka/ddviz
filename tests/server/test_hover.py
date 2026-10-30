@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,7 @@ import pytest
 
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.server.hover import HOVER_DISTANCE, HoverIndex
+from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import ScatterSpec
 
 
@@ -76,3 +78,61 @@ def test_lookup_scales_the_hover_distance_by_pixels_per_bin(index: HoverIndex) -
             assert index.lookup(0, fx, by + 0.5, 1.0, 1.0, [2, 1, 0]) is not None
             return
     pytest.skip("no empty neighbor next to the chosen pixel")
+
+
+def _run(tmp_path: Path, spec: ScatterSpec, hover_bytes: int | None) -> Path:
+    """Run the plot task with a limit on its hover files; return its directory."""
+    out = tmp_path / f"task-{hover_bytes}"
+    out.mkdir()
+    run_plot(replace(spec, hover_bytes=hover_bytes), out, lambda _: None)
+    return out
+
+
+def _hover_files(out: Path) -> int:
+    """Return the bytes of the hover files in a task's directory."""
+    return sum(f.stat().st_size for f in out.glob("*.npy"))
+
+
+def test_hover_bytes_records_the_hover_files(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """Without a limit every column is written, and the manifest has their bytes."""
+    out = _run(tmp_path, scatter_spec, None)
+    manifest = PlotManifest.read(out)
+    assert manifest.hover_files
+    assert manifest.hover_dropped == []
+    assert [c.name for c in manifest.columns] == scatter_spec.hover
+    assert manifest.hover_bytes == _hover_files(out)
+
+
+def test_a_limit_leaves_out_columns_off_the_axes(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """A limit just under all the files drops the last column off the axes."""
+    full = PlotManifest.read(_run(tmp_path, scatter_spec, None)).hover_bytes
+    out = _run(tmp_path, scatter_spec, full - 1)
+    manifest = PlotManifest.read(out)
+    assert manifest.hover_dropped == ["facet"]
+    assert [c.name for c in manifest.columns] == ["x", "y", "label", "color"]
+    assert manifest.hover_bytes == _hover_files(out) <= full - 1
+    index = HoverIndex(out)
+    bx, by = _occupied(index, 0, 1)
+    values = index.lookup(0, bx + 0.5, by + 0.5, 1.0, 1.0, [2, 1, 0])["values"]
+    assert list(values) == ["x", "y", "label", "color"]
+    index.close()
+
+
+def test_without_room_for_the_axes_no_hover_files_are_written(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """When even x and y do not fit, the result has no hover files and no hover."""
+    out = _run(tmp_path, scatter_spec, 1)
+    manifest = PlotManifest.read(out)
+    assert not manifest.hover_files
+    assert manifest.hover_dropped == scatter_spec.hover
+    assert manifest.hover_bytes == 0
+    assert list(out.glob("*.npy")) == []
+    assert any(manifest.images)
+    index = HoverIndex(out)
+    assert index.lookup(0, 1.5, 1.5, 1.0, 1.0, [2, 1, 0]) is None
+    index.close()
