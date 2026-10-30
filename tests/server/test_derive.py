@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-
 import pytest
 
 from ddviz.server.derive import (
@@ -12,37 +10,49 @@ from ddviz.server.derive import (
     selection_spec,
     unchanged,
 )
+from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import AxisGrid, grid_layout
+from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import Filter, ScatterSpec
 
 
 @pytest.fixture
-def manifest(scatter_spec: ScatterSpec) -> dict:
+def manifest(scatter_spec: ScatterSpec) -> PlotManifest:
     """Return the manifest of an overview of `scatter_spec`: two facet columns, p and q."""
-    return {
-        "spec": scatter_spec.to_dict(),
-        "levels": {"row": [], "col": ["p", "q"], "color": ["a", "b", "c"]},
-        "all_levels": {"row": [], "col": ["p", "q"], "color": ["a", "b", "c"]},
-        "axes": asdict(AxisGrid(1, 2)),
-        "layout": asdict(grid_layout(400, 300, 1, 2)),
-        "x_ranges": [[-4.0, 4.0]],
-        "y_ranges": [[-3.0, 3.0]],
-        "cuts": {},
-        "color_range": None,
-    }
+    levels = {"row": [None], "col": ["p", "q"], "color": ["a", "b", "c"]}
+    return PlotManifest(
+        spec=scatter_spec,
+        grid=BinGrid(n_panels=2, n_series=3, width=150, height=200),
+        layout=grid_layout(400, 300, 1, 2),
+        axes=AxisGrid(1, 2),
+        x_ranges=[[-4.0, 4.0]],
+        y_ranges=[[-3.0, 3.0]],
+        levels=levels,
+        all_levels=levels,
+        cuts={},
+        color_range=None,
+        colors=["#000000"] * 3,
+        columns=[],
+        images=[None] * 3,
+        rows=2000,
+    )
 
 
-def test_resized_spec_keeps_the_panels_of_the_same_filter(manifest: dict) -> None:
+def test_resized_spec_keeps_the_panels_of_the_same_filter(
+    manifest: PlotManifest,
+) -> None:
     """Another size or range reuses the overview's levels and its facet panels."""
     spec = resized_spec(manifest, 800, 600, [], {}, [[0, 1]], [[0, 2]])
     assert (spec.width, spec.height) == (800, 600)
     assert spec.view.x_ranges == [[0, 1]]
     assert spec.view.y_ranges == [[0, 2]]
-    assert spec.view.levels == manifest["all_levels"]
-    assert spec.view.facets == {"row": [], "col": ["p", "q"]}
+    assert spec.view.levels == manifest.all_levels
+    assert spec.view.facets == {"row": [None], "col": ["p", "q"]}
 
 
-def test_resized_spec_with_another_filter_finds_its_panels(manifest: dict) -> None:
+def test_resized_spec_with_another_filter_finds_its_panels(
+    manifest: PlotManifest,
+) -> None:
     """A new filter adds its column's file and leaves the facet panels to the worker."""
     filters = [Filter(column="label", levels=["r1"])]
     spec = resized_spec(
@@ -53,23 +63,23 @@ def test_resized_spec_with_another_filter_finds_its_panels(manifest: dict) -> No
     assert spec.files["label"] == "label.parquet"
 
 
-def test_resized_spec_needs_a_range_per_axis_column(manifest: dict) -> None:
+def test_resized_spec_needs_a_range_per_axis_column(manifest: PlotManifest) -> None:
     """A request with the wrong number of ranges is refused."""
     with pytest.raises(ValueError, match="one range"):
         resized_spec(manifest, 400, 300, [], {}, [], [[0, 1]])
 
 
-def test_unchanged(manifest: dict) -> None:
+def test_unchanged(manifest: PlotManifest) -> None:
     """A result stands for a spec with its layout, ranges and filter."""
     same = resized_spec(
-        manifest, 400, 300, [], {}, manifest["x_ranges"], manifest["y_ranges"]
+        manifest, 400, 300, [], {}, manifest.x_ranges, manifest.y_ranges
     )
     assert unchanged(manifest, same)
     assert not unchanged(None, same)
-    zoomed = resized_spec(manifest, 400, 300, [], {}, [[0, 1]], manifest["y_ranges"])
+    zoomed = resized_spec(manifest, 400, 300, [], {}, [[0, 1]], manifest.y_ranges)
     assert not unchanged(manifest, zoomed)
     larger = resized_spec(
-        manifest, 800, 600, [], {}, manifest["x_ranges"], manifest["y_ranges"]
+        manifest, 800, 600, [], {}, manifest.x_ranges, manifest.y_ranges
     )
     assert not unchanged(manifest, larger)
     filtered = resized_spec(
@@ -78,13 +88,13 @@ def test_unchanged(manifest: dict) -> None:
         300,
         [Filter(column="label", levels=["r1"])],
         {"label": "label.parquet"},
-        manifest["x_ranges"],
-        manifest["y_ranges"],
+        manifest.x_ranges,
+        manifest.y_ranges,
     )
     assert not unchanged(manifest, filtered)
 
 
-def test_box_selection(manifest: dict) -> None:
+def test_box_selection(manifest: PlotManifest) -> None:
     """A box on the second panel selects its facet level, with sorted ranges."""
     selection = box_selection(manifest, 1, (2.0, -1.0), (0.0, 1.0))
     assert (selection.x, selection.y) == ("x", "y")
@@ -102,17 +112,17 @@ def test_box_selection(manifest: dict) -> None:
     ],
 )
 def test_box_selection_refuses(
-    manifest: dict, panel: int, x_range: tuple | None, match: str
+    manifest: PlotManifest, panel: int, x_range: tuple | None, match: str
 ) -> None:
     """A panel the result lacks, or a box without both ranges, is refused."""
     with pytest.raises(ValueError, match=match):
         box_selection(manifest, panel, x_range, (0.0, 1.0))
 
 
-def test_selection_spec(manifest: dict) -> None:
+def test_selection_spec(manifest: PlotManifest) -> None:
     """A selection's spec is the result's, with its view and panels."""
     selection = box_selection(manifest, 0, (0.0, 1.0), (0.0, 1.0))
     spec = selection_spec(manifest, selection)
     assert spec.selection == selection
-    assert spec.view.x_ranges == manifest["x_ranges"]
-    assert spec.view.facets == {"row": [], "col": ["p", "q"]}
+    assert spec.view.x_ranges == manifest.x_ranges
+    assert spec.view.facets == {"row": [None], "col": ["p", "q"]}

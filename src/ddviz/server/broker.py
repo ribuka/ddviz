@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import IO, Literal
 
 from ddviz.shared.manifest import read_manifest
+from ddviz.shared.tasks import Task, task_to_dict
 from ddviz.workers.jobs import WorkerJob
 from ddviz.workers.runner import WorkerPool
 
@@ -142,13 +143,13 @@ class TaskBroker:
         elif not future.done():
             future.set_result(message)
 
-    async def run(self, task: dict, pool: Pool = "plot") -> TaskEnd:
+    async def run(self, task: Task, pool: Pool = "plot") -> TaskEnd:
         """Submit a task to a pool and wait for its end.
 
         Parameters
         ----------
-        task : dict
-            The task without ``"out"`` (`ddviz.compute.tasks.run.run_task`).
+        task : Task
+            The task (`ddviz.shared.tasks`).
         pool : {"plot", "table", "summary"}
             The pool to run it in.
 
@@ -157,7 +158,7 @@ class TaskBroker:
         TaskEnd
             The task's end.
         """
-        task_id = await asyncio.to_thread(self._pools[pool].submit, task)
+        task_id = await asyncio.to_thread(self._pools[pool].submit, task_to_dict(task))
         out = self._root / DIRS[pool] / str(task_id)
         # The task may have ended before its future was registered.
         if (pool, task_id) in self._ended:

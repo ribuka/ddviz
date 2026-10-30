@@ -9,6 +9,8 @@ labels and facet labels of a grid that scrolls (``static/js/sticky.js``).
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from ddviz.shared.layout import (
     MARGIN_BOTTOM,
     MARGIN_LEFT,
@@ -17,6 +19,8 @@ from ddviz.shared.layout import (
     AxisGrid,
     GridLayout,
 )
+from ddviz.shared.manifest import PlotManifest
+from ddviz.shared.scatter import ScatterSpec
 
 # Each plot area is white with a frame line around it, on a light gray
 # figure, so neighboring panels stand apart. The frame lies just outside the
@@ -39,17 +43,17 @@ def _label(column: str | None, level: object) -> str:
 
 
 def _facet_labels(
-    spec: dict, levels: dict, layout: GridLayout, axes: AxisGrid
+    spec: ScatterSpec, levels: dict, layout: GridLayout, axes: AxisGrid
 ) -> list[dict]:
     """Return the facet labels above the grid and right of it, each over its panels."""
     labels = []
-    if spec["col"] is not None:
+    if spec.col is not None:
         for col, level in enumerate(levels["col"]):
             lo = layout.x_domain(col * axes.nx)[0]
             hi = layout.x_domain(col * axes.nx + axes.nx - 1)[1]
             labels.append(
                 {
-                    "text": _label(spec["col"], level),
+                    "text": _label(spec.col, level),
                     "x": (lo + hi) / 2,
                     "y": 1,
                     # plotly's "auto" anchors a label left of the middle
@@ -61,13 +65,13 @@ def _facet_labels(
                     "showarrow": False,
                 }
             )
-    if spec["row"] is not None:
+    if spec.row is not None:
         for row, level in enumerate(levels["row"]):
             lo = layout.y_domain(row * axes.ny + axes.ny - 1)[0]
             hi = layout.y_domain(row * axes.ny)[1]
             labels.append(
                 {
-                    "text": _label(spec["row"], level),
+                    "text": _label(spec.row, level),
                     "x": 1,
                     "y": (lo + hi) / 2,
                     "xanchor": "left",
@@ -82,23 +86,25 @@ def _facet_labels(
     return labels
 
 
-def _color_scale(spec: dict, manifest: dict) -> dict:
+def _color_scale(manifest: PlotManifest) -> dict:
     """Return how the page colors the series: by level, by intervals of a numeric column, or by a gradient."""
-    if spec.get("gradient"):
+    spec = manifest.spec
+    bins = spec.binned.get("color")
+    if spec.gradient:
         kind = "gradient"
-    elif "color" in spec.get("binned", {}):
+    elif bins is not None:
         kind = "bins"
     else:
         kind = "levels"
     return {
-        "column": spec["color"],
+        "column": spec.color,
         "kind": kind,
-        "bins": spec.get("binned", {}).get("color"),
-        "range": manifest.get("color_range"),
+        "bins": None if bins is None else asdict(bins),
+        "range": manifest.color_range,
     }
 
 
-def build_figure(manifest: dict) -> dict:
+def build_figure(manifest: PlotManifest) -> dict:
     """Return the figure of a plot task and what the page needs to draw its images.
 
     The figure holds the axes of every panel, each kept by an empty scatter
@@ -107,7 +113,7 @@ def build_figure(manifest: dict) -> dict:
 
     Parameters
     ----------
-    manifest : dict
+    manifest : PlotManifest
         Manifest of the plot task.
 
     Returns
@@ -127,12 +133,9 @@ def build_figure(manifest: dict) -> dict:
         a numeric column, or ``"gradient"``, whose single image holds grays
         from 1 to 255 over ``range``).
     """
-    spec = manifest["spec"]
-    grid = manifest["grid"]
-    layout = GridLayout(**manifest["layout"])
-    axes = AxisGrid(**manifest["axes"])
-    x_ranges, y_ranges = manifest["x_ranges"], manifest["y_ranges"]
-    levels = manifest["levels"]
+    spec, layout, axes = manifest.spec, manifest.layout, manifest.axes
+    x_ranges, y_ranges = manifest.x_ranges, manifest.y_ranges
+    levels = manifest.levels
     # The first panel of each x column (the top row) and of each y column
     # (the left column) holds its range; the other panels match it.
     x_axes = [f"x{_axis_suffix(axes.panel(0, 0, xi, 0))}" for xi in range(axes.nx)]
@@ -180,7 +183,7 @@ def build_figure(manifest: dict) -> dict:
             **({"matches": y_axes[yj]} if y_axis != y_axes[yj] else {}),
         }
         facet = [
-            None if spec[role] is None else str(levels[role][i])
+            None if getattr(spec, role) is None else str(levels[role][i])
             for role, i in (("row", prow // axes.ny), ("col", pcol // axes.nx))
         ]
         panels.append(
@@ -208,19 +211,19 @@ def build_figure(manifest: dict) -> dict:
     ]
     meta = {
         "panels": panels,
-        "x_columns": spec["x"],
-        "y_columns": spec["y"],
+        "x_columns": spec.x,
+        "y_columns": spec.y,
         "x_axes": x_axes,
         "y_axes": y_axes,
-        "grid": grid,
+        "grid": asdict(manifest.grid),
         "x_ranges": [list(r) for r in x_ranges],
         "y_ranges": [list(r) for r in y_ranges],
         "series": [str(v) for v in levels["color"]],
-        "color": _color_scale(spec, manifest),
-        "colors": manifest["colors"],
-        "images": manifest["images"],
+        "color": _color_scale(manifest),
+        "colors": manifest.colors,
+        "images": manifest.images,
         "ncol": layout.ncol,
-        "rows": manifest["rows"],
+        "rows": manifest.rows,
         "scroll": layout.scroll,
         "facet_labels": labels,
     }

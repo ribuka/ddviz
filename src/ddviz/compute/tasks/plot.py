@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +11,7 @@ from ddviz.compute.aggregate import COUNT, INDEX, KEY, aggregate
 from ddviz.compute.progress import Emit
 from ddviz.compute.raster import masks, occupancy
 from ddviz.compute.tasks.images import write_gradient, write_images
-from ddviz.shared.manifest import write_manifest
+from ddviz.shared.manifest import HoverColumn, PlotManifest, SelectionManifest
 from ddviz.shared.palette import series_color
 from ddviz.shared.scatter import ScatterSpec
 
@@ -54,7 +53,7 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     for i, name in enumerate(dict.fromkeys(spec.hover)):
         array, labels = _column_array(bins[name])
         np.save(out / f"col{i}.npy", array)
-        columns.append({"name": name, "file": f"col{i}.npy", "labels": labels})
+        columns.append(HoverColumn(name, f"col{i}.npy", labels))
 
     emit({"type": "progress", "stage": "raster"})
     bin_masks = masks(keys, agg.grid)
@@ -67,26 +66,22 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     else:
         images = write_images(out, bin_masks, agg.layout.ncol, colors)
 
-    write_manifest(
-        out,
-        {
-            "kind": "plot",
-            "spec": spec.to_dict(),
-            "grid": asdict(agg.grid),
-            "layout": asdict(agg.layout),
-            "axes": asdict(agg.axes),
-            "x_ranges": agg.x_ranges,
-            "y_ranges": agg.y_ranges,
-            "levels": agg.levels,
-            "all_levels": agg.all_levels,
-            "cuts": agg.cuts,
-            "color_range": agg.color_range,
-            "colors": colors,
-            "columns": columns,
-            "images": images,
-            "rows": int(bins[COUNT].sum()),
-        },
-    )
+    PlotManifest(
+        spec=spec,
+        grid=agg.grid,
+        layout=agg.layout,
+        axes=agg.axes,
+        x_ranges=[list(r) for r in agg.x_ranges],
+        y_ranges=[list(r) for r in agg.y_ranges],
+        levels=agg.levels,
+        all_levels=agg.all_levels,
+        cuts=agg.cuts,
+        color_range=None if agg.color_range is None else list(agg.color_range),
+        colors=colors,
+        columns=columns,
+        images=images,
+        rows=int(bins[COUNT].sum()),
+    ).write(out)
 
 
 def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
@@ -121,13 +116,9 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     else:
         colors = [series_color(spec.colors, s) for s in range(agg.grid.n_series)]
         images = write_images(out, masks(keys, agg.grid), agg.layout.ncol, colors)
-    write_manifest(
-        out,
-        {
-            "kind": "selection",
-            "selection": spec.to_dict()["selection"],
-            "grid": asdict(agg.grid),
-            "images": images,
-            "rows": agg.selected_rows,
-        },
-    )
+    SelectionManifest(
+        selection=spec.selection,
+        grid=agg.grid,
+        images=images,
+        rows=agg.selected_rows,
+    ).write(out)

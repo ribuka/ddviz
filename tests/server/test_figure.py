@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.server.figure import FRAME_COLOR, PAPER_COLOR, PLOT_COLOR, build_figure
-from ddviz.shared.manifest import IMAGES, read_manifest
+from ddviz.shared.manifest import IMAGES, PlotManifest
 from ddviz.shared.scatter import ScatterSpec, View
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -17,7 +17,7 @@ def _figure(spec: ScatterSpec, out: Path) -> dict:
     """Run the plot task and build its figure."""
     out.mkdir()
     run_plot(spec, out, lambda _: None)
-    return build_figure(read_manifest(out))
+    return build_figure(PlotManifest.read(out))
 
 
 def test_images_are_slices_of_one_file(
@@ -54,13 +54,13 @@ def test_a_panel_without_rows_keeps_its_axes(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
     """A view where no row falls has no image, and every panel keeps its axes."""
-    overview = read_manifest(_overview_dir(tmp_path, scatter_spec))
+    overview = PlotManifest.read(_overview_dir(tmp_path, scatter_spec))
     view = replace(
         scatter_spec,
         view=View(
             x_ranges=[[50.0, 60.0]],
             y_ranges=[[50.0, 60.0]],
-            levels=overview["all_levels"],
+            levels=overview.all_levels,
         ),
     )
     result = _figure(view, tmp_path / "view")

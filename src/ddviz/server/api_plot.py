@@ -11,6 +11,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
+from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -28,6 +29,7 @@ from ddviz.server.source import Source
 from ddviz.shared.manifest import IMAGES
 from ddviz.shared.palette import DEFAULT_COLORS
 from ddviz.shared.scatter import ScatterSpec
+from ddviz.shared.tasks import PlotTask
 
 
 def plot_router(source: Source, results: Results, broker: TaskBroker) -> APIRouter:
@@ -52,7 +54,7 @@ def plot_router(source: Source, results: Results, broker: TaskBroker) -> APIRout
     async def run_plot(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
         """Run a plot task; return its opened result, or None when a newer task killed it."""
         started = time.perf_counter()
-        end = await broker.run({"kind": "plot", "spec": spec.to_dict()})
+        end = await broker.run(PlotTask(spec))
         if end.type == "cancelled":
             return None, {}
         ensure_done(end)
@@ -74,7 +76,7 @@ def plot_router(source: Source, results: Results, broker: TaskBroker) -> APIRout
         """Return the figure of a result; the page fetches its images on their own."""
         result = build_figure(index.manifest)
         result["meta"]["task"] = int(index.out.name)
-        result["meta"]["filters"] = index.manifest["spec"]["filters"]
+        result["meta"]["filters"] = [asdict(f) for f in index.manifest.spec.filters]
         result["meta"].update(timing)
         return JSONResponse(result)
 
@@ -96,8 +98,8 @@ def plot_router(source: Source, results: Results, broker: TaskBroker) -> APIRout
                 request.height,
                 filters,
                 {f.column: source.file(f.column) for f in filters},
-                manifest["x_ranges"] if x_ranges is None else x_ranges,
-                manifest["y_ranges"] if y_ranges is None else y_ranges,
+                manifest.x_ranges if x_ranges is None else x_ranges,
+                manifest.y_ranges if y_ranges is None else y_ranges,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error

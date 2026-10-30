@@ -19,7 +19,8 @@ from ddviz.server.errors import ensure_done
 from ddviz.server.models import SelectionRequest
 from ddviz.server.results import Layer, Results
 from ddviz.server.source import Source
-from ddviz.shared.manifest import read_manifest
+from ddviz.shared.manifest import SelectionManifest
+from ddviz.shared.tasks import SelectionTask, TableTask
 
 # Rows of a page of the selection table.
 TABLE_PAGE = 100
@@ -67,20 +68,18 @@ def selection_router(source: Source, results: Results, broker: TaskBroker) -> AP
         spec = selection_spec(manifest, selection)
         plot_id = results.plot_id
         started = time.perf_counter()
-        end = await broker.run({"kind": "selection", "spec": spec.to_dict()})
+        end = await broker.run(SelectionTask(spec))
         if end.type == "cancelled" or results.plot_id != plot_id:
             end.discard()
             raise HTTPException(409, "cancelled")
         ensure_done(end)
-        layer = read_manifest(end.out)
-        results.set_layer(
-            Layer(end.out, spec, layer["images"], layer["rows"]), selection
-        )
+        layer = SelectionManifest.read(end.out)
+        results.set_layer(Layer(end.out, spec, layer.images, layer.rows), selection)
         return {
             "task": end.task_id,
             "base": request.task,
-            "images": layer["images"],
-            "rows": layer["rows"],
+            "images": layer.images,
+            "rows": layer.rows,
             "selection": asdict(selection),
             "task_seconds": time.perf_counter() - started,
         }
@@ -109,14 +108,7 @@ def selection_router(source: Source, results: Results, broker: TaskBroker) -> AP
         missing = set(await asyncio.to_thread(source.cache.missing, window))
         files = {c: source.path if c in missing else source.file(c) for c in window}
         end = await broker.run(
-            {
-                "kind": "table",
-                "spec": layer.spec.to_dict(),
-                "offset": offset,
-                "limit": TABLE_PAGE,
-                "files": files,
-            },
-            "table",
+            TableTask(layer.spec, offset, TABLE_PAGE, files), "table"
         )
         ensure_done(end)
         page = end.take()

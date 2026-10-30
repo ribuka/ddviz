@@ -7,18 +7,19 @@ worker does not find them again.
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import replace
 
-from ddviz.shared.layout import AxisGrid, grid_layout
-from ddviz.shared.scatter import Filter, ScatterSpec, Selection
+from ddviz.shared.layout import grid_layout
+from ddviz.shared.manifest import PlotManifest
+from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
 
 
-def facets_of(manifest: dict) -> dict:
+def facets_of(manifest: PlotManifest) -> dict:
     """Return the row and col levels a result draws as panels.
 
     Parameters
     ----------
-    manifest : dict
+    manifest : PlotManifest
         Manifest of a plot task.
 
     Returns
@@ -26,23 +27,25 @@ def facets_of(manifest: dict) -> dict:
     dict
         ``{"row": levels, "col": levels}``.
     """
-    return {role: manifest["levels"][role] for role in ("row", "col")}
+    return {role: manifest.levels[role] for role in ("row", "col")}
 
 
-def _view(manifest: dict, x_ranges: list, y_ranges: list, facets: dict | None) -> dict:
-    """Return the ``view`` of a spec: the given ranges and the result's levels, cuts and color range."""
-    return {
-        "x_ranges": [list(r) for r in x_ranges],
-        "y_ranges": [list(r) for r in y_ranges],
-        "levels": manifest["all_levels"],
-        "facets": facets,
-        "cuts": manifest["cuts"],
-        "color_range": manifest["color_range"],
-    }
+def _view(
+    manifest: PlotManifest, x_ranges: list, y_ranges: list, facets: dict | None
+) -> View:
+    """Return the view of the given ranges with the result's levels, cuts and color range."""
+    return View(
+        x_ranges=[list(r) for r in x_ranges],
+        y_ranges=[list(r) for r in y_ranges],
+        levels=manifest.all_levels,
+        facets=facets,
+        cuts=manifest.cuts,
+        color_range=manifest.color_range,
+    )
 
 
 def resized_spec(
-    manifest: dict,
+    manifest: PlotManifest,
     width: int,
     height: int,
     filters: list[Filter],
@@ -57,7 +60,7 @@ def resized_spec(
 
     Parameters
     ----------
-    manifest : dict
+    manifest : PlotManifest
         Manifest of the overview.
     width, height : int
         Size of the plot area in pixels.
@@ -78,25 +81,21 @@ def resized_spec(
     ValueError
         Unless there is one range per x and per y column.
     """
-    spec = manifest["spec"]
-    if len(x_ranges) != len(spec["x"]) or len(y_ranges) != len(spec["y"]):
+    spec = manifest.spec
+    if len(x_ranges) != len(spec.x) or len(y_ranges) != len(spec.y):
         raise ValueError("one range per x and y column")
-    same = spec["filters"] == [asdict(f) for f in filters]
-    return ScatterSpec.from_dict(
-        {
-            **spec,
-            "files": {**spec["files"], **filter_files},
-            "filters": [asdict(f) for f in filters],
-            "width": width,
-            "height": height,
-            "view": _view(
-                manifest, x_ranges, y_ranges, facets_of(manifest) if same else None
-            ),
-        }
+    same = spec.filters == filters
+    return replace(
+        spec,
+        files={**spec.files, **filter_files},
+        filters=list(filters),
+        width=width,
+        height=height,
+        view=_view(manifest, x_ranges, y_ranges, facets_of(manifest) if same else None),
     )
 
 
-def unchanged(manifest: dict | None, spec: ScatterSpec) -> bool:
+def unchanged(manifest: PlotManifest | None, spec: ScatterSpec) -> bool:
     """Whether a result already has the panels, ranges and filter of `spec`.
 
     A new size often keeps the layout: a grid that scrolls in both
@@ -104,7 +103,7 @@ def unchanged(manifest: dict | None, spec: ScatterSpec) -> bool:
 
     Parameters
     ----------
-    manifest : dict or None
+    manifest : PlotManifest or None
         Manifest of the result, if any.
     spec : ScatterSpec
         The spec of a new task.
@@ -116,18 +115,18 @@ def unchanged(manifest: dict | None, spec: ScatterSpec) -> bool:
     """
     if manifest is None:
         return False
-    axes = AxisGrid(**manifest["axes"])
+    axes = manifest.axes
     layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols)
     return (
-        asdict(layout) == manifest["layout"]
-        and [list(r) for r in manifest["x_ranges"]] == spec.view.x_ranges
-        and [list(r) for r in manifest["y_ranges"]] == spec.view.y_ranges
-        and manifest["spec"]["filters"] == [asdict(f) for f in spec.filters]
+        layout == manifest.layout
+        and manifest.x_ranges == spec.view.x_ranges
+        and manifest.y_ranges == spec.view.y_ranges
+        and manifest.spec.filters == spec.filters
     )
 
 
 def box_selection(
-    manifest: dict,
+    manifest: PlotManifest,
     panel: int,
     x_range: tuple[float, float] | None,
     y_range: tuple[float, float] | None,
@@ -136,7 +135,7 @@ def box_selection(
 
     Parameters
     ----------
-    manifest : dict
+    manifest : PlotManifest
         Manifest of the result.
     panel : int
         Index of the panel.
@@ -153,8 +152,7 @@ def box_selection(
     ValueError
         For a panel the result does not have, or a box without both ranges.
     """
-    spec, levels = manifest["spec"], manifest["levels"]
-    axes = AxisGrid(**manifest["axes"])
+    spec, levels, axes = manifest.spec, manifest.levels, manifest.axes
     if not 0 <= panel < axes.rows * axes.cols:
         raise ValueError("no such panel")
     if x_range is None or y_range is None:
@@ -162,21 +160,21 @@ def box_selection(
     xi, yj = axes.axes(panel)
     prow, pcol = divmod(panel, axes.cols)
     return Selection(
-        x=spec["x"][xi],
-        y=spec["y"][yj],
+        x=spec.x[xi],
+        y=spec.y[yj],
         x_range=sorted(x_range),
         y_range=sorted(y_range),
-        row=levels["row"][prow // axes.ny] if spec["row"] else None,
-        col=levels["col"][pcol // axes.nx] if spec["col"] else None,
+        row=levels["row"][prow // axes.ny] if spec.row else None,
+        col=levels["col"][pcol // axes.nx] if spec.col else None,
     )
 
 
-def selection_spec(manifest: dict, selection: Selection) -> ScatterSpec:
+def selection_spec(manifest: PlotManifest, selection: Selection) -> ScatterSpec:
     """Return the spec of the task aggregating a selection over a result.
 
     Parameters
     ----------
-    manifest : dict
+    manifest : PlotManifest
         Manifest of the result.
     selection : Selection
         The selected rows.
@@ -186,15 +184,8 @@ def selection_spec(manifest: dict, selection: Selection) -> ScatterSpec:
     ScatterSpec
         The result's spec with its view and the selection.
     """
-    return ScatterSpec.from_dict(
-        {
-            **manifest["spec"],
-            "view": _view(
-                manifest,
-                manifest["x_ranges"],
-                manifest["y_ranges"],
-                facets_of(manifest),
-            ),
-            "selection": asdict(selection),
-        }
+    return replace(
+        manifest.spec,
+        view=_view(manifest, manifest.x_ranges, manifest.y_ranges, facets_of(manifest)),
+        selection=selection,
     )
