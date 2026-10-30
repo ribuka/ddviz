@@ -749,6 +749,7 @@ function clearPlot() {
   sticky.set(null);
   empty.hidden = false;
   status.textContent = "";
+  hoverWarning.hidden = true;
 }
 
 // The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`): placing

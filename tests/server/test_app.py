@@ -269,7 +269,11 @@ def test_a_folder_plots_selects_and_lists_as_one_table(
 def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
     client: TestClient, tmp_path: Path, scatter_path: Path
 ) -> None:
-    """A view gets the room the overview leaves; without room for x and y it has no hover."""
+    """A view gets the room the overview leaves; without room for x and y it has no hover.
+
+    The results a task replaces give up their hover files first, so the
+    files on disk keep within the limit.
+    """
     unlimited = _plot(client)["meta"]["hover"]
     assert unlimited["files"] and unlimited["dropped"] == []
     settings = Settings(hover=HoverSettings(max_temp_bytes=unlimited["bytes"] + 1000))
@@ -294,3 +298,8 @@ def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
         assert view["hover"]["limit_gb"] == settings.hover.max_temp_bytes / 2**30
         params = {"task": view["task"], "panel": 0, "fx": 0, "fy": 0, "sx": 1, "sy": 1}
         assert limited.get("/api/hover", params=params).json() == {"hit": None}
+        # A new plot replaces both results, whose hover files go before it writes.
+        again = _plot(limited)["meta"]["hover"]
+        assert again["files"] and again["dropped"] == []
+        on_disk = sum(f.stat().st_size for f in (tmp_path / "limited").rglob("*.npy"))
+        assert on_disk <= settings.hover.max_temp_bytes

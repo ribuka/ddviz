@@ -136,3 +136,17 @@ def test_without_room_for_the_axes_no_hover_files_are_written(
     index = HoverIndex(out)
     assert index.lookup(0, 1.5, 1.5, 1.0, 1.0, [2, 1, 0]) is None
     index.close()
+
+
+def test_release_removes_the_hover_files(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """A released result keeps its manifest and images but finds no row."""
+    out = _run(tmp_path, scatter_spec, None)
+    index = HoverIndex(out)
+    bx, by = _occupied(index, 0, 1)
+    index.release()
+    assert index.hover_bytes == 0
+    assert list(out.glob("*.npy")) == []
+    assert (out / "manifest.json").exists()
+    assert index.lookup(0, bx + 0.5, by + 0.5, 1.0, 1.0, [2, 1, 0]) is None

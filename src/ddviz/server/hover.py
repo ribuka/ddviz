@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import math
 from pathlib import Path
 
@@ -31,6 +32,8 @@ class HoverIndex:
         self.out = out
         self.manifest = PlotManifest.read(out)
         self.grid = self.manifest.grid
+        # Bytes of the hover files left on disk (`release` removes them).
+        self.hover_bytes = self.manifest.hover_bytes
         self._columns = []
         if not self.manifest.hover_files:
             self._keys = self._count = self._index = self._occupancy = None
@@ -48,6 +51,15 @@ class HoverIndex:
         """Drop the memory maps, so that the files can be deleted."""
         self._keys = self._count = self._index = self._occupancy = None
         self._columns = []
+
+    def release(self) -> None:
+        """Close and remove the hover files, keeping the manifest and the images; no row is found after."""
+        self.close()
+        files = ["keys.npy", "count.npy", "index.npy", "occupancy.npy"]
+        for name in [*files, *(c.file for c in self.manifest.columns)]:
+            with contextlib.suppress(OSError):
+                (self.out / name).unlink(missing_ok=True)
+        self.hover_bytes = 0
 
     def _find(self, key: int) -> int | None:
         """Return the position of a key, or None if its bin is empty."""
