@@ -280,7 +280,9 @@ def plot_router(
                 409,
                 "ホバー用のファイルが上限を超えたため、この図のデータは残っていない",
             )
-        end = await broker.run(PlotDataTask(str(index.out), format), "table")
+        # A newer overview may replace it while the worker reads it.
+        with results.hold(index):
+            end = await broker.run(PlotDataTask(str(index.out), format), "table")
         ensure_done(end)
         file = read_manifest(end.out)["file"]
         return FileResponse(

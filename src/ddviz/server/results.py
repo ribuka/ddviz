@@ -3,12 +3,15 @@
 A plot first aggregates its overview (the whole data range). Zooming and
 panning aggregate the view again in a worker; the overview's result is kept
 so that going back to it needs no worker. Each result's files stay open
-(`HoverIndex`) for hovers until a newer result replaces it.
+(`HoverIndex`) for hovers until a newer result replaces it; a result a worker
+still reads (`Results.hold`) leaves its directory until the worker is done.
 """
 
 from __future__ import annotations
 
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,6 +59,10 @@ class Results:
         self.plot_id = 0
         self.selection: Selection | None = None
         self.layer: Layer | None = None
+        # Directories of results that workers read, with how many read each,
+        # and those of them already replaced, removed when the last is done.
+        self._held: dict[Path, int] = {}
+        self._replaced: set[Path] = set()
 
     def opened(self, task: int) -> HoverIndex | None:
         """Return the open result (the overview or the view) of a task, if any."""
@@ -75,18 +82,47 @@ class Results:
         old = (self.overview, self.view)
         self.overview, self.view = index, None
         for o in old:
-            drop(o)
+            self._drop(o)
         self.clear_selection()
 
     def set_view(self, index: HoverIndex) -> None:
         """Make a result the zoomed view, dropping the old one."""
         old, self.view = self.view, index
-        drop(old)
+        self._drop(old)
 
     def set_overview(self, index: HoverIndex) -> None:
         """Make a result of the same plot at another size the overview, dropping the old one."""
         old, self.overview = self.overview, index
-        drop(old)
+        self._drop(old)
+
+    def _drop(self, index: HoverIndex | None) -> None:
+        """Drop a replaced result (`drop`), keeping its directory while a worker reads it."""
+        if index is None or index.out not in self._held:
+            drop(index)
+            return
+        index.close()
+        self._replaced.add(index.out)
+
+    @contextmanager
+    def hold(self, index: HoverIndex) -> Iterator[None]:
+        """Keep a result's directory while a worker reads it, even when a newer result replaces it.
+
+        Parameters
+        ----------
+        index : HoverIndex
+            The result.
+        """
+        out = index.out
+        self._held[out] = self._held.get(out, 0) + 1
+        try:
+            yield
+        finally:
+            self._held[out] -= 1
+            if not self._held[out]:
+                del self._held[out]
+                if out in self._replaced:
+                    self._replaced.discard(out)
+                    shutil.rmtree(out, ignore_errors=True)
 
     def set_layer(self, layer: Layer, selection: Selection) -> None:
         """Keep a selection and its layer, removing the old layer."""
