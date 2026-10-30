@@ -1,5 +1,6 @@
 // Row-level hover over the image layers: the server looks up the row of the
 // pixel under the cursor, and this module draws a plotly-like label.
+import { boxAt } from "./boxes.js";
 import { seriesColors, valueColor } from "./colorscale.js";
 
 const HOVER_DISTANCE = 20;
@@ -75,6 +76,11 @@ export function attachHover(gd, getMeta, legend, onTiming) {
       hide();
       return;
     }
+    const box = boxAt(meta, at.panel, at.x0 + at.fx * at.dxBin, at.y0 + at.fy * at.dyBin);
+    if (box) {
+      showBox(meta, at.panel, box, event);
+      return;
+    }
     const order = legend.order(meta.series.length);
     const query = new URLSearchParams({
       task: meta.task,
@@ -117,6 +123,36 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     ring.hidden = false;
     ring.style.left = `${cx}px`;
     ring.style.top = `${cy}px`;
+    const width = label.offsetWidth;
+    const flip = cx + 12 + width > gd.clientWidth;
+    label.style.left = `${flip ? cx - 12 - width : cx + 12}px`;
+    label.style.top = `${cy - label.offsetHeight / 2}px`;
+  }
+
+  // Shows the numbers of a box plot beside the cursor: no lookup, the meta
+  // holds them.
+  function showBox(meta, p, box, event) {
+    const [level, series, n, low, q1, median, q3, high] = box;
+    const x = meta.x_columns[meta.panels[p].x];
+    const lines = [`${x}: ${meta.axis_levels[x][level]}`];
+    if (meta.color.column !== null && meta.color.kind !== "gradient") {
+      lines.push(`${meta.color.column}: ${meta.series[series]}`);
+    }
+    lines.push(
+      `ひげの上端: ${formatValue(high)}`,
+      `75%: ${formatValue(q3)}`,
+      `50%: ${formatValue(median)}`,
+      `25%: ${formatValue(q1)}`,
+      `ひげの下端: ${formatValue(low)}`,
+      `行数: ${n.toLocaleString()}`,
+    );
+    label.textContent = lines.join("\n");
+    label.style.background = meta.color.kind === "gradient" ? "#444" : seriesColors(meta)[series];
+    label.hidden = false;
+    ring.hidden = true;
+    const rect = gd.getBoundingClientRect();
+    const cx = event.clientX - rect.left;
+    const cy = event.clientY - rect.top;
     const width = label.offsetWidth;
     const flip = cx + 12 + width > gd.clientWidth;
     label.style.left = `${flip ? cx - 12 - width : cx + 12}px`;

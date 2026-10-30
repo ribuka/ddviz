@@ -7,7 +7,22 @@ from dataclasses import dataclass, field
 
 import polars as pl
 
-from ddviz.compute.bands import band_range, count_spread, level_index, pair_positions
+from ddviz.compute.bands import (
+    JITTER_X,
+    band_range,
+    count_spread,
+    jitter,
+    level_index,
+    pair_positions,
+)
+from ddviz.compute.boxes import (
+    GROUP,
+    VALUE,
+    box_stats,
+    fences,
+    is_outlier,
+    outlier_position,
+)
 from ddviz.compute.cuts import cut_index, cut_labels, find_cuts
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.scan import scan_columns
@@ -26,11 +41,14 @@ from ddviz.shared.layout import (
     facet_grid,
     grid_layout,
 )
-from ddviz.shared.scatter import ScatterSpec, Spread
+from ddviz.shared.scatter import Boxes, ScatterSpec, Spread
 
 KEY = "__key"
 COUNT = "__n"
 INDEX = "__idx"
+# Whether a row is an outlier of its box plot, or any row of a pair whose
+# panels draw points.
+_OUTLIER = "__outlier"
 
 # Margin added on each side of the data range, as a fraction of the range.
 RANGE_PADDING = 0.02
@@ -72,7 +90,9 @@ class Aggregation:
         bands of its axis (`ddviz.compute.bands`).
     spreads : list of Spread
         How the points spread in the bands of each pair of axis columns
-        with a categorical axis.
+        with a categorical axis whose panels draw points.
+    boxes : list of Boxes
+        Box plots of each pair of `ddviz.shared.scatter.ScatterSpec.box_pairs`.
     bins : polars.DataFrame or None
         One row per non-empty bin, sorted by `KEY`: the key, the number of
         rows in the bin (`COUNT`), the representative row's index (`INDEX`,
@@ -100,6 +120,7 @@ class Aggregation:
     color_range: tuple[float, float] | None = None
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
     spreads: list[Spread] = field(default_factory=list)
+    boxes: list[Boxes] = field(default_factory=list)
 
 
 def _padded(lo: float | None, hi: float | None) -> tuple[float, float]:
@@ -276,7 +297,7 @@ def _spreads(
     known: list[Spread],
     ranges: dict[str, tuple[float, float]],
 ) -> list[Spread]:
-    """Return the spread of each pair of axis columns with a categorical axis.
+    """Return the spread of each pair of axis columns with a categorical axis whose panels draw points.
 
     A spread with widths in `known` is kept; the others are counted over the
     drawn rows that pass the local filter (`ddviz.compute.bands.count_spread`),
@@ -287,7 +308,10 @@ def _spreads(
     categorical = set(spec.categorical)
     known_by_pair = {(k.x, k.y): k for k in known}
     pairs = dict.fromkeys(
-        (x, y) for y in spec.y for x in spec.x if {x, y} & categorical
+        (x, y)
+        for y in spec.y
+        for x in spec.x
+        if {x, y} & categorical and spec.draws_points(x, y)
     )
     spreads = []
     for x, y in pairs:
@@ -374,6 +398,7 @@ def aggregate(
             color_range = (color_range[0], color_range[1])
         axis_levels = spec.view.axis_levels
         known = spec.view.spreads
+        known_boxes = spec.view.boxes
     else:
         progress("levels")
         found = _overview(spec, roles)
@@ -381,6 +406,7 @@ def aggregate(
         all_levels, cuts, color_range = found.levels, found.cuts, found.color_range
         axis_levels = found.axis_levels
         known = []
+        known_boxes = []
     if spec.view is not None and spec.view.facets is not None:
         levels = {**all_levels, **spec.view.facets}
     else:
@@ -425,24 +451,76 @@ def aggregate(
         return _index_expr(roles[role], levels[role])
 
     row, col, series = index("row"), index("col"), index("color")
+    # The facet cell of a box: the drawn row and col levels.
+    row_level, col_level = row, col
     if spec.wrap:
         # The panel of a wrapped level is its index (`AxisGrid`).
         row, col = col // axes.ncol, col % axes.ncol
     valid = drawn_conditions(spec)
+
+    def group(x_col: str) -> pl.Expr:
+        """Return each row's box among those of a pair: its facet cell, x level and series."""
+        cell = row_level * len(levels["col"]) + col_level
+        level = level_index(x_col, axis_levels[x_col])
+        return (cell * len(axis_levels[x_col]) + level) * grid.n_series + series
+
+    known_boxes_of = {(b.x, b.y): b for b in known_boxes}
+    boxes = []
+    pairs_with_boxes = spec.box_pairs()
+    if pairs_with_boxes:
+        progress("boxes")
+    for y_col in spec.y:
+        for x_col in spec.x:
+            if (x_col, y_col) not in pairs_with_boxes:
+                continue
+            if (x_col, y_col) in known_boxes_of:
+                boxes.append(known_boxes_of[x_col, y_col])
+                continue
+            value = pl.col(y_col).cast(pl.Float64)
+            frame = (
+                _scan(spec, [x_col, y_col, *used, *filter_columns(spec.filters)])
+                .filter(
+                    pl.col(x_col).is_not_null(),
+                    value.is_finite(),
+                    *valid,
+                    *filter_conditions(spec.filters),
+                )
+                .select(group(x_col).alias(GROUP), value.alias(VALUE))
+            )
+            boxes.append(
+                _boxes(x_col, y_col, box_stats(frame), levels, axis_levels, grid)
+            )
+    boxes_of = {(b.x, b.y): b for b in boxes}
 
     def pair(
         xi: int, yj: int, extra: list[pl.Expr], extra_columns: list[str]
     ) -> pl.LazyFrame:
         """Return the bins of the panels of one pair of axis columns, of the rows `extra` keeps."""
         x_col, y_col = spec.x[xi], spec.y[yj]
-        x, y = pair_positions(
-            x_col,
-            y_col,
-            set(spec.categorical),
-            axis_levels,
-            spread_of.get((x_col, y_col)),
-            INDEX,
-        )
+        outlier = pl.lit(True)
+        if spec.draws_points(x_col, y_col):
+            x, y = pair_positions(
+                x_col,
+                y_col,
+                set(spec.categorical),
+                axis_levels,
+                spread_of.get((x_col, y_col)),
+                INDEX,
+            )
+        else:
+            # Only the outliers, spread in the slot of their series' box.
+            y = pl.col(y_col).cast(pl.Float64)
+            x = outlier_position(
+                x_col,
+                axis_levels[x_col],
+                series,
+                grid.n_series,
+                jitter(INDEX, JITTER_X),
+            )
+            n_groups = len(levels["row"]) * len(levels["col"])
+            n_groups *= len(axis_levels[x_col]) * grid.n_series
+            stats = _group_stats(boxes_of[x_col, y_col], levels, axis_levels, grid)
+            outlier = is_outlier(y, group(x_col), fences(stats, n_groups))
         key = grid.pack(
             axes.panel(row, col, xi, yj),
             series,
@@ -459,7 +537,10 @@ def aggregate(
                 *valid,
                 *extra,
             )
-            .select(key.alias(KEY), pl.col(INDEX))
+            # The group, like the key, reads the drawn facet levels: only the
+            # rows kept above have one.
+            .select(key.alias(KEY), pl.col(INDEX), outlier.alias(_OUTLIER))
+            .filter(pl.col(_OUTLIER))
             .group_by(KEY)
             .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
         )
@@ -530,4 +611,44 @@ def aggregate(
         color_range=color_range,
         axis_levels=axis_levels,
         spreads=spreads,
+        boxes=boxes,
     )
+
+
+def _boxes(
+    x: str,
+    y: str,
+    stats: dict[int, list[float]],
+    levels: dict[str, list],
+    axis_levels: dict[str, list[str]],
+    grid: BinGrid,
+) -> Boxes:
+    """Return the box plots of a pair from the boxes of its groups (`aggregate`'s ``group``)."""
+    n_levels, n_series, n_col = len(axis_levels[x]), grid.n_series, len(levels["col"])
+    rows = []
+    for g in sorted(stats):
+        cell, rest = divmod(g, n_levels * n_series)
+        level, series = divmod(rest, n_series)
+        row, col = divmod(cell, n_col)
+        rows.append([row, col, level, series, *stats[g]])
+    return Boxes(x=x, y=y, stats=rows)
+
+
+def _group_stats(
+    boxes: Boxes,
+    levels: dict[str, list],
+    axis_levels: dict[str, list[str]],
+    grid: BinGrid,
+) -> dict[int, list[float]]:
+    """Return the boxes of a pair by their group, as `ddviz.compute.boxes.box_stats` gives them."""
+    n_levels, n_series, n_col = (
+        len(axis_levels[boxes.x]),
+        grid.n_series,
+        len(levels["col"]),
+    )
+    return {
+        ((row * n_col + col) * n_levels + level) * n_series + series: stats
+        for row, col, level, series, *stats in (
+            [int(v) for v in b[:4]] + b[4:] for b in boxes.stats
+        )
+    }

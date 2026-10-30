@@ -147,7 +147,7 @@ def count_spread(
     return Spread(x=x, y=y, bounds=None if both else list(bounds), widths=widths)
 
 
-def _jitter(index: str, step: float) -> pl.Expr:
+def jitter(index: str, step: float) -> pl.Expr:
     """Return a spread of the rows from -1 to 1 by their row index."""
     return ((pl.col(index).cast(pl.Float64) * step) % 1.0) * 2 - 1
 
@@ -196,6 +196,6 @@ def pair_positions(
         if column not in categorical:
             return pl.col(column).cast(pl.Float64)
         center = level_index(column, axis_levels[column]).cast(pl.Float64)
-        return center + BAND * widths * _jitter(index, step)
+        return center + BAND * widths * jitter(index, step)
 
     return position(x, JITTER_X), position(y, JITTER_Y if both else JITTER_X)

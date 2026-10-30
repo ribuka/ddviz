@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import AxisGrid, GridLayout
-from ddviz.shared.scatter import ScatterSpec, Selection, Spread
+from ddviz.shared.scatter import Boxes, ScatterSpec, Selection, Spread
 
 MANIFEST = "manifest.json"
 # File of a plot task holding the PNG of every panel and series one after
@@ -121,6 +121,9 @@ class PlotManifest:
     spreads : list of Spread
         How the points spread in the bands of the categorical axes
         (`ddviz.compute.aggregate.Aggregation.spreads`).
+    boxes : list of Boxes
+        Box plots of the pairs of a categorical x and a numeric y
+        (`ddviz.compute.aggregate.Aggregation.boxes`).
     """
 
     spec: ScatterSpec
@@ -142,6 +145,7 @@ class PlotManifest:
     hover_bytes: int = 0
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
     spreads: list[Spread] = field(default_factory=list)
+    boxes: list[Boxes] = field(default_factory=list)
 
     def write(self, out: Path) -> None:
         """Write the manifest into a task's directory (`write_manifest`)."""
@@ -183,6 +187,7 @@ class PlotManifest:
             hover_bytes=data["hover_bytes"],
             axis_levels=data["axis_levels"],
             spreads=[Spread(**k) for k in data["spreads"]],
+            boxes=[Boxes(**b) for b in data["boxes"]],
         )
 
 

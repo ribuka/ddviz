@@ -33,10 +33,10 @@ def facets_of(manifest: PlotManifest) -> dict:
 def _view(
     manifest: PlotManifest, x_ranges: list, y_ranges: list, same_filter: bool
 ) -> View:
-    """Return the view of the given ranges with the result's levels, cuts, color range and spreads.
+    """Return the view of the given ranges with the result's levels, cuts, color range, spreads and boxes.
 
-    For another filter, the facet levels and the spreads' widths are left
-    for the worker to find again over the rows it keeps.
+    For another filter, the facet levels, the spreads' widths and the boxes
+    are left for the worker to find again over the rows it keeps.
     """
     return View(
         x_ranges=[list(r) for r in x_ranges],
@@ -49,6 +49,7 @@ def _view(
         spreads=[
             k if same_filter else replace(k, widths=None) for k in manifest.spreads
         ],
+        boxes=manifest.boxes if same_filter else [],
     )
 
 

@@ -140,6 +140,17 @@ def _color_scale(manifest: PlotManifest) -> dict:
     }
 
 
+def _panel_boxes(manifest: PlotManifest) -> dict[tuple, list[list[float]]]:
+    """Return the box plots of each pair of axis columns and facet cell, as the page draws them."""
+    boxes: dict[tuple, list[list[float]]] = {}
+    for pair in manifest.boxes:
+        for row, col, *box in pair.stats:
+            boxes.setdefault((pair.x, pair.y, int(row), int(col)), []).append(
+                [int(box[0]), int(box[1]), *box[2:]]
+            )
+    return boxes
+
+
 def build_figure(manifest: PlotManifest) -> dict:
     """Return the figure of a plot task and what the page needs to draw its images.
 
@@ -157,8 +168,12 @@ def build_figure(manifest: PlotManifest) -> dict:
     -------
     dict
         ``{"figure": {"data", "layout"}, "meta": {...}}``; the meta holds the
-        axes, the axis columns (``x``, ``y``: their indices) and the facet
-        levels (``facet``: row and col as text, or None) of each panel,
+        axes, the axis columns (``x``, ``y``: their indices), the facet
+        levels (``facet``: row and col as text, or None), whether the
+        points of every row are drawn (``points``) and the box plots
+        (``boxes``: ``[level, series, n, low, q1, median, q3, high]`` each,
+        `ddviz.shared.scatter.Boxes`) of each panel, the levels of each
+        categorical axis column (``axis_levels``),
         the axes that hold the range of each x and y column (``x_axes``,
         ``y_axes``), the bin grid, the data range of each column, where each
         series' PNG lies in the images file (`ddviz.shared.manifest.IMAGES`; its
@@ -197,6 +212,7 @@ def build_figure(manifest: PlotManifest) -> dict:
         "annotations": [],
     }
     panels = []
+    boxes = _panel_boxes(manifest)
     for panel in range(axes.panels):
         prow, pcol = divmod(panel, layout.ncol)
         xi, yj = axes.axes(panel)
@@ -229,8 +245,17 @@ def build_figure(manifest: PlotManifest) -> dict:
             None if getattr(spec, role) is None else str(levels[role][i])
             for role, i in zip(("row", "col"), axes.facet(panel), strict=True)
         ]
+        row, col = axes.facet(panel)
         panels.append(
-            {"xaxis": x_axis, "yaxis": y_axis, "x": xi, "y": yj, "facet": facet}
+            {
+                "xaxis": x_axis,
+                "yaxis": y_axis,
+                "x": xi,
+                "y": yj,
+                "facet": facet,
+                "points": spec.draws_points(spec.x[xi], spec.y[yj]),
+                "boxes": boxes.get((spec.x[xi], spec.y[yj], row, col), []),
+            }
         )
     # A grid that scrolls has its tick labels and facet labels in strips
     # along the edges of the area (``static/js/sticky.js``), so that they
@@ -274,5 +299,6 @@ def build_figure(manifest: PlotManifest) -> dict:
         "rows": manifest.rows,
         "scroll": layout.scroll,
         "facet_labels": labels,
+        "axis_levels": manifest.axis_levels,
     }
     return {"figure": {"data": data, "layout": fig_layout}, "meta": meta}

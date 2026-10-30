@@ -55,6 +55,28 @@ class Spread:
 
 
 @dataclass(frozen=True)
+class Boxes:
+    """Box plots of a pair of axis columns: a categorical x and a numeric y (`ddviz.compute.boxes`).
+
+    Parameters
+    ----------
+    x, y : str
+        The pair's x and y columns.
+    stats : list of list of float
+        One box per facet cell, x level and series with rows:
+        ``[row, col, level, series, n, low, q1, median, q3, high]``, where
+        ``row`` and ``col`` index the drawn facet levels
+        (`ddviz.compute.aggregate.Aggregation.levels`), ``level`` the x
+        level, ``n`` counts the rows, and ``low`` and ``high`` are the ends
+        of the whiskers.
+    """
+
+    x: str
+    y: str
+    stats: list[list[float]]
+
+
+@dataclass(frozen=True)
 class View:
     """Zoomed view of a scatter plot.
 
@@ -83,6 +105,9 @@ class View:
     spreads : list of Spread
         Spread of each pair with a categorical axis, from a result; one
         without widths is counted again (another local filter).
+    boxes : list of Boxes
+        Box plots of each pair, from a result with the same local filter; a
+        pair without them has them found again.
     """
 
     x_ranges: list[list[float]]
@@ -93,6 +118,7 @@ class View:
     color_range: list[float] | None = None
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
     spreads: list[Spread] = field(default_factory=list)
+    boxes: list[Boxes] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -208,6 +234,13 @@ class ScatterSpec:
     categorical : list of str
         Columns of x and y that are not numeric: each of their levels is a
         band of the axis, up to ``max_levels`` levels.
+    points : bool
+        Whether the points of every row are drawn. A panel that cannot have
+        box plots draws them anyway.
+    box : bool
+        Whether the panels of a categorical x and a numeric y have box plots
+        (`box_pairs`); without points, such a panel draws only the outliers
+        as points (`ddviz.compute.boxes`).
     """
 
     files: dict[str, list[str]]
@@ -230,6 +263,42 @@ class ScatterSpec:
     wrap: bool = False
     wrap_cols: int | None = None
     categorical: list[str] = field(default_factory=list)
+    points: bool = True
+    box: bool = False
+
+    def box_pairs(self) -> set[tuple[str, str]]:
+        """Return the pairs of axis columns whose panels have box plots.
+
+        Returns
+        -------
+        set of tuple of str
+            Each ``(x, y)`` with a categorical x and a numeric y, when the
+            spec draws box plots; none otherwise.
+        """
+        if not self.box:
+            return set()
+        categorical = set(self.categorical)
+        return {
+            (x, y)
+            for x in self.x
+            for y in self.y
+            if x in categorical and y not in categorical
+        }
+
+    def draws_points(self, x: str, y: str) -> bool:
+        """Return whether the panels of a pair draw the points of every row, not only the outliers.
+
+        Parameters
+        ----------
+        x, y : str
+            The pair's columns.
+
+        Returns
+        -------
+        bool
+            True with the points element, or for a pair without box plots.
+        """
+        return self.points or (x, y) not in self.box_pairs()
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.
@@ -272,4 +341,10 @@ class ScatterSpec:
 
 def _view(data: dict) -> View:
     """Build a view from its dict, as `ScatterSpec.to_dict` makes it."""
-    return View(**{**data, "spreads": [Spread(**s) for s in data.get("spreads", [])]})
+    return View(
+        **{
+            **data,
+            "spreads": [Spread(**s) for s in data.get("spreads", [])],
+            "boxes": [Boxes(**b) for b in data.get("boxes", [])],
+        }
+    )
