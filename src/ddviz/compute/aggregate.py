@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 import polars as pl
 
+from ddviz.compute.bands import band_range, count_spread, level_index, pair_positions
 from ddviz.compute.cuts import cut_index, cut_labels, find_cuts
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.scan import scan_columns
@@ -25,7 +26,7 @@ from ddviz.shared.layout import (
     facet_grid,
     grid_layout,
 )
-from ddviz.shared.scatter import ScatterSpec
+from ddviz.shared.scatter import ScatterSpec, Spread
 
 KEY = "__key"
 COUNT = "__n"
@@ -66,6 +67,12 @@ class Aggregation:
         For a gradient, the finite minimum and maximum of the color column
         over every row; the bins then also hold the color of their
         representative row, and so do the selected bins.
+    axis_levels : dict
+        Levels of each categorical axis column over every row, as text: the
+        bands of its axis (`ddviz.compute.bands`).
+    spreads : list of Spread
+        How the points spread in the bands of each pair of axis columns
+        with a categorical axis.
     bins : polars.DataFrame or None
         One row per non-empty bin, sorted by `KEY`: the key, the number of
         rows in the bin (`COUNT`), the representative row's index (`INDEX`,
@@ -91,6 +98,8 @@ class Aggregation:
     selected_rows: int | None = None
     cuts: dict[str, dict] = field(default_factory=dict)
     color_range: tuple[float, float] | None = None
+    axis_levels: dict[str, list[str]] = field(default_factory=dict)
+    spreads: list[Spread] = field(default_factory=list)
 
 
 def _padded(lo: float | None, hi: float | None) -> tuple[float, float]:
@@ -103,10 +112,10 @@ def _padded(lo: float | None, hi: float | None) -> tuple[float, float]:
     return (lo - pad, hi + pad)
 
 
-def _bin_expr(column: str, bounds: tuple[float, float], n: int) -> pl.Expr:
-    """Return the bin index of a numeric column over `bounds` split into `n` bins."""
+def _bin_expr(value: pl.Expr, bounds: tuple[float, float], n: int) -> pl.Expr:
+    """Return the bin index of a position (`ddviz.compute.bands.pair_positions`) over `bounds` split into `n` bins."""
     lo, hi = bounds
-    scaled = (pl.col(column).cast(pl.Float64) - lo) * (n / (hi - lo))
+    scaled = (value - lo) * (n / (hi - lo))
     return scaled.floor().clip(0, n - 1).cast(pl.Int64)
 
 
@@ -114,14 +123,7 @@ def _index_expr(column: str | None, levels: list) -> pl.Expr:
     """Return the level index of a categorical column by its text, or 0 without a column."""
     if column is None:
         return pl.lit(0, pl.Int64)
-    # An Enum cast streams; replace_strict on 100M rows took over 9GB.
-    return (
-        pl.col(column)
-        .cast(pl.String)
-        .cast(pl.Enum(levels))
-        .to_physical()
-        .cast(pl.Int64)
-    )
+    return level_index(column, levels)
 
 
 def _scan(
@@ -154,18 +156,27 @@ class _Overview:
     levels: dict[str, list]
     cuts: dict[str, dict]
     color_range: tuple[float, float] | None
+    axis_levels: dict[str, list[str]]
 
 
 def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
     """Return the padded data range of each axis column and the levels of each role.
 
-    The ranges and the levels of the categorical roles come in one pass,
-    the cuts of each binned role in passes of their own
-    (`ddviz.compute.cuts.find_cuts`).
+    The ranges and the levels of the categorical roles and axis columns
+    come in one pass, the cuts of each binned role in passes of their own
+    (`ddviz.compute.cuts.find_cuts`). A categorical axis column spans its
+    bands (`ddviz.compute.bands.band_range`).
     """
-    numeric = list(dict.fromkeys([*spec.x, *spec.y]))
+    numeric = [
+        c for c in dict.fromkeys([*spec.x, *spec.y]) if c not in spec.categorical
+    ]
     used = list(
-        dict.fromkeys(c for r, c in roles.items() if c and r not in numeric_roles(spec))
+        dict.fromkeys(
+            [
+                *(c for r, c in roles.items() if c and r not in numeric_roles(spec)),
+                *spec.categorical,
+            ]
+        )
     )
     gradient = [spec.color] if spec.gradient else []
     # Levels and ranges come from the unfiltered scan: a row filter on the
@@ -185,12 +196,14 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
         lo, hi = found.pop().row(0)
         color_range = (0.0, 1.0) if lo is None else (lo, hi)
     ranges = {c: _padded(*f.row(0)) for c, f in zip(numeric, found, strict=False)}
-    x_ranges = [ranges[c] for c in spec.x]
-    y_ranges = [ranges[c] for c in spec.y]
     column_levels = {
         c: sorted(f[c].drop_nulls().to_list())
         for c, f in zip(used, found[len(numeric) :], strict=True)
     }
+    axis_levels = {c: column_levels[c] for c in spec.categorical}
+    ranges.update({c: band_range(v) for c, v in axis_levels.items()})
+    x_ranges = [ranges[c] for c in spec.x]
+    y_ranges = [ranges[c] for c in spec.y]
     many = {c: len(v) for c, v in column_levels.items() if len(v) > spec.max_levels}
     if many:
         raise ValueError(
@@ -209,7 +222,7 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
             levels[role] = cut_labels(cuts[role])
         else:
             levels[role] = column_levels[c]
-    return _Overview(x_ranges, y_ranges, levels, cuts, color_range)
+    return _Overview(x_ranges, y_ranges, levels, cuts, color_range, axis_levels)
 
 
 def _facet_levels(
@@ -255,6 +268,52 @@ def _facet_levels(
             present = {levels[role][i] for i in present}
         kept[role] = [v for v in levels[role] if v in present]
     return kept
+
+
+def _spreads(
+    spec: ScatterSpec,
+    axis_levels: dict[str, list[str]],
+    known: list[Spread],
+    ranges: dict[str, tuple[float, float]],
+) -> list[Spread]:
+    """Return the spread of each pair of axis columns with a categorical axis.
+
+    A spread with widths in `known` is kept; the others are counted over the
+    drawn rows that pass the local filter (`ddviz.compute.bands.count_spread`),
+    the numeric axis cut over the bounds a known spread has, else over its
+    range in `ranges` (the overview's). On 100M rows and 20 levels, counting
+    took about 0.6s.
+    """
+    categorical = set(spec.categorical)
+    known_by_pair = {(k.x, k.y): k for k in known}
+    pairs = dict.fromkeys(
+        (x, y) for y in spec.y for x in spec.x if {x, y} & categorical
+    )
+    spreads = []
+    for x, y in pairs:
+        old = known_by_pair.get((x, y))
+        if old is not None and old.widths is not None:
+            spreads.append(old)
+            continue
+        both = x in categorical and y in categorical
+        other = None if both else (y if x in categorical else x)
+        if old is not None:
+            bounds = old.bounds
+        else:
+            bounds = None if other is None else list(ranges[other])
+        drawn = [
+            pl.col(c).is_not_null()
+            if c in categorical
+            else pl.col(c).cast(pl.Float64).is_finite()
+            for c in (x, y)
+        ]
+        frame = _scan(
+            spec,
+            [x, y, *(c for c in (spec.color, spec.row, spec.col) if c)]
+            + filter_columns(spec.filters),
+        ).filter(*drawn, *drawn_conditions(spec), *filter_conditions(spec.filters))
+        spreads.append(count_spread(frame, x, y, categorical, axis_levels, bounds))
+    return spreads
 
 
 def aggregate(
@@ -313,16 +372,28 @@ def aggregate(
         color_range = spec.view.color_range
         if color_range is not None:
             color_range = (color_range[0], color_range[1])
+        axis_levels = spec.view.axis_levels
+        known = spec.view.spreads
     else:
         progress("levels")
         found = _overview(spec, roles)
         x_ranges, y_ranges = found.x_ranges, found.y_ranges
         all_levels, cuts, color_range = found.levels, found.cuts, found.color_range
+        axis_levels = found.axis_levels
+        known = []
     if spec.view is not None and spec.view.facets is not None:
         levels = {**all_levels, **spec.view.facets}
     else:
         progress("facets")
         levels = _facet_levels(spec, all_levels, cuts)
+
+    if spec.categorical:
+        progress("spread")
+    ranges = dict(zip(spec.x, x_ranges, strict=True)) | dict(
+        zip(spec.y, y_ranges, strict=True)
+    )
+    spreads = _spreads(spec, axis_levels, known, ranges) if spec.categorical else []
+    spread_of = {(k.x, k.y): k for k in spreads}
 
     axes = facet_grid(
         len(levels["row"]),
@@ -364,13 +435,19 @@ def aggregate(
     ) -> pl.LazyFrame:
         """Return the bins of the panels of one pair of axis columns, of the rows `extra` keeps."""
         x_col, y_col = spec.x[xi], spec.y[yj]
-        x = pl.col(x_col).cast(pl.Float64)
-        y = pl.col(y_col).cast(pl.Float64)
+        x, y = pair_positions(
+            x_col,
+            y_col,
+            set(spec.categorical),
+            axis_levels,
+            spread_of.get((x_col, y_col)),
+            INDEX,
+        )
         key = grid.pack(
             axes.panel(row, col, xi, yj),
             series,
-            _bin_expr(y_col, y_ranges[yj], grid.height),
-            _bin_expr(x_col, x_ranges[xi], grid.width),
+            _bin_expr(y, y_ranges[yj], grid.height),
+            _bin_expr(x, x_ranges[xi], grid.width),
         )
         return (
             _scan(spec, [x_col, y_col, *used, *extra_columns], INDEX)
@@ -415,7 +492,7 @@ def aggregate(
     selected = selected_rows = None
     if spec.selection is not None:
         progress("selection")
-        conditions = selection_filter(spec)
+        conditions = selection_filter(spec, INDEX)
         columns = selection_columns(spec)
         selected = all_pairs(conditions, columns)
         if spec.gradient:
@@ -432,7 +509,7 @@ def aggregate(
         else:
             selected = selected.select(KEY, COUNT)
         selected_rows = (
-            _scan(spec, columns)
+            _scan(spec, columns, INDEX)
             .filter(*conditions)
             .select(pl.len())
             .collect(engine="streaming")
@@ -451,4 +528,6 @@ def aggregate(
         selected_rows=selected_rows,
         cuts=cuts,
         color_range=color_range,
+        axis_levels=axis_levels,
+        spreads=spreads,
     )

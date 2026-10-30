@@ -106,6 +106,8 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         hover_files=kept is not None,
         hover_dropped=[c for c in hover if kept is None or c not in kept],
         hover_bytes=sum(f.stat().st_size for f in files),
+        axis_levels=agg.axis_levels,
+        spreads=agg.spreads,
     ).write(out)
 
 

@@ -10,6 +10,9 @@ AXES = ("x", "y")
 # Roles that hold one column or none.
 SINGLES = ("color", "overlay", "row", "col", "wrap")
 ROLES = AXES + SINGLES
+# Elements of a graph, which the icons above the figure toggle: points,
+# box plots and smoothing lines.
+ELEMENTS = ("points", "box", "smooth")
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,9 @@ class Encoding:
         Column whose levels make panels side by side that wrap into rows
         (``facet_col_wrap`` of plotly express); the plan refuses it beside
         row, col or the n-th axes (`ddviz.server.plan.scatter_spec`).
+    elements : tuple of str
+        Elements drawn, one or more of `ELEMENTS` in that order; several
+        are drawn one over another.
     """
 
     x: tuple[str, ...] = ()
@@ -44,6 +50,7 @@ class Encoding:
     row: str | None = None
     col: str | None = None
     wrap: str | None = None
+    elements: tuple[str, ...] = ("points",)
 
     def columns(self) -> list[str]:
         """Return every placed column once, in role order.
@@ -63,16 +70,17 @@ class Encoding:
         Returns
         -------
         dict
-            Each role; the axes as lists.
+            Each role, and the elements; the axes and the elements as lists.
         """
         return {
             **{r: list(getattr(self, r)) for r in AXES},
             **{r: getattr(self, r) for r in SINGLES},
+            "elements": list(self.elements),
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> Encoding:
-        """Build an encoding from a dict like `to_dict`'s; missing roles are empty.
+        """Build an encoding from a dict like `to_dict`'s; missing roles are empty, missing elements are points.
 
         Parameters
         ----------
@@ -87,9 +95,10 @@ class Encoding:
         Raises
         ------
         ValueError
-            For an unknown role, or a role whose value has the wrong type.
+            For an unknown role, a role whose value has the wrong type, or
+            elements that are not a non-empty list of `ELEMENTS`.
         """
-        unknown = sorted(set(data) - set(ROLES))
+        unknown = sorted(set(data) - {*ROLES, "elements"})
         if unknown:
             raise ValueError(f"unknown roles: {unknown}")
         values: dict = {}
@@ -105,4 +114,12 @@ class Encoding:
             if column is not None and not isinstance(column, str):
                 raise ValueError(f"{role} must be a column name or null")
             values[role] = column
+        elements = data.get("elements", ["points"])
+        if (
+            not isinstance(elements, list)
+            or not elements
+            or not all(e in ELEMENTS for e in elements)
+        ):
+            raise ValueError(f"elements must be a non-empty list of {ELEMENTS}")
+        values["elements"] = tuple(e for e in ELEMENTS if e in elements)
         return cls(**values)

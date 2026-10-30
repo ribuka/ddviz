@@ -62,7 +62,8 @@ def plot_router(
     broker : TaskBroker
         Runs the plot tasks.
     max_levels : int
-        Most levels a categorical color, Group X or Group Y column may have.
+        Most levels a categorical x, y, color, Group X, Group Y or Wrap
+        column may have.
     max_hover_bytes : int
         Most bytes the hover files of the overview and the view take together.
 
@@ -154,9 +155,6 @@ def plot_router(
             raise HTTPException(400, f"unknown columns: {missing}")
         if not encoding.x or not encoding.y:
             raise HTTPException(400, "x and y need a column")
-        text = [c for c in (*encoding.x, *encoding.y) if not numeric[c]]
-        if text:
-            raise HTTPException(400, f"x and y need numeric columns: {text}")
         # The page refuses edits while converting; a plot now would kill the conversion.
         if source.converting:
             raise HTTPException(409, "converting")

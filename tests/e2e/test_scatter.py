@@ -96,3 +96,27 @@ def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:
     page.wait_for_timeout(1000)
     expect(page.locator("#empty")).to_be_visible()
     expect(labels).to_have_count(0)
+
+
+def test_a_categorical_x_draws_bands_named_by_its_levels(app_page: Page) -> None:
+    """A text column dropped on X draws a band per level, ticked with its names; the element icons show points on and the others off."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    for column, role in [("color", "x"), ("y", "y")]:
+        source = columns.filter(has=page.get_by_text(column, exact=True))
+        zone = page.locator(f'.zone[data-role="{role}"]')
+        source.drag_to(zone)
+        expect(zone.locator(".chip-name")).to_have_text(column)
+    page.wait_for_function(PAINTED_PIXEL)
+    expect(page.locator("#plot .xtick text")).to_have_text(["a", "b", "c"])
+
+    icons = page.locator("#elements .element")
+    expect(icons).to_have_count(3)
+    points = icons.nth(0)
+    expect(points).to_have_attribute("aria-pressed", "true")
+    expect(icons.nth(1)).to_be_disabled()
+    expect(icons.nth(2)).to_be_disabled()
+    # Points are the only element drawn: they stay on.
+    points.click()
+    expect(points).to_have_attribute("aria-pressed", "true")

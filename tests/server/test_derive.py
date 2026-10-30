@@ -15,7 +15,7 @@ from ddviz.server.derive import (
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import WRAP_GAP, AxisGrid, facet_grid, grid_layout
 from ddviz.shared.manifest import PlotManifest
-from ddviz.shared.scatter import Filter, ScatterSpec
+from ddviz.shared.scatter import Filter, ScatterSpec, Spread
 
 
 @pytest.fixture
@@ -159,3 +159,24 @@ def test_a_wrapped_grid_changes_with_the_size(wrapped: PlotManifest) -> None:
     ranges = (wrapped.x_ranges, wrapped.y_ranges)
     assert unchanged(wrapped, resized_spec(wrapped, 1000, 400, [], {}, *ranges))
     assert not unchanged(wrapped, resized_spec(wrapped, 400, 1000, [], {}, *ranges))
+
+
+def test_spreads_are_kept_for_the_same_filter_only(manifest: PlotManifest) -> None:
+    """A view and a selection reuse the spreads' widths; another filter counts them again over the same bounds."""
+    spread = Spread(x="color", y="y", bounds=[-3.0, 3.0], widths=[1.0, 0.5])
+    banded = replace(
+        manifest,
+        spec=replace(manifest.spec, x=["color"], categorical=["color"]),
+        axis_levels={"color": ["a", "b", "c"]},
+        spreads=[spread],
+    )
+    same = resized_spec(banded, 400, 300, [], {}, [[0, 1]], [[0, 1]])
+    assert same.view.axis_levels == {"color": ["a", "b", "c"]}
+    assert same.view.spreads == [spread]
+    filters = [Filter(column="label", levels=["r1"])]
+    other = resized_spec(
+        banded, 400, 300, filters, {"label": ["label.parquet"]}, [[0, 1]], [[0, 1]]
+    )
+    assert other.view.spreads == [replace(spread, widths=None)]
+    box = box_selection(banded, 0, (0.5, 1.5), (0, 1))
+    assert selection_spec(banded, box).view.spreads == [spread]

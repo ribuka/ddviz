@@ -9,6 +9,7 @@ labels and facet labels of a grid that scrolls (``static/js/sticky.js``).
 
 from __future__ import annotations
 
+import html
 from dataclasses import asdict
 
 from ddviz.shared.layout import (
@@ -107,6 +108,20 @@ def _facet_labels(
     return labels
 
 
+def _band_ticks(manifest: PlotManifest, column: str) -> dict:
+    """Return the ticks of an axis column: a categorical one's levels at the middle of their bands, else plotly's."""
+    levels = manifest.axis_levels.get(column)
+    if levels is None:
+        return {}
+    # plotly reads tick text as its own markup; the levels are the data's.
+    return {
+        "tickmode": "array",
+        "tickvals": list(range(len(levels))),
+        "ticktext": [html.escape(str(v), quote=False) for v in levels],
+        "showgrid": False,
+    }
+
+
 def _color_scale(manifest: PlotManifest) -> dict:
     """Return how the page colors the series: by level, by intervals of a numeric column, or by a gradient."""
     spec = manifest.spec
@@ -129,7 +144,8 @@ def build_figure(manifest: PlotManifest) -> dict:
     """Return the figure of a plot task and what the page needs to draw its images.
 
     The figure holds the axes of every panel, each kept by an empty scatter
-    trace (plotly leaves out the axes of a subplot without traces). The axes
+    trace (plotly leaves out the axes of a subplot without traces). A
+    categorical axis has a tick at the middle of each level's band. The axes
     of the panels of one x column match, and so do those of one y column.
 
     Parameters
@@ -195,6 +211,7 @@ def build_figure(manifest: PlotManifest) -> dict:
             "range": list(x_ranges[xi]),
             "showticklabels": not layout.scroll and bottom,
             "zeroline": False,
+            **_band_ticks(manifest, spec.x[xi]),
             **_FRAME,
             **({"matches": x_axes[xi]} if x_axis != x_axes[xi] else {}),
         }
@@ -204,6 +221,7 @@ def build_figure(manifest: PlotManifest) -> dict:
             "range": list(y_ranges[yj]),
             "showticklabels": not layout.scroll and pcol == 0,
             "zeroline": False,
+            **_band_ticks(manifest, spec.y[yj]),
             **_FRAME,
             **({"matches": y_axes[yj]} if y_axis != y_axes[yj] else {}),
         }

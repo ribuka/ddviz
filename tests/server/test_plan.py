@@ -134,3 +134,29 @@ def test_parse_wrap_cols() -> None:
     for raw in (0, -1, 1.5, "2", True):
         with pytest.raises(ValueError, match="wrap_cols"):
             parse_wrap_cols(raw)
+
+
+def test_categorical_axis_columns_are_drawn_in_bands() -> None:
+    """A text column on x or y is categorical; a column missing from numeric stays numeric."""
+    encoding = Encoding(x=("g", "a"), y=("b",), color="h")
+    files = {c: [f"{c}.parquet"] for c in encoding.columns()}
+    numeric = {"g": False, "a": True, "h": False}
+    spec = scatter_spec(encoding, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.categorical == ["g"]
+    assert scatter_spec(encoding, files, 400, 300, ["#000000"]).categorical == []
+
+
+def test_elements_that_cannot_be_drawn_are_undrawn() -> None:
+    """Box plots and smoothing lines are not drawn yet; a graph needs points."""
+    files = {c: [f"{c}.parquet"] for c in ("a", "b")}
+    both = Encoding(x=("a",), y=("b",), elements=("points", "box"))
+    assert undrawn(both) == ["box"]
+    scatter_spec(both, files, 400, 300, ["#000000"])
+    with pytest.raises(ValueError, match="elements"):
+        scatter_spec(
+            Encoding(x=("a",), y=("b",), elements=("box",)),
+            files,
+            400,
+            300,
+            ["#000000"],
+        )

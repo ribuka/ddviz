@@ -3,6 +3,7 @@
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
 import { attachColumnList } from "./columns.js";
+import { ElementBar } from "./elements.js";
 import { FilterPane } from "./filters.js";
 import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
@@ -775,14 +776,14 @@ function clearPlot() {
   hoverWarning.hidden = true;
 }
 
-// The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`): placing
-// overlay changes nothing drawn, so it aggregates nothing.
+// The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`) and
+// its elements: placing overlay changes nothing drawn, so it aggregates nothing.
 function drawnRoles(encoding) {
-  const { x, y, color, row, col, wrap } = encoding;
-  return JSON.stringify([x, y, color, row, col, wrap]);
+  const { x, y, color, row, col, wrap, elements } = encoding;
+  return JSON.stringify([x, y, color, row, col, wrap, elements]);
 }
 
-let drawnRolesKey = drawnRoles({ x: [], y: [], color: null, row: null, col: null, wrap: null });
+let drawnRolesKey = drawnRoles({ x: [], y: [], color: null, row: null, col: null, wrap: null, elements: ["points"] });
 // Cuts a numeric color column another way, or draws it as a gradient (null):
 // the series change, so the graph is plotted again.
 function setColorBins(bins) {
@@ -825,7 +826,7 @@ async function recolor() {
   }
 }
 
-new Builder(
+const builder = new Builder(
   document.getElementById("builder"),
   document.getElementById("columns"),
   (encoding) => {
@@ -844,5 +845,6 @@ new Builder(
   },
   { wrap: wrapColsInput },
 );
+new ElementBar(document.getElementById("elements"), (elements) => builder.setElements(elements));
 await attachColumnList(document.getElementById("columns"));
 showCasts(document.getElementById("casts"));

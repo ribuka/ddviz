@@ -208,3 +208,20 @@ def test_a_scrolled_wrapped_grid_keeps_its_labels_in_the_figure(
         "c",
     ]
     assert result["meta"]["facet_labels"] == []
+
+
+def test_a_categorical_axis_ticks_the_middle_of_each_band(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """A categorical axis has its levels as tick text at 0, 1, ..., escaped as plotly markup."""
+    spec = replace(
+        scatter_spec, x=["color"], color=None, categorical=["color"], hover=["color"]
+    )
+    layout = _figure(spec, tmp_path / "task")["figure"]["layout"]
+    for key in ("xaxis", "xaxis2"):
+        axis = layout[key]
+        assert axis["range"] == [-0.5, 2.5]
+        assert axis["tickmode"] == "array"
+        assert axis["tickvals"] == [0, 1, 2]
+        assert axis["ticktext"] == ["a", "b", "c"]
+    assert "tickvals" not in layout["yaxis"]

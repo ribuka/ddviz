@@ -121,7 +121,8 @@ def test_plot_draws_and_serves_images(client: TestClient) -> None:
     ("encoding", "detail"),
     [
         ({"x": ["nope"], "y": ["y"]}, "unknown columns"),
-        ({"x": ["label"], "y": ["y"]}, "numeric"),
+        ({"x": ["x"], "y": ["y"], "elements": ["box"]}, "elements"),
+        ({"x": ["x"], "y": ["y"], "elements": "points"}, "elements"),
         ({"x": ["x"]}, "x and y"),
         ({"x": "x", "y": ["y"]}, "list"),
         ({"x": ["x"], "y": ["y"], "wrap": "facet", "col": "color"}, "wrap"),
@@ -131,7 +132,7 @@ def test_plot_draws_and_serves_images(client: TestClient) -> None:
 def test_plot_refuses_bad_encodings(
     client: TestClient, encoding: dict, detail: str
 ) -> None:
-    """A plot with an unknown, text or missing axis column, or wrap beside a facet or an n-th axis, is refused."""
+    """A plot with an unknown or missing axis column, no drawable element, or wrap beside a facet or an n-th axis, is refused."""
     response = client.post("/api/plot", json={"encoding": encoding, **SIZE})
     assert response.status_code == 400
     assert detail in response.json()["detail"]
@@ -321,3 +322,35 @@ def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
         assert meta["hover"]["bytes"] + again["bytes"] <= settings.hover.max_temp_bytes
         # The old results are gone now, so the next plot has the whole limit.
         assert _plot(limited)["meta"]["hover"]["files"]
+
+
+def test_a_categorical_axis_plots_zooms_filters_and_selects(client: TestClient) -> None:
+    """A text column on x is drawn in bands; a view, another filter, a box and the table follow them."""
+    encoding = {"x": ["color"], "y": ["y"], "col": "facet"}
+    plotted = client.post("/api/plot", json={"encoding": encoding, **SIZE}).json()
+    meta = plotted["meta"]
+    assert meta["x_ranges"] == [[-0.5, 2.5]]
+    assert plotted["figure"]["layout"]["xaxis"]["ticktext"] == ["a", "b", "c"]
+    assert meta["rows"] == 2002
+
+    view = {**SIZE, "x_ranges": [[0.5, 1.5]], "y_ranges": meta["y_ranges"]}
+    zoomed = client.post("/api/view", json=view).json()["meta"]
+    assert 0 < zoomed["rows"] < meta["rows"]
+    filters = [{"column": "facet", "levels": ["p"]}]
+    narrowed = client.post("/api/overview", json={**SIZE, "filters": filters})
+    narrowed = narrowed.json()["meta"]
+    assert 0 < narrowed["rows"] < meta["rows"]
+
+    box = {
+        "task": narrowed["task"],
+        "panel": 0,
+        "x_range": [0.5, 1.5],
+        "y_range": [-5, 5],
+    }
+    selected = client.post("/api/selection", json=box).json()
+    assert 0 < selected["rows"]
+    table = client.get("/api/table").json()
+    assert table["rows"] == selected["rows"]
+    assert {
+        v for c in table["columns"] if c["name"] == "color" for v in c["values"]
+    } == {"b"}

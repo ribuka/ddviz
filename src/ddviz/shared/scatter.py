@@ -31,6 +31,30 @@ class Binning:
 
 
 @dataclass(frozen=True)
+class Spread:
+    """How wide the points of a pair of axis columns spread in the bands of its categorical axes (`ddviz.compute.bands`).
+
+    Parameters
+    ----------
+    x, y : str
+        The pair's x and y columns; one of them at least is categorical.
+    bounds : list of float or None
+        With one categorical axis, the range of the numeric axis cut into
+        `ddviz.compute.bands.SPREAD_CELLS` cells: the overview's, so that a
+        zoom keeps the widths. None with two categorical axes.
+    widths : list of float or None
+        Width of each cell, from 0 to 1, flat with the levels of the
+        categorical axis outermost (with two, the x levels outermost and the
+        y levels inside); None to count them again over `bounds`.
+    """
+
+    x: str
+    y: str
+    bounds: list[float] | None
+    widths: list[float] | None
+
+
+@dataclass(frozen=True)
 class View:
     """Zoomed view of a scatter plot.
 
@@ -54,6 +78,11 @@ class View:
     color_range : list of float or None
         Finite minimum and maximum of a gradient's color column, from the
         overview.
+    axis_levels : dict of str to list of str
+        Levels of each categorical axis column, from the overview.
+    spreads : list of Spread
+        Spread of each pair with a categorical axis, from a result; one
+        without widths is counted again (another local filter).
     """
 
     x_ranges: list[list[float]]
@@ -62,6 +91,8 @@ class View:
     facets: dict[str, list] | None = None
     cuts: dict[str, dict] = field(default_factory=dict)
     color_range: list[float] | None = None
+    axis_levels: dict[str, list[str]] = field(default_factory=dict)
+    spreads: list[Spread] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -130,6 +161,8 @@ class ScatterSpec:
         Columns on the x and y axes, at least one each. Every pair of an x and
         a y column is a panel of each facet cell: the x columns side by side,
         the y columns stacked from the top (`ddviz.shared.layout.AxisGrid`).
+        A column in ``categorical`` is drawn by its levels, in bands
+        (`ddviz.compute.bands`).
     color : str or None
         Column whose levels make the series, or None for a single series.
     row, col : str or None
@@ -172,6 +205,9 @@ class ScatterSpec:
     hover_bytes : int or None
         Most bytes the result's hover files may take
         (`ddviz.compute.hoverfit`); None for no limit.
+    categorical : list of str
+        Columns of x and y that are not numeric: each of their levels is a
+        band of the axis, up to ``max_levels`` levels.
     """
 
     files: dict[str, list[str]]
@@ -193,6 +229,7 @@ class ScatterSpec:
     hover_bytes: int | None = None
     wrap: bool = False
     wrap_cols: int | None = None
+    categorical: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.
@@ -223,7 +260,7 @@ class ScatterSpec:
         return cls(
             **{
                 **data,
-                "view": View(**view) if view is not None else None,
+                "view": _view(view) if view is not None else None,
                 "selection": Selection(**selection) if selection is not None else None,
                 "filters": [Filter(**f) for f in data.get("filters", [])],
                 "binned": {
@@ -231,3 +268,8 @@ class ScatterSpec:
                 },
             }
         )
+
+
+def _view(data: dict) -> View:
+    """Build a view from its dict, as `ScatterSpec.to_dict` makes it."""
+    return View(**{**data, "spreads": [Spread(**s) for s in data.get("spreads", [])]})

@@ -31,16 +31,24 @@ def facets_of(manifest: PlotManifest) -> dict:
 
 
 def _view(
-    manifest: PlotManifest, x_ranges: list, y_ranges: list, facets: dict | None
+    manifest: PlotManifest, x_ranges: list, y_ranges: list, same_filter: bool
 ) -> View:
-    """Return the view of the given ranges with the result's levels, cuts and color range."""
+    """Return the view of the given ranges with the result's levels, cuts, color range and spreads.
+
+    For another filter, the facet levels and the spreads' widths are left
+    for the worker to find again over the rows it keeps.
+    """
     return View(
         x_ranges=[list(r) for r in x_ranges],
         y_ranges=[list(r) for r in y_ranges],
         levels=manifest.all_levels,
-        facets=facets,
+        facets=facets_of(manifest) if same_filter else None,
         cuts=manifest.cuts,
         color_range=manifest.color_range,
+        axis_levels=manifest.axis_levels,
+        spreads=[
+            k if same_filter else replace(k, widths=None) for k in manifest.spreads
+        ],
     )
 
 
@@ -55,8 +63,9 @@ def resized_spec(
 ) -> ScatterSpec:
     """Return the spec of the overview for other ranges, size or filter, reusing its levels.
 
-    The overview's facet panels are kept for the same filter; another
-    filter finds its own (`ddviz.compute.aggregate.aggregate`).
+    The overview's facet panels and spreads (`ddviz.compute.bands`) are kept
+    for the same filter; another filter finds its own
+    (`ddviz.compute.aggregate.aggregate`).
 
     Parameters
     ----------
@@ -91,7 +100,7 @@ def resized_spec(
         filters=list(filters),
         width=width,
         height=height,
-        view=_view(manifest, x_ranges, y_ranges, facets_of(manifest) if same else None),
+        view=_view(manifest, x_ranges, y_ranges, same),
     )
 
 
@@ -198,6 +207,6 @@ def selection_spec(manifest: PlotManifest, selection: Selection) -> ScatterSpec:
     """
     return replace(
         manifest.spec,
-        view=_view(manifest, manifest.x_ranges, manifest.y_ranges, facets_of(manifest)),
+        view=_view(manifest, manifest.x_ranges, manifest.y_ranges, True),
         selection=selection,
     )
