@@ -5,7 +5,9 @@
 // on the left, the x ticks of each panel column at the bottom, and the facet
 // labels at the top and on the right, following the scroll and the axes.
 // Unscrolled, the strips lie on the figure's margins, where a grid that fits
-// has its labels. plotly draws none of them (`ddviz.server.figure`).
+// has its labels. plotly draws none of them (`ddviz.server.figure`). The
+// mode bar, at the figure's top right, follows the scroll the same way and
+// stays at the top right of the area, above the top strip.
 
 function axisKey(id) {
   return id.replace(/^([xy])/, "$1axis");
@@ -52,12 +54,19 @@ export class StickyLabels {
     const full = this.gd._fullLayout;
     const on = Boolean(meta?.scroll && full);
     this.root.hidden = !on;
-    if (!on) return;
+    const modeBar = this.gd.querySelector(".modebar-container");
+    if (!on) {
+      if (modeBar) modeBar.style.transform = "";
+      return;
+    }
     const { l, r, t, b } = full.margin;
     const width = this.scroller.clientWidth;
     const height = this.scroller.clientHeight;
     const sx = this.scroller.scrollLeft;
     const sy = this.scroller.scrollTop;
+    if (modeBar) {
+      modeBar.style.transform = `translate(${sx + width - full.width}px, ${sy}px)`;
+    }
     const place = (strip, left, top, w, h) => {
       Object.assign(strip.style, { left: `${left}px`, top: `${top}px`, width: `${w}px`, height: `${h}px` });
     };
