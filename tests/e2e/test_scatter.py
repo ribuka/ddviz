@@ -253,6 +253,14 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
     status = page.locator("#status")
     task = status.inner_text()
     box = card.locator(".filter-contains input")
+    # The Enter that commits an IME conversion keeps the box in use.
+    box.focus()
+    box.evaluate(
+        """(box) => box.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter", keyCode: 229, isComposing: true, bubbles: true,
+        }))"""
+    )
+    expect(box).to_be_focused()
     box.fill("r12")
     box.press("Enter")
     expect(status).not_to_have_text(task)

@@ -389,7 +389,8 @@ export class FilterPane {
       this.commit();
     });
     input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") input.blur();
+      // The Enter that commits an IME conversion keeps editing.
+      if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) input.blur();
     });
     bar.append(input);
     body.append(note, bar);
