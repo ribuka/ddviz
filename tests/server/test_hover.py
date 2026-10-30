@@ -9,10 +9,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from ddviz.compute.raster import occupancy
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.server.hover import HOVER_DISTANCE, HoverIndex
+from ddviz.shared.keys import BinGrid
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import ScatterSpec
+from ddviz.shared.shapes import kernel
 
 
 @pytest.fixture
@@ -135,3 +138,31 @@ def test_without_room_for_the_axes_no_hover_files_are_written(
     index = HoverIndex(out)
     assert index.lookup(0, 1.5, 1.5, 1.0, 1.0, [2, 1, 0]) is None
     index.close()
+
+
+def _overlay_index(points: list[tuple[int, int, int]]) -> HoverIndex:
+    """Return an index of one panel of 30 x 20 bins, one color and two overlay levels (a circle and a square of 7px), with a row per point ``(series, bx, by)``."""
+    index = HoverIndex.__new__(HoverIndex)
+    index.grid = BinGrid(n_panels=1, n_series=2, width=30, height=20)
+    keys = np.array(sorted(index.grid.pack(0, s, by, bx) for s, bx, by in points))
+    index._keys = keys
+    index._count = np.ones(len(keys), dtype=np.uint32)
+    index._index = np.arange(len(keys), dtype=np.int64)
+    index._occupancy = occupancy(keys, index.grid)
+    index._columns = []
+    index._shapes = [kernel(i, 7)[::-1] for i in range(2)]
+    return index
+
+
+def test_lookup_finds_the_topmost_marker_shape_over_the_cursor() -> None:
+    """A square drawn on top of a point's bin answers there; with the order reversed, the point does."""
+    index = _overlay_index([(0, 10, 10), (1, 13, 10)])
+    # The square of series 1 (the second shape) covers bin (10, 10) with its left side.
+    hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])
+    assert (hit["series"], hit["bx"], hit["by"]) == (1, 13, 10)
+    assert hit["pixel_count"] == 1
+    hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [0, 1])
+    assert (hit["series"], hit["bx"], hit["by"]) == (0, 10, 10)
+    # Inside the square's outline, no shape covers the cursor: the nearest point answers.
+    hit = index.lookup(0, 12.5, 10.5, 1.0, 1.0, [1, 0])
+    assert (hit["bx"], hit["by"]) == (13, 10)

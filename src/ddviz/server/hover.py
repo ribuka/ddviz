@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from ddviz.shared.manifest import PlotManifest
+from ddviz.shared.shapes import kernel
 
 # Hover distance in screen pixels, as plotly's default `hoverdistance`.
 HOVER_DISTANCE = 20
@@ -43,6 +44,15 @@ class HoverIndex:
             (c.name, np.load(out / c.file, mmap_mode="r"), c.labels)
             for c in self.manifest.columns
         ]
+        # The marker shape of each overlay level, rows from the bottom as
+        # the bins: a series' points cover the bins of their shape.
+        spec = self.manifest.spec
+        self._shapes = []
+        if spec.overlay is not None:
+            levels = self.manifest.levels["overlay"]
+            self._shapes = [
+                kernel(i, spec.shape_size)[::-1] for i in range(len(levels))
+            ]
 
     def close(self) -> None:
         """Drop the memory maps, so that the files can be deleted."""
@@ -58,6 +68,40 @@ class HoverIndex:
         hit = np.zeros(len(keys), dtype=bool)
         hit[inside] = self._keys[found[inside]] == keys[inside]
         return {int(s): int(i) for s, i in zip(series[hit], found[hit], strict=True)}
+
+    def _covering(
+        self, panel: int, fx: float, fy: float, order: list[int]
+    ) -> tuple[int, int, int] | None:
+        """Return the bin and series of the topmost marker shape that covers the cursor's bin, or None.
+
+        Of the series whose shapes cover it, the first in `order` (else the
+        last series) wins, and of its bins, the one whose row has the largest
+        index.
+        """
+        grid = self.grid
+        cx, cy = math.floor(fx), math.floor(fy)
+        if not (0 <= cx < grid.width and 0 <= cy < grid.height):
+            return None
+        half = self._shapes[0].shape[0] // 2
+        x0, y0 = max(cx - half, 0), max(cy - half, 0)
+        x1, y1 = min(cx + half + 1, grid.width), min(cy + half + 1, grid.height)
+        rank = {s: i for i, s in enumerate(order)}
+        best = None
+        for py, px in np.argwhere(self._occupancy[panel, y0:y1, x0:x1]):
+            by, bx = int(py) + y0, int(px) + x0
+            for s, i in self._series_at(panel, by, bx).items():
+                shape = self._shapes[s % len(self._shapes)]
+                # A point keeps its own bin, even inside an outline.
+                own = (by, bx) == (cy, cx)
+                if not (own or shape[cy - by + half, cx - bx + half]):
+                    continue
+                score = (
+                    -rank.get(s, len(order) + grid.n_series - s),
+                    int(self._index[i]),
+                )
+                if best is None or score > best[0]:
+                    best = (score, bx, by, s)
+        return None if best is None else best[1:]
 
     def _nearest_pixel(
         self, panel: int, fx: float, fy: float, sx: float, sy: float
@@ -103,6 +147,8 @@ class HoverIndex:
         That is the topmost drawn point under the cursor, or else at the
         nearest occupied pixel within `HOVER_DISTANCE`: of the series there,
         the first in `order`, and of its rows, the one with the largest index.
+        With an overlay, a point is drawn as its marker shape: the topmost
+        shape covering the cursor answers (`_covering`).
 
         Parameters
         ----------
@@ -123,12 +169,17 @@ class HoverIndex:
         """
         if self._occupancy is None:
             return None
-        pixel = self._nearest_pixel(panel, fx, fy, sx, sy)
-        if pixel is None:
-            return None
-        bx, by = pixel
-        found = self._series_at(panel, by, bx)
-        series = next((s for s in order if s in found), max(found))
+        covering = self._covering(panel, fx, fy, order) if self._shapes else None
+        if covering is not None:
+            bx, by, series = covering
+            found = self._series_at(panel, by, bx)
+        else:
+            pixel = self._nearest_pixel(panel, fx, fy, sx, sy)
+            if pixel is None:
+                return None
+            bx, by = pixel
+            found = self._series_at(panel, by, bx)
+            series = next((s for s in order if s in found), max(found))
         i = found[series]
         return {
             "series": series,
