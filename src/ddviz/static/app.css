@@ -451,7 +451,7 @@ button {
   text-overflow: ellipsis;
 }
 
-/* Share of non-null values: a number over a bar as long as the share. */
+/* Rows with a value: their count over a bar as long as their share. */
 .column-share {
   flex: none;
   width: 42px;

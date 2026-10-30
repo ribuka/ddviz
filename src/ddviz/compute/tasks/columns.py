@@ -83,7 +83,7 @@ def run_schema(paths: list[str], out: Path, emit: Emit) -> None:
 
 
 def run_nonnull(paths: list[str], names: list[str], out: Path, emit: Emit) -> None:
-    """Write the share of non-null values of each column (`ddviz.compute.nonnull`).
+    """Write the non-null values of each column and the rows (`ddviz.compute.nonnull`).
 
     Parameters
     ----------
@@ -97,10 +97,10 @@ def run_nonnull(paths: list[str], names: list[str], out: Path, emit: Emit) -> No
         Receives progress messages.
     """
     # Imported here, so that standby workers do not load pyarrow.
-    from ddviz.compute.nonnull import nonnull_shares
+    from ddviz.compute.nonnull import nonnull_counts
 
-    shares = nonnull_shares(paths, names)
-    write_manifest(out, {"kind": "nonnull", "shares": shares})
+    counts, rows = nonnull_counts(paths, names)
+    write_manifest(out, {"kind": "nonnull", "counts": counts, "rows": rows})
 
 
 def run_summary(parts: list[str], column: str, out: Path, emit: Emit) -> None:

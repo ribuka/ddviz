@@ -54,12 +54,12 @@ def source_router(source: Source) -> APIRouter:
     ) -> dict:
         """Return the columns whose names hold every word of `q` (`ddviz.server.columns`).
 
-        ``"shares"`` tells whether the share of non-null values is known
+        ``"shares"`` tells whether the non-null values are counted
         yet: ``"pending"``, ``"done"`` or ``"failed"``.
         """
         try:
             found = search_columns(
-                await source.schema(), q, kind, limit, source.shares, min_share, order
+                await source.schema(), q, kind, limit, source.nonnull, min_share, order
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error

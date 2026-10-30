@@ -50,7 +50,7 @@ class SchemaTask:
 
 @dataclass(frozen=True)
 class NonnullTask:
-    """Measure the share of non-null values of each column (`ddviz.compute.nonnull`).
+    """Count the non-null values of each column (`ddviz.compute.nonnull`).
 
     Parameters
     ----------

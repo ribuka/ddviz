@@ -1,9 +1,9 @@
 // The column list: the server searches the names (`GET /api/columns`) and
 // returns the first matches with their count, so a data set of 100,000
 // columns never sends them all. Each listed column can be dragged to a role.
-// Each shows its share of non-null values, which the server measures after
-// Load; until then the list asks again every second, and the controls that
-// filter and sort by the share wait.
+// Each shows its rows with a value, which the server counts after Load, over
+// a bar as long as their share of the rows; until then the list asks again
+// every second, and the controls that filter and sort by the share wait.
 import { beginDrag } from "./builder.js";
 
 const LIMIT = 200;
@@ -41,7 +41,7 @@ export function attachColumnList(root) {
     }
     const found = await response.json();
     const shown = found.matched > found.columns.length ? `、上位 ${found.columns.length} 件を表示` : "";
-    const shares = { pending: "（非 null の割合を計算中）", failed: "（非 null の割合は求められませんでした）" }[found.shares] ?? "";
+    const shares = { pending: "（非 null の行数を計算中）", failed: "（非 null の行数は求められませんでした）" }[found.shares] ?? "";
     count.textContent = `${found.total.toLocaleString()} 列中 ${found.matched.toLocaleString()} 件${shown}${shares}`;
     for (const control of [hideEmpty, minShare, orderButton]) control.disabled = found.shares !== "done";
     list.replaceChildren(...found.columns.map((c) => columnItem(c, found.shares)));
@@ -71,15 +71,14 @@ export function attachColumnList(root) {
   return search();
 }
 
-// A share as a percentage: 100% and 0% only when exact, and small shares
-// with one significant digit, since most columns are sparse.
-function percent(share) {
-  const value = share * 100;
-  if (value === 0 || value === 100) return `${value}%`;
-  if (value >= 10) return `${Math.min(Math.floor(value), 99)}%`;
-  if (value >= 1) return `${Math.floor(value * 10) / 10}%`;
-  return `${Number(value.toPrecision(1))}%`;
-}
+// A count of rows in the narrow share column: up to 3 significant digits
+// with K, M or B, cut rather than rounded, so that a count just short of the
+// rows never shows as all of them.
+const COMPACT = new Intl.NumberFormat("en", {
+  notation: "compact",
+  maximumSignificantDigits: 3,
+  roundingMode: "trunc",
+});
 
 function columnItem(column, sharesState) {
   const item = document.createElement("div");
@@ -98,9 +97,9 @@ function columnItem(column, sharesState) {
     share.textContent = sharesState === "pending" ? "…" : "?";
     item.title = `${column.name}（${column.dtype}）`;
   } else {
-    share.textContent = percent(column.nonnull);
-    share.style.setProperty("--share", `${column.nonnull * 100}%`);
-    item.title = `${column.name}（${column.dtype}、非 null ${(column.nonnull * 100).toPrecision(3)}%）`;
+    share.textContent = COMPACT.format(column.nonnull);
+    share.style.setProperty("--share", `${column.share * 100}%`);
+    item.title = `${column.name}（${column.dtype}、非 null ${column.nonnull.toLocaleString()} 行）`;
   }
   item.append(type, name, share);
   item.addEventListener("dragstart", (event) => {
