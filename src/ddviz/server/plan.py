@@ -107,7 +107,7 @@ def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
 
 def scatter_spec(
     encoding: Encoding,
-    files: dict[str, str],
+    files: dict[str, list[str]],
     width: int,
     height: int,
     colors: list[str],
@@ -126,8 +126,9 @@ def scatter_spec(
     ----------
     encoding : Encoding
         The graph.
-    files : dict of str to str
-        Parquet file to read each drawn column and filter column from.
+    files : dict of str to list of str
+        Parquet files holding each drawn column and filter column: its parts
+        in the column cache.
     width, height : int
         Figure size in pixels.
     colors : list of str

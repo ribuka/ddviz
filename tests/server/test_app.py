@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
@@ -21,7 +22,12 @@ TOKEN = "secret-of-the-run"
 def server(tmp_path: Path, scatter_path: Path) -> Iterator[TestClient]:
     """Serve `scatter_path` with its task outputs and column cache under `tmp_path`; no token yet."""
     app = create_app(
-        str(scatter_path), tmp_path / "run", tmp_path / "cache", Settings(), TOKEN
+        str(scatter_path),
+        False,
+        tmp_path / "run",
+        tmp_path / "cache",
+        Settings(),
+        TOKEN,
     )
     (tmp_path / "run").mkdir()
     with TestClient(app) as started:
@@ -207,3 +213,54 @@ def test_summary(client: TestClient) -> None:
     summary = client.get("/api/summary", params={"column": "color"}).json()
     assert summary["column"] == "color"
     assert client.get("/api/summary", params={"column": "nope"}).status_code == 400
+
+
+@pytest.fixture
+def folder_client(tmp_path: Path, folder_path: Path) -> Iterator[TestClient]:
+    """Serve the folder `folder_path` with the token in a cookie."""
+    app = create_app(
+        str(folder_path),
+        False,
+        tmp_path / "run",
+        tmp_path / "cache",
+        Settings(),
+        TOKEN,
+    )
+    (tmp_path / "run").mkdir()
+    with TestClient(app) as started:
+        assert started.get("/", params={"token": TOKEN}).status_code == 200
+        yield started
+
+
+def test_a_folder_plots_selects_and_lists_as_one_table(
+    folder_client: TestClient, folder_frame: pl.DataFrame
+) -> None:
+    """A folder's files read as one table: its casts are told, and plot, table and summary work."""
+    client = folder_client
+    source = client.get("/api/source").json()
+    assert source["files"] == 3
+    assert source["rows"] == folder_frame.height
+    assert source["casts"] == [
+        {"name": "n", "dtypes": ["Int32", "Int64"], "dtype": "Int64"}
+    ]
+    schema = client.get("/api/schema").json()
+    assert [c["name"] for c in schema] == folder_frame.columns
+    meta = _plot(client)["meta"]
+    assert (
+        meta["rows"]
+        == folder_frame.filter(
+            pl.col("x").is_finite(), pl.col("color").is_not_null()
+        ).height
+    )
+    box = {"task": meta["task"], "panel": 0, "x_range": [-5, 5], "y_range": [-5, 5]}
+    selected = client.post("/api/selection", json=box).json()
+    table = client.get("/api/table").json()
+    assert table["rows"] == selected["rows"]
+    names = [c["name"] for c in table["columns"]]
+    assert names == ["x", "y", "color", "facet", "label", "n"]
+    rows = folder_frame[table["index"]]
+    columns = {c["name"]: c["values"] for c in table["columns"]}
+    assert columns["label"] == rows["label"].to_list()
+    assert columns["n"] == rows["n"].to_list()
+    summary = client.get("/api/summary", params={"column": "n"}).json()
+    assert summary["nulls"] == folder_frame["n"].null_count()

@@ -32,14 +32,21 @@ STATIC = Path(__file__).parents[1] / "static"
 
 
 def create_app(
-    data_path: str, root: Path, cache_root: Path, settings: Settings, token: str
+    data_path: str,
+    recursive: bool,
+    root: Path,
+    cache_root: Path,
+    settings: Settings,
+    token: str,
 ) -> FastAPI:
-    """Create the UI server for one Parquet file.
+    """Create the UI server for one Parquet file or a folder of them.
 
     Parameters
     ----------
     data_path : str
-        Parquet file to plot.
+        Parquet file, or folder of Parquet files, to plot.
+    recursive : bool
+        For a folder, also read the files in its subfolders.
     root : pathlib.Path
         Empty directory for task outputs and the worker log; removed on shutdown.
     cache_root : pathlib.Path
@@ -55,7 +62,7 @@ def create_app(
         The application.
     """
     broker = TaskBroker(root)
-    source = Source(data_path, cache_root, settings, broker)
+    source = Source(data_path, recursive, cache_root, settings, broker)
     results = Results()
 
     @asynccontextmanager

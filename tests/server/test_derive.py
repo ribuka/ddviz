@@ -56,11 +56,11 @@ def test_resized_spec_with_another_filter_finds_its_panels(
     """A new filter adds its column's file and leaves the facet panels to the worker."""
     filters = [Filter(column="label", levels=["r1"])]
     spec = resized_spec(
-        manifest, 400, 300, filters, {"label": "label.parquet"}, [[0, 1]], [[0, 1]]
+        manifest, 400, 300, filters, {"label": ["label.parquet"]}, [[0, 1]], [[0, 1]]
     )
     assert spec.view.facets is None
     assert spec.filters == filters
-    assert spec.files["label"] == "label.parquet"
+    assert spec.files["label"] == ["label.parquet"]
 
 
 def test_resized_spec_needs_a_range_per_axis_column(manifest: PlotManifest) -> None:
@@ -87,7 +87,7 @@ def test_unchanged(manifest: PlotManifest) -> None:
         400,
         300,
         [Filter(column="label", levels=["r1"])],
-        {"label": "label.parquet"},
+        {"label": ["label.parquet"]},
         manifest.x_ranges,
         manifest.y_ranges,
     )

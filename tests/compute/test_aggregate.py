@@ -133,7 +133,7 @@ def test_each_pair_of_axis_columns_is_a_panel(tmp_path: Path) -> None:
     path = tmp_path / "pairs.parquet"
     frame.write_parquet(path)
     spec = ScatterSpec(
-        files={c: str(path) for c in frame.columns},
+        files={c: [str(path)] for c in frame.columns},
         x=["x1", "x2"],
         y=["y1", "y2"],
         color=None,
@@ -229,7 +229,7 @@ def test_selection_bins_the_selected_rows_in_every_panel(tmp_path: Path) -> None
     path = tmp_path / "sel.parquet"
     frame.write_parquet(path)
     spec = ScatterSpec(
-        files={c: str(path) for c in frame.columns},
+        files={c: [str(path)] for c in frame.columns},
         x=["x1", "x2"],
         y=["y"],
         color="color",

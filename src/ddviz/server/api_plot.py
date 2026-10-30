@@ -59,7 +59,7 @@ def plot_router(source: Source, results: Results, broker: TaskBroker) -> APIRout
             return None, {}
         ensure_done(end)
         timing = {"task_seconds": time.perf_counter() - started}
-        await asyncio.to_thread(source.cache.touch, spec.hover)
+        await asyncio.to_thread(source.touch, spec.hover)
         index = await asyncio.to_thread(HoverIndex, end.out)
         return index, timing
 
@@ -97,7 +97,7 @@ def plot_router(source: Source, results: Results, broker: TaskBroker) -> APIRout
                 request.width,
                 request.height,
                 filters,
-                {f.column: source.file(f.column) for f in filters},
+                {f.column: source.parts(f.column) for f in filters},
                 manifest.x_ranges if x_ranges is None else x_ranges,
                 manifest.y_ranges if y_ranges is None else y_ranges,
             )
@@ -134,7 +134,7 @@ def plot_router(source: Source, results: Results, broker: TaskBroker) -> APIRout
         convert_seconds = time.perf_counter() - started
         spec = scatter_spec(
             encoding,
-            {c: source.file(c) for c in columns},
+            {c: source.parts(c) for c in columns},
             request.width,
             request.height,
             DEFAULT_COLORS,

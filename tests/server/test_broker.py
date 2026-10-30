@@ -10,7 +10,7 @@ from pathlib import Path
 from ddviz.server.broker import TaskBroker
 from ddviz.shared.tasks import SchemaTask
 
-TASK = SchemaTask("data.parquet")
+TASK = SchemaTask(["data.parquet"])
 
 
 class _FakePool:
@@ -76,7 +76,10 @@ def test_run_waits_for_the_end(tmp_path: Path) -> None:
         late = await broker.run(TASK)
         early = await broker.run(TASK)
         failed = await broker.run(TASK, "table")
-        assert pools["tasks"].submitted[0] == {"kind": "schema", "path": "data.parquet"}
+        assert pools["tasks"].submitted[0] == {
+            "kind": "schema",
+            "paths": ["data.parquet"],
+        }
         assert (late.task_id, late.type) == (1, "done")
         assert late.out == tmp_path / "tasks" / "1"
         assert (early.task_id, early.type) == (2, "done")

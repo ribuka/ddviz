@@ -882,6 +882,36 @@ button {
   white-space: pre-wrap;
 }
 
+/* Tells after Load which columns were cast to a common type (casts.js). */
+#casts {
+  max-width: 640px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+#casts .casts-list {
+  max-height: 50vh;
+  overflow: auto;
+}
+
+#casts table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+#casts th,
+#casts td {
+  padding: 2px 8px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+}
+
+#casts form {
+  margin-top: 10px;
+  text-align: right;
+}
+
 /* Covers the page while columns are converted: edits wait for the conversion. */
 #converting {
   position: fixed;

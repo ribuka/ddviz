@@ -13,7 +13,10 @@ from ddviz.compute.summary import MAX_FILTER_LEVELS, summarize_column
 from ddviz.compute.tasks.table import run_table
 from ddviz.shared.manifest import read_manifest
 from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
+from ddviz.shared.tasks import SourceFiles, TableTask
 
+# A table task whose columns are all in the cache reads no source file.
+NO_SOURCE = SourceFiles([], [], "", {})
 FILTERS = [Filter("facet", levels=["q"]), Filter("x", range=[-1.0, 0.5])]
 
 
@@ -116,7 +119,10 @@ def test_selection_and_table_follow_the_filter(
 
     out = tmp_path / "page"
     out.mkdir()
-    run_table(spec, 0, 1000, {"label": spec.files["label"]}, out, lambda _: None)
+    task = TableTask(
+        spec, 0, 1000, ["label"], {"label": spec.files["label"]}, NO_SOURCE
+    )
+    run_table(task, out, lambda _: None)
     assert read_manifest(out)["index"] == rows[INDEX].to_list()
 
 
@@ -124,7 +130,7 @@ def test_summary_of_a_numeric_column(
     scatter_path: Path, scatter_frame: pl.DataFrame
 ) -> None:
     """A numeric column's summary is its finite minimum and maximum and its null count."""
-    summary = summarize_column(str(scatter_path), "x")
+    summary = summarize_column([str(scatter_path)], "x")
     finite = scatter_frame["x"].filter(scatter_frame["x"].is_finite())
     assert summary == {
         "rows": scatter_frame.height,
@@ -140,7 +146,7 @@ def test_summary_of_a_categorical_column(
     scatter_path: Path, scatter_frame: pl.DataFrame
 ) -> None:
     """A categorical column's summary is its levels with their counts, nulls apart."""
-    summary = summarize_column(str(scatter_path), "color")
+    summary = summarize_column([str(scatter_path)], "color")
     counts = scatter_frame["color"].drop_nulls().value_counts().sort("color")
     assert summary["numeric"] is False
     assert summary["nulls"] == 1
@@ -155,6 +161,6 @@ def test_summary_leaves_out_the_levels_of_a_column_with_too_many(
     path = tmp_path / "ids.parquet"
     n = MAX_FILTER_LEVELS * 3
     pl.DataFrame({"id": [f"id{i}" for i in range(n)]}).write_parquet(path)
-    summary = summarize_column(str(path), "id")
+    summary = summarize_column([str(path)], "id")
     assert summary["levels"] is None
     assert summary["n_levels"] > MAX_FILTER_LEVELS

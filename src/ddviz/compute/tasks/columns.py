@@ -1,4 +1,4 @@
-"""Tasks that read the columns of the file: its schema, their non-null shares, a summary."""
+"""Tasks that read the columns of the input: its schema, their non-null shares, a summary."""
 
 from __future__ import annotations
 
@@ -8,36 +8,87 @@ import polars as pl
 
 from ddviz.compute.progress import Emit
 from ddviz.compute.summary import summarize_column
+from ddviz.shared.cache import SCHEMA
 from ddviz.shared.manifest import write_manifest
 
 
-def run_schema(path: str, out: Path, emit: Emit) -> None:
-    """Write the column names and types of a Parquet file.
+def supertype(a: pl.DataType, b: pl.DataType) -> pl.DataType:
+    """Return the type both types cast to, by polars' rules (Int32 and Float64 give Float64).
+
+    Raises
+    ------
+    ValueError
+        When the types have none.
+    """
+    empty = [pl.DataFrame(schema={"c": a}), pl.DataFrame(schema={"c": b})]
+    try:
+        return pl.concat(empty, how="vertical_relaxed").schema["c"]
+    except pl.exceptions.PolarsError as error:
+        raise ValueError(f"no common type of {a} and {b}") from error
+
+
+def run_schema(paths: list[str], out: Path, emit: Emit) -> None:
+    """Write the columns of Parquet files read one after another as one table.
+
+    The columns are those of every file, in the order they first appear. A
+    column whose type differs between files gets the type all its types
+    cast to (`supertype`); such columns are listed as ``casts``, so that the
+    page can tell. A file lacking a column holds nulls in it.
+
+    Each file is scanned once and dropped before the next, so that only one
+    footer is in memory.
 
     Parameters
     ----------
-    path : str
-        Parquet file.
+    paths : list of str
+        Parquet files in reading order.
     out : pathlib.Path
-        Directory to write the result into.
+        Directory to write the result into: the manifest, with ``rows``, the
+        rows of each file, and ``schema.parquet``, an empty file with the type
+        of every column.
     emit : callable
-        Receives progress messages.
+        Receives a ``progress`` message before each file.
     """
-    schema = pl.scan_parquet(path).collect_schema()
+    dtypes: dict[str, pl.DataType] = {}
+    # The types of each column found in the files, for those with several.
+    variants: dict[str, dict[str, None]] = {}
+    rows = []
+    for done, path in enumerate(paths):
+        emit({"type": "progress", "stage": "schema", "done": done, "total": len(paths)})
+        scan = pl.scan_parquet(path)
+        for name, dtype in scan.collect_schema().items():
+            known = dtypes.get(name)
+            if known is None:
+                dtypes[name] = dtype
+            elif dtype != known:
+                variants.setdefault(name, {str(known): None})[str(dtype)] = None
+                try:
+                    dtypes[name] = supertype(known, dtype)
+                except ValueError as error:
+                    raise ValueError(f"{name}: {error}") from error
+        # The row count comes from the footer the scan has parsed.
+        rows.append(scan.select(pl.len()).collect().item())
+    pl.DataFrame(schema=dtypes).write_parquet(out / SCHEMA)
     columns = [
         {"name": name, "dtype": str(dtype), "numeric": dtype.is_numeric()}
-        for name, dtype in schema.items()
+        for name, dtype in dtypes.items()
     ]
-    write_manifest(out, {"kind": "schema", "columns": columns})
+    casts = [
+        {"name": name, "dtypes": list(found), "dtype": str(dtypes[name])}
+        for name, found in variants.items()
+    ]
+    write_manifest(
+        out, {"kind": "schema", "columns": columns, "rows": rows, "casts": casts}
+    )
 
 
-def run_nonnull(path: str, names: list[str], out: Path, emit: Emit) -> None:
+def run_nonnull(paths: list[str], names: list[str], out: Path, emit: Emit) -> None:
     """Write the share of non-null values of each column (`ddviz.compute.nonnull`).
 
     Parameters
     ----------
-    path : str
-        Parquet file.
+    paths : list of str
+        Parquet files read as one table.
     names : list of str
         Column names, in schema order.
     out : pathlib.Path
@@ -48,17 +99,17 @@ def run_nonnull(path: str, names: list[str], out: Path, emit: Emit) -> None:
     # Imported here, so that standby workers do not load pyarrow.
     from ddviz.compute.nonnull import nonnull_shares
 
-    shares = nonnull_shares(path, names)
+    shares = nonnull_shares(paths, names)
     write_manifest(out, {"kind": "nonnull", "shares": shares})
 
 
-def run_summary(file: str, column: str, out: Path, emit: Emit) -> None:
+def run_summary(parts: list[str], column: str, out: Path, emit: Emit) -> None:
     """Write what the filter pane shows of a column (`ddviz.compute.summary`).
 
     Parameters
     ----------
-    file : str
-        Parquet file holding the column.
+    parts : list of str
+        Parquet files holding the column, read one after another.
     column : str
         The column.
     out : pathlib.Path
@@ -67,5 +118,5 @@ def run_summary(file: str, column: str, out: Path, emit: Emit) -> None:
         Receives progress messages.
     """
     emit({"type": "progress", "stage": "summary"})
-    summary = summarize_column(file, column)
+    summary = summarize_column(parts, column)
     write_manifest(out, {"kind": "summary", "column": column, **summary})

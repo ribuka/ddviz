@@ -49,7 +49,7 @@ def scatter_path(tmp_path: Path, scatter_frame: pl.DataFrame) -> Path:
 def scatter_spec(scatter_path: Path) -> ScatterSpec:
     """Return a spec plotting `scatter_path` colored by color and faceted by facet."""
     return ScatterSpec(
-        files={c: str(scatter_path) for c in ["x", "y", "label", "color", "facet"]},
+        files={c: [str(scatter_path)] for c in ["x", "y", "label", "color", "facet"]},
         x=["x"],
         y=["y"],
         color="color",
@@ -59,3 +59,37 @@ def scatter_spec(scatter_path: Path) -> ScatterSpec:
         height=300,
         hover=["x", "y", "label", "color", "facet"],
     )
+
+
+@pytest.fixture
+def folder_parts(scatter_frame: pl.DataFrame) -> dict[str, pl.DataFrame]:
+    """Return `scatter_frame` split into three files whose columns differ.
+
+    ``n`` is Int32 in the first file and Int64 in the second; the second
+    lacks ``label``; the third lacks ``n``. Natural order puts part-10 last.
+    """
+    n = pl.int_range(pl.len()).alias("n")
+    return {
+        "part-1.parquet": scatter_frame[:700].with_columns(n.cast(pl.Int32)),
+        "part-2.parquet": scatter_frame[700:1400]
+        .drop("label")
+        .with_columns(n.cast(pl.Int64)),
+        "part-10.parquet": scatter_frame[1400:],
+    }
+
+
+@pytest.fixture
+def folder_frame(folder_parts: dict[str, pl.DataFrame]) -> pl.DataFrame:
+    """Return the rows of `folder_path` as one table, in reading order."""
+    return pl.concat(folder_parts.values(), how="diagonal_relaxed")
+
+
+@pytest.fixture
+def folder_path(tmp_path: Path, folder_parts: dict[str, pl.DataFrame]) -> Path:
+    """Write `folder_parts` into a folder with a file that is not Parquet."""
+    path = tmp_path / "folder"
+    path.mkdir()
+    for name, part in folder_parts.items():
+        part.write_parquet(path / name, row_group_size=300)
+    (path / "_SUCCESS").write_bytes(b"")
+    return path

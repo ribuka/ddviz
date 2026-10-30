@@ -14,6 +14,7 @@ from ddviz.shared.tasks import (
     PlotTask,
     SchemaTask,
     SelectionTask,
+    SourceFiles,
     SummaryTask,
     TableTask,
     Task,
@@ -25,13 +26,27 @@ from ddviz.shared.tasks import (
 def _every_task(spec: ScatterSpec) -> list[Task]:
     """Return one task of each kind."""
     return [
-        SchemaTask("data.parquet"),
-        NonnullTask("data.parquet", ["x", "y"]),
-        ConvertTask("data.parquet", {"x": "x.parquet"}),
+        SchemaTask(["a.parquet", "b.parquet"]),
+        NonnullTask(["a.parquet", "b.parquet"], ["x", "y"]),
+        ConvertTask(
+            "schema.parquet",
+            {"x": "Float64"},
+            ["a.parquet"],
+            [{"x": "a/x.parquet"}],
+        ),
         PlotTask(spec),
         SelectionTask(spec),
-        TableTask(spec, 100, 50, {"x": "x.parquet"}),
-        SummaryTask("x.parquet", "x"),
+        TableTask(
+            spec,
+            100,
+            50,
+            ["x", "y"],
+            {"x": ["a/x.parquet", "b/x.parquet"]},
+            SourceFiles(
+                ["a.parquet", "b.parquet"], [3, 4], "schema.parquet", {"y": "Int64"}
+            ),
+        ),
+        SummaryTask(["a/x.parquet", "b/x.parquet"], "x"),
     ]
 
 

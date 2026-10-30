@@ -39,18 +39,19 @@ def run_task(data: dict, emit: Emit) -> None:
     """
     out = Path(data["out"])
     out.mkdir(parents=True, exist_ok=True)
-    match task_from_dict(data):
-        case SchemaTask(path=path):
-            run_schema(path, out, emit)
-        case NonnullTask(path=path, names=names):
-            run_nonnull(path, names, out, emit)
-        case ConvertTask(path=path, files=files):
-            convert_columns(path, files, emit)
+    task = task_from_dict(data)
+    match task:
+        case SchemaTask(paths=paths):
+            run_schema(paths, out, emit)
+        case NonnullTask(paths=paths, names=names):
+            run_nonnull(paths, names, out, emit)
+        case ConvertTask():
+            convert_columns(task, emit)
         case PlotTask(spec=spec):
             run_plot(spec, out, emit)
         case SelectionTask(spec=spec):
             run_selection(spec, out, emit)
-        case TableTask(spec=spec, offset=offset, limit=limit, files=files):
-            run_table(spec, offset, limit, files, out, emit)
-        case SummaryTask(file=file, column=column):
-            run_summary(file, column, out, emit)
+        case TableTask():
+            run_table(task, out, emit)
+        case SummaryTask(parts=parts, column=column):
+            run_summary(parts, column, out, emit)

@@ -52,7 +52,7 @@ def _spec(path: Path, **roles: str) -> ScatterSpec:
     columns = ["x", "y", "v", "k"]
     return scatter_spec(
         encoding,
-        {c: str(path) for c in columns},
+        {c: [str(path)] for c in columns},
         400,
         300,
         [],

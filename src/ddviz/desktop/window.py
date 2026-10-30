@@ -30,6 +30,34 @@ _LOADING = """<!doctype html><html lang="ja"><head><meta charset="utf-8">
 justify-content:center;font-family:sans-serif;color:#555}</style></head>
 <body>起動しています…</body></html>"""
 
+# Shown when no input was given: the OS has no dialog that picks a file or a
+# folder, so the user first picks which; a folder's subfolders are read only
+# when ticked. The buttons call `_Chooser` through pywebview's JS API.
+_CHOOSER = """<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<style>body{margin:0;height:100vh;display:flex;align-items:center;
+justify-content:center;font-family:sans-serif;color:#333;background:#f6f6f6}
+main{display:flex;flex-direction:column;gap:14px;padding:28px 36px;
+background:#fff;border:1px solid #ddd;border-radius:6px;min-width:320px}
+h1{font-size:16px;margin:0 0 4px}button{font-size:14px;padding:8px 14px}
+.row{display:flex;gap:10px}label{font-size:13px}</style></head>
+<body><main><h1>開く Parquet を選んでください</h1>
+<div class="row"><button type="button" id="file">ファイルを開く…</button>
+<button type="button" id="folder">フォルダを開く…</button></div>
+<label><input type="checkbox" id="recursive"> フォルダのサブフォルダの Parquet も読む</label>
+<div class="row"><button type="button" id="cancel">キャンセル</button></div></main>
+<script>
+const recursive = document.getElementById("recursive");
+const buttons = document.querySelectorAll("button");
+async function call(name, ...args) {
+  for (const b of buttons) b.disabled = true;
+  try { await window.pywebview.api[name](...args); }
+  finally { for (const b of buttons) b.disabled = false; }
+}
+document.getElementById("file").onclick = () => call("choose", "file", false);
+document.getElementById("folder").onclick = () => call("choose", "folder", recursive.checked);
+document.getElementById("cancel").onclick = () => call("cancel");
+</script></body></html>"""
+
 _MB_ICONWARNING = 0x30
 
 
@@ -67,40 +95,67 @@ class _App:
         self,
         window: webview.Window,
         path: str | None,
-        make_app: Callable[[str, str], object],
+        recursive: bool,
+        make_app: Callable[[str, bool, str], object],
     ) -> None:
         self._window = window
         self._path = path
+        self._recursive = recursive
         self._make_app = make_app
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._closing = False
+        self._opened = threading.Lock()
         self.failed = False
 
     def start(self) -> None:
-        """Ask for the Parquet file if none was given, then start the server.
+        """Start the server for the input given, if any; otherwise the chooser page waits for one.
 
         Runs in pywebview's thread once the window is shown.
         """
+        if self._path is not None:
+            self._open(self._path, self._recursive)
+
+    def choose(self, kind: str, recursive: bool) -> None:
+        """Ask for a Parquet file or folder with the OS dialog, then start the server for it.
+
+        Parameters
+        ----------
+        kind : str
+            ``"file"`` or ``"folder"``.
+        recursive : bool
+            For a folder, also read the files in its subfolders.
+        """
+        if kind == "folder":
+            chosen = self._window.create_file_dialog(webview.FileDialog.FOLDER)
+        else:
+            chosen = self._window.create_file_dialog(
+                webview.FileDialog.OPEN,
+                file_types=("Parquet (*.parquet)", "すべてのファイル (*.*)"),
+            )
+        if chosen:
+            self._open(chosen[0], recursive and kind == "folder")
+
+    def cancel(self) -> None:
+        """Close the window without an input; the run ends normally."""
+        self._closing = True
+        self._window.destroy()
+
+    def _open(self, path: str, recursive: bool) -> None:
+        """Start the server for an input and show it in the window; only the first call does."""
+        if not self._opened.acquire(blocking=False):
+            return
         try:
-            if self._path is None:
-                chosen = self._window.create_file_dialog(
-                    webview.FileDialog.OPEN,
-                    file_types=("Parquet (*.parquet)", "すべてのファイル (*.*)"),
-                )
-                if not chosen:
-                    self._closing = True
-                    self._window.destroy()
-                    return
-                self._path = chosen[0]
-            path = str(Path(self._path).resolve())
+            path = str(Path(path).resolve())
             self._window.title = f"ddviz - {Path(path).name}"
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
             token = secrets.token_urlsafe(32)
             config = uvicorn.Config(
-                self._make_app(path, token), log_config=None, access_log=False
+                self._make_app(path, recursive, token),
+                log_config=None,
+                access_log=False,
             )
             self._server = uvicorn.Server(config)
             self._thread = threading.Thread(
@@ -138,16 +193,21 @@ class _App:
             self._thread.join()
 
 
-def run_window(path: str | None, make_app: Callable[[str, str], object]) -> int:
+def run_window(
+    path: str | None, recursive: bool, make_app: Callable[[str, bool, str], object]
+) -> int:
     """Run the app in its own window until the window closes.
 
     Parameters
     ----------
     path : str or None
-        Parquet file to plot; None asks for it with a file dialog.
+        Parquet file or folder to plot; None shows a page that asks whether
+        to open a file or a folder, then the OS dialog for it.
+    recursive : bool
+        For a folder, also read the files in its subfolders.
     make_app : callable
-        Builds the ASGI app of the UI server for a Parquet file and the
-        token that requests must carry.
+        Builds the ASGI app of the UI server for an input, whether to read
+        its subfolders, and the token that requests must carry.
 
     Returns
     -------
@@ -162,7 +222,7 @@ def run_window(path: str | None, make_app: Callable[[str, str], object]) -> int:
                 f"ログ：{log.path}\n\n"
                 "問題が続く場合は、このログを開発者に送ってください。"
             )
-        if not _run(path, make_app):
+        if not _run(path, recursive, make_app):
             return 1
         log.finish()
         return 0
@@ -170,7 +230,24 @@ def run_window(path: str | None, make_app: Callable[[str, str], object]) -> int:
         log.close()
 
 
-def _run(path: str | None, make_app: Callable[[str, str], object]) -> bool:
+class _Chooser:
+    """What the chooser page may call through pywebview's JS API, and nothing else of `_App`."""
+
+    def __init__(self) -> None:
+        self.app: _App | None = None
+
+    def choose(self, kind: str, recursive: bool) -> None:
+        """Open the OS dialog for a file or a folder (`_App.choose`)."""
+        self.app.choose(kind, bool(recursive))
+
+    def cancel(self) -> None:
+        """Close the window (`_App.cancel`)."""
+        self.app.cancel()
+
+
+def _run(
+    path: str | None, recursive: bool, make_app: Callable[[str, bool, str], object]
+) -> bool:
     """Show the window until it closes; return whether everything went well."""
     runtime = bundled_runtime()
     if runtime is not None:
@@ -180,10 +257,17 @@ def _run(path: str | None, make_app: Callable[[str, str], object]) -> bool:
         webview.settings["WEBVIEW2_RUNTIME_PATH"] = str(runtime)
     webview.settings["SHOW_DEFAULT_MENUS"] = False
     webview.settings["ALLOW_FILE_URLS"] = False
+    chooser = _Chooser()
     window = webview.create_window(
-        "ddviz", html=_LOADING, width=1280, height=860, min_size=(800, 600)
+        "ddviz",
+        html=_CHOOSER if path is None else _LOADING,
+        js_api=chooser,
+        width=1280,
+        height=860,
+        min_size=(800, 600),
     )
-    app = _App(window, path, make_app)
+    app = _App(window, path, recursive, make_app)
+    chooser.app = app
     # Not private: private mode deletes the WebView2 user data on every exit.
     webview.start(
         app.start,
