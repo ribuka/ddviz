@@ -119,9 +119,9 @@ class ScatterSpec:
 
     Parameters
     ----------
-    files : dict of str to str
-        Parquet file to read each column of the plot from: a file of the
-        column cache, or the source itself (`ddviz.compute.scan.scan_columns`).
+    files : dict of str to list of str
+        Parquet files holding each column of the plot, read one after another:
+        its parts in the column cache (`ddviz.compute.scan.scan_columns`).
     x, y : list of str
         Columns on the x and y axes, at least one each. Every pair of an x and
         a y column is a panel of each facet cell: the x columns side by side,
@@ -156,7 +156,7 @@ class ScatterSpec:
         panels left without rows (`ddviz.compute.aggregate.aggregate`).
     """
 
-    files: dict[str, str]
+    files: dict[str, list[str]]
     x: list[str]
     y: list[str]
     color: str | None

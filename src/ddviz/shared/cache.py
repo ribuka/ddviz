@@ -1,8 +1,16 @@
-"""Column cache: one Parquet file per source column, made on first use.
+"""Column cache: per source file, one Parquet file per column, made on first use.
 
 The UI server owns the cache and never imports polars: it decides which
 columns to convert, hands them to a worker (`ddviz.compute.convert`), and evicts old
 files. A column file's modification time is the time it was last used.
+
+An input (one Parquet file or a folder of them, `ddviz.shared.inputs`) has a
+directory named by its path. In it, each source file has a directory named
+by its path relative to the input, holding a part of each converted column:
+the column's values in that file, cast to the input's type of the column,
+or nulls when the file lacks it. A column of the input is its parts in the
+order of the files, read with one scan (`ddviz.compute.scan`). A changed file
+loses only its own parts.
 """
 
 from __future__ import annotations
@@ -18,6 +26,12 @@ from pathlib import Path
 SOURCE = "source.json"
 PARTIAL = ".tmp"
 DAY = 86400.0
+# Empty Parquet file with the input's type of every column, written by the
+# schema task and kept in the input's directory.
+SCHEMA = "schema.parquet"
+# Files of an input's directory made from all its source files: they go
+# whenever a file is added, removed or changed.
+DERIVED = ("schema.json", SCHEMA, "nonnull.json")
 
 
 def default_cache_root() -> Path:
@@ -33,87 +47,125 @@ def default_cache_root() -> Path:
     return local / "ddviz" / "cache" / "columns"
 
 
-def _identity(source: Path) -> dict:
+def _key(text: str) -> str:
+    """Return a short name made from `text`, safe as a file name."""
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def _identity(file: Path) -> dict:
     """Return what tells a source file apart from a changed one."""
-    stat = source.stat()
-    return {"path": str(source), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+    stat = file.stat()
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
 
 
 class ColumnCache:
-    """The cached columns of one source file.
+    """The cached columns of an input.
 
-    Opening the cache discards it when the source changed (size or
-    modification time) since the files were made, and removes files a
-    conversion left unfinished.
+    Opening the cache discards the parts of source files that changed (size
+    or modification time) or are gone since the parts were made, the files
+    made from all the source files (`DERIVED`) when any file was added,
+    removed or changed, and files a conversion left unfinished.
 
     Parameters
     ----------
     root : pathlib.Path
-        Directory holding the caches of all sources.
+        Directory holding the caches of all inputs.
     source : pathlib.Path
-        Parquet file the columns come from.
-    columns : list of str
-        Column names of the source in schema order; a column's file is named
-        by its position, since names may not be valid file names.
+        The input: a Parquet file or a folder.
+    files : list of pathlib.Path
+        Its Parquet files in reading order (`ddviz.shared.inputs.parquet_files`).
     """
 
-    def __init__(self, root: Path, source: Path, columns: list[str]) -> None:
+    def __init__(self, root: Path, source: Path, files: list[Path]) -> None:
         source = source.resolve()
-        key = hashlib.sha256(os.path.normcase(str(source)).encode()).hexdigest()
-        self.dir = root / key[:16]
-        identity = _identity(source)
+        self.dir = root / _key(os.path.normcase(str(source)))
+        base = source if source.is_dir() else source.parent
+        names = [f.resolve().relative_to(base).as_posix() for f in files]
+        self._dirs = [self.dir / f"f{_key(os.path.normcase(n))}" for n in names]
+        identity = {
+            "path": str(source),
+            "files": {n: _identity(f) for n, f in zip(names, files, strict=True)},
+        }
         marker = self.dir / SOURCE
         recorded = (
             json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else None
         )
         if recorded != identity:
-            shutil.rmtree(self.dir, ignore_errors=True)
-            self.dir.mkdir(parents=True, exist_ok=True)
+            self._discard(recorded, identity)
             marker.write_text(json.dumps(identity), encoding="utf-8")
-        for partial in self.dir.glob("*" + PARTIAL):
+        for partial in self.dir.glob("*/*" + PARTIAL):
             partial.unlink(missing_ok=True)
-        self._position = {name: i for i, name in enumerate(columns)}
 
-    def file(self, column: str) -> Path:
-        """Return the file of a column, which may not exist yet.
+    def _discard(self, recorded: dict | None, identity: dict) -> None:
+        """Remove what no longer matches the source files."""
+        if recorded is None or recorded.get("path") != identity["path"]:
+            shutil.rmtree(self.dir, ignore_errors=True)
+        else:
+            files = identity["files"]
+            for name, before in recorded.get("files", {}).items():
+                if files.get(name) != before:
+                    shutil.rmtree(
+                        self.dir / f"f{_key(os.path.normcase(name))}",
+                        ignore_errors=True,
+                    )
+            for name in DERIVED:
+                (self.dir / name).unlink(missing_ok=True)
+        self.dir.mkdir(parents=True, exist_ok=True)
+
+    def parts(self, column: str, dtype: str) -> list[Path]:
+        """Return the parts of a column, one per source file; they may not exist yet.
 
         Parameters
         ----------
         column : str
             Column name.
+        dtype : str
+            The input's type of the column. Parts are named by the name and
+            the type, since names may not be valid file names and a file
+            added with another type can change the input's type.
 
         Returns
         -------
-        pathlib.Path
-            The file.
+        list of pathlib.Path
+            The parts in the order of the source files.
         """
-        return self.dir / f"c{self._position[column]:06d}.parquet"
+        name = f"c{_key(column + chr(0) + dtype)}.parquet"
+        return [d / name for d in self._dirs]
 
-    def missing(self, columns: Iterable[str]) -> list[str]:
-        """Return the columns not converted yet.
+    def missing(self, columns: dict[str, str]) -> dict[str, list[int]]:
+        """Return the parts not converted yet.
 
         Parameters
         ----------
-        columns : iterable of str
-            Column names.
+        columns : dict of str to str
+            The type of each column.
 
         Returns
         -------
-        list of str
-            The columns without a file, without duplicates.
+        dict of str to list of int
+            Per column with missing parts, the positions of their source
+            files.
         """
-        return [c for c in dict.fromkeys(columns) if not self.file(c).exists()]
+        missing = {}
+        for column, dtype in columns.items():
+            gaps = [
+                i for i, p in enumerate(self.parts(column, dtype)) if not p.exists()
+            ]
+            if gaps:
+                missing[column] = gaps
+        return missing
 
-    def touch(self, columns: Iterable[str]) -> None:
+    def touch(self, columns: dict[str, str]) -> None:
         """Mark columns as used now.
 
         Parameters
         ----------
-        columns : iterable of str
-            Column names whose files exist.
+        columns : dict of str to str
+            The type of each column whose parts exist.
         """
-        for column in dict.fromkeys(columns):
-            os.utime(self.file(column))
+        for column, dtype in columns.items():
+            for part in self.parts(column, dtype):
+                os.utime(part)
 
 
 def evict(
@@ -123,30 +175,33 @@ def evict(
     keep: Iterable[Path] = (),
     now: float | None = None,
 ) -> list[Path]:
-    """Remove column files unused for too long, then the least recently used past the size limit.
+    """Remove column parts unused for too long, then the least recently used past the size limit.
+
+    A column that loses some of its parts has the missing ones converted
+    again when used.
 
     Parameters
     ----------
     root : pathlib.Path
-        Directory holding the caches of all sources.
+        Directory holding the caches of all inputs.
     max_bytes : int
-        Total size the column files may take.
+        Total size the column parts may take.
     max_unused_days : float
-        Files unused for longer are removed.
+        Parts unused for longer are removed.
     keep : iterable of pathlib.Path
-        Files never removed, such as the columns of the current plot.
+        Parts never removed, such as the columns of the current plot.
     now : float, optional
         Current time in seconds since the epoch.
 
     Returns
     -------
     list of pathlib.Path
-        The removed files. A file another process holds open is skipped.
+        The removed parts. A part another process holds open is skipped.
     """
     now = time.time() if now is None else now
     kept = {Path(p).resolve() for p in keep}
     files = []
-    for path in root.glob("*/c*.parquet"):
+    for path in root.glob("*/f*/c*.parquet"):
         try:
             stat = path.stat()
         except FileNotFoundError:

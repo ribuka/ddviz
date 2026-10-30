@@ -9,14 +9,14 @@ import polars as pl
 MAX_FILTER_LEVELS = 1000
 
 
-def summarize_column(file: str, column: str) -> dict:
+def summarize_column(files: list[str], column: str) -> dict:
     """Return the summary of one column over every row.
 
     Parameters
     ----------
-    file : str
-        Parquet file holding the column: a file of the column cache, or the
-        source.
+    files : list of str
+        Parquet files holding the column, read one after another: its parts
+        in the column cache.
     column : str
         The column.
 
@@ -30,7 +30,7 @@ def summarize_column(file: str, column: str) -> dict:
         text, or None when it has more than `MAX_FILTER_LEVELS` levels, with
         ``n_levels`` (an estimate then).
     """
-    scan = pl.scan_parquet(file).select(column)
+    scan = pl.scan_parquet(files).select(column)
     dtype = scan.collect_schema()[column]
     value = pl.col(column)
     if dtype.is_numeric():

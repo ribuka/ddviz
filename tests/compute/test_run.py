@@ -16,7 +16,7 @@ def test_run_task_makes_the_directory_and_runs_the_task(
 ) -> None:
     """A schema task writes its manifest into a directory it makes."""
     out = tmp_path / "tasks" / "1"
-    run_task({**task_to_dict(SchemaTask(str(scatter_path))), "out": str(out)}, print)
+    run_task({**task_to_dict(SchemaTask([str(scatter_path)])), "out": str(out)}, print)
     names = [c["name"] for c in read_manifest(out)["columns"]]
     assert names == ["x", "y", "label", "color", "facet"]
 

@@ -49,7 +49,7 @@ def resized_spec(
     width: int,
     height: int,
     filters: list[Filter],
-    filter_files: dict[str, str],
+    filter_files: dict[str, list[str]],
     x_ranges: list,
     y_ranges: list,
 ) -> ScatterSpec:
@@ -67,7 +67,7 @@ def resized_spec(
     filters : list of Filter
         Conditions of the local filter.
     filter_files : dict
-        File of each filter column in the column cache.
+        Parts of each filter column in the column cache.
     x_ranges, y_ranges : list
         Data range of each x and y column.
 

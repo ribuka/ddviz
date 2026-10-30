@@ -13,17 +13,39 @@ from ddviz.shared.scatter import ScatterSpec
 
 
 @dataclass(frozen=True)
-class SchemaTask:
-    """Read the column names and types of a Parquet file.
+class SourceFiles:
+    """The source files of an input, for reading columns not in the column cache.
 
     Parameters
     ----------
-    path : str
-        The Parquet file.
+    paths : list of str
+        The Parquet files in reading order.
+    rows : list of int
+        The rows of each.
+    schema : str
+        Empty Parquet file with the input's type of every column.
+    dtypes : dict of str to str
+        The input's type of each column to read, as text.
+    """
+
+    paths: list[str]
+    rows: list[int]
+    schema: str
+    dtypes: dict[str, str]
+
+
+@dataclass(frozen=True)
+class SchemaTask:
+    """Read the columns of Parquet files read one after another as one table.
+
+    Parameters
+    ----------
+    paths : list of str
+        The Parquet files in reading order.
     """
 
     KIND: ClassVar[str] = "schema"
-    path: str
+    paths: list[str]
 
 
 @dataclass(frozen=True)
@@ -32,32 +54,39 @@ class NonnullTask:
 
     Parameters
     ----------
-    path : str
-        The Parquet file.
+    paths : list of str
+        The Parquet files read as one table.
     names : list of str
-        Its columns, in schema order.
+        Their columns, in schema order.
     """
 
     KIND: ClassVar[str] = "nonnull"
-    path: str
+    paths: list[str]
     names: list[str]
 
 
 @dataclass(frozen=True)
 class ConvertTask:
-    """Convert columns of a Parquet file into the column cache (`ddviz.compute.convert`).
+    """Convert columns of Parquet files into parts of the column cache (`ddviz.compute.convert`).
 
     Parameters
     ----------
-    path : str
-        The Parquet file.
-    files : dict of str to str
-        The file to write for each column.
+    schema : str
+        Empty Parquet file with the type of every column of the input
+        (`ddviz.compute.tasks.columns.run_schema`).
+    dtypes : dict of str to str
+        The input's type of each column to convert, as text.
+    sources : list of str
+        Source files with parts to write.
+    parts : list of dict of str to str
+        Per source file, the part to write for each column.
     """
 
     KIND: ClassVar[str] = "convert"
-    path: str
-    files: dict[str, str]
+    schema: str
+    dtypes: dict[str, str]
+    sources: list[str]
+    parts: list[dict[str, str]]
 
 
 @dataclass(frozen=True)
@@ -98,15 +127,22 @@ class TableTask:
         A spec with a selection.
     offset, limit : int
         The page: the selected rows from `offset`, at most `limit`.
-    files : dict of str to str
-        The file to read each column of the page from.
+    columns : list of str
+        The columns of the page, in order.
+    parts : dict of str to list of str
+        The parts of the columns in the column cache; the other columns are
+        read from the source files.
+    source : SourceFiles
+        The source files.
     """
 
     KIND: ClassVar[str] = "table"
     spec: ScatterSpec
     offset: int
     limit: int
-    files: dict[str, str]
+    columns: list[str]
+    parts: dict[str, list[str]]
+    source: SourceFiles
 
 
 @dataclass(frozen=True)
@@ -115,14 +151,14 @@ class SummaryTask:
 
     Parameters
     ----------
-    file : str
-        The Parquet file holding the column.
+    parts : list of str
+        The parts of the column in the column cache.
     column : str
         The column.
     """
 
     KIND: ClassVar[str] = "summary"
-    file: str
+    parts: list[str]
     column: str
 
 
@@ -189,4 +225,6 @@ def task_from_dict(data: dict) -> Task:
     values = {f.name: data[f.name] for f in fields(cls)}
     if "spec" in values:
         values["spec"] = ScatterSpec.from_dict(values["spec"])
+    if "source" in values:
+        values["source"] = SourceFiles(**values["source"])
     return cls(**values)

@@ -28,6 +28,22 @@ def source_router(source: Source) -> APIRouter:
         """Return the columns of the file, reading them on the first request (Load)."""
         return await source.schema()
 
+    @router.get("/api/source")
+    async def input_files() -> dict:
+        """Return the input after Load: its files, rows and the columns cast to a common type.
+
+        ``"casts"`` lists the columns whose type differs between the files,
+        with their types and the type they are read as; the page tells them
+        once after Load.
+        """
+        await source.schema()
+        return {
+            "path": source.path,
+            "files": len(source.files),
+            "rows": sum(source.rows),
+            "casts": source.casts,
+        }
+
     @router.get("/api/columns")
     async def columns(
         q: str = "",

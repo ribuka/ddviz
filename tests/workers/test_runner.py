@@ -10,6 +10,7 @@ import pytest
 
 from ddviz.shared.manifest import read_manifest
 from ddviz.shared.scatter import ScatterSpec
+from ddviz.shared.tasks import ConvertTask, task_to_dict
 from ddviz.workers.jobs import WorkerJob
 from ddviz.workers.runner import WorkerPool
 
@@ -43,7 +44,7 @@ def test_schema_task_writes_its_manifest(
 ) -> None:
     """A schema task ends with done and lists the columns."""
     workers, events = pool
-    task_id = workers.submit({"kind": "schema", "path": str(scatter_path)})
+    task_id = workers.submit({"kind": "schema", "paths": [str(scatter_path)]})
     assert _until_end(events, task_id) == {"type": "done"}
     columns = read_manifest(tmp_path / "tasks" / str(task_id))["columns"]
     assert [c["name"] for c in columns] == ["x", "y", "label", "color", "facet"]
@@ -78,7 +79,7 @@ def test_a_failing_task_reports_an_error(pool: tuple, tmp_path: Path) -> None:
     """A task on a missing file ends with an error message."""
     workers, events = pool
     task_id = workers.submit(
-        {"kind": "schema", "path": str(tmp_path / "missing.parquet")}
+        {"kind": "schema", "paths": [str(tmp_path / "missing.parquet")]}
     )
     message = _until_end(events, task_id)
     assert message["type"] == "error"
@@ -89,10 +90,14 @@ def test_convert_task_writes_each_column(
 ) -> None:
     """A convert task reports progress per column and leaves one file each."""
     workers, events = pool
-    files = {c: str(tmp_path / f"{c}.parquet") for c in ("x", "label")}
-    task_id = workers.submit(
-        {"kind": "convert", "path": str(scatter_path), "files": files}
+    files = {c: str(tmp_path / "parts" / f"{c}.parquet") for c in ("x", "label")}
+    task = ConvertTask(
+        str(tmp_path / "schema.parquet"),
+        {"x": "Float64", "label": "String"},
+        [str(scatter_path)],
+        [files],
     )
+    task_id = workers.submit(task_to_dict(task))
     seen = []
     while True:
         got, message = events.get(timeout=TIMEOUT)

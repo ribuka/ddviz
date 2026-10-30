@@ -14,7 +14,7 @@ def test_scatter_draws_every_axis_and_leaves_out_overlay() -> None:
     encoding = Encoding(
         x=("a", "a2"), y=("b", "b2", "b3"), color="g", overlay="o", col="h"
     )
-    files = {c: f"{c}.parquet" for c in encoding.columns()}
+    files = {c: [f"{c}.parquet"] for c in encoding.columns()}
     spec = scatter_spec(encoding, files, 400, 300, ["#000000"])
     assert (spec.x, spec.y, spec.color, spec.row, spec.col) == (
         ["a", "a2"],
@@ -48,7 +48,7 @@ NUMERIC = {"a": True, "b": True, "g": False}
 def test_filters_are_read_but_not_hovered() -> None:
     """A filter column is read with the plot's columns, and not hovered."""
     encoding = Encoding(x=("a",), y=("b",))
-    files = {c: f"{c}.parquet" for c in ("a", "b", "g")}
+    files = {c: [f"{c}.parquet"] for c in ("a", "b", "g")}
     filters = [Filter("g", levels=["p"])]
     spec = scatter_spec(encoding, files, 400, 300, ["#000000"], filters)
     assert spec.hover == ["a", "b"]

@@ -105,11 +105,20 @@ def selection_router(source: Source, results: Results, broker: TaskBroker) -> AP
             c["name"] for c in await source.schema() if c["name"] not in first
         ]
         window = order[col_offset : col_offset + min(col_limit, TABLE_MAX_COLUMNS)]
-        missing = set(await asyncio.to_thread(source.cache.missing, window))
-        files = {c: source.path if c in missing else source.file(c) for c in window}
-        end = await broker.run(
-            TableTask(layer.spec, offset, TABLE_PAGE, files), "table"
+        # Columns not converted yet are read from the source files: a page
+        # is a few rows, and converting 50 columns of 100M rows would take
+        # about 20s.
+        missing = await asyncio.to_thread(source.missing, window)
+        parts = {c: source.parts(c) for c in window if c not in missing}
+        task = TableTask(
+            layer.spec,
+            offset,
+            TABLE_PAGE,
+            window,
+            parts,
+            source.source_files([c for c in window if c in missing]),
         )
+        end = await broker.run(task, "table")
         ensure_done(end)
         page = end.take()
         if results.layer is not layer:

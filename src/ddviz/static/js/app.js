@@ -1,6 +1,7 @@
 // The page: drop columns on the graph builder's zones, plot, zoom and pan,
 // resize, hover, select rows with a box, and filter rows.
 import { Builder } from "./builder.js";
+import { showCasts } from "./casts.js";
 import { attachColumnList } from "./columns.js";
 import { FilterPane } from "./filters.js";
 import { attachHover } from "./hover.js";
@@ -797,3 +798,4 @@ new Builder(document.getElementById("builder"), document.getElementById("columns
   else clearPlot();
 });
 await attachColumnList(document.getElementById("columns"));
+showCasts(document.getElementById("casts"));
