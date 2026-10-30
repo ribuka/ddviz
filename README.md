@@ -37,6 +37,6 @@ uv run --group build packaging/build.py
 - PyInstaller（onedir）で exe を作り、`dist\ddviz\` に出力します。WebView2 のランタイムは `dist\ddviz\webview2\`、設定は `dist\ddviz\config\` に置かれます。
 - 配布するときは `dist\ddviz` フォルダごと zip にして渡します。起動は `ddviz.exe` です。
 
-### 共有の場所に置くとき（Windows 10 系・Windows Server 2016）
+### 共有の場所に置くとき
 
 [docs/shared-install.md](docs/shared-install.md) を参照してください。
