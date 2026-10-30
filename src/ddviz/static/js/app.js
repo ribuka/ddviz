@@ -163,8 +163,10 @@ const hideHover = attachHover(gd, () => current, legend, (ms) => {
 });
 
 // The mode bar holds only zoom, pan, box select and reset; pan is the
-// starting drag mode (`dragmode` in the figure).
+// starting drag mode (`dragmode` in the figure). It shows always, not only on
+// hover, so that the drag mode in use is in sight.
 const PLOT_CONFIG = {
+  displayModeBar: true,
   displaylogo: false,
   scrollZoom: false,
   modeBarButtons: [["zoom2d", "pan2d", "select2d", "resetScale2d"]],

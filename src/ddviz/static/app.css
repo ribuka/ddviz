@@ -1132,6 +1132,11 @@ button {
   display: none;
 }
 
+/* The mode bar of a grid that scrolls lies over the top strip. */
+#plot .modebar-container {
+  z-index: 1;
+}
+
 .sticky-strip {
   position: absolute;
   overflow: hidden;

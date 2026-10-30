@@ -9,12 +9,14 @@ from typing import TypeVar
 T = TypeVar("T")
 
 # Figure margins in pixels: room for tick labels and facet labels. The axis
-# names and the legend are outside the figure. A grid that scrolls draws its
+# names and the legend are outside the figure. The top margin also holds
+# plotly's mode bar (22px high, 2px from the top), which always shows, above
+# the facet labels. A grid that scrolls draws its
 # labels in strips of the page of the same sizes, along the edges of the
 # area it scrolls in (``static/js/sticky.js``).
 MARGIN_LEFT = 50
 MARGIN_RIGHT = 30
-MARGIN_TOP = 30
+MARGIN_TOP = 54
 MARGIN_BOTTOM = 30
 # Gap between panels in pixels, between facet cells and between axis columns
 # alike, whether the grid fits the given size or scrolls. The figure draws a frame line

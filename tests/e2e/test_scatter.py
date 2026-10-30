@@ -352,3 +352,52 @@ def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None
     page.wait_for_function(SETTLED)
     expect(shapes.first.locator("canvas")).to_have_attribute("width", "11")
     page.wait_for_function(PAINTED_PIXEL)
+
+
+def overlaps(a: dict, b: dict) -> bool:
+    """Whether two bounding boxes overlap."""
+    return not (
+        a["x"] + a["width"] <= b["x"]
+        or b["x"] + b["width"] <= a["x"]
+        or a["y"] + a["height"] <= b["y"]
+        or b["y"] + b["height"] <= a["y"]
+    )
+
+
+def test_the_mode_bar_shows_without_hover_and_stays_in_sight(app_page: Page) -> None:
+    """The mode bar shows with the pointer off the plot, apart from the facet labels, and stays at the top right of a grid that scrolls."""
+    page = app_page
+    # Two panels of their smallest width do not fit: the grid scrolls.
+    page.set_viewport_size({"width": 800, "height": 600})
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    place(page, "facet", "col")
+    expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
+    page.mouse.move(0, 0)
+    mode_bar = page.locator("#plot .modebar")
+    expect(mode_bar).to_be_visible()
+    expect(mode_bar).to_have_css("opacity", "1")
+    stage = page.locator("#stage").bounding_box()
+    labels = page.locator(".sticky-strip .facet.col")
+    expect(labels).to_have_count(2)
+
+    for left in [0, 10_000]:
+        page.locator("#scroller").evaluate(
+            "(s, left) => { s.scrollLeft = left; s.dispatchEvent(new Event('scroll')); }",
+            left,
+        )
+        box = mode_bar.bounding_box()
+        assert stage["x"] <= box["x"]
+        assert box["x"] + box["width"] <= stage["x"] + stage["width"]
+        assert stage["y"] <= box["y"] < stage["y"] + 30
+        for label in labels.all():
+            if label.is_visible():
+                assert not overlaps(box, label.bounding_box())
+        # The button on top takes the click, not the strip under it.
+        mode_bar.locator('[data-val="zoom"]').click()
+        assert (
+            page.evaluate("document.getElementById('plot').layout.dragmode") == "zoom"
+        )
+        mode_bar.locator('[data-val="pan"]').click()
