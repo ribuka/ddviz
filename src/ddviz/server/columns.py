@@ -47,9 +47,10 @@ def search_columns(
     Returns
     -------
     dict
-        ``{"total", "matched", "columns"}``: the number of columns, the
-        number of matches and the first `limit` matches, each with its
-        ``"nonnull"`` count and ``"share"``.
+        ``{"total", "matched", "rows", "columns"}``: the number of columns,
+        the number of matches, the rows of the input (None without
+        `nonnull`) and the first `limit` matches, each with its ``"nonnull"``
+        count and ``"share"``.
 
     Raises
     ------
@@ -87,6 +88,7 @@ def search_columns(
     return {
         "total": len(columns),
         "matched": len(found),
+        "rows": None if nonnull is None else nonnull["rows"],
         "columns": [
             {**columns[i], "nonnull": counts[i], "share": shares[i]}
             for i in found[:limit]

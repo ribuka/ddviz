@@ -100,6 +100,7 @@ def test_columns_carry_their_non_null_rows(
         found = client.get("/api/columns").json()
     assert found["shares"] == "done"
     rows = scatter_frame.height
+    assert found["rows"] == rows
     counts = {c: rows - scatter_frame[c].null_count() for c in scatter_frame.columns}
     for column in found["columns"]:
         assert column["nonnull"] == counts[column["name"]]

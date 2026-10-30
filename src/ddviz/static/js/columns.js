@@ -44,7 +44,7 @@ export function attachColumnList(root) {
     const shares = { pending: "（非 null の行数を計算中）", failed: "（非 null の行数は求められませんでした）" }[found.shares] ?? "";
     count.textContent = `${found.total.toLocaleString()} 列中 ${found.matched.toLocaleString()} 件${shown}${shares}`;
     for (const control of [hideEmpty, minShare, orderButton]) control.disabled = found.shares !== "done";
-    list.replaceChildren(...found.columns.map((c) => columnItem(c, found.shares)));
+    list.replaceChildren(...found.columns.map((c) => columnItem(c, found.shares, found.rows)));
     if (found.shares === "pending") timer = setTimeout(search, PENDING_RETRY_MS);
   }
 
@@ -72,15 +72,20 @@ export function attachColumnList(root) {
 }
 
 // A count of rows in the narrow share column: up to 3 significant digits
-// with K, M or B, cut rather than rounded, so that a count just short of the
-// rows never shows as all of them.
+// with K, M or B, cut rather than rounded. A count short of the rows that
+// still reads as them gets "<", so that only a column of no nulls shows them.
 const COMPACT = new Intl.NumberFormat("en", {
   notation: "compact",
   maximumSignificantDigits: 3,
   roundingMode: "trunc",
 });
 
-function columnItem(column, sharesState) {
+function compactCount(count, rows) {
+  const text = COMPACT.format(count);
+  return count < rows && text === COMPACT.format(rows) ? `<${text}` : text;
+}
+
+function columnItem(column, sharesState, rows) {
   const item = document.createElement("div");
   item.className = "column";
   item.draggable = true;
@@ -97,7 +102,7 @@ function columnItem(column, sharesState) {
     share.textContent = sharesState === "pending" ? "…" : "?";
     item.title = `${column.name}（${column.dtype}）`;
   } else {
-    share.textContent = COMPACT.format(column.nonnull);
+    share.textContent = compactCount(column.nonnull, rows);
     share.style.setProperty("--share", `${column.share * 100}%`);
     item.title = `${column.name}（${column.dtype}、非 null ${column.nonnull.toLocaleString()} 行）`;
   }

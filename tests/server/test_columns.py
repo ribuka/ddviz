@@ -46,6 +46,8 @@ def test_each_column_carries_its_count_and_share() -> None:
     found = search_columns(COLUMNS, "", None, 10, NONNULL)
     assert [c["nonnull"] for c in found["columns"]] == [5, None, 0, 9]
     assert [c["share"] for c in found["columns"]] == [0.5, None, 0.0, 0.9]
+    assert found["rows"] == 10
+    assert search_columns(COLUMNS, "", None, 10)["rows"] is None
     column = search_columns(COLUMNS, "", None, 10)["columns"][0]
     assert (column["nonnull"], column["share"]) == (None, None)
 
