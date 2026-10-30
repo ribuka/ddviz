@@ -124,6 +124,8 @@ def test_plot_draws_and_serves_images(client: TestClient) -> None:
         ({"x": ["x"], "y": ["y"], "elements": []}, "elements"),
         ({"x": ["x"], "y": ["y"], "elements": "points"}, "elements"),
         ({"x": ["x"]}, "x and y"),
+        ({"y": ["color"]}, "x and y"),
+        ({"y": ["y", "color"]}, "x and y"),
         ({"x": "x", "y": ["y"]}, "list"),
         ({"x": ["x"], "y": ["y"], "wrap": "facet", "col": "color"}, "wrap"),
         ({"x": ["x", "y"], "y": ["y"], "wrap": "facet"}, "n-th axes"),
@@ -224,6 +226,26 @@ def test_selection_and_table(client: TestClient) -> None:
     assert client.post("/api/selection", json=no_panel).status_code == 400
     assert client.delete("/api/selection").json() == {}
     assert client.get("/api/table").status_code == 409
+
+
+def test_a_graph_without_x_draws_one_band(client: TestClient) -> None:
+    """Without an x column, numeric y columns have their boxes in one band; a box selects rows of it."""
+    encoding = {"y": ["y"], "color": "color", "elements": ["box"]}
+    response = client.post("/api/plot", json={"encoding": encoding, **SIZE})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    meta = body["meta"]
+    assert meta["one_band"] is True
+    assert meta["undrawn"] == []
+    assert meta["x_ranges"] == [[-0.5, 0.5]]
+    assert {b[1] for p in meta["panels"] for b in p["boxes"]} == {0, 1, 2}
+    assert body["figure"]["layout"]["xaxis"]["ticktext"] == ["a", "b", "c"]
+    box = {"task": meta["task"], "panel": 0, "x_range": [-0.5, 0.5], "y_range": [-1, 1]}
+    selected = client.post("/api/selection", json=box).json()
+    assert 0 < selected["rows"]
+    table = client.get("/api/table").json()
+    assert table["rows"] == selected["rows"]
+    assert [c["name"] for c in table["columns"]][:2] == ["y", "color"]
 
 
 def test_summary(client: TestClient) -> None:

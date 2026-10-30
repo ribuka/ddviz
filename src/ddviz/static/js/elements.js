@@ -3,8 +3,8 @@
 // Each icon toggles its element, and several are drawn one over another.
 // An element that cannot be drawn yet shows its icon, which cannot be
 // pressed; nor can the last element that can be drawn be turned off. Box
-// plots need a categorical X column and a numeric Y column
-// (`ddviz.server.plan.has_box_pair`), smoothing lines a numeric X column and
+// plots need a categorical X column and a numeric Y column, or numeric Y
+// columns alone (`ddviz.server.plan.has_box_pair`), smoothing lines a numeric X column and
 // a numeric Y column (`ddviz.server.plan.has_smooth_pair`): without them,
 // their icon cannot be pressed either. A right click on the smoothing
 // lines' icon opens their menu (smoothmenu.js).
@@ -20,7 +20,7 @@ const ELEMENTS = [
     name: "box",
     label: "箱ひげ図",
     drawn: true,
-    needs: "X にカテゴリの列、Y に数値の列を置くと描ける",
+    needs: "X にカテゴリの列か何も置かず、Y に数値の列を置くと描ける",
     svg: '<path d="M11 2v4M11 15v5M8 2h6M8 20h6" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="6" width="10" height="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 10h10" stroke="currentColor" stroke-width="1.5"/>',
   },
   {

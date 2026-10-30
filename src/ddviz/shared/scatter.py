@@ -10,6 +10,10 @@ MAX_LEVELS = 50
 # Default size in pixels of the marker shapes of the overlay levels
 # (`ScatterSpec.shape_size`).
 SHAPE_SIZE = 7
+# The x column of a graph whose X is empty: a categorical column of one
+# level, so that every row lies in one band. It is no column of the data;
+# the scan makes it (`ddviz.compute.scan.scan_columns`).
+ONE_BAND = "\x00one band"
 
 
 @dataclass(frozen=True)
@@ -238,13 +242,15 @@ class ScatterSpec:
     ----------
     files : dict of str to list of str
         Parquet files holding each column of the plot, read one after another:
-        its parts in the column cache (`ddviz.compute.scan.scan_columns`).
+        its parts in the column cache (`ddviz.compute.scan.scan_columns`);
+        none for `ONE_BAND`.
     x, y : list of str
         Columns on the x and y axes, at least one each. Every pair of an x and
         a y column is a panel of each facet cell: the x columns side by side,
         the y columns stacked from the top (`ddviz.shared.layout.AxisGrid`).
         A column in ``categorical`` is drawn by its levels, in bands
-        (`ddviz.compute.bands`).
+        (`ddviz.compute.bands`); the x column `ONE_BAND` puts every row in
+        one band.
     color : str or None
         Column whose levels make the series' colors, or None for a single
         color.

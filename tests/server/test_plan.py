@@ -7,6 +7,7 @@ import pytest
 from ddviz.server.encoding import Encoding
 from ddviz.server.plan import (
     FACET_BINS,
+    drawable,
     drawn_columns,
     has_box_pair,
     parse_filters,
@@ -16,7 +17,7 @@ from ddviz.server.plan import (
     scatter_spec,
     undrawn,
 )
-from ddviz.shared.scatter import SHAPE_SIZE, Binning, Filter, Smoothing
+from ddviz.shared.scatter import ONE_BAND, SHAPE_SIZE, Binning, Filter, Smoothing
 
 
 def test_scatter_draws_every_axis_and_overlay_as_shapes() -> None:
@@ -273,3 +274,32 @@ def test_box_plots_need_a_categorical_x_and_a_numeric_y() -> None:
     spec = scatter_spec(mixed, files, 400, 300, ["#000000"], numeric=numeric)
     assert spec.box_pairs() == {("g", "b")}
     assert spec.draws_points("a", "b")
+
+
+def test_numeric_y_columns_alone_lie_in_one_band() -> None:
+    """Without an x column, numeric y columns are drawn over the one band, which can have box plots."""
+    files = {c: [f"{c}.parquet"] for c in ("g", "a", "b")}
+    numeric = {"g": False, "a": True, "b": True}
+    alone = Encoding(y=("a", "b"), color="g", elements=("points", "box"))
+    assert drawable(alone, numeric)
+    assert has_box_pair(alone, numeric)
+    assert undrawn(alone, numeric) == []
+    spec = scatter_spec(alone, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.x == [ONE_BAND]
+    assert spec.categorical == [ONE_BAND]
+    assert spec.files[ONE_BAND] == []
+    assert spec.hover == ["a", "b", "g"]
+    assert (spec.points, spec.box, spec.smooth) == (True, True, None)
+    assert spec.box_pairs() == {(ONE_BAND, "a"), (ONE_BAND, "b")}
+
+
+@pytest.mark.parametrize(
+    "encoding",
+    [Encoding(), Encoding(x=("a",)), Encoding(y=("g",)), Encoding(y=("a", "g"))],
+)
+def test_a_graph_without_x_needs_numeric_y_columns(encoding: Encoding) -> None:
+    """Without an x column, a categorical y column or none has no scatter plot."""
+    numeric = {"g": False, "a": True}
+    assert not drawable(encoding, numeric)
+    with pytest.raises(ValueError, match="x and y"):
+        scatter_spec(encoding, {"a": ["a"], "g": ["g"]}, 400, 300, [], numeric=numeric)

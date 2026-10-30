@@ -776,7 +776,7 @@ new FilterPane(
   (count, text) => leftPane.setFilter(count, text),
 );
 
-// Removes the figure of a graph that cannot be drawn (no x or no y column).
+// Removes the figure of a graph that cannot be drawn (`drawable`).
 function clearPlot() {
   clearSelection();
   generation++;
@@ -806,11 +806,26 @@ function drawnRoles(encoding) {
   return JSON.stringify([x, y, color ?? overlay, row, col, wrap, elements, overlay]);
 }
 
+// Whether the graph draws every row in one band along x: no x column and
+// numeric y columns only (`ddviz.server.plan.one_band`).
+function oneBand(encoding) {
+  const numeric = (name) => builder.numeric.get(name) !== false;
+  return !encoding.x.length && encoding.y.length > 0 && encoding.y.every(numeric);
+}
+
+// Whether the graph has a scatter plot (`ddviz.server.plan.drawable`).
+function drawable(encoding) {
+  return (encoding.x.length > 0 && encoding.y.length > 0) || oneBand(encoding);
+}
+
 // Whether a pair of the graph's axis columns can have box plots: a
-// categorical x and a numeric y (`ddviz.server.plan.has_box_pair`).
+// categorical x and a numeric y, or the one band
+// (`ddviz.server.plan.has_box_pair`).
 function hasBoxPair(encoding) {
   const numeric = (name) => builder.numeric.get(name) !== false;
-  return encoding.x.some((x) => !numeric(x)) && encoding.y.some(numeric);
+  return (
+    oneBand(encoding) || (encoding.x.some((x) => !numeric(x)) && encoding.y.some(numeric))
+  );
 }
 
 // Whether a pair of the graph's axis columns can have smoothing lines: a
@@ -903,7 +918,7 @@ const builder = new Builder(
       wrapColsInput.placeholder = "自動";
     }
     drawnRolesKey = key;
-    if (encoding.x.length && encoding.y.length) plot(encoding);
+    if (drawable(encoding)) plot(encoding);
     else clearPlot();
   },
   { wrap: wrapColsInput },

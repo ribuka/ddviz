@@ -7,6 +7,7 @@ import math
 from ddviz.server.encoding import Encoding
 from ddviz.shared.scatter import (
     MAX_LEVELS,
+    ONE_BAND,
     SHAPE_SIZE,
     Binning,
     Filter,
@@ -26,6 +27,46 @@ SMOOTH_METHODS = ("gcv", "csaps", "lowess")
 SHAPE_SIZES = (3, 5, 7, 9, 11, 15)
 
 
+def one_band(encoding: Encoding, numeric: dict[str, bool]) -> bool:
+    """Return whether the graph draws every row in one band along x: X is empty and Y holds numeric columns only.
+
+    Parameters
+    ----------
+    encoding : Encoding
+        The graph.
+    numeric : dict of str to bool
+        Whether each column is numeric; a missing one is numeric.
+
+    Returns
+    -------
+    bool
+        Whether the x axis is the one band (`ddviz.shared.scatter.ONE_BAND`).
+    """
+    return (
+        not encoding.x
+        and bool(encoding.y)
+        and all(numeric.get(y, True) for y in encoding.y)
+    )
+
+
+def drawable(encoding: Encoding, numeric: dict[str, bool]) -> bool:
+    """Return whether the graph has a scatter plot: x and y columns, or numeric y columns alone (`one_band`).
+
+    Parameters
+    ----------
+    encoding : Encoding
+        The graph.
+    numeric : dict of str to bool
+        Whether each column is numeric; a missing one is numeric.
+
+    Returns
+    -------
+    bool
+        Whether it is drawn.
+    """
+    return bool(encoding.x and encoding.y) or one_band(encoding, numeric)
+
+
 def has_box_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
     """Return whether a pair of the graph's axis columns can have box plots: a categorical x and a numeric y.
 
@@ -39,10 +80,12 @@ def has_box_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
     Returns
     -------
     bool
-        Whether such a pair exists.
+        Whether such a pair exists; the one band (`one_band`) is a
+        categorical x.
     """
-    return any(not numeric.get(x, True) for x in encoding.x) and any(
-        numeric.get(y, True) for y in encoding.y
+    return one_band(encoding, numeric) or (
+        any(not numeric.get(x, True) for x in encoding.x)
+        and any(numeric.get(y, True) for y in encoding.y)
     )
 
 
@@ -214,7 +257,8 @@ def scatter_spec(
     plots when the elements have them (`ScatterSpec.box`), and those of a
     numeric x and a numeric y smoothing lines (`ScatterSpec.smooth`); the
     other panels draw the points even without the points element. A categorical x or y column is drawn in bands, one per
-    level (`ScatterSpec.categorical`). A wrap column takes the col role of the spec, its levels
+    level (`ScatterSpec.categorical`); without an x column, every row lies
+    in one band (`one_band`), a categorical x of its own. A wrap column takes the col role of the spec, its levels
     wrapping into rows (`ScatterSpec.wrap`). The hover shows the drawn
     columns. The local filter's columns are read too.
 
@@ -259,11 +303,14 @@ def scatter_spec(
     Raises
     ------
     ValueError
-        When x or y has no column, or wrap has one beside row, col or the
-        n-th axes.
+        When the graph is not `drawable`, or wrap has a column beside row,
+        col or the n-th axes.
     """
-    if not encoding.x or not encoding.y:
-        raise ValueError("x and y need a column")
+    numeric = numeric or {}
+    if not drawable(encoding, numeric):
+        raise ValueError("x and y need a column, or y numeric columns alone")
+    # Without an x column, every row lies in one band.
+    x = list(encoding.x) or [ONE_BAND]
     wrap = encoding.wrap is not None
     if wrap and (encoding.row is not None or encoding.col is not None):
         raise ValueError("wrap cannot be placed with row or col")
@@ -276,7 +323,6 @@ def scatter_spec(
         color, overlay = overlay, None
     hover = drawn_columns(encoding)
     filters = list(filters or [])
-    numeric = numeric or {}
     binned = {
         role: Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
         for role, column in (("overlay", overlay), ("row", encoding.row), ("col", col))
@@ -287,9 +333,10 @@ def scatter_spec(
         binned["color"] = color_bins
         gradient = False
     read = dict.fromkeys([*hover, *(f.column for f in filters)])
+    band = {ONE_BAND: []} if x == [ONE_BAND] else {}
     return ScatterSpec(
-        files={c: files[c] for c in read},
-        x=list(encoding.x),
+        files={**{c: files[c] for c in read}, **band},
+        x=x,
         y=list(encoding.y),
         color=color,
         row=encoding.row,
@@ -306,8 +353,8 @@ def scatter_spec(
         wrap_cols=wrap_cols if wrap else None,
         categorical=[
             c
-            for c in dict.fromkeys([*encoding.x, *encoding.y])
-            if not numeric.get(c, True)
+            for c in dict.fromkeys([*x, *encoding.y])
+            if c == ONE_BAND or not numeric.get(c, True)
         ],
         points="points" in encoding.elements,
         box="box" in encoding.elements and has_box_pair(encoding, numeric),

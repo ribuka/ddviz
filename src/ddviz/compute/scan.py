@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import polars as pl
 
+from ddviz.shared.scatter import ONE_BAND
+
 
 def scan_columns(
     files: dict[str, list[str]], row_index: str | None = None
@@ -23,6 +25,8 @@ def scan_columns(
     ----------
     files : dict of str to list of str
         Parquet files holding each column, in the order of the output columns.
+        `ddviz.shared.scatter.ONE_BAND` needs no files: it is an empty text
+        on every row, beside at least one column read from files.
     row_index : str or None
         Name of a row index column to put first. The first scan adds it:
         ``with_row_index`` on 100M rows raised the streaming peak from about
@@ -35,7 +39,8 @@ def scan_columns(
     """
     by_file: dict[tuple[str, ...], list[str]] = {}
     for column, paths in files.items():
-        by_file.setdefault(tuple(paths), []).append(column)
+        if column != ONE_BAND:
+            by_file.setdefault(tuple(paths), []).append(column)
     head = [] if row_index is None else [row_index]
     parts = [
         pl.scan_parquet(
@@ -44,4 +49,6 @@ def scan_columns(
         for i, (paths, columns) in enumerate(by_file.items())
     ]
     frame = parts[0] if len(parts) == 1 else pl.concat(parts, how="horizontal")
+    if ONE_BAND in files:
+        frame = frame.with_columns(pl.lit("", pl.String).alias(ONE_BAND))
     return frame.select(head + list(files))

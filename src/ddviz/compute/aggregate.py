@@ -42,7 +42,7 @@ from ddviz.shared.layout import (
     facet_grid,
     grid_layout,
 )
-from ddviz.shared.scatter import Boxes, ScatterSpec, Smooths, Spread
+from ddviz.shared.scatter import ONE_BAND, Boxes, ScatterSpec, Smooths, Spread
 
 KEY = "__key"
 COUNT = "__n"
@@ -205,6 +205,8 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
             ]
         )
     )
+    # The one band has its level without reading the data.
+    used = [c for c in used if c != ONE_BAND]
     gradient = [spec.color] if spec.gradient else []
     # Levels and ranges come from the unfiltered scan: a row filter on the
     # same pass made the streaming engine peak at about 6.5GB on 100M rows,
@@ -227,6 +229,8 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
         c: sorted(f[c].drop_nulls().to_list())
         for c, f in zip(used, found[len(numeric) :], strict=True)
     }
+    if ONE_BAND in spec.categorical:
+        column_levels[ONE_BAND] = [""]
     axis_levels = {c: column_levels[c] for c in spec.categorical}
     ranges.update({c: band_range(v) for c, v in axis_levels.items()})
     x_ranges = [ranges[c] for c in spec.x]
