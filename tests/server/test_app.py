@@ -271,8 +271,8 @@ def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
 ) -> None:
     """A view gets the room the overview leaves; without room for x and y it has no hover.
 
-    The results a task replaces give up their hover files first, so the
-    files on disk keep within the limit.
+    The results a task replaces count too: they go only once the new one
+    is open, so they are on disk while it is written.
     """
     unlimited = _plot(client)["meta"]["hover"]
     assert unlimited["files"] and unlimited["dropped"] == []
@@ -298,8 +298,9 @@ def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
         assert view["hover"]["limit_gb"] == settings.hover.max_temp_bytes / 2**30
         params = {"task": view["task"], "panel": 0, "fx": 0, "fy": 0, "sx": 1, "sy": 1}
         assert limited.get("/api/hover", params=params).json() == {"hit": None}
-        # A new plot replaces both results, whose hover files go before it writes.
+        # A new plot is written beside the old overview, which leaves no room.
         again = _plot(limited)["meta"]["hover"]
-        assert again["files"] and again["dropped"] == []
-        on_disk = sum(f.stat().st_size for f in (tmp_path / "limited").rglob("*.npy"))
-        assert on_disk <= settings.hover.max_temp_bytes
+        assert again["files"] is False
+        assert meta["hover"]["bytes"] + again["bytes"] <= settings.hover.max_temp_bytes
+        # The old results are gone now, so the next plot has the whole limit.
+        assert _plot(limited)["meta"]["hover"]["files"]
