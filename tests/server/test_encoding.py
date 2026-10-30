@@ -27,6 +27,7 @@ def test_columns_lists_each_placed_column_once() -> None:
         ({"x": "a"}, "x must be a list"),
         ({"y": [1]}, "y must be a list"),
         ({"color": ["a"]}, "color must be a column name"),
+        ({"wrap": 1}, "wrap must be a column name"),
     ],
 )
 def test_from_dict_refuses_bad_roles(data: dict, message: str) -> None:

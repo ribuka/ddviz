@@ -68,7 +68,7 @@ export class StickyLabels {
     place(right, width - r, t, r, height - t - b);
 
     const ncol = meta.ncol;
-    const nrow = meta.panels.length / ncol;
+    const count = meta.panels.length;
     // Positions inside a strip: figure pixels less the scroll and the strip's origin.
     const yTicks = [];
     const xTicks = [];
@@ -80,7 +80,9 @@ export class StickyLabels {
           yTicks.push(label("tick y", tick.text, { right: "4px", top: `${y}px` }, true));
         }
       }
-      if (p >= (nrow - 1) * ncol) {
+      // The bottom panel of each panel column: a wrapped grid may leave
+      // the cells below it empty.
+      if (p + ncol >= count) {
         const xa = full[axisKey(panel.xaxis)];
         for (const tick of xa?._vals ?? []) {
           const x = xa._offset + xa.l2p(tick.x) - sx;

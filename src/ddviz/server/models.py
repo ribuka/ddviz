@@ -13,6 +13,7 @@ class PlotRequest(BaseModel):
     height: int
     filters: list[dict] = []
     color_bins: dict | None = None
+    wrap_cols: int | None = None
 
 
 class SizeRequest(BaseModel):

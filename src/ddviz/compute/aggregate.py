@@ -17,7 +17,14 @@ from ddviz.compute.selection import (
     selection_filter,
 )
 from ddviz.shared.keys import BinGrid
-from ddviz.shared.layout import AxisGrid, GridLayout, grid_layout
+from ddviz.shared.layout import (
+    GAP,
+    WRAP_GAP,
+    AxisGrid,
+    GridLayout,
+    facet_grid,
+    grid_layout,
+)
 from ddviz.shared.scatter import ScatterSpec
 
 KEY = "__key"
@@ -259,7 +266,8 @@ def aggregate(
 
     Each pair of an x and a y column is a panel of each facet cell
     (`ddviz.shared.layout.AxisGrid`); a row is in the panels of the pairs whose x
-    and y it has. The pairs are aggregated one after another in this
+    and y it has; a wrapped spec lays its col levels out in rows instead.
+    The pairs are aggregated one after another in this
     process. A panel leaves out
     rows with a null or non-finite x or y, and for a view, rows outside the
     ranges of its columns; every panel leaves out rows with a null color,
@@ -316,13 +324,19 @@ def aggregate(
         progress("facets")
         levels = _facet_levels(spec, all_levels, cuts)
 
-    axes = AxisGrid(
-        nrow=len(levels["row"]),
-        ncol=len(levels["col"]),
-        nx=len(spec.x),
-        ny=len(spec.y),
+    axes = facet_grid(
+        len(levels["row"]),
+        len(levels["col"]),
+        len(spec.x),
+        len(spec.y),
+        spec.wrap,
+        spec.wrap_cols,
+        spec.width,
+        spec.height,
     )
-    layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols)
+    layout = grid_layout(
+        spec.width, spec.height, axes.rows, axes.cols, WRAP_GAP if spec.wrap else GAP
+    )
     grid = BinGrid(
         n_panels=layout.nrow * layout.ncol,
         n_series=len(levels["color"]),
@@ -340,6 +354,9 @@ def aggregate(
         return _index_expr(roles[role], levels[role])
 
     row, col, series = index("row"), index("col"), index("color")
+    if spec.wrap:
+        # The panel of a wrapped level is its index (`AxisGrid`).
+        row, col = col // axes.ncol, col % axes.ncol
     valid = drawn_conditions(spec)
 
     def pair(

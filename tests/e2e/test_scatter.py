@@ -59,3 +59,31 @@ def test_a_scatter_plot_draws_and_hovers(
     row = scatter_frame.row(int(lines["行番号"]), named=True)
     for column in ["x", "y"]:
         assert float(lines[column]) == pytest.approx(row[column], rel=1e-5)
+
+
+def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:
+    """A column on Wrap removes Group X's and draws a panel per level, labeled by the level; the number to a row can be set."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    for column, role in [("x", "x"), ("y", "y"), ("facet", "col"), ("color", "wrap")]:
+        source = columns.filter(has=page.get_by_text(column, exact=True))
+        source.drag_to(page.locator(f'.zone[data-role="{role}"]'))
+    wrap = page.locator('.zone[data-role="wrap"]')
+    expect(wrap.locator(".chip-name")).to_have_text("color")
+    expect(page.locator('.zone[data-role="col"] .chip')).to_have_count(0)
+    page.wait_for_function(PAINTED_PIXEL)
+    labels = page.locator("#plot .annotation-text")
+    expect(labels).to_have_text(["a", "b", "c"])
+
+    wrap.locator(".wrap-cols").fill("1")
+    wrap.locator(".wrap-cols").press("Enter")
+    # One panel to a row: the panels stack, the first on top.
+    page.wait_for_function(
+        """() => {
+          const layout = document.getElementById("plot").layout;
+          return layout?.yaxis3 && layout.yaxis3.domain[1] < layout.yaxis2.domain[0]
+            && layout.xaxis3.domain[0] === layout.xaxis.domain[0];
+        }"""
+    )
+    expect(labels).to_have_text(["a", "b", "c"])

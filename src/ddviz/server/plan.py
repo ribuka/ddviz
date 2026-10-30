@@ -42,9 +42,17 @@ def drawn_columns(encoding: Encoding) -> list[str]:
     Returns
     -------
     list of str
-        The x and y columns and the color, row and col columns, once each.
+        The x and y columns and the color, row, col and wrap columns, once
+        each.
     """
-    columns = [*encoding.x, *encoding.y, encoding.color, encoding.row, encoding.col]
+    columns = [
+        *encoding.x,
+        *encoding.y,
+        encoding.color,
+        encoding.row,
+        encoding.col,
+        encoding.wrap,
+    ]
     return list(dict.fromkeys(c for c in columns if c is not None))
 
 
@@ -115,13 +123,15 @@ def scatter_spec(
     numeric: dict[str, bool] | None = None,
     color_bins: Binning | None = None,
     max_levels: int = MAX_LEVELS,
+    wrap_cols: int | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
     Every pair of an x and a y column is drawn in a panel of each facet
     cell, colored by color and faceted by row and col; overlay is left out
-    (`undrawn`). The hover shows the drawn columns. The local filter's
-    columns are read too.
+    (`undrawn`). A wrap column takes the col role of the spec, its levels
+    wrapping into rows (`ScatterSpec.wrap`). The hover shows the drawn
+    columns. The local filter's columns are read too.
 
     Parameters
     ----------
@@ -137,13 +147,16 @@ def scatter_spec(
     filters : list of Filter, optional
         Conditions of the local filter.
     numeric : dict of str to bool, optional
-        Whether each column is numeric. A numeric row or col column is cut
-        into `FACET_BINS` intervals (`ddviz.compute.cuts`); a numeric color column
-        is a gradient, or cut by `color_bins`.
+        Whether each column is numeric. A numeric row, col or wrap column is
+        cut into `FACET_BINS` intervals (`ddviz.compute.cuts`); a numeric color
+        column is a gradient, or cut by `color_bins`.
     color_bins : Binning, optional
         How to cut a numeric color column; None draws it as a gradient.
     max_levels : int, optional
-        Most levels a categorical color, row or col column may have.
+        Most levels a categorical color, row, col or wrap column may have.
+    wrap_cols : int, optional
+        Wrapped panels to a row (`parse_wrap_cols`); None to make them
+        closest to square.
 
     Returns
     -------
@@ -153,17 +166,24 @@ def scatter_spec(
     Raises
     ------
     ValueError
-        When x or y has no column.
+        When x or y has no column, or wrap has one beside row, col or the
+        n-th axes.
     """
     if not encoding.x or not encoding.y:
         raise ValueError("x and y need a column")
+    wrap = encoding.wrap is not None
+    if wrap and (encoding.row is not None or encoding.col is not None):
+        raise ValueError("wrap cannot be placed with row or col")
+    if wrap and (len(encoding.x) > 1 or len(encoding.y) > 1):
+        raise ValueError("wrap cannot be placed with the n-th axes")
+    col = encoding.wrap if wrap else encoding.col
     hover = drawn_columns(encoding)
     filters = list(filters or [])
     numeric = numeric or {}
     binned = {
         role: Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
-        for role in ("row", "col")
-        if numeric.get(getattr(encoding, role))
+        for role, column in (("row", encoding.row), ("col", col))
+        if numeric.get(column)
     }
     gradient = bool(numeric.get(encoding.color))
     if gradient and color_bins is not None:
@@ -176,7 +196,7 @@ def scatter_spec(
         y=list(encoding.y),
         color=encoding.color,
         row=encoding.row,
-        col=encoding.col,
+        col=col,
         width=width,
         height=height,
         hover=hover,
@@ -185,6 +205,8 @@ def scatter_spec(
         gradient=gradient,
         filters=filters,
         max_levels=max_levels,
+        wrap=wrap,
+        wrap_cols=wrap_cols if wrap else None,
     )
 
 
@@ -218,3 +240,28 @@ def parse_color_bins(raw: dict | None) -> Binning | None:
             f"color bins are n in {COLOR_BINS} and by rows or values: {raw}"
         )
     return Binning(raw["n"], raw["by"])
+
+
+def parse_wrap_cols(raw: object) -> int | None:
+    """Return how many wrapped panels the page asks to put in a row, checked.
+
+    Parameters
+    ----------
+    raw : object
+        A positive int, or None to make the panels closest to square.
+
+    Returns
+    -------
+    int or None
+        The number.
+
+    Raises
+    ------
+    ValueError
+        For anything else.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise ValueError(f"wrap_cols is a positive int or null: {raw}")
+    return raw

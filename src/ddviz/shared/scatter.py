@@ -138,6 +138,13 @@ class ScatterSpec:
         Figure size in pixels. The worker splits it into panels by
         `ddviz.shared.layout.grid_layout` once it knows the facet levels; one bin is
         one pixel of a panel.
+    wrap : bool
+        Whether the col levels wrap into rows of panels (``facet_col_wrap``
+        of plotly express; `ddviz.shared.layout.AxisGrid`); row is then None
+        and x and y have one column each.
+    wrap_cols : int or None
+        Wrapped panels to a row; None to make the panels closest to square
+        (`ddviz.shared.layout.wrap_columns`).
     hover : list of str
         Columns whose values the hover shows for the representative rows.
     colors : list of str
@@ -184,6 +191,8 @@ class ScatterSpec:
     filters: list[Filter] = field(default_factory=list)
     max_levels: int = MAX_LEVELS
     hover_bytes: int | None = None
+    wrap: bool = False
+    wrap_cols: int | None = None
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.

@@ -1,7 +1,8 @@
 // Drop zones of the graph builder, laid out around the figure: Group X
-// above the figure, Y left of it, Group Y right of it, X below it, and Color
-// and Overlay beside it. They are outside the scrolled figure and name its
-// axes. The zones edit the graph (`ddviz.server.encoding.Encoding`):
+// above the figure, Y left of it, Group Y right of it, X below it, Wrap in
+// the corner right of Group X and above Group Y, and Color and Overlay
+// beside it. They are outside the scrolled figure and name its axes. The
+// zones edit the graph (`ddviz.server.encoding.Encoding`):
 // - A column dropped on a zone takes that role, replacing the column there.
 // - On X and Y, which hold several columns (the n-th axes), a column dropped
 //   on the leading quarter of a chip goes in before it, on the trailing
@@ -12,12 +13,18 @@
 //   zone holds a column, the two swap roles.
 // - A chip's × button, or dropping it on the column list or outside every
 //   zone, removes it.
+// - Wrap and the facets replace each other: a column placed on Wrap removes
+//   those of Group X and Group Y, and one placed on either removes Wrap's.
+//   Wrap is refused while X or Y has an n-th axis, and an n-th axis while
+//   Wrap has a column.
 // While dragging, a tip says what a drop would do, a line marks where a
 // column would go in, and an outline marks the chip it would replace.
 
 // Roles that hold a list of columns (the n-th axes after the first).
 const AXES = ["x", "y"];
-const LABELS = { x: "X", y: "Y", col: "Group X", row: "Group Y", color: "Color", overlay: "Overlay" };
+const LABELS = { x: "X", y: "Y", col: "Group X", row: "Group Y", wrap: "Wrap", color: "Color", overlay: "Overlay" };
+// Roles that wrap replaces.
+const FACETS = ["row", "col"];
 // Roles placed but not drawn yet.
 const UNDRAWN_NOTE = "（まだ描かない）";
 // Part of a chip at each end, along its axis, where a drop goes in beside
@@ -45,11 +52,13 @@ export function draggedColumn() {
 
 export class Builder {
   // `root` holds the zones (`[data-role]`); `columnList` takes chips dropped
-  // to remove them; `onChange` gets the graph after each edit.
-  constructor(root, columnList, onChange) {
+  // to remove them; `onChange` gets the graph after each edit. `extras` maps
+  // a role to an element shown after its chips while it has a column.
+  constructor(root, columnList, onChange, extras = {}) {
     this.zones = [...root.querySelectorAll(".zone[data-role]")];
     this.onChange = onChange;
-    this.encoding = { x: [], y: [], color: null, overlay: null, row: null, col: null };
+    this.extras = extras;
+    this.encoding = { x: [], y: [], color: null, overlay: null, row: null, col: null, wrap: null };
     // Whether each placed column is numeric, for moves between roles.
     this.numeric = new Map();
     this.tip = document.getElementById("drop-tip");
@@ -140,12 +149,18 @@ export class Builder {
     if (AXES.includes(role) && !column.numeric) {
       return { refused: `${LABELS[role]} には数値の列だけを置ける` };
     }
+    if (role === "wrap" && AXES.some((axis) => this.placed(axis).length - (column.from === axis ? 1 : 0) > 1)) {
+      return { refused: "第 n 軸があると Wrap に置けない" };
+    }
     const placed = this.placed(role);
     const label = LABELS[role];
     let index = 0;
     let insert = false;
     if (AXES.includes(role) && placed.length > 0) {
       ({ index, insert } = this.position(zone, event));
+    }
+    if (insert && this.encoding.wrap !== null && column.from !== "wrap" && column.from !== role) {
+      return { refused: "Wrap に列があると第 n 軸を置けない" };
     }
     if (insert) {
       // Where the column ends up once a chip of this role has left its place.
@@ -171,7 +186,7 @@ export class Builder {
     } else {
       text = `${label} の ${target} を置き換える`;
     }
-    return { index, insert, text };
+    return { index, insert, text: text + this.replacedNote(role, column.from) };
   }
 
   // Returns where on an axis zone's chips the pointer is: in the middle of
@@ -188,6 +203,15 @@ export class Builder {
       return { index: i, insert: false };
     }
     return { index: spans.filter(([start, end]) => (start + end) / 2 < at).length, insert: true };
+  }
+
+  // Returns what a drop on `role` removes besides, as Wrap and the facets
+  // replace each other; "" for nothing.
+  replacedNote(role, from) {
+    const others = role === "wrap" ? FACETS : FACETS.includes(role) ? ["wrap"] : [];
+    const removed = others.filter((r) => r !== from && this.encoding[r] !== null);
+    if (!removed.length) return "";
+    return `（${removed.map((r) => LABELS[r]).join(" と ")} の列を外す）`;
   }
 
   // Whether `column` (a placed one) may take `role`.
@@ -248,6 +272,8 @@ export class Builder {
       else source.splice(column.index, 1);
       this.setRole(column.from, source);
     }
+    if (role === "wrap") for (const facet of FACETS) this.encoding[facet] = null;
+    if (FACETS.includes(role)) this.encoding.wrap = null;
     this.changed();
   }
 
@@ -275,7 +301,8 @@ export class Builder {
       const label = document.createElement("span");
       label.className = "zone-label";
       label.textContent = LABELS[role] + (role === "overlay" ? UNDRAWN_NOTE : "");
-      zone.replaceChildren(label, ...chips);
+      const extra = placed.length && this.extras[role] ? [this.extras[role]] : [];
+      zone.replaceChildren(label, ...chips, ...extra);
       zone.classList.toggle("filled", placed.length > 0);
     }
   }
