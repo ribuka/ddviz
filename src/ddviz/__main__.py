@@ -1,13 +1,14 @@
 """Command line entry.
 
 ``ddviz [parquet]`` opens the app window; ``ddviz <parquet> --port N`` only
-serves the UI on that port, for a browser in development; ``--worker`` runs a
-worker.
+serves the UI on that port, for a browser in development, and prints the URL
+with the token to open; ``--worker`` runs a worker.
 """
 
 from __future__ import annotations
 
 import argparse
+import secrets
 import sys
 import tempfile
 from pathlib import Path
@@ -17,13 +18,15 @@ if TYPE_CHECKING:  # a worker does not import fastapi
     from fastapi import FastAPI
 
 
-def make_app(path: str) -> FastAPI:
+def make_app(path: str, token: str) -> FastAPI:
     """Build the UI server for a Parquet file.
 
     Parameters
     ----------
     path : str
         Absolute path of the Parquet file.
+    token : str
+        Secret of this run; requests without it are refused.
 
     Returns
     -------
@@ -35,7 +38,7 @@ def make_app(path: str) -> FastAPI:
     from ddviz.shared.cache import default_cache_root
 
     root = Path(tempfile.mkdtemp(prefix="ddviz-"))
-    return create_app(path, root, default_cache_root(), load_settings())
+    return create_app(path, root, default_cache_root(), load_settings(), token)
 
 
 def main() -> int:
@@ -67,9 +70,13 @@ def main() -> int:
         parser.error("--port needs a Parquet file")
     import uvicorn
 
-    print(f"ddviz: http://127.0.0.1:{args.port}/", flush=True)
+    token = secrets.token_urlsafe(32)
+    # Opening this URL once moves the token into a cookie of the browser.
+    print(f"ddviz: http://127.0.0.1:{args.port}/?token={token}", flush=True)
     uvicorn.run(
-        make_app(str(Path(args.path).resolve())), host="127.0.0.1", port=args.port
+        make_app(str(Path(args.path).resolve()), token),
+        host="127.0.0.1",
+        port=args.port,
     )
     return 0
 
