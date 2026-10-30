@@ -66,6 +66,28 @@ def test_filter_on_another_column_drops_the_facets_it_leaves_empty(
     assert agg.levels["color"] == ["a", "b", "c"]
 
 
+def test_filter_by_contained_text_keeps_the_rows_whose_value_holds_it(
+    scatter_spec: ScatterSpec, scatter_frame: pl.DataFrame
+) -> None:
+    """Only the rows whose value contains the text are binned; "r1." is matched literally, not as a pattern."""
+    whole = aggregate(scatter_spec)
+    agg = aggregate(replace(scatter_spec, filters=[Filter("label", contains="r12")]))
+    kept = scatter_frame.with_row_index(INDEX).filter(
+        pl.col("label").str.contains("r12", literal=True),
+        pl.col("x").is_finite(),
+        pl.col("y").is_finite(),
+        pl.col("color").is_not_null(),
+    )
+    assert 0 < kept.height < scatter_frame.height
+    assert agg.bins[COUNT].sum() == kept.height
+    assert set(agg.bins[INDEX].to_list()) <= set(kept[INDEX].to_list())
+    assert agg.x_ranges == whole.x_ranges
+    literal = aggregate(
+        replace(scatter_spec, filters=[Filter("label", contains="r1.")])
+    )
+    assert literal.bins.height == 0
+
+
 def test_filter_without_rows_keeps_every_panel(scatter_spec: ScatterSpec) -> None:
     """A filter that keeps no row leaves the panels of every row, all empty."""
     agg = aggregate(replace(scatter_spec, filters=[Filter("x", range=[50.0, 60.0])]))

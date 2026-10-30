@@ -25,6 +25,10 @@ def filter_conditions(filters: list[Filter]) -> list[pl.Expr]:
         column = pl.col(f.column)
         if f.range is not None:
             conditions.append(column.cast(pl.Float64).is_between(*f.range))
+        elif f.contains is not None:
+            conditions.append(
+                column.cast(pl.String).str.contains(f.contains, literal=True)
+            )
         else:
             conditions.append(column.cast(pl.String).is_in(f.levels))
     return conditions

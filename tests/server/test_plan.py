@@ -66,12 +66,14 @@ def test_filters_are_read_but_not_hovered() -> None:
 
 
 def test_parse_filters_takes_a_range_or_levels_by_column_type() -> None:
-    """A numeric column takes a range, a categorical one levels."""
+    """A numeric column takes a range, a categorical one levels or a text to contain."""
     raw = [{"column": "a", "range": [-1, 2.5]}, {"column": "g", "levels": ["p", "q"]}]
     assert parse_filters(raw, NUMERIC) == [
         Filter("a", range=[-1.0, 2.5]),
         Filter("g", levels=["p", "q"]),
     ]
+    raw = [{"column": "g", "contains": "p."}]
+    assert parse_filters(raw, NUMERIC) == [Filter("g", contains="p.")]
 
 
 @pytest.mark.parametrize(
@@ -84,6 +86,10 @@ def test_parse_filters_takes_a_range_or_levels_by_column_type() -> None:
         [{"column": "g", "range": [0, 1]}],
         [{"column": "g", "levels": []}],
         [{"column": "g", "levels": ["p"], "other": 1}],
+        [{"column": "a", "contains": "1"}],
+        [{"column": "g", "contains": ""}],
+        [{"column": "g", "contains": 1}],
+        [{"column": "g", "contains": "p", "levels": ["p"]}],
         [{"column": "g", "levels": ["p"]}, {"column": "g", "levels": ["q"]}],
     ],
 )

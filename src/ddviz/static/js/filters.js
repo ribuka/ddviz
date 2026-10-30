@@ -1,12 +1,13 @@
 // The local filter pane, below the column list. A
 // column dragged onto it gets a card: a numeric column a range (a slider with
 // two thumbs and two boxes), a categorical column its levels with their counts
-// to tick. The server summarizes a column over every row, once
+// to tick, or, with too many levels to list (an ID), a box of text the kept
+// values contain. The server summarizes a column over every row, once
 // (`GET /api/summary`). A row is drawn when it meets every card's condition
 // (`ddviz.compute.rowfilter`); a card that keeps every row has no condition.
 //
-// A condition goes to the plot when a slider is let go, a box is left or
-// Enter is pressed in it, or 0.4s after the last tick, so that a few ticks in
+// A condition goes to the plot when a slider is let go, a box (or the text
+// box) is left or Enter is pressed in it, or 0.4s after the last tick, so that a few ticks in
 // a row aggregate once.
 import { draggedColumn } from "./builder.js";
 
@@ -34,7 +35,8 @@ export class FilterPane {
     this.onChange = onChange;
     this.onSummary = onSummary;
     // One card per column, in the order added: `{name, numeric, summary,
-    // range, levels, element}`; `range` is [lo, hi], `levels` the ticked set.
+    // range, levels, contains, element}`; `range` is [lo, hi], `levels` the
+    // ticked set, `contains` the text of a column with too many levels.
     this.cards = [];
     this.committed = "[]";
     this.timer = null;
@@ -86,7 +88,7 @@ export class FilterPane {
 
   add({ name, numeric }) {
     if (this.cards.some((c) => c.name === name)) return;
-    const card = { name, numeric, summary: null, range: null, levels: new Set(), element: null };
+    const card = { name, numeric, summary: null, range: null, levels: new Set(), contains: "", element: null };
     this.cards.push(card);
     this.setCollapsed(false);
     this.render();
@@ -123,9 +125,10 @@ export class FilterPane {
   conditions() {
     const out = [];
     for (const card of this.cards) {
-      if (this.isActive(card)) {
-        out.push(card.numeric ? { column: card.name, range: [...card.range] } : { column: card.name, levels: [...card.levels].sort() });
-      }
+      if (!this.isActive(card)) continue;
+      if (card.numeric) out.push({ column: card.name, range: [...card.range] });
+      else if (card.summary.levels === null) out.push({ column: card.name, contains: card.contains });
+      else out.push({ column: card.name, levels: [...card.levels].sort() });
     }
     return out;
   }
@@ -135,18 +138,19 @@ export class FilterPane {
     if (card.numeric) {
       return card.range !== null && (card.range[0] > card.summary.min || card.range[1] < card.summary.max);
     }
+    if (card.summary.levels === null) return card.contains !== "";
     return card.levels.size > 0;
   }
 
-  // Returns the conditions in a few words: "g1: 3/10、x: −2〜5".
+  // Returns the conditions in a few words: "g1: 3/10、x: −2〜5、id: 「a1」を含む".
   summaryText() {
     return this.cards
       .filter((card) => this.isActive(card))
-      .map((card) =>
-        card.numeric
-          ? `${card.name}: ${formatNumber(card.range[0])}〜${formatNumber(card.range[1])}`
-          : `${card.name}: ${card.levels.size}/${card.summary.levels.length}`,
-      )
+      .map((card) => {
+        if (card.numeric) return `${card.name}: ${formatNumber(card.range[0])}〜${formatNumber(card.range[1])}`;
+        if (card.summary.levels === null) return `${card.name}: 「${card.contains}」を含む`;
+        return `${card.name}: ${card.levels.size}/${card.summary.levels.length}`;
+      })
       .join("、");
   }
 
@@ -312,7 +316,7 @@ export class FilterPane {
   levelBody(card, body) {
     const { levels, n_levels: count, nulls } = card.summary;
     if (levels === null) {
-      body.textContent = `水準が多すぎる（約 ${count.toLocaleString()} 個）ため、水準では絞れない`;
+      this.containsBody(card, body);
       return;
     }
     const bar = document.createElement("div");
@@ -363,5 +367,31 @@ export class FilterPane {
     });
     update();
     body.append(bar, list);
+  }
+
+  // A column with too many levels to list is filtered by the text its kept
+  // values contain (literally, case-sensitively); an empty box keeps every row.
+  containsBody(card, body) {
+    const { n_levels: count, nulls } = card.summary;
+    const note = document.createElement("div");
+    note.className = "filter-note";
+    note.textContent = `水準が多すぎる（約 ${count.toLocaleString()} 個）ため、部分一致で絞る`;
+    if (nulls) note.textContent += `　null ${nulls.toLocaleString()} 行`;
+    const bar = document.createElement("div");
+    bar.className = "filter-contains";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = card.contains;
+    input.placeholder = "含む文字列";
+    input.title = "この文字列を含む行だけを残す（大文字と小文字を区別する。空なら絞らない）";
+    input.addEventListener("change", () => {
+      card.contains = input.value;
+      this.commit();
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") input.blur();
+    });
+    bar.append(input);
+    body.append(note, bar);
   }
 }

@@ -235,3 +235,33 @@ def test_smoothing_lines_draw_alone_and_change_their_method(app_page: Page) -> N
     expect(status).not_to_have_text(task)
     expect(status).to_contain_text("点は描いていない")
     page.wait_for_function(PAINTED_PIXEL)
+
+
+def test_a_column_with_too_many_levels_filters_by_contained_text(
+    app_page: Page, scatter_frame: pl.DataFrame
+) -> None:
+    """The label column, one level per row, gets a text box; the plot then draws only the rows whose label contains the text."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    source = columns.filter(has=page.get_by_text("label", exact=True))
+    source.drag_to(page.locator("#filters"))
+    card = page.locator(".filter-card")
+    expect(card).to_contain_text("部分一致で絞る")
+    status = page.locator("#status")
+    task = status.inner_text()
+    box = card.locator(".filter-contains input")
+    box.fill("r12")
+    box.press("Enter")
+    expect(status).not_to_have_text(task)
+    expect(status).to_contain_text("（フィルタ後）")
+    page.wait_for_function(SETTLED)
+    kept = scatter_frame.filter(
+        pl.col("label").str.contains("r12", literal=True),
+        pl.col("x").is_finite(),
+        pl.col("y").is_finite(),
+    ).height
+    expect(status).to_contain_text(f": {kept:,} 行")
+    expect(page.locator(".filter-summary")).to_have_text("（1）label: 「r12」を含む")

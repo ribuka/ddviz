@@ -201,8 +201,8 @@ class Filter:
     """Condition of the local filter on one column (`ddviz.compute.rowfilter`).
 
     A row passes when its value of the column is in the range (a numeric
-    column) or among the levels (a categorical column, compared as text);
-    a row with a null value never passes.
+    column), or, for a categorical column compared as text, is among the
+    levels or contains the text; a row with a null value never passes.
 
     Parameters
     ----------
@@ -212,11 +212,16 @@ class Filter:
         Bounds, both included, for a numeric column.
     levels : list of str or None
         Levels kept, for a categorical column.
+    contains : str or None
+        Text the kept values contain, matched literally and case-sensitively,
+        for a categorical column with too many levels to tick
+        (`ddviz.compute.summary.MAX_FILTER_LEVELS`).
     """
 
     column: str
     range: list[float] | None = None
     levels: list[str] | None = None
+    contains: str | None = None
 
 
 @dataclass(frozen=True)
