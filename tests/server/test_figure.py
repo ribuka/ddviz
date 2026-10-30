@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import polars as pl
 import pytest
 
 from ddviz.compute.tasks.plot import run_plot
@@ -299,6 +300,20 @@ def test_the_one_band_ticks_each_series_under_its_box(
     assert meta["one_band"] is True
     if changes.get("box", True):
         assert {b[0] for b in meta["panels"][0]["boxes"]} == {0}
+
+
+def test_the_one_band_without_series_has_no_ticks(
+    tmp_path: Path, scatter_spec: ScatterSpec, scatter_frame: pl.DataFrame
+) -> None:
+    """A color column with no values makes no series: the one band has no ticks, and no error."""
+    path = tmp_path / "nulls.parquet"
+    scatter_frame.with_columns(pl.lit(None, pl.String).alias("color")).write_parquet(
+        path
+    )
+    spec = _one_band(scatter_spec)
+    spec = replace(spec, files={**spec.files, "color": [str(path)]})
+    axis = _figure(spec, tmp_path / "task")["figure"]["layout"]["xaxis"]
+    assert (axis["tickvals"], axis["ticktext"]) == ([], [])
 
 
 def test_a_categorical_x_is_not_the_one_band(

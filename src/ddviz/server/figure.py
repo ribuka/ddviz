@@ -132,8 +132,8 @@ def _band_ticks(manifest: PlotManifest, column: str) -> dict:
 def _series_ticks(manifest: PlotManifest) -> dict[float, str]:
     """Return the ticks of the one band (`ddviz.shared.scatter.ONE_BAND`): each series' name under its box.
 
-    Without box plots or series (no color column, or a gradient) it has
-    none. A series of a color level and an overlay level is named by both.
+    Without box plots or series (no color column, a gradient, or a color
+    column without values) it has none. A series of a color level and an overlay level is named by both.
     """
     spec, levels = manifest.spec, manifest.levels
     colors, overlays = levels["color"], levels["overlay"]
@@ -144,6 +144,8 @@ def _series_ticks(manifest: PlotManifest) -> dict[float, str]:
         for c in colors
         for o in overlays
     ]
+    if not names:
+        return {}
     # The boxes split the band into a slot per series (``static/js/boxes.js``).
     slot = 2 * BAND / len(names)
     return {-BAND + slot * (s + 0.5): name for s, name in enumerate(names)}
