@@ -13,12 +13,14 @@
 - NEVER use `python -m`.
 - Coding rules: [.agents/docs/python.md](.agents/docs/python.md)
 - Running tests: [.agents/docs/pytest.md](.agents/docs/pytest.md)
+- Checking the UI in a browser and E2E tests: [.agents/docs/browser.md](.agents/docs/browser.md)
 
 ### Verification commands
 
 - Run lint: `uv run -m ruff check .`
 - Run tests: `uv run -m pytest --tb=short -q`
-- CI runs both on every pull request to main.
+- Run E2E tests (needs Chrome): `uv run -m pytest -m e2e --tb=short -q`
+- CI runs all three on every pull request to main.
 
 ## Github
 
