@@ -3,6 +3,10 @@
 // scale's colors; the intervals of a binned column (`meta.color.kind` "bins")
 // take colors spread over the scale, tinted onto their masks. A new color set
 // or direction only recolors the decoded images: no aggregation runs.
+//
+// The levels of a categorical color column (`meta.color.kind` "levels") come
+// in the palette's colors (`ddviz.shared.palette`); the user may pick another
+// color for a level (`picked`), tinted onto its masks the same way.
 
 // Color sets as evenly spaced stops, from the low end to the high end.
 export const COLOR_SETS = {
@@ -46,18 +50,50 @@ export function intervalColors(n) {
   return [...Array(n).keys()].map((i) => cssColor(n === 1 ? 0.5 : i / (n - 1)));
 }
 
+// Colors the user picked for the levels of the color column `column`, by
+// level name; kept while the graphs color by that column.
+const picked = { column: undefined, colors: new Map() };
+
+// Keeps the picked colors for a result colored by `column` (null for a single
+// color), or drops them for another column.
+export function keepPicked(column) {
+  if (picked.column === column) return;
+  picked.column = column;
+  picked.colors.clear();
+}
+
+// Picks the color of a color level (its name), or the palette's again (null).
+export function pickColor(level, color) {
+  if (color === null) picked.colors.delete(level);
+  else picked.colors.set(level, color);
+}
+
+// Returns the color picked for color level `i` of a result, or undefined.
+function pickedColor(meta, i) {
+  if (meta.color.kind !== "levels" || meta.color.column !== picked.column) return undefined;
+  return picked.colors.get(meta.series[i]);
+}
+
 // Returns the colors of the color levels of a result (`meta.series`).
 export function levelColors(meta) {
   if (meta.color.kind === "bins") return intervalColors(meta.series.length);
-  return meta.series.map((_, i) => meta.colors[i * meta.color.shapes]);
+  return meta.series.map((_, i) => pickedColor(meta, i) ?? meta.colors[i * meta.color.shapes]);
 }
 
 // Returns the colors the series of a result are drawn in: series `s` is
 // color level `s // shapes` with overlay level `s % shapes`.
 export function seriesColors(meta) {
-  if (meta.color.kind !== "bins") return meta.colors;
+  if (meta.color.kind === "levels" && !tinted(meta)) return meta.colors;
   const levels = levelColors(meta);
   return [...Array(meta.grid.n_series).keys()].map((s) => levels[Math.floor(s / meta.color.shapes)]);
+}
+
+// Whether the masks of a result are tinted on the page: the intervals of a
+// numeric column, or levels with a picked color. Otherwise they come in their
+// colors.
+function tinted(meta) {
+  if (meta.color.kind === "bins") return true;
+  return meta.color.kind === "levels" && meta.series.some((_, i) => pickedColor(meta, i) !== undefined);
 }
 
 // Returns the color of a value of a gradient's column.
@@ -97,11 +133,10 @@ function tint(bitmap, color) {
   return canvas.transferToImageBitmap();
 }
 
-// Decodes the PNGs of a result or layer for the scale (`color` is the
-// result's `meta.color`, `n` its number of series: pairs of a color level and
-// one of `color.shapes` overlay levels).
-export async function decode(blobs, color, n) {
-  if (color?.kind === "gradient") {
+// Decodes the PNGs of a result or layer, one per series, in the colors of
+// result `meta` (colored the same way).
+export async function decode(blobs, meta) {
+  if (meta.color.kind === "gradient") {
     return Promise.all(
       blobs.map(async (blob) => {
         if (!blob) return null;
@@ -113,14 +148,13 @@ export async function decode(blobs, color, n) {
       }),
     );
   }
-  const shapes = color?.shapes ?? 1;
-  const colors = color?.kind === "bins" ? intervalColors(n / shapes) : null;
+  const colors = tinted(meta) ? seriesColors(meta) : null;
   return Promise.all(
     blobs.map(async (blob, i) => {
       if (!blob) return null;
       const mask = await createImageBitmap(blob);
       if (!colors) return mask;
-      const painted = tint(mask, colors[Math.floor(i / shapes)]);
+      const painted = tint(mask, colors[i]);
       mask.close();
       return painted;
     }),

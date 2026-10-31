@@ -10,13 +10,14 @@
 // the overlay levels (marker shapes) are two legends, each toggled on its
 // own: a series (a pair of a color and an overlay level) is inactive when
 // either of its levels is. A right click on an item's marker opens the menu
-// of the markers (`onMarkerMenu`): the size of the markers, of every series
-// on a color item, of the level's shapes on an overlay item.
+// of the markers (`onMarkerMenu`): on a color item, the level's color and the
+// size of every series' markers, or the scale's menu for the intervals of a
+// numeric column; on an overlay item, the size of the level's shapes.
 //
 // A numeric color column shows its scale instead (colorscale.js): a color
 // bar for a gradient, or its intervals in colors spread over the scale. A
-// right click on the bar or on the title opens the scale's menu, which for a
-// gradient also has the size of the markers.
+// right click on the bar, on the title or on an interval's marker opens the
+// scale's menu, which also has the size of the markers.
 import { cssColor, levelColors } from "./colorscale.js";
 import { formatTemporal } from "./temporal.js";
 
@@ -152,13 +153,20 @@ export class Legend {
       this.isolate(kind, i);
     });
     marker.classList.add("menu");
-    marker.title = kind === "shape" ? "右クリックでこの形の大きさを変える" : "右クリックで点の大きさを変える";
+    marker.title = this.markerTip(kind);
     marker.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
       this.onMarkerMenu(event, kind, i);
     });
     return item;
+  }
+
+  // The tooltip of a marker of a legend (`kind` "color" or "shape").
+  markerTip(kind) {
+    if (kind === "shape") return "右クリックでこの形の大きさを変える";
+    if (this.color.kind === "bins") return "右クリックで色の付け方を変える";
+    return "右クリックで色と点の大きさを変える";
   }
 
   // The title; for a numeric column, a right click opens the scale's menu.

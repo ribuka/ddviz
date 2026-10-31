@@ -15,17 +15,18 @@ function axisKey(id) {
   return id.replace(/^([xy])/, "$1axis");
 }
 
-// Fetches the PNGs of a result (one file, sliced by `meta.images`) and decodes
-// them in the colors of `color` (a result's `meta.color`; colorscale.js);
-// returns per series an ImageBitmap whose tiles are the panels, or null.
-export async function loadImages(meta, color = meta.color) {
-  const response = await fetch(`/api/images/${meta.task}`);
-  if (!response.ok) throw new Error(`images of task ${meta.task}: ${response.status}`);
+// Fetches the PNGs of a result or layer (`source`: one file of task
+// `source.task`, sliced by `source.images`) and decodes them in the colors of
+// result `meta` (colorscale.js); returns per series an ImageBitmap whose
+// tiles are the panels, or null.
+export async function loadImages(source, meta = source) {
+  const response = await fetch(`/api/images/${source.task}`);
+  if (!response.ok) throw new Error(`images of task ${source.task}: ${response.status}`);
   const buffer = await response.arrayBuffer();
-  const blobs = meta.images.map((span) =>
+  const blobs = source.images.map((span) =>
     span ? new Blob([new Uint8Array(buffer, span[0], span[1])], { type: "image/png" }) : null,
   );
-  return decode(blobs, color, meta.images.length);
+  return decode(blobs, meta);
 }
 
 // Frees the decoded images of a result.
