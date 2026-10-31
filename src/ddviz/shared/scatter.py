@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 
 # Default of the most levels a color, overlay, row or col column may have
 # (`ScatterSpec.max_levels`).
-MAX_LEVELS = 50
+MAX_LEVELS = 100
 # Default size in pixels of the marker shapes of the overlay levels
 # (`ScatterSpec.shape_size`).
 SHAPE_SIZE = 7
