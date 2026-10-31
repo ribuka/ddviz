@@ -9,17 +9,17 @@ natural order of the paths relative to the folder: numbers compare by value
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
+
+from ddviz.shared.natural import natural_key
 
 SUFFIX = ".parquet"
 # Names other tools write next to the data and readers skip: Spark's
 # ``_SUCCESS``, Arrow's ``_metadata``, and hidden files.
 _HIDDEN = ("_", ".")
-_DIGITS = re.compile(r"(\d+)")
 
 
-def natural_key(relative: str) -> tuple:
+def path_key(relative: str) -> tuple:
     """Return the sort key of a relative path in natural order.
 
     Parameters
@@ -30,18 +30,10 @@ def natural_key(relative: str) -> tuple:
     Returns
     -------
     tuple
-        Per part, its runs of text (without case) and of digits (by value);
-        the path itself last, so that the order is total.
+        Per part, its natural key (`ddviz.shared.natural.natural_key`); the
+        path itself last, so that the order is total.
     """
-    parts = tuple(
-        tuple(
-            (1, int(run), run) if run.isdigit() else (0, run.casefold(), run)
-            for run in _DIGITS.split(part)
-            if run
-        )
-        for part in relative.split("/")
-    )
-    return (parts, relative)
+    return (tuple(natural_key(part) for part in relative.split("/")), relative)
 
 
 def parquet_files(path: Path, recursive: bool = False) -> list[Path]:
@@ -71,4 +63,4 @@ def parquet_files(path: Path, recursive: bool = False) -> list[Path]:
             for name in names
             if name.lower().endswith(SUFFIX) and not name.startswith(_HIDDEN)
         ]
-    return sorted(found, key=lambda f: natural_key(f.relative_to(path).as_posix()))
+    return sorted(found, key=lambda f: path_key(f.relative_to(path).as_posix()))
