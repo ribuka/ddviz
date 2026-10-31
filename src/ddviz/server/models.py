@@ -16,6 +16,7 @@ class PlotRequest(BaseModel):
     wrap_cols: int | None = None
     smooth: dict | None = None
     shape_size: int | None = None
+    shape_sizes: dict[str, object] | None = None
 
 
 class SizeRequest(BaseModel):

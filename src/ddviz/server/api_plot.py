@@ -37,6 +37,7 @@ from ddviz.server.plan import (
     drawn_columns,
     parse_color_bins,
     parse_shape_size,
+    parse_shape_sizes,
     parse_smoothing,
     parse_wrap_cols,
     scatter_spec,
@@ -158,6 +159,7 @@ def plot_router(
             wrap_cols = parse_wrap_cols(request.wrap_cols)
             smoothing = parse_smoothing(request.smooth)
             shape_size = parse_shape_size(request.shape_size)
+            shape_sizes = parse_shape_sizes(request.shape_sizes)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         numeric = await source.numeric()
@@ -191,6 +193,7 @@ def plot_router(
                 smoothing,
                 shape_size,
                 await source.temporal(),
+                shape_sizes,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error

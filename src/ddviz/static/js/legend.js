@@ -10,8 +10,8 @@
 // the overlay levels (marker shapes) are two legends, each toggled on its
 // own: a series (a pair of a color and an overlay level) is inactive when
 // either of its levels is. A right click on an item's marker opens the menu
-// of the markers (`onMarkerMenu`): the size of the markers (the overlay's
-// shapes, or the circles of the points without one).
+// of the markers (`onMarkerMenu`): the size of the markers, of every series
+// on a color item, of the level's shapes on an overlay item.
 //
 // A numeric color column shows its scale instead (colorscale.js): a color
 // bar for a gradient, or its intervals in colors spread over the scale. A
@@ -29,7 +29,8 @@ const SHAPE_COLOR = "#444";
 export class Legend {
   // `element` holds the items; `onChange` runs after each click, `onMenu`
   // with the right click's event on a numeric column's scale, and
-  // `onMarkerMenu` with the right click's event on a marker.
+  // `onMarkerMenu` with the right click's event on a marker, its legend
+  // ("color" or "shape") and the item's index.
   constructor(element, onChange, onMenu, onMarkerMenu) {
     this.element = element;
     this.onChange = onChange;
@@ -151,11 +152,11 @@ export class Legend {
       this.isolate(kind, i);
     });
     marker.classList.add("menu");
-    marker.title = "右クリックで点の大きさを変える";
+    marker.title = kind === "shape" ? "右クリックでこの形の大きさを変える" : "右クリックで点の大きさを変える";
     marker.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      this.onMarkerMenu(event);
+      this.onMarkerMenu(event, kind, i);
     });
     return item;
   }

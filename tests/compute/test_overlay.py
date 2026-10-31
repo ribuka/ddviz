@@ -106,3 +106,23 @@ def test_more_than_64_series_are_drawn_and_hovered(
         assert hit["values"]["facet"] == "pq"[hit["series"] % 2]
     finally:
         index.close()
+
+
+def test_an_overlay_level_is_drawn_in_its_own_size(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """The shapes of a level in `shape_sizes` take that size; the other level's, `shape_size`."""
+    spec = replace(_overlay_spec(scatter_spec), shape_sizes={"q": 11})
+    run_plot(spec, tmp_path, lambda _: None)
+    manifest = PlotManifest.read(tmp_path)
+    data = (tmp_path / IMAGES).read_bytes()
+    keys = np.load(tmp_path / "keys.npy")
+    grid = manifest.grid
+    for s, at in by_series(keys, grid):
+        offset, length = manifest.images[s]
+        bits, _ = _decode_mask(data[offset : offset + length])
+        size = (5, 11)[s % 2]
+        expected = spread(
+            series_layer(pixels(keys, grid)[at], grid), marker(s, 2, size)
+        )
+        assert np.array_equal(bits, atlas(expected, manifest.layout.ncol))

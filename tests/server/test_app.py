@@ -525,6 +525,17 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
     bad = {"encoding": encoding, **SIZE, "shape_size": 8}
     assert client.post("/api/plot", json=bad).status_code == 400
 
+    # A level takes a size of its own; the others keep the size of every series.
+    meta = client.post(
+        "/api/plot",
+        json={"encoding": encoding, **SIZE, "shape_size": 9, "shape_sizes": {"q": 3}},
+    ).json()["meta"]
+    assert meta["marker_size"] == 9
+    assert meta["overlay"]["sizes"] == [9, 3]
+    assert [len(k) for k in meta["overlay"]["kernels"]] == [9, 3]
+    bad = {"encoding": encoding, **SIZE, "shape_sizes": {"q": 4}}
+    assert client.post("/api/plot", json=bad).status_code == 400
+
 
 def test_plot_data_saves_the_overview_bins(client: TestClient) -> None:
     """The data of a plot is its overview's bins, as CSV or Parquet, whatever the zoom."""

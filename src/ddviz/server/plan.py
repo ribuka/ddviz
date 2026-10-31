@@ -249,6 +249,7 @@ def scatter_spec(
     smoothing: Smoothing | None = None,
     shape_size: int | None = None,
     temporal: dict[str, str] | None = None,
+    shape_sizes: dict[str, int] | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -302,6 +303,10 @@ def scatter_spec(
     temporal : dict of str to str, optional
         The kind of each temporal column (`ddviz.shared.temporal.KINDS`);
         such a column is numeric in `numeric` too.
+    shape_sizes : dict of str to int, optional
+        Size of the shapes of single overlay levels, by the level's name
+        (`parse_shape_sizes`), in place of `shape_size`; dropped without
+        shapes (overlay alone colors the series).
 
     Returns
     -------
@@ -371,6 +376,7 @@ def scatter_spec(
         else None,
         overlay=overlay,
         shape_size=shape_size or (POINT_SIZE if overlay is None else SHAPE_SIZE),
+        shape_sizes=dict(shape_sizes or {}) if overlay is not None else {},
         temporal={c: k for c, k in (temporal or {}).items() if c in read},
     )
 
@@ -472,6 +478,34 @@ def parse_shape_size(raw: object) -> int | None:
     if isinstance(raw, bool) or raw not in SHAPE_SIZES:
         raise ValueError(f"shape_size is one of {SHAPE_SIZES} or null: {raw}")
     return int(raw)
+
+
+def parse_shape_sizes(raw: dict[str, object] | None) -> dict[str, int]:
+    """Return the sizes the page asks for the shapes of single overlay levels, checked.
+
+    Parameters
+    ----------
+    raw : dict of str to object, or None
+        A level's name to one of `SHAPE_SIZES`, or None for none.
+
+    Returns
+    -------
+    dict of str to int
+        The size in pixels of each level named.
+
+    Raises
+    ------
+    ValueError
+        For anything else.
+    """
+    if raw is None:
+        return {}
+    sizes = {}
+    for level, size in raw.items():
+        sizes[level] = parse_shape_size(size)
+        if sizes[level] is None:
+            raise ValueError(f"shape_sizes has no size for {level!r}")
+    return sizes
 
 
 def parse_wrap_cols(raw: object) -> int | None:

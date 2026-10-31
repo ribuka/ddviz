@@ -12,7 +12,7 @@ import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { StatusLine, Toasts, errorText } from "./notice.js";
 import { openScaleMenu } from "./scalemenu.js";
-import { openShapeMenu } from "./shapemenu.js";
+import { levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
 import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
@@ -84,7 +84,16 @@ const legend = new Legend(
   () => layers.draw(),
   (event) =>
     openScaleMenu(event, colorBins, setColorBins, recolor, current?.marker_size, setShapeSize),
-  (event) => openShapeMenu(event, current?.marker_size, setShapeSize),
+  (event, kind, i) => {
+    if (kind === "shape") {
+      const level = current.overlay.levels[i];
+      openShapeMenu(event, levelHeading(level), current.overlay.sizes[i], (size) =>
+        setLevelSize(current.overlay.column, level, size),
+      );
+    } else {
+      openShapeMenu(event, SIZE_HEADING, current?.marker_size, setShapeSize);
+    }
+  },
 );
 const layers = new ImageLayers(gd, legend);
 const sticky = new StickyLabels(document.getElementById("scroller"), gd);
@@ -110,10 +119,17 @@ let plottedEncoding = null;
 // How the smoothing lines are fitted (`ddviz.server.plan.parse_smoothing`),
 // picked in the menu of their element icon; kept for every graph.
 let smoothing = DEFAULT_SMOOTHING;
-// Size in pixels of the markers (`ddviz.server.plan.parse_shape_size`), picked
-// in the menu of the legend's markers; kept for every graph. Null for the
-// default: larger for the overlay's shapes than for the circles of the points.
+// Size in pixels of the markers of every series
+// (`ddviz.server.plan.parse_shape_size`), picked in the menu of the points'
+// element icon or of the legend's color markers; kept for every graph. Null
+// for the default: larger for the overlay's shapes than for the circles of
+// the points.
 let shapeSize = null;
+// Sizes of the shapes of single overlay levels, by overlay column and level
+// name (`ddviz.server.plan.parse_shape_sizes`), picked in the menu of the
+// overlay legend's markers; kept for every graph, dropped when the size of
+// every series is picked.
+const levelSizes = new Map();
 // Wrapped panels to a row, or null to make them closest to square
 // (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
 // The user sets it in the Wrap zone, beside its chip.
@@ -191,6 +207,7 @@ const PLOT_CONFIG = {
 function setCurrent(meta) {
   current = meta;
   legend.setEmpty(meta);
+  elementBar.setPointsText(markerSizeText(meta));
   stage.classList.toggle("scrolls", meta.scroll);
   // The number to a row the size made, while the user sets none.
   wrapColsInput.placeholder = `自動（${meta.ncol}）`;
@@ -262,6 +279,7 @@ async function plot(encoding) {
     wrap_cols: wrapCols,
     smooth: smoothing,
     shape_size: shapeSize,
+    shape_sizes: (encoding.color !== null && levelSizes.get(encoding.overlay)) || null,
   };
   requestedSize = size;
   statusLine.show("集約中…");
@@ -815,6 +833,7 @@ function clearPlot() {
   if (overview?.bitmaps) closeImages(overview.bitmaps);
   overview = null;
   current = null;
+  elementBar.setPointsText(null);
   stage.classList.remove("scrolls");
   sticky.set(null);
   empty.hidden = false;
@@ -858,10 +877,29 @@ function hasSmoothPair(encoding) {
   return encoding.x.some(numeric) && encoding.y.some(numeric);
 }
 
-// Draws the markers in another size: the graph is plotted again.
+// Draws the markers of every series in another size, dropping the sizes of
+// single overlay levels: the graph is plotted again.
 function setShapeSize(size) {
   shapeSize = size;
+  levelSizes.clear();
   if (plottedEncoding) plot(plottedEncoding);
+}
+
+// Draws the shapes of an overlay level in another size: the graph is plotted again.
+function setLevelSize(column, level, size) {
+  const sizes = levelSizes.get(column) ?? {};
+  sizes[level] = size;
+  levelSizes.set(column, sizes);
+  if (plottedEncoding) plot(plottedEncoding);
+}
+
+// Returns the text of the size of a result's markers (its meta), for the
+// points' icon: a range when overlay levels have sizes of their own.
+function markerSizeText(meta) {
+  const sizes = meta.overlay?.sizes.length ? meta.overlay.sizes : [meta.marker_size];
+  const lo = Math.min(...sizes);
+  const hi = Math.max(...sizes);
+  return lo === hi ? `${lo} px` : `${lo}〜${hi} px`;
 }
 
 // Fits the smoothing lines another way: a graph with them is plotted again.
@@ -950,6 +988,9 @@ elementBar = new ElementBar(
   document.getElementById("elements"),
   (elements) => builder.setElements(elements),
   (event) => openSmoothMenu(event, smoothing, setSmoothing),
+  (event) => {
+    if (current) openShapeMenu(event, SIZE_HEADING, current.marker_size, setShapeSize);
+  },
 );
 elementBar.setSmoothText(smoothingText(smoothing));
 await attachColumnList(document.getElementById("columns"));
