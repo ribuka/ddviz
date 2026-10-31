@@ -2,6 +2,7 @@
 // resize, hover, select rows with a box, and filter rows.
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
+import { colorsChanged, keepPicked, levelColors, pickColor } from "./colorscale.js";
 import { attachColumnList } from "./columns.js";
 import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
@@ -90,8 +91,15 @@ const legend = new Legend(
       openShapeMenu(event, levelHeading(level), current.overlay.sizes[i], (size) =>
         setLevelSize(current.overlay.column, level, size),
       );
+    } else if (current.color.kind === "bins") {
+      // The intervals take their colors from the scale.
+      openScaleMenu(event, colorBins, setColorBins, recolor, sharedSize(), setShapeSize);
     } else {
-      openShapeMenu(event, SIZE_HEADING, sharedSize(), setShapeSize);
+      const level = current.series[i];
+      openShapeMenu(event, SIZE_HEADING, sharedSize(), setShapeSize, {
+        current: levelColors(current)[i],
+        onPick: (color) => setLevelColor(level, color),
+      });
     }
   },
 );
@@ -311,6 +319,8 @@ async function plot(encoding) {
   timings.fetch = Math.round(performance.now() - started);
   timings.size = Math.round(text.length / 1024);
   const { figure, meta } = JSON.parse(text);
+  // The colors picked for the levels stay while the color column does.
+  keepPicked(meta.color.column);
   // The images decode while plotly draws the axes.
   const images = fetchImages(meta);
   timings.task = Number(meta.task_seconds.toFixed(2));
@@ -572,7 +582,7 @@ async function followSelection() {
   const layer = await response.json();
   let bitmaps = null;
   try {
-    bitmaps = await loadImages({ task: layer.task, images: layer.images }, meta.color);
+    bitmaps = await loadImages({ task: layer.task, images: layer.images }, meta);
   } catch (error) {
     console.error(error);
   }
@@ -936,19 +946,29 @@ function setColorBins(bins) {
   if (plottedEncoding) plot(plottedEncoding);
 }
 
-// Draws the decoded images again in the scale's new colors: the overview's,
-// the drawn result's and the selection layer's. Their files are still on the
-// server, so no aggregation runs.
+// Picks the color of a color level, or the palette's again (null).
+function setLevelColor(level, color) {
+  pickColor(level, color);
+  recolor();
+}
+
+// Draws the decoded images again in new colors (of the scale, or picked for
+// the levels): the overview's, the drawn result's and the selection layer's.
+// Their files are still on the server, so no aggregation runs. Images being
+// decoded meanwhile are decoded again in the new colors (`loadImages`).
 async function recolor() {
+  colorsChanged();
   legend.render();
-  if (!overview || overview.meta.color.kind === "levels") return;
+  // The boxes and the smoothing lines take the new colors at once.
+  layers.draw();
+  if (!overview) return;
   const mine = generation;
   const shown = current;
   const layerOf = selection?.bitmaps ? selection : null;
   const [overviewImages, shownImages_, layerImages] = await Promise.all([
     overview.bitmaps ? fetchImages(overview.meta) : null,
     shown && shown !== overview.meta ? fetchImages(shown) : null,
-    layerOf ? loadImages(layerOf.layer, shown.color).catch(() => null) : null,
+    layerOf ? loadImages(layerOf.layer, shown).catch(() => null) : null,
   ]);
   if (mine !== generation) {
     for (const b of [overviewImages, shownImages_, layerImages]) closeImages(b);

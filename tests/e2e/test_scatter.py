@@ -374,6 +374,122 @@ def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None
     expect(points).to_have_attribute("title", re.compile("（7 px）"))
 
 
+# Whether the image layers have a pixel of the color [r, g, b].
+HAS_COLOR = """([r, g, b]) => {
+  const canvas = document.querySelector("canvas.image-layers");
+  const { data } = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 255 && data[i] === r && data[i + 1] === g && data[i + 2] === b) return true;
+  }
+  return false;
+}"""
+
+
+def test_a_color_level_takes_a_color_picked_on_its_marker(app_page: Page) -> None:
+    """A color item's marker opens a menu whose color panel recolors the level without aggregating; another color column drops it, and an interval's marker opens the scale's menu."""
+    page = app_page
+    plots: list[str] = []
+    page.on("request", lambda r: plots.append(r.url) if "/api/plot" in r.url else None)
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    # The images land after the status: the drop waits for them.
+    page.wait_for_function(PAINTED_PIXEL)
+    place(page, "color", "color")
+    page.wait_for_function(PAINTED_PIXEL)
+    legend = page.locator("#legend")
+    swatch = legend.locator(".legend-item .swatch").first
+    expect(swatch).to_have_css("background-color", "rgb(31, 119, 180)")
+    marker = legend.locator(".legend-marker").first
+    expect(marker).to_have_attribute("title", "右クリックで色と点の大きさを変える")
+
+    marker.click(button="right")
+    menu = page.locator(".shape-menu")
+    menu.get_by_text("色", exact=True).hover()
+    panel = page.locator(".color-panel")
+    expect(panel).to_be_visible()
+    # Hues in columns, five shades under them and a row of grays.
+    expect(panel.locator(".color-cell")).to_have_count(70)
+    expect(panel.locator(".color-cell.current")).to_have_attribute("title", "#1f77b4")
+    expect(panel.get_by_text("その他の色…")).to_be_visible()
+    # Away to a size, the panel closes; back on the color, it opens again.
+    menu.get_by_text("9 px", exact=True).hover()
+    expect(panel).to_have_count(0)
+    menu.get_by_text("色", exact=True).hover()
+    asked = len(plots)
+    panel.locator('.color-cell[title="#000000"]').click()
+    expect(menu).to_have_count(0)
+    expect(swatch).to_have_css("background-color", "rgb(0, 0, 0)")
+    page.wait_for_function(HAS_COLOR, arg=[0, 0, 0])
+    assert len(plots) == asked
+
+    marker.click(button="right")
+    menu.get_by_text("色", exact=True).hover()
+    expect(panel.locator(".color-cell.current")).to_have_attribute("title", "#000000")
+    panel.get_by_text("既定の色に戻す").click()
+    expect(swatch).to_have_css("background-color", "rgb(31, 119, 180)")
+    page.wait_for_function(f"() => !({HAS_COLOR})([0, 0, 0])")
+    assert len(plots) == asked
+
+    # The color stays while the color column does, and goes with another.
+    marker.click(button="right")
+    menu.get_by_text("色", exact=True).hover()
+    panel.locator('.color-cell[title="#000000"]').click()
+    expect(swatch).to_have_css("background-color", "rgb(0, 0, 0)")
+    place(page, "facet", "color")
+    expect(swatch).to_have_css("background-color", "rgb(31, 119, 180)")
+    place(page, "color", "color")
+    expect(swatch).to_have_css("background-color", "rgb(31, 119, 180)")
+
+    # The intervals of a numeric column take the scale's colors: their
+    # markers open the scale's menu.
+    place(page, "x", "color")
+    legend.locator(".colorbar").click(button="right")
+    page.locator(".scale-menu").get_by_text("3 個", exact=True).click()
+    page.wait_for_function(SETTLED)
+    marker = legend.locator(".legend-marker").first
+    expect(marker).to_have_attribute("title", "右クリックで色の付け方を変える")
+    marker.click(button="right")
+    menu = page.locator(".scale-menu")
+    expect(menu.locator(".scale-menu-item.checked").first).to_have_text("3 個")
+    expect(menu.get_by_text("点の大きさ（全系列）")).to_be_visible()
+    expect(menu.get_by_text("色", exact=True)).to_be_visible()
+    expect(page.locator(".color-panel")).to_have_count(0)
+
+
+# Holds the decoding of images until `window.releaseImages()`.
+HOLD_IMAGES = """() => {
+  const hold = new Promise((resolve) => { window.releaseImages = resolve; });
+  const original = window.createImageBitmap;
+  window.createImageBitmap = async (...args) => {
+    await hold;
+    return original(...args);
+  };
+}"""
+
+
+def test_a_color_picked_while_the_images_decode_draws_them(app_page: Page) -> None:
+    """A color picked before the first images are decoded draws them in that color."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    page.wait_for_function(PAINTED_PIXEL)
+    page.evaluate(HOLD_IMAGES)
+    place(page, "color", "color")
+    legend = page.locator("#legend")
+    legend.locator(".legend-marker").first.click(button="right")
+    page.locator(".shape-menu").get_by_text("色", exact=True).hover()
+    page.locator('.color-panel .color-cell[title="#000000"]').click()
+    expect(legend.locator(".legend-item .swatch").first).to_have_css(
+        "background-color", "rgb(0, 0, 0)"
+    )
+    page.evaluate("() => window.releaseImages()")
+    page.wait_for_function(HAS_COLOR, arg=[0, 0, 0])
+
+
 # Number of painted pixels of the image layers.
 PAINTED_COUNT = """() => {
   const canvas = document.querySelector("canvas.image-layers");

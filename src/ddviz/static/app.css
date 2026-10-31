@@ -1223,6 +1223,75 @@ button {
   left: 8px;
 }
 
+.scale-menu-separator {
+  margin: 4px 0;
+  border-top: 1px solid #e4e4e4;
+}
+
+/* An item that opens a submenu beside the menu (shapemenu.js). */
+.scale-menu-item.has-sub {
+  padding-right: 28px;
+}
+
+.scale-menu-item.has-sub::after {
+  content: "▸";
+  position: absolute;
+  right: 10px;
+  color: #888;
+}
+
+/* The level's color, in place of a check mark. */
+.color-item-swatch {
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  box-sizing: border-box;
+}
+
+/* ---- color panel of a color level (colorpanel.js) ---- */
+.color-panel {
+  min-width: 0;
+}
+
+.color-grid {
+  display: grid;
+  gap: 2px;
+  padding: 4px 8px 6px;
+}
+
+.color-cell {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+}
+
+.color-cell:hover {
+  outline: 1px solid #555;
+}
+
+/* The level's color now. */
+.color-cell.current {
+  outline: 2px solid #222;
+  outline-offset: 1px;
+}
+
+/* The native picker, opened from "その他の色…": kept rendered, out of sight. */
+.color-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* ---- labels of a grid that scrolls (sticky.js) ---- */
 /* Strips along the edges of the plot area, in the figure's color
    (`ddviz.server.figure.PAPER_COLOR`), with plotly's label font. */
