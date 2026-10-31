@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ddviz.shared.inputs import natural_key, parquet_files
+from ddviz.shared.inputs import parquet_files, path_key
 
 
 def test_natural_order_compares_numbers_by_value() -> None:
     """Numbers compare by value, letters without case, folders part by part."""
     names = ["b/1.parquet", "a_10.parquet", "A_2.parquet", "a_2b.parquet", "a/z"]
-    assert sorted(names, key=natural_key) == [
+    assert sorted(names, key=path_key) == [
         "a/z",
         "A_2.parquet",
         "a_2b.parquet",

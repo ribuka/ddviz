@@ -312,3 +312,34 @@ def test_wrapped_levels_are_panels_in_rows(
     levels = scatter_frame[agg.bins[INDEX].to_list()]["color"].to_list()
     assert [agg.levels["col"][p] for p in panels] == levels
     assert sorted(set(panels.tolist())) == [0, 1, 2]
+
+
+def test_levels_are_in_natural_order(tmp_path: Path) -> None:
+    """Color, overlay and facet levels compare numbers by value (``2_`` before ``10_``), nulls left out."""
+    n = 600
+    names = ["10_", "1_", "2_", None]
+    frame = pl.DataFrame(
+        {
+            "x": np.linspace(0, 1, n),
+            "y": np.linspace(1, 2, n),
+            "g": [names[i % 4] for i in range(n)],
+            "h": [["b10", "B2", "a"][i % 3] for i in range(n)],
+        }
+    )
+    path = tmp_path / "levels.parquet"
+    frame.write_parquet(path)
+    spec = ScatterSpec(
+        files={c: [str(path)] for c in ["x", "y", "g", "h"]},
+        x=["x"],
+        y=["y"],
+        color="g",
+        overlay="h",
+        row="h",
+        col="g",
+        width=400,
+        height=300,
+        hover=["x", "y"],
+    )
+    levels = aggregate(spec).levels
+    assert levels["color"] == levels["col"] == ["1_", "2_", "10_"]
+    assert levels["overlay"] == levels["row"] == ["a", "B2", "b10"]

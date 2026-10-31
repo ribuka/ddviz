@@ -5,6 +5,7 @@ from __future__ import annotations
 import polars as pl
 
 from ddviz.compute.temporal import as_number, temporal_kind
+from ddviz.shared.natural import natural_key
 
 # Most levels the filter pane lists for a categorical column. A column with
 # about one level per row (an ID) cannot be filtered by ticking levels.
@@ -30,9 +31,10 @@ def summarize_column(files: list[str], column: str) -> dict:
         temporal column, `ddviz.compute.temporal`, else None) and the finite
         ``min`` and ``max`` (None without finite values), a temporal column's
         as numbers (`ddviz.compute.temporal.as_number`); for a categorical column,
-        ``numeric: False`` and ``levels``, ``[text, count]`` pairs sorted by
-        text, or None when it has more than `MAX_FILTER_LEVELS` levels, with
-        ``n_levels`` (an estimate then).
+        ``numeric: False`` and ``levels``, ``[text, count]`` pairs in the
+        natural order of the text (`ddviz.shared.natural`), or None when it
+        has more than `MAX_FILTER_LEVELS` levels, with ``n_levels`` (an
+        estimate then).
     """
     scan = pl.scan_parquet(files).select(column)
     dtype = scan.collect_schema()[column]
@@ -66,10 +68,10 @@ def summarize_column(files: list[str], column: str) -> dict:
         scan.group_by(text.alias("level"))
         .len()
         .drop_nulls("level")
-        .sort("level")
         .collect(engine="streaming")
     )
     summary["n_levels"] = levels.height
     if levels.height <= MAX_FILTER_LEVELS:
-        summary["levels"] = [list(r) for r in levels.iter_rows()]
+        rows = sorted(levels.iter_rows(), key=lambda r: natural_key(r[0]))
+        summary["levels"] = [list(r) for r in rows]
     return summary

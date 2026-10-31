@@ -42,6 +42,7 @@ from ddviz.shared.layout import (
     facet_grid,
     grid_layout,
 )
+from ddviz.shared.natural import natural_key
 from ddviz.shared.scatter import ONE_BAND, Boxes, ScatterSpec, Smooths, Spread
 
 KEY = "__key"
@@ -226,7 +227,7 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
         color_range = (0.0, 1.0) if lo is None else (lo, hi)
     ranges = {c: _padded(*f.row(0)) for c, f in zip(numeric, found, strict=False)}
     column_levels = {
-        c: sorted(f[c].drop_nulls().to_list())
+        c: sorted(f[c].drop_nulls().to_list(), key=natural_key)
         for c, f in zip(used, found[len(numeric) :], strict=True)
     }
     if ONE_BAND in spec.categorical:
