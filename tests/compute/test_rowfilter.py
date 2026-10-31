@@ -196,3 +196,11 @@ def test_summary_lists_the_levels_in_natural_order(tmp_path: Path) -> None:
     summary = summarize_column([str(path)], "g")
     assert summary["levels"] == [["1_", 1], ["2_", 2], ["10_", 1]]
     assert summary["nulls"] == 1
+
+
+def test_summary_lists_levels_with_long_runs_of_digits(tmp_path: Path) -> None:
+    """A level of more digits than ``int`` takes is listed after shorter numbers."""
+    path = tmp_path / "long.parquet"
+    long = "1" * 4301
+    pl.DataFrame({"g": [long, "2"]}).write_parquet(path)
+    assert summarize_column([str(path)], "g")["levels"] == [["2", 1], [long, 1]]

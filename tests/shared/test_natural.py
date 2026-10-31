@@ -26,3 +26,10 @@ def test_the_order_is_total() -> None:
 def test_other_decimal_digits_and_superscripts() -> None:
     """Decimal digits of other scripts count by value; a superscript is text, not a number (no error)."""
     assert sorted(["x²", "x١٠", "x٢"], key=natural_key) == ["x٢", "x١٠", "x²"]
+
+
+def test_long_runs_of_digits_compare_by_value() -> None:
+    """Runs longer than ``int`` takes (4300 digits) still compare by value, leading zeros aside."""
+    long = "1" * 5000
+    names = [long, "2", "0" + long, "9" * 4999]
+    assert sorted(names, key=natural_key) == ["2", "9" * 4999, "0" + long, long]
