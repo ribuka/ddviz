@@ -897,11 +897,10 @@ function setLevelSize(column, level, size) {
 
 // Returns the size of every series' markers drawn, checked in the menus of
 // the size of every series; null while overlay levels have sizes of their
-// own, so that picking any size, that one too, drops them.
+// own, of any overlay column, so that picking any size, that one too, drops
+// them.
 function sharedSize() {
-  if (!current) return null;
-  const sizes = current.overlay?.sizes ?? [];
-  return sizes.every((s) => s === current.marker_size) ? current.marker_size : null;
+  return current && levelSizes.size === 0 ? current.marker_size : null;
 }
 
 // Returns the text of the size of a result's markers (its meta), for the
