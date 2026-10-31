@@ -587,10 +587,8 @@ button {
   display: none;
 }
 
-/* X and Y take more columns beside the placed ones (n-th axes). */
-.zone.horizontal.filled[data-role="x"]::after,
-.zone.vertical.filled[data-role="y"]::after {
-  content: "＋";
+/* X and Y take more columns after the placed ones (n-th axes). */
+.zone-add {
   color: #bbb;
   padding: 0 6px;
 }

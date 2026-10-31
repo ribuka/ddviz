@@ -1,13 +1,14 @@
 // Drop zones of the graph builder, laid out around the figure: Group X
 // above the figure, Y left of it, Group Y right of it, X below it, Wrap in
-// the corner right of Group X and above Group Y, and Color and Overlay
+// the corner right of Group X and above Group Y, and Overlay above Color
 // beside it. They are outside the scrolled figure and name its axes. The
 // zones edit the graph (`ddviz.server.encoding.Encoding`):
 // - A column dropped on a zone takes that role, replacing the column there.
 // - On X and Y, which hold several columns (the n-th axes), a column dropped
-//   on the leading quarter of a chip goes in before it, on the trailing
-//   quarter after it, and on its middle replaces it; dropped between chips
-//   or beside them, it goes in there. X runs left to right and Y top to
+//   within INSERT_EDGE of a chip's edge (inside or outside it) goes in on
+//   that side, and one dropped on the "+" after the chips goes in last.
+//   Dropped anywhere else in the zone, it replaces the chip nearest along
+//   the axis, the empty ends included. X runs left to right and Y top to
 //   bottom, as the panels of the axis columns do.
 // - A placed column (a chip) dragged to another zone moves there; when that
 //   zone holds a column, the two swap roles.
@@ -27,9 +28,12 @@ const AXES = ["x", "y"];
 const LABELS = { x: "X", y: "Y", col: "Group X", row: "Group Y", wrap: "Wrap", color: "Color", overlay: "Overlay" };
 // Roles that wrap replaces.
 const FACETS = ["row", "col"];
-// Part of a chip at each end, along its axis, where a drop goes in beside
-// it instead of replacing it.
-const INSERT_EDGE = 0.25;
+// Pixels from a chip's edge, along its axis and on either side of it, where
+// a drop goes in beside the chip instead of replacing one. Pixels, not a
+// part of the chip: a chip is as wide as its column name, so a part would
+// widen the band for long names. Inside a chip the band takes at most a
+// third of it, so a short chip keeps a middle that replaces it.
+const INSERT_EDGE = 12;
 // Words for before and after a chip on each axis.
 const SIDES = { x: ["左", "右"], y: ["上", "下"] };
 
@@ -48,6 +52,23 @@ export function endDrag() {
 // The column being dragged, for drop targets outside the builder (the filter pane).
 export function draggedColumn() {
   return dragged;
+}
+
+// Returns what a drop at `at` does on chips at `spans` (start and end along
+// their axis, in order): go in at `index` within INSERT_EDGE of a chip's
+// edge, else replace the nearest chip at `index`. Between two chips closer
+// than twice INSERT_EDGE, the bands of their edges meet in the middle of
+// the gap; both go in at the same place.
+export function locate(spans, at) {
+  for (const [i, [start, end]] of spans.entries()) {
+    const inner = Math.min(INSERT_EDGE, (end - start) / 3);
+    if (at >= start - INSERT_EDGE && at < start + inner) return { index: i, insert: true };
+    if (at > end - inner && at <= end + INSERT_EDGE) return { index: i + 1, insert: true };
+  }
+  const distance = ([start, end]) => Math.max(start - at, at - end, 0);
+  let index = 0;
+  for (const [i, span] of spans.entries()) if (distance(span) < distance(spans[index])) index = i;
+  return { index, insert: false };
 }
 
 export class Builder {
@@ -184,20 +205,19 @@ export class Builder {
     return { index, insert, text: text + this.replacedNote(role, column.from) };
   }
 
-  // Returns where on an axis zone's chips the pointer is: in the middle of
-  // the chip at `index` (replace it), or the place `index` to go in at.
+  // Returns what a drop at the pointer on an axis zone's chips does: go in
+  // at `index` (near a chip's edge, or on the "+"), or replace the chip at
+  // `index` (the nearest along the axis).
   position(zone, event) {
     const role = zone.dataset.role;
     const at = role === "x" ? event.clientX : event.clientY;
     const spans = [...zone.querySelectorAll(".chip")].map((chip) => this.span(role, chip.getBoundingClientRect()));
-    for (const [i, [start, end]] of spans.entries()) {
-      if (at < start || at > end) continue;
-      const part = (at - start) / (end - start);
-      if (part < INSERT_EDGE) return { index: i, insert: true };
-      if (part > 1 - INSERT_EDGE) return { index: i + 1, insert: true };
-      return { index: i, insert: false };
+    const add = zone.querySelector(".zone-add");
+    if (add) {
+      const [start, end] = this.span(role, add.getBoundingClientRect());
+      if (at >= start && at <= end) return { index: spans.length, insert: true };
     }
-    return { index: spans.filter(([start, end]) => (start + end) / 2 < at).length, insert: true };
+    return locate(spans, at);
   }
 
   // Returns what a drop on `role` removes besides, as Wrap and the facets
@@ -298,7 +318,16 @@ export class Builder {
       label.className = "zone-label";
       label.textContent = LABELS[role];
       const extra = placed.length && this.extras[role] ? [this.extras[role]] : [];
-      zone.replaceChildren(label, ...chips, ...extra);
+      // X and Y take more columns after the placed ones (n-th axes): a drop on the "+" goes in last.
+      const add = [];
+      if (placed.length && AXES.includes(role)) {
+        const mark = document.createElement("span");
+        mark.className = "zone-add";
+        mark.textContent = "＋";
+        mark.title = "ここに落とすと末尾に第 n 軸として挿入";
+        add.push(mark);
+      }
+      zone.replaceChildren(label, ...chips, ...add, ...extra);
       zone.classList.toggle("filled", placed.length > 0);
     }
   }
