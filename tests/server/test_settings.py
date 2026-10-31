@@ -41,11 +41,11 @@ def test_the_repository_settings_load() -> None:
 
 
 def test_max_levels_is_read(tmp_path: Path) -> None:
-    """``plot.max_levels`` sets the most levels; without it the default is 50."""
+    """``plot.max_levels`` sets the most levels; without it the default is 100."""
     path = tmp_path / "settings.toml"
     path.write_text("[plot]\nmax_levels = 80\n", encoding="utf-8")
     assert load_settings(path).plot.max_levels == 80
-    assert PlotSettings().max_levels == 50
+    assert PlotSettings().max_levels == 100
 
 
 @pytest.mark.parametrize("value", ["0", "2.5", "true", '"50"'])
