@@ -90,11 +90,14 @@ def _texts(breaks: list[float], kind: str | None = None) -> list[str]:
     """Return the breaks as text with the fewest significant digits (3 or more) that tell them apart.
 
     A break of a date-axis kind (`ddviz.shared.temporal.DATE_KINDS`) is its
-    date or time (`ddviz.shared.temporal.text`) instead.
+    date or time (`ddviz.shared.temporal.text`) instead. Breaks of a date
+    that fall within one day are told apart by their time, as a datetime's:
+    the levels are found again by their names.
     """
-    if kind is not None:
-        dates = [text(kind, b) for b in breaks]
-        if None not in dates:
+    kinds = {"date": ["date", "datetime"]}.get(kind, [kind] if kind else [])
+    for k in kinds:
+        dates = [text(k, b) for b in breaks]
+        if None not in dates and len(set(dates)) == len(set(breaks)):
             return dates
     for digits in range(3, 18):
         texts = [_text(b, digits) for b in breaks]

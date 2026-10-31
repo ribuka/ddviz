@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 from pathlib import Path
 
 import polars as pl
 import pytest
 
-from ddviz.compute.aggregate import COUNT, aggregate
+from ddviz.compute.aggregate import COUNT, KEY, aggregate
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.summary import summarize_column
 from ddviz.compute.tasks.columns import run_schema
@@ -16,7 +17,7 @@ from ddviz.compute.temporal import as_number, temporal_kind, with_numbers
 from ddviz.server.encoding import Encoding
 from ddviz.server.plan import scatter_spec
 from ddviz.shared.manifest import read_manifest
-from ddviz.shared.scatter import Filter, ScatterSpec
+from ddviz.shared.scatter import Binning, Filter, ScatterSpec
 
 # 2026-10-31 12:34:56.789 UTC in milliseconds since the epoch.
 NOON_MS = 1_793_450_096_789.0
@@ -191,3 +192,16 @@ def test_a_filter_on_a_datetime_takes_milliseconds(path: Path) -> None:
         filters=[Filter("at", range=[start, start + 9 * 60_000])],
     )
     assert aggregate(spec).bins[COUNT].sum() == 10
+
+
+def test_date_intervals_within_a_day_are_named_apart(path: Path) -> None:
+    """Equal-width intervals of a date narrower than a day are named by their times, each once, and rows keep their own interval."""
+    spec = _spec(path, x=["took"], y=["y"], color="day")
+    spec = replace(spec, gradient=False, binned={"color": Binning(10, "values")})
+    agg = aggregate(spec)
+    names = agg.levels["color"]
+    assert len(names) == len(set(names)) == 10
+    assert names[0].startswith("[2026-10-01 00:00:00.000000, 2026-10-01 04:48")
+    # 2026-10-01, -02 and -03 lie in the first, middle and last intervals.
+    series = agg.grid.unpack(agg.bins[KEY].to_numpy())[1]
+    assert {names[s] for s in series.tolist()} == {names[0], names[5], names[9]}

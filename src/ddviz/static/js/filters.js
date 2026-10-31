@@ -16,6 +16,7 @@ const TICK_SETTLE_MS = 400;
 // Steps of a slider over the column's range.
 const STEPS = 1000;
 const SUMMARY_RETRY_MS = 300;
+const MS_PER_DAY = 86_400_000;
 
 // Returns a number short enough for the pane.
 export function formatNumber(value) {
@@ -249,7 +250,9 @@ export class FilterPane {
       if (s <= 0) return min;
       if (s >= STEPS) return max;
       const v = min + (span * s) / STEPS;
-      // A date keeps its microseconds: 6 digits of milliseconds since 1970 are days.
+      // A date steps by days, as it is shown; a datetime or time keeps its
+      // microseconds (6 digits of milliseconds since 1970 are days).
+      if (temporal === "date") return Math.round(v / MS_PER_DAY) * MS_PER_DAY;
       if (dates) return Math.round(v * 1000) / 1000;
       return integer ? Math.round(v) : Number(v.toPrecision(6));
     };
