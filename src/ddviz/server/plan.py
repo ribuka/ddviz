@@ -246,6 +246,7 @@ def scatter_spec(
     wrap_cols: int | None = None,
     smoothing: Smoothing | None = None,
     shape_size: int = SHAPE_SIZE,
+    temporal: dict[str, str] | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -294,6 +295,9 @@ def scatter_spec(
         default.
     shape_size : int, optional
         Size of the marker shapes in pixels (`parse_shape_size`).
+    temporal : dict of str to str, optional
+        The kind of each temporal column (`ddviz.shared.temporal.KINDS`);
+        such a column is numeric in `numeric` too.
 
     Returns
     -------
@@ -363,6 +367,7 @@ def scatter_spec(
         else None,
         overlay=overlay,
         shape_size=shape_size,
+        temporal={c: k for c, k in (temporal or {}).items() if c in read},
     )
 
 

@@ -10,17 +10,25 @@
 // box) is left or Enter is pressed in it, or 0.4s after the last tick, so that a few ticks in
 // a row aggregate once.
 import { draggedColumn } from "./builder.js";
+import { formatTemporal, isDateKind, parseTemporal } from "./temporal.js";
 
 const TICK_SETTLE_MS = 400;
 // Steps of a slider over the column's range.
 const STEPS = 1000;
 const SUMMARY_RETRY_MS = 300;
+const MS_PER_DAY = 86_400_000;
 
 // Returns a number short enough for the pane.
 export function formatNumber(value) {
   if (!Number.isFinite(value)) return String(value);
   if (Number.isInteger(value)) return value.toLocaleString();
   return String(Number(value.toPrecision(4)));
+}
+
+// Returns a bound of a numeric card: a datetime, date or time column's as
+// such (`temporal.js`), else as `formatNumber`.
+function formatBound(card, value) {
+  return formatTemporal(card.summary?.temporal, value) ?? formatNumber(value);
 }
 
 export class FilterPane {
@@ -147,7 +155,7 @@ export class FilterPane {
     return this.cards
       .filter((card) => this.isActive(card))
       .map((card) => {
-        if (card.numeric) return `${card.name}: ${formatNumber(card.range[0])}〜${formatNumber(card.range[1])}`;
+        if (card.numeric) return `${card.name}: ${formatBound(card, card.range[0])}〜${formatBound(card, card.range[1])}`;
         if (card.summary.levels === null) return `${card.name}: 「${card.contains}」を含む`;
         return `${card.name}: ${card.levels.size}/${card.summary.levels.length}`;
       })
@@ -222,10 +230,15 @@ export class FilterPane {
   }
 
   numericBody(card, body) {
-    const { min, max, nulls, integer } = card.summary;
+    const { min, max, nulls, integer, temporal } = card.summary;
+    // A datetime, date or time column's bounds are typed as text; its
+    // values are milliseconds (`ddviz.compute.temporal`).
+    const dates = isDateKind(temporal);
+    const toText = (v) => (dates ? formatTemporal(temporal, v) : String(v));
+    const fromText = (text) => (dates ? parseTemporal(temporal, text) : text === "" ? null : Number(text));
     const note = document.createElement("div");
     note.className = "filter-note";
-    note.textContent = `最小 ${formatNumber(min)}　最大 ${formatNumber(max)}` + (nulls ? `　null ${nulls.toLocaleString()} 行` : "");
+    note.textContent = `最小 ${formatBound(card, min)}　最大 ${formatBound(card, max)}` + (nulls ? `　null ${nulls.toLocaleString()} 行` : "");
     body.append(note);
     if (min === null) {
       note.textContent = "有限な値が無い";
@@ -237,6 +250,10 @@ export class FilterPane {
       if (s <= 0) return min;
       if (s >= STEPS) return max;
       const v = min + (span * s) / STEPS;
+      // A date steps by days, as it is shown; a datetime or time keeps its
+      // microseconds (6 digits of milliseconds since 1970 are days).
+      if (temporal === "date") return Math.round(v / MS_PER_DAY) * MS_PER_DAY;
+      if (dates) return Math.round(v * 1000) / 1000;
       return integer ? Math.round(v) : Number(v.toPrecision(6));
     };
     const slider = document.createElement("div");
@@ -255,18 +272,26 @@ export class FilterPane {
     slider.append(fill, ...thumbs);
     const boxes = document.createElement("div");
     boxes.className = "filter-range";
+    // A datetime's bounds are too long to sit side by side.
+    boxes.classList.toggle("dates", dates);
     const inputs = [0, 1].map((i) => {
       const input = document.createElement("input");
-      input.type = "number";
-      input.value = card.range[i];
-      input.step = integer ? 1 : "any";
+      if (dates) {
+        input.type = "text";
+        input.classList.add("filter-date");
+        input.placeholder = formatTemporal(temporal, i === 0 ? min : max);
+      } else {
+        input.type = "number";
+        input.step = integer ? 1 : "any";
+      }
+      input.value = toText(card.range[i]);
       return input;
     });
     boxes.append(inputs[0], "〜", inputs[1]);
     const show = () => {
       for (const i of [0, 1]) {
         thumbs[i].value = toStep(card.range[i]);
-        if (document.activeElement !== inputs[i]) inputs[i].value = card.range[i];
+        if (document.activeElement !== inputs[i]) inputs[i].value = toText(card.range[i]);
       }
       const [a, b] = thumbs.map((t) => (Number(t.value) / STEPS) * 100);
       fill.style.left = `${a}%`;
@@ -286,11 +311,11 @@ export class FilterPane {
     });
     inputs.forEach((input, i) => {
       input.addEventListener("change", () => {
-        let value = Number(input.value);
-        if (input.value === "" || !Number.isFinite(value)) value = i === 0 ? min : max;
+        let value = fromText(input.value);
+        if (value === null || !Number.isFinite(value)) value = i === 0 ? min : max;
         value = Math.min(Math.max(value, min), max);
         card.range[i] = i === 0 ? Math.min(value, card.range[1]) : Math.max(value, card.range[0]);
-        input.value = card.range[i];
+        input.value = toText(card.range[i]);
         show();
         this.commit();
       });

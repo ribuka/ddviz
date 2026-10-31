@@ -8,6 +8,7 @@ import polars as pl
 
 from ddviz.compute.progress import Emit
 from ddviz.compute.summary import summarize_column
+from ddviz.compute.temporal import temporal_kind
 from ddviz.shared.cache import SCHEMA
 from ddviz.shared.manifest import write_manifest
 
@@ -43,9 +44,11 @@ def run_schema(paths: list[str], out: Path, emit: Emit) -> None:
     paths : list of str
         Parquet files in reading order.
     out : pathlib.Path
-        Directory to write the result into: the manifest, with ``rows``, the
-        rows of each file, and ``schema.parquet``, an empty file with the type
-        of every column.
+        Directory to write the result into: the manifest, with ``columns``
+        (``{"name", "dtype", "numeric", "temporal"}`` each: a temporal column
+        is numeric, with its kind, `ddviz.compute.temporal.temporal_kind`),
+        ``rows``, the rows of each file, and ``schema.parquet``, an empty
+        file with the type of every column.
     emit : callable
         Receives a ``progress`` message before each file.
     """
@@ -69,10 +72,13 @@ def run_schema(paths: list[str], out: Path, emit: Emit) -> None:
         # The row count comes from the footer the scan has parsed.
         rows.append(scan.select(pl.len()).collect().item())
     pl.DataFrame(schema=dtypes).write_parquet(out / SCHEMA)
-    columns = [
-        {"name": name, "dtype": str(dtype), "numeric": dtype.is_numeric()}
-        for name, dtype in dtypes.items()
-    ]
+    columns = []
+    for name, dtype in dtypes.items():
+        kind = temporal_kind(dtype)
+        numeric = dtype.is_numeric() or kind is not None
+        columns.append(
+            {"name": name, "dtype": str(dtype), "numeric": numeric, "temporal": kind}
+        )
     casts = [
         {"name": name, "dtypes": list(found), "dtype": str(dtypes[name])}
         for name, found in variants.items()

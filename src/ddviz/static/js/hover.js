@@ -2,6 +2,7 @@
 // pixel under the cursor, and this module draws a plotly-like label.
 import { boxAt } from "./boxes.js";
 import { seriesColors, valueColor } from "./colorscale.js";
+import { formatTemporal, linearRange } from "./temporal.js";
 
 const HOVER_DISTANCE = 20;
 
@@ -9,7 +10,11 @@ function axisKey(id) {
   return id.replace(/^([xy])/, "$1axis");
 }
 
-function formatValue(value) {
+// Returns a hover value as text: a datetime, date or time column's
+// (`kind`) as such (`temporal.js`), a number to 6 digits.
+function formatValue(value, kind = null) {
+  const temporal = formatTemporal(kind, value);
+  if (temporal !== null) return temporal;
   if (typeof value === "number" && !Number.isInteger(value)) {
     return value.toPrecision(6);
   }
@@ -43,6 +48,8 @@ function locate(gd, meta, event) {
     if (ly < -HOVER_DISTANCE || ly > ya._length + HOVER_DISTANCE) continue;
     const x = xa.p2l(lx);
     const y = ya.p2l(ly);
+    const [xr0, xr1] = linearRange(xa);
+    const [yr0, yr1] = linearRange(ya);
     const x0 = meta.x_ranges[xi][0];
     const y0 = meta.y_ranges[yj][0];
     const dxBin = (meta.x_ranges[xi][1] - x0) / meta.grid.width;
@@ -55,8 +62,8 @@ function locate(gd, meta, event) {
       y0,
       fx: (x - x0) / dxBin,
       fy: (y - y0) / dyBin,
-      sx: xa._length / ((xa.range[1] - xa.range[0]) / dxBin),
-      sy: ya._length / ((ya.range[1] - ya.range[0]) / dyBin),
+      sx: xa._length / ((xr1 - xr0) / dxBin),
+      sy: ya._length / ((yr1 - yr0) / dyBin),
       dxBin,
       dyBin,
     };
@@ -118,7 +125,7 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     const others = new Set([...meta.x_columns, ...meta.y_columns].filter((c) => !own.has(c)));
     const lines = Object.entries(hit.values)
       .filter(([k]) => !others.has(k))
-      .map(([k, v]) => `${k}: ${formatValue(v)}`);
+      .map(([k, v]) => `${k}: ${formatValue(v, meta.temporal[k])}`);
     lines.push(`行番号: ${hit.row}`);
     const series = seriesName(meta, hit.series);
     const ofSeries = series === "" ? "" : `（${series}: ${hit.count} 行）`;
@@ -144,6 +151,7 @@ export function attachHover(gd, getMeta, legend, onTiming) {
   function showBox(meta, p, box, event) {
     const [level, series, n, low, q1, median, q3, high] = box;
     const x = meta.x_columns[meta.panels[p].x];
+    const kind = meta.temporal[meta.y_columns[meta.panels[p].y]];
     // The one band is no column of the data.
     const lines = meta.one_band ? [] : [`${x}: ${meta.axis_levels[x][level]}`];
     const shapes = meta.color.shapes;
@@ -152,11 +160,11 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     }
     if (meta.overlay) lines.push(`${meta.overlay.column}: ${meta.overlay.levels[series % shapes]}`);
     lines.push(
-      `ひげの上端: ${formatValue(high)}`,
-      `75%: ${formatValue(q3)}`,
-      `50%: ${formatValue(median)}`,
-      `25%: ${formatValue(q1)}`,
-      `ひげの下端: ${formatValue(low)}`,
+      `ひげの上端: ${formatValue(high, kind)}`,
+      `75%: ${formatValue(q3, kind)}`,
+      `50%: ${formatValue(median, kind)}`,
+      `25%: ${formatValue(q1, kind)}`,
+      `ひげの下端: ${formatValue(low, kind)}`,
       `行数: ${n.toLocaleString()}`,
     );
     label.textContent = lines.join("\n");

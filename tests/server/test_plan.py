@@ -303,3 +303,17 @@ def test_a_graph_without_x_needs_numeric_y_columns(encoding: Encoding) -> None:
     assert not drawable(encoding, numeric)
     with pytest.raises(ValueError, match="x and y"):
         scatter_spec(encoding, {"a": ["a"], "g": ["g"]}, 400, 300, [], numeric=numeric)
+
+
+def test_scatter_keeps_the_kinds_of_the_temporal_columns_it_reads() -> None:
+    """The spec holds the temporal kinds of its own columns only; such a column is numeric."""
+    encoding = Encoding(x=("t",), y=("b",), row="d")
+    files = {c: [f"{c}.parquet"] for c in ["t", "b", "d", "other"]}
+    numeric = dict.fromkeys(files, True)
+    temporal = {"t": "datetime", "d": "date", "other": "time"}
+    spec = scatter_spec(
+        encoding, files, 400, 300, [], numeric=numeric, temporal=temporal
+    )
+    assert spec.temporal == {"t": "datetime", "d": "date"}
+    assert spec.categorical == []
+    assert "row" in spec.binned

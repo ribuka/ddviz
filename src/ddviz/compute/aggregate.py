@@ -250,7 +250,7 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
         if c is None or (role == "color" and spec.gradient):
             levels[role] = [None]
         elif role in cuts:
-            levels[role] = cut_labels(cuts[role])
+            levels[role] = cut_labels(cuts[role], spec.temporal.get(c))
         else:
             levels[role] = column_levels[c]
     return _Overview(x_ranges, y_ranges, levels, cuts, color_range, axis_levels)

@@ -15,6 +15,7 @@ from __future__ import annotations
 import polars as pl
 
 from ddviz.shared.scatter import Binning
+from ddviz.shared.temporal import text
 
 
 def _finite(column: str) -> pl.Expr:
@@ -85,8 +86,19 @@ def _text(value: float, digits: int) -> str:
     return f"{value:.{digits}g}"
 
 
-def _texts(breaks: list[float]) -> list[str]:
-    """Return the breaks as text with the fewest significant digits (3 or more) that tell them apart."""
+def _texts(breaks: list[float], kind: str | None = None) -> list[str]:
+    """Return the breaks as text with the fewest significant digits (3 or more) that tell them apart.
+
+    A break of a date-axis kind (`ddviz.shared.temporal.DATE_KINDS`) is its
+    date or time (`ddviz.shared.temporal.text`) instead. Breaks of a date
+    that fall within one day are told apart by their time, as a datetime's:
+    the levels are found again by their names.
+    """
+    kinds = {"date": ["date", "datetime"]}.get(kind, [kind] if kind else [])
+    for k in kinds:
+        dates = [text(k, b) for b in breaks]
+        if None not in dates and len(set(dates)) == len(set(breaks)):
+            return dates
     for digits in range(3, 18):
         texts = [_text(b, digits) for b in breaks]
         if len(set(texts)) == len(set(breaks)):
@@ -94,13 +106,17 @@ def _texts(breaks: list[float]) -> list[str]:
     return [repr(b) for b in breaks]
 
 
-def cut_labels(cuts: dict) -> list[str]:
+def cut_labels(cuts: dict, kind: str | None = None) -> list[str]:
     """Return the level of each interval as text.
 
     Parameters
     ----------
     cuts : dict
         The cuts (`find_cuts`).
+    kind : str or None
+        The kind of a temporal column (`ddviz.shared.temporal.KINDS`), whose
+        breaks of a datetime, date or time are dates or times; None for
+        another column.
 
     Returns
     -------
@@ -109,7 +125,7 @@ def cut_labels(cuts: dict) -> list[str]:
         the value itself with ``values``.
     """
     breaks = cuts["breaks"]
-    texts = _texts(breaks)
+    texts = _texts(breaks, kind)
     if cuts["values"]:
         return texts[:-1]
     k = len(breaks) - 1

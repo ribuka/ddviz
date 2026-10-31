@@ -15,6 +15,7 @@ import { DEFAULT_SHAPE_SIZE, openShapeMenu } from "./shapemenu.js";
 import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
+import { linearRange } from "./temporal.js";
 
 const status = document.getElementById("status");
 const hoverWarning = document.getElementById("hover-warning");
@@ -357,13 +358,14 @@ function axisKey(id) {
   return id.replace(/^([xy])/, "$1axis");
 }
 
-// Returns the ranges on screen of each x and y column of a result: the
-// panels of one column share them (`matches`).
+// Returns the ranges on screen of each x and y column of a result, as
+// numbers (a date axis holds dates): the panels of one column share them
+// (`matches`).
 function shownRanges(meta) {
   const full = gd._fullLayout;
   return {
-    x: meta.x_axes.map((id) => [...full[axisKey(id)].range]),
-    y: meta.y_axes.map((id) => [...full[axisKey(id)].range]),
+    x: meta.x_axes.map((id) => linearRange(full[axisKey(id)])),
+    y: meta.y_axes.map((id) => linearRange(full[axisKey(id)])),
   };
 }
 
@@ -404,7 +406,7 @@ function figureKey(data, layout) {
 function rangeUpdate(layout) {
   const update = {};
   for (const [key, value] of Object.entries(layout)) {
-    if (/^[xy]axis\d*$/.test(key) && !sameRange(gd._fullLayout[key].range, value.range)) {
+    if (/^[xy]axis\d*$/.test(key) && !sameRange(linearRange(gd._fullLayout[key]), value.range)) {
       update[`${key}.range`] = [...value.range];
     }
   }
@@ -469,12 +471,19 @@ let selection = null;
 let selectionGeneration = 0;
 const table = new SelectionTable(document.getElementById("table"));
 
-// Returns the panel of a box from plotly's `range` (keyed by axis id).
+// Returns the panel of a box from plotly's `range` (keyed by axis id), its
+// bounds as numbers (a date axis gives dates).
 function boxOf(meta, range) {
   const panel = meta.panels.findIndex((p) => p.xaxis in range && p.yaxis in range);
   if (panel < 0) return null;
   const { xaxis, yaxis } = meta.panels[panel];
-  return { panel, at: panelKey(meta.panels[panel]), x_range: [...range[xaxis]], y_range: [...range[yaxis]] };
+  const full = gd._fullLayout;
+  return {
+    panel,
+    at: panelKey(meta.panels[panel]),
+    x_range: linearRange(full[axisKey(xaxis)], range[xaxis]),
+    y_range: linearRange(full[axisKey(yaxis)], range[yaxis]),
+  };
 }
 
 // Names a panel by its facet levels and axis columns, the same in every result of a plot.

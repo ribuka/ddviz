@@ -299,6 +299,17 @@ button {
   padding: 1px 3px;
 }
 
+/* A datetime, date or time column: one bound per line. */
+.filter-range.dates {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.filter-range.dates input {
+  width: auto;
+  flex: none;
+}
+
 .filter-contains {
   display: flex;
   margin-top: 4px;
