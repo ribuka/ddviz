@@ -17,7 +17,14 @@ from ddviz.server.plan import (
     scatter_spec,
     undrawn,
 )
-from ddviz.shared.scatter import ONE_BAND, SHAPE_SIZE, Binning, Filter, Smoothing
+from ddviz.shared.scatter import (
+    ONE_BAND,
+    POINT_SIZE,
+    SHAPE_SIZE,
+    Binning,
+    Filter,
+    Smoothing,
+)
 
 
 def test_scatter_draws_every_axis_and_overlay_as_shapes() -> None:
@@ -67,12 +74,25 @@ def test_a_numeric_overlay_beside_color_is_cut_into_intervals() -> None:
 
 
 def test_parse_shape_size() -> None:
-    """The size is one of `SHAPE_SIZES`, the default for null."""
-    assert parse_shape_size(None) == SHAPE_SIZE
+    """The size is one of `SHAPE_SIZES`, or null for the default."""
+    assert parse_shape_size(None) is None
     assert parse_shape_size(11) == 11
     for bad in (4, 0, True, "7", 7.5):
         with pytest.raises(ValueError, match="shape_size"):
             parse_shape_size(bad)
+
+
+def test_the_default_marker_size_is_larger_for_the_overlay_shapes() -> None:
+    """Without a size, the overlay's shapes take `SHAPE_SIZE` and the circles `POINT_SIZE`."""
+    files = {c: [f"{c}.parquet"] for c in ("a", "b", "g", "o")}
+    shapes = Encoding(x=("a",), y=("b",), color="g", overlay="o")
+    circles = Encoding(x=("a",), y=("b",), overlay="o")
+    assert scatter_spec(shapes, files, 400, 300, ["#000000"]).shape_size == SHAPE_SIZE
+    assert scatter_spec(circles, files, 400, 300, ["#000000"]).shape_size == POINT_SIZE
+    assert (
+        scatter_spec(circles, files, 400, 300, ["#000000"], shape_size=11).shape_size
+        == 11
+    )
 
 
 def test_a_column_on_several_roles_is_read_once() -> None:

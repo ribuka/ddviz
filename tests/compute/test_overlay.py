@@ -18,7 +18,7 @@ from ddviz.server.hover import HoverIndex
 from ddviz.shared.manifest import IMAGES, PlotManifest
 from ddviz.shared.palette import DEFAULT_COLORS
 from ddviz.shared.scatter import ScatterSpec
-from ddviz.shared.shapes import kernel
+from ddviz.shared.shapes import marker
 
 
 def _overlay_spec(spec: ScatterSpec) -> ScatterSpec:
@@ -76,7 +76,7 @@ def test_each_series_image_spreads_its_pixels_into_its_shape(
     for s, at in layers.items():
         offset, length = manifest.images[s]
         bits, color = _decode_mask(data[offset : offset + length])
-        expected = spread(series_layer(pixels(keys, grid)[at], grid), kernel(s % 2, 5))
+        expected = spread(series_layer(pixels(keys, grid)[at], grid), marker(s, 2, 5))
         assert np.array_equal(bits, atlas(expected, manifest.layout.ncol))
         assert color == bytes.fromhex(DEFAULT_COLORS[s // 2].removeprefix("#"))
         assert manifest.colors[s] == DEFAULT_COLORS[s // 2]

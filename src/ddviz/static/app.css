@@ -702,7 +702,7 @@ button {
   color: #999;
 }
 
-/* The marker of an item; while shapes are drawn, a right click on it opens
+/* The marker of an item; a right click on it opens
    the markers' menu, so it reaches the item's left edge (24px) to be easy to hit. */
 .legend-marker {
   flex: none;

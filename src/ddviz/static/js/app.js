@@ -12,7 +12,7 @@ import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { StatusLine, Toasts, errorText } from "./notice.js";
 import { openScaleMenu } from "./scalemenu.js";
-import { DEFAULT_SHAPE_SIZE, openShapeMenu } from "./shapemenu.js";
+import { openShapeMenu } from "./shapemenu.js";
 import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
@@ -82,8 +82,9 @@ let current = null;
 const legend = new Legend(
   document.getElementById("legend"),
   () => layers.draw(),
-  (event) => openScaleMenu(event, colorBins, setColorBins, recolor),
-  (event) => openShapeMenu(event, shapeSize, setShapeSize),
+  (event) =>
+    openScaleMenu(event, colorBins, setColorBins, recolor, current?.marker_size, setShapeSize),
+  (event) => openShapeMenu(event, current?.marker_size, setShapeSize),
 );
 const layers = new ImageLayers(gd, legend);
 const sticky = new StickyLabels(document.getElementById("scroller"), gd);
@@ -109,9 +110,10 @@ let plottedEncoding = null;
 // How the smoothing lines are fitted (`ddviz.server.plan.parse_smoothing`),
 // picked in the menu of their element icon; kept for every graph.
 let smoothing = DEFAULT_SMOOTHING;
-// Size in pixels of the overlay's marker shapes (`ddviz.server.plan.parse_shape_size`),
-// picked in the menu of the legend's markers; kept for every graph.
-let shapeSize = DEFAULT_SHAPE_SIZE;
+// Size in pixels of the markers (`ddviz.server.plan.parse_shape_size`), picked
+// in the menu of the legend's markers; kept for every graph. Null for the
+// default: larger for the overlay's shapes than for the circles of the points.
+let shapeSize = null;
 // Wrapped panels to a row, or null to make them closest to square
 // (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
 // The user sets it in the Wrap zone, beside its chip.
@@ -856,10 +858,10 @@ function hasSmoothPair(encoding) {
   return encoding.x.some(numeric) && encoding.y.some(numeric);
 }
 
-// Draws the overlay's shapes in another size: a graph with them is plotted again.
+// Draws the markers in another size: the graph is plotted again.
 function setShapeSize(size) {
   shapeSize = size;
-  if (plottedEncoding?.color && plottedEncoding.overlay) plot(plottedEncoding);
+  if (plottedEncoding) plot(plottedEncoding);
 }
 
 // Fits the smoothing lines another way: a graph with them is plotted again.

@@ -1,10 +1,12 @@
 // The menu of the legend's markers, opened by a right click on a marker
-// (legend.js) while the overlay draws shapes: the size of the shapes
-// (`ddviz.server.plan.SHAPE_SIZES`). Options of each item, such as its color
-// or shape, are to come here too.
+// (legend.js): the size of the markers, the overlay's shapes or the circles
+// of the points without one (`ddviz.server.plan.SHAPE_SIZES`). A gradient,
+// whose legend has no markers, offers the sizes in its scale's menu
+// (scalemenu.js). Options of each item, such as its color or shape, are to
+// come here too.
 
-const SIZES = [3, 5, 7, 9, 11, 15];
-export const DEFAULT_SHAPE_SIZE = 7;
+export const SIZES = [3, 5, 7, 9, 11, 15];
+export const SIZE_HEADING = "点の大きさ（凡例全体）";
 
 let open = null;
 
@@ -28,7 +30,7 @@ export function openShapeMenu(event, size, onPick) {
   menu.className = "scale-menu shape-menu";
   const head = document.createElement("div");
   head.className = "scale-menu-heading";
-  head.textContent = "形の大きさ（凡例全体）";
+  head.textContent = SIZE_HEADING;
   menu.append(head);
   for (const pick of SIZES) {
     const row = document.createElement("button");

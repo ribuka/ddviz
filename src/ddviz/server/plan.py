@@ -8,6 +8,7 @@ from ddviz.server.encoding import Encoding
 from ddviz.shared.scatter import (
     MAX_LEVELS,
     ONE_BAND,
+    POINT_SIZE,
     SHAPE_SIZE,
     Binning,
     Filter,
@@ -23,7 +24,8 @@ FACET_BINS = 5
 COLOR_BINS = (2, 3, 5, 10)
 # Methods of the smoothing lines (`ddviz.compute.smooth`).
 SMOOTH_METHODS = ("gcv", "csaps", "lowess")
-# Sizes in pixels the marker shapes of the overlay levels can take.
+# Sizes in pixels the markers can take: the shapes of the overlay levels, or
+# the circles without an overlay.
 SHAPE_SIZES = (3, 5, 7, 9, 11, 15)
 
 
@@ -245,7 +247,7 @@ def scatter_spec(
     max_levels: int = MAX_LEVELS,
     wrap_cols: int | None = None,
     smoothing: Smoothing | None = None,
-    shape_size: int = SHAPE_SIZE,
+    shape_size: int | None = None,
     temporal: dict[str, str] | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
@@ -294,7 +296,9 @@ def scatter_spec(
         How to fit the smoothing lines (`parse_smoothing`); None for the
         default.
     shape_size : int, optional
-        Size of the marker shapes in pixels (`parse_shape_size`).
+        Size of the markers in pixels (`parse_shape_size`); None for the
+        default, `SHAPE_SIZE` for the overlay's shapes and `POINT_SIZE` for
+        the circles without an overlay.
     temporal : dict of str to str, optional
         The kind of each temporal column (`ddviz.shared.temporal.KINDS`);
         such a column is numeric in `numeric` too.
@@ -366,7 +370,7 @@ def scatter_spec(
         if "smooth" in encoding.elements and has_smooth_pair(encoding, numeric)
         else None,
         overlay=overlay,
-        shape_size=shape_size,
+        shape_size=shape_size or (POINT_SIZE if overlay is None else SHAPE_SIZE),
         temporal={c: k for c, k in (temporal or {}).items() if c in read},
     )
 
@@ -445,8 +449,8 @@ def parse_smoothing(raw: dict | None) -> Smoothing | None:
     return Smoothing(method, None if p is None else float(p), float(frac))
 
 
-def parse_shape_size(raw: object) -> int:
-    """Return the size of the marker shapes the page asks for, checked.
+def parse_shape_size(raw: object) -> int | None:
+    """Return the size of the markers the page asks for, checked.
 
     Parameters
     ----------
@@ -455,8 +459,8 @@ def parse_shape_size(raw: object) -> int:
 
     Returns
     -------
-    int
-        The size in pixels.
+    int or None
+        The size in pixels, or None for the default (`scatter_spec`).
 
     Raises
     ------
@@ -464,7 +468,7 @@ def parse_shape_size(raw: object) -> int:
         For anything else.
     """
     if raw is None:
-        return SHAPE_SIZE
+        return None
     if isinstance(raw, bool) or raw not in SHAPE_SIZES:
         raise ValueError(f"shape_size is one of {SHAPE_SIZES} or null: {raw}")
     return int(raw)

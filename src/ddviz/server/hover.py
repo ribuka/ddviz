@@ -7,8 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
-from ddviz.shared.manifest import GRAYS, PlotManifest
-from ddviz.shared.shapes import kernel
+from ddviz.shared.manifest import PlotManifest
+from ddviz.shared.shapes import marker
 
 # Hover distance in screen pixels, as plotly's default `hoverdistance`.
 HOVER_DISTANCE = 20
@@ -44,26 +44,19 @@ class HoverIndex:
             (c.name, np.load(out / c.file, mmap_mode="r"), c.labels)
             for c in self.manifest.columns
         ]
-        # The marker shape of each overlay level, rows from the bottom as
-        # the bins: a series' points cover the bins of their shape.
+        # The marker of each overlay level, or the circle without an
+        # overlay, rows from the bottom as the bins: a series' points cover
+        # the bins of their marker (`ddviz.compute.shapes`).
         spec = self.manifest.spec
-        self._shapes = []
-        if spec.overlay is not None:
-            levels = self.manifest.levels["overlay"]
-            self._shapes = [
-                kernel(i, spec.shape_size)[::-1] for i in range(len(levels))
-            ]
-        # A gradient's grays, which decide which of a series' overlapping
-        # shapes shows.
-        self._grays = None
-        if (out / GRAYS).exists():
-            self._grays = np.load(out / GRAYS, mmap_mode="r")
+        shapes = len(self.manifest.levels["overlay"]) if spec.overlay else 0
+        self._shapes = [
+            marker(i, shapes, spec.shape_size)[::-1] for i in range(max(shapes, 1))
+        ]
 
     def close(self) -> None:
         """Drop the memory maps, so that the files can be deleted."""
         self._keys = self._count = self._index = self._occupancy = None
         self._columns = []
-        self._grays = None
 
     def _series_at(self, panel: int, by: int, bx: int) -> dict[int, int]:
         """Return the position of the key of each series with rows at an occupied pixel."""
@@ -78,12 +71,11 @@ class HoverIndex:
     def _covering(
         self, panel: int, fx: float, fy: float, order: list[int]
     ) -> tuple[int, int, int] | None:
-        """Return the bin and series of the topmost marker shape that covers the cursor's bin, or None.
+        """Return the bin and series of the topmost marker that covers the cursor's bin, or None.
 
-        Of the series whose shapes cover it, the first in `order` (else the
-        last series) wins, and of its bins, the one drawn there
-        (`ddviz.compute.shapes.spread`): the cursor's own bin, else for a
-        gradient the one of the largest gray; then the one whose row has the
+        Of the series whose markers cover it, the first in `order` (else the
+        last series) wins, and of its bins, the one drawn on top
+        (`ddviz.compute.shapes.spread_top`): the one whose row has the
         largest index.
         """
         grid = self.grid
@@ -99,23 +91,15 @@ class HoverIndex:
             by, bx = int(py) + y0, int(px) + x0
             for s, i in self._series_at(panel, by, bx).items():
                 shape = self._shapes[s % len(self._shapes)]
-                # A point keeps its own bin, even inside an outline.
-                own = (by, bx) == (cy, cx)
-                if not (own or shape[cy - by + half, cx - bx + half]):
+                if not shape[cy - by + half, cx - bx + half]:
                     continue
                 score = (
                     -rank.get(s, len(order) + grid.n_series - s),
-                    own,
-                    self._gray(i),
                     int(self._index[i]),
                 )
                 if best is None or score > best[0]:
                     best = (score, bx, by, s)
         return None if best is None else best[1:]
-
-    def _gray(self, i: int) -> int:
-        """Return the gray a gradient's bin is drawn in (`ddviz.compute.tasks.images.gradient_grays`), or 0."""
-        return 0 if self._grays is None else int(self._grays[i])
 
     def _nearest_pixel(
         self, panel: int, fx: float, fy: float, sx: float, sy: float
@@ -161,8 +145,8 @@ class HoverIndex:
         That is the topmost drawn point under the cursor, or else at the
         nearest occupied pixel within `HOVER_DISTANCE`: of the series there,
         the first in `order`, and of its rows, the one with the largest index.
-        With an overlay, a point is drawn as its marker shape: the topmost
-        shape covering the cursor answers (`_covering`).
+        A point is drawn as its marker (`ddviz.shared.shapes.marker`): the
+        topmost marker covering the cursor answers (`_covering`).
 
         Parameters
         ----------
@@ -183,7 +167,7 @@ class HoverIndex:
         """
         if self._occupancy is None:
             return None
-        covering = self._covering(panel, fx, fy, order) if self._shapes else None
+        covering = self._covering(panel, fx, fy, order)
         if covering is not None:
             bx, by, series = covering
             found = self._series_at(panel, by, bx)

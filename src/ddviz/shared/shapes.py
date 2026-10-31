@@ -1,4 +1,4 @@
-"""Marker shapes of the overlay levels (`ddviz.shared.scatter.ScatterSpec.overlay`).
+"""Marker shapes of the overlay levels (`ddviz.shared.scatter.ScatterSpec.overlay`), and the circles of the points without one.
 
 The worker spreads each pixel of a series into its shape
 (`ddviz.compute.shapes`); the page draws the shapes in the legend.
@@ -79,3 +79,29 @@ def kernel(level: int, size: int) -> np.ndarray:
     if name in ("cross", "x"):
         return filled
     return _outline(filled)
+
+
+def marker(series: int, shapes: int, size: int) -> np.ndarray:
+    """Return the marker a series' points are drawn in.
+
+    Parameters
+    ----------
+    series : int
+        The series (`ddviz.shared.scatter.ScatterSpec.overlay`).
+    shapes : int
+        Number of overlay levels; 0 without an overlay, whose points are
+        filled circles.
+    size : int
+        Width and height in pixels, odd.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean array of shape ``(size, size)``, row 0 at the top. Its
+        center is always set: a point covers its own pixel, even inside an
+        outline.
+    """
+    shape = kernel(series % shapes, size) if shapes else _filled("circle", size)
+    shape = shape.copy()
+    shape[size // 2, size // 2] = True
+    return shape

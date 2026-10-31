@@ -354,6 +354,56 @@ def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None
     page.wait_for_function(PAINTED_PIXEL)
 
 
+# Number of painted pixels of the image layers.
+PAINTED_COUNT = """() => {
+  const canvas = document.querySelector("canvas.image-layers");
+  const { data } = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+  let n = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i] !== 0) n++;
+  return n;
+}"""
+
+
+def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
+    app_page: Page,
+) -> None:
+    """Without an overlay the points are 5px circles; the marker's menu, or a gradient's color bar menu, changes their size."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    page.wait_for_function(PAINTED_PIXEL)
+    small = page.evaluate(PAINTED_COUNT)
+
+    status = page.locator("#status")
+    task = status.inner_text()
+    legend = page.locator("#legend")
+    legend.locator(".legend-marker").first.click(button="right")
+    menu = page.locator(".shape-menu")
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("5 px")
+    menu.get_by_text("9 px", exact=True).click()
+    expect(menu).to_have_count(0)
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    page.wait_for_function(f"() => ({PAINTED_COUNT})() > {small}")
+
+    # A gradient has no markers: its color bar's menu has the size, kept.
+    place(page, "x", "color")
+    bar = legend.locator(".colorbar")
+    expect(bar).to_be_visible()
+    task = status.inner_text()
+    bar.click(button="right")
+    menu = page.locator(".scale-menu")
+    expect(menu.get_by_text("点の大きさ（凡例全体）")).to_be_visible()
+    expect(menu.locator(".scale-menu-item.checked").last).to_have_text("9 px")
+    menu.get_by_text("3 px", exact=True).click()
+    expect(menu).to_have_count(0)
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    page.wait_for_function(PAINTED_PIXEL)
+
+
 def overlaps(a: dict, b: dict) -> bool:
     """Whether two bounding boxes overlap."""
     return not (

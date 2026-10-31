@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from ddviz.server.app import create_app
 from ddviz.server.auth import COOKIE
 from ddviz.server.settings import HoverSettings, Settings
+from ddviz.shared.scatter import POINT_SIZE
 
 ENCODING = {"x": ["x"], "y": ["y"], "color": "color", "col": "facet"}
 SIZE = {"width": 400, "height": 300}
@@ -490,7 +491,7 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
     assert meta["color"]["shapes"] == 2
     assert meta["overlay"]["column"] == "facet"
     assert meta["overlay"]["levels"] == ["p", "q"]
-    assert meta["overlay"]["size"] == 9
+    assert meta["marker_size"] == 9
     assert [len(k) for k in meta["overlay"]["kernels"]] == [9, 9]
     assert len(meta["images"]) == 6 and all(meta["images"])
     assert meta["grid"]["n_series"] == 6
@@ -518,6 +519,8 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
     assert meta["series"] == ["p", "q"]
     assert meta["color"]["column"] == "facet"
     assert meta["overlay"] is None
+    # The circles of the points without an overlay take the smaller default.
+    assert meta["marker_size"] == POINT_SIZE
 
     bad = {"encoding": encoding, **SIZE, "shape_size": 8}
     assert client.post("/api/plot", json=bad).status_code == 400
