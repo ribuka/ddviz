@@ -50,6 +50,18 @@ export function intervalColors(n) {
   return [...Array(n).keys()].map((i) => cssColor(n === 1 ? 0.5 : i / (n - 1)));
 }
 
+// Counts the changes of the colors (scale, direction or picked colors), so
+// that images decoded meanwhile in the old colors are decoded again.
+let colorsVersion = 0;
+
+export function colorsChanged() {
+  colorsVersion++;
+}
+
+export function colorsNow() {
+  return colorsVersion;
+}
+
 // Colors the user picked for the levels of the color column `column`, by
 // level name; kept while the graphs color by that column.
 const picked = { column: undefined, colors: new Map() };

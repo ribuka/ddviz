@@ -2,7 +2,7 @@
 // resize, hover, select rows with a box, and filter rows.
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
-import { keepPicked, levelColors, pickColor } from "./colorscale.js";
+import { colorsChanged, keepPicked, levelColors, pickColor } from "./colorscale.js";
 import { attachColumnList } from "./columns.js";
 import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
@@ -954,8 +954,10 @@ function setLevelColor(level, color) {
 
 // Draws the decoded images again in new colors (of the scale, or picked for
 // the levels): the overview's, the drawn result's and the selection layer's.
-// Their files are still on the server, so no aggregation runs.
+// Their files are still on the server, so no aggregation runs. Images being
+// decoded meanwhile are decoded again in the new colors (`loadImages`).
 async function recolor() {
+  colorsChanged();
   legend.render();
   // The boxes and the smoothing lines take the new colors at once.
   layers.draw();

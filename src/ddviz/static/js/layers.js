@@ -2,7 +2,7 @@
 // image trace per panel and series: plotly then only draws the axes, and a
 // legend click redraws the canvas instead of the figure.
 import { POINTS_UNDER_BOXES, drawBoxes } from "./boxes.js";
-import { decode, seriesColors } from "./colorscale.js";
+import { colorsNow, decode, seriesColors } from "./colorscale.js";
 import { INACTIVE_OPACITY } from "./legend.js";
 import { drawSmooths } from "./smooth.js";
 
@@ -17,8 +17,8 @@ function axisKey(id) {
 
 // Fetches the PNGs of a result or layer (`source`: one file of task
 // `source.task`, sliced by `source.images`) and decodes them in the colors of
-// result `meta` (colorscale.js); returns per series an ImageBitmap whose
-// tiles are the panels, or null.
+// result `meta` (colorscale.js), again when the colors change meanwhile;
+// returns per series an ImageBitmap whose tiles are the panels, or null.
 export async function loadImages(source, meta = source) {
   const response = await fetch(`/api/images/${source.task}`);
   if (!response.ok) throw new Error(`images of task ${source.task}: ${response.status}`);
@@ -26,7 +26,12 @@ export async function loadImages(source, meta = source) {
   const blobs = source.images.map((span) =>
     span ? new Blob([new Uint8Array(buffer, span[0], span[1])], { type: "image/png" }) : null,
   );
-  return decode(blobs, meta);
+  for (;;) {
+    const version = colorsNow();
+    const bitmaps = await decode(blobs, meta);
+    if (version === colorsNow()) return bitmaps;
+    closeImages(bitmaps);
+  }
 }
 
 // Frees the decoded images of a result.

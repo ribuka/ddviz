@@ -458,6 +458,38 @@ def test_a_color_level_takes_a_color_picked_on_its_marker(app_page: Page) -> Non
     expect(page.locator(".color-panel")).to_have_count(0)
 
 
+# Holds the decoding of images until `window.releaseImages()`.
+HOLD_IMAGES = """() => {
+  const hold = new Promise((resolve) => { window.releaseImages = resolve; });
+  const original = window.createImageBitmap;
+  window.createImageBitmap = async (...args) => {
+    await hold;
+    return original(...args);
+  };
+}"""
+
+
+def test_a_color_picked_while_the_images_decode_draws_them(app_page: Page) -> None:
+    """A color picked before the first images are decoded draws them in that color."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    page.wait_for_function(PAINTED_PIXEL)
+    page.evaluate(HOLD_IMAGES)
+    place(page, "color", "color")
+    legend = page.locator("#legend")
+    legend.locator(".legend-marker").first.click(button="right")
+    page.locator(".shape-menu").get_by_text("色", exact=True).hover()
+    page.locator('.color-panel .color-cell[title="#000000"]').click()
+    expect(legend.locator(".legend-item .swatch").first).to_have_css(
+        "background-color", "rgb(0, 0, 0)"
+    )
+    page.evaluate("() => window.releaseImages()")
+    page.wait_for_function(HAS_COLOR, arg=[0, 0, 0])
+
+
 # Number of painted pixels of the image layers.
 PAINTED_COUNT = """() => {
   const canvas = document.querySelector("canvas.image-layers");
