@@ -37,7 +37,7 @@ const INSERT_EDGE = 12;
 // Words for before and after a chip on each axis.
 const SIDES = { x: ["左", "右"], y: ["上", "下"] };
 
-// The column being dragged: `{name, numeric}` from the column list, plus
+// The column being dragged: `{name, numeric, temporal}` from the column list, plus
 // `from` and `index` for a chip. A dragover cannot read the drag's data.
 let dragged = null;
 
@@ -82,6 +82,8 @@ export class Builder {
     this.encoding = { x: [], y: [], color: null, overlay: null, row: null, col: null, wrap: null, elements: ["points"] };
     // Whether each placed column is numeric, for the filter pane a chip is dragged to.
     this.numeric = new Map();
+    // The temporal kind of each placed column (`ddviz.shared.temporal.KINDS`), or null.
+    this.temporal = new Map();
     this.tip = document.getElementById("drop-tip");
     this.line = document.getElementById("drop-line");
     for (const zone of this.zones) this.attachZone(zone);
@@ -261,6 +263,7 @@ export class Builder {
   // chip it replaces.
   place(role, column, { index, insert }) {
     this.numeric.set(column.name, column.numeric);
+    this.temporal.set(column.name, column.temporal ?? null);
     const list = this.placed(role).slice();
     if (column.from === role) {
       if (insert) {
@@ -339,7 +342,8 @@ export class Builder {
     chip.title = `${name}。ドラッグで別の役割へ移す。× か、枠の外に落とすと外す`;
     const text = document.createElement("span");
     text.className = "chip-name";
-    text.textContent = name;
+    // A duration is drawn as seconds.
+    text.textContent = this.temporal.get(name) === "duration" ? `${name} (s)` : name;
     const close = document.createElement("button");
     close.className = "chip-remove";
     close.type = "button";
@@ -349,7 +353,7 @@ export class Builder {
     chip.append(text, close);
     chip.addEventListener("dragstart", (event) => {
       event.stopPropagation();
-      beginDrag({ name, numeric: this.numeric.get(name), from: role, index });
+      beginDrag({ name, numeric: this.numeric.get(name), temporal: this.temporal.get(name), from: role, index });
       event.dataTransfer.setData("text/plain", name);
       event.dataTransfer.effectAllowed = "move";
     });

@@ -316,6 +316,11 @@ class ScatterSpec:
         counts the overlay levels.
     shape_size : int
         Width and height in pixels of the marker shapes, odd.
+    temporal : dict of str to str
+        The kind of each temporal column read (`ddviz.shared.temporal.KINDS`).
+        Such a column is numeric: it is read as numbers
+        (`ddviz.compute.temporal`), and its intervals are named and its axis
+        drawn as dates, times or seconds.
     """
 
     files: dict[str, list[str]]
@@ -343,6 +348,7 @@ class ScatterSpec:
     smooth: Smoothing | None = None
     overlay: str | None = None
     shape_size: int = SHAPE_SIZE
+    temporal: dict[str, str] = field(default_factory=dict)
 
     def box_pairs(self) -> set[tuple[str, str]]:
         """Return the pairs of axis columns whose panels have box plots.

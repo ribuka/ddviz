@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import replace
 from pathlib import Path
 
@@ -321,3 +322,43 @@ def test_a_categorical_x_is_not_the_one_band(
 ) -> None:
     """A graph with an x column says so in its meta."""
     assert _figure(scatter_spec, tmp_path / "task")["meta"]["one_band"] is False
+
+
+def test_a_datetime_or_time_axis_is_a_date_axis(tmp_path: Path) -> None:
+    """A datetime or time column has plotly's date axis; a duration a plain one. The meta names the kinds."""
+    start = dt.datetime(2026, 10, 31)  # noqa: DTZ001 (naive, as in Parquet)
+    path = tmp_path / "temporal.parquet"
+    pl.DataFrame(
+        {
+            "at": [start + dt.timedelta(minutes=i) for i in range(10)],
+            "clock": [dt.time(i, 0) for i in range(10)],
+            "took": [dt.timedelta(seconds=i) for i in range(10)],
+            "y": [float(i) for i in range(10)],
+        }
+    ).write_parquet(path)
+    temporal = {"at": "datetime", "clock": "time", "took": "duration"}
+    spec = ScatterSpec(
+        files={c: [str(path)] for c in ["at", "clock", "took", "y"]},
+        x=["at", "clock", "took"],
+        y=["y"],
+        color="at",
+        row=None,
+        col=None,
+        width=600,
+        height=300,
+        hover=["at", "clock", "took", "y"],
+        gradient=True,
+        temporal=temporal,
+    )
+    result = _figure(spec, tmp_path / "task")
+    layout = result["figure"]["layout"]
+    assert layout["xaxis"]["type"] == "date"
+    assert "tickformatstops" not in layout["xaxis"]
+    assert layout["xaxis2"]["type"] == "date"
+    assert layout["xaxis2"]["tickformatstops"][0]["value"] == "%H:%M:%S.%L"
+    assert "type" not in layout["xaxis3"]
+    lo, hi = layout["xaxis"]["range"]
+    first = dt.datetime(2026, 10, 31, tzinfo=dt.UTC).timestamp() * 1000
+    assert lo < first < hi
+    assert result["meta"]["temporal"] == temporal
+    assert result["meta"]["color"]["temporal"] == "datetime"

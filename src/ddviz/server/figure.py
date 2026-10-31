@@ -23,6 +23,7 @@ from ddviz.shared.layout import (
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import ONE_BAND, ScatterSpec
 from ddviz.shared.shapes import kernel
+from ddviz.shared.temporal import DATE_KINDS
 
 # Each plot area is white with a frame line around it, on a light gray
 # figure, so neighboring panels stand apart. The frame lies just outside the
@@ -129,6 +130,24 @@ def _band_ticks(manifest: PlotManifest, column: str) -> dict:
     }
 
 
+def _date_axis(spec: ScatterSpec, column: str) -> dict:
+    """Return the type of an axis column of a datetime, date or time: plotly's date axis, over milliseconds.
+
+    A time lies on the first day of the epoch: its ticks show the time
+    alone, to the millisecond when zoomed below a second.
+    """
+    kind = spec.temporal.get(column)
+    if kind not in DATE_KINDS:
+        return {}
+    axis: dict = {"type": "date"}
+    if kind == "time":
+        axis["tickformatstops"] = [
+            {"dtickrange": [None, 1000], "value": "%H:%M:%S.%L"},
+            {"dtickrange": [1000, None], "value": "%H:%M:%S"},
+        ]
+    return axis
+
+
 def _series_ticks(manifest: PlotManifest) -> dict[float, str]:
     """Return the ticks of the one band (`ddviz.shared.scatter.ONE_BAND`): each series' name under its box.
 
@@ -166,6 +185,8 @@ def _color_scale(manifest: PlotManifest) -> dict:
         "kind": kind,
         "bins": None if bins is None else asdict(bins),
         "range": manifest.color_range,
+        # The kind of a temporal column, whose gradient's ticks are dates.
+        "temporal": spec.temporal.get(spec.color),
         # Series per color level: one per overlay level.
         "shapes": len(manifest.levels["overlay"]),
     }
@@ -235,6 +256,9 @@ def build_figure(manifest: PlotManifest) -> dict:
         panel, the levels of each
         categorical axis column (``axis_levels``), whether the x axis is
         the one band (``one_band``, `ddviz.shared.scatter.ONE_BAND`),
+        the kind of each temporal column (``temporal``,
+        `ddviz.shared.temporal.KINDS`: a datetime, date or time axis is
+        plotly's date axis over milliseconds),
         the axes that hold the range of each x and y column (``x_axes``,
         ``y_axes``), the bin grid, the data range of each column, where each
         series' PNG lies in the images file (`ddviz.shared.manifest.IMAGES`; its
@@ -293,6 +317,7 @@ def build_figure(manifest: PlotManifest) -> dict:
             "showticklabels": not layout.scroll and bottom,
             "zeroline": False,
             **_band_ticks(manifest, spec.x[xi]),
+            **_date_axis(spec, spec.x[xi]),
             **_FRAME,
             **({"matches": x_axes[xi]} if x_axis != x_axes[xi] else {}),
         }
@@ -303,6 +328,7 @@ def build_figure(manifest: PlotManifest) -> dict:
             "showticklabels": not layout.scroll and pcol == 0,
             "zeroline": False,
             **_band_ticks(manifest, spec.y[yj]),
+            **_date_axis(spec, spec.y[yj]),
             **_FRAME,
             **({"matches": y_axes[yj]} if y_axis != y_axes[yj] else {}),
         }
@@ -368,5 +394,6 @@ def build_figure(manifest: PlotManifest) -> dict:
         "facet_labels": labels,
         "axis_levels": manifest.axis_levels,
         "one_band": spec.x == [ONE_BAND],
+        "temporal": spec.temporal,
     }
     return {"figure": {"data": data, "layout": fig_layout}, "meta": meta}

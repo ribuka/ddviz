@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import polars as pl
 
+from ddviz.compute.temporal import with_numbers
 from ddviz.shared.scatter import ONE_BAND
 
 
 def scan_columns(
-    files: dict[str, list[str]], row_index: str | None = None
+    files: dict[str, list[str]], row_index: str | None = None, numbers: bool = True
 ) -> pl.LazyFrame:
     """Return the columns of `files` side by side as one lazy frame.
 
@@ -31,6 +32,10 @@ def scan_columns(
         Name of a row index column to put first. The first scan adds it:
         ``with_row_index`` on 100M rows raised the streaming peak from about
         4.1GB to 6.7GB.
+    numbers : bool
+        Whether temporal columns are read as numbers
+        (`ddviz.compute.temporal.with_numbers`), as they are aggregated,
+        filtered and selected; False keeps their values.
 
     Returns
     -------
@@ -51,4 +56,5 @@ def scan_columns(
     frame = parts[0] if len(parts) == 1 else pl.concat(parts, how="horizontal")
     if ONE_BAND in files:
         frame = frame.with_columns(pl.lit("", pl.String).alias(ONE_BAND))
-    return frame.select(head + list(files))
+    frame = frame.select(head + list(files))
+    return with_numbers(frame) if numbers else frame

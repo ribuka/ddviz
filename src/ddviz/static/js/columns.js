@@ -91,7 +91,8 @@ function columnItem(column, sharesState, rows) {
   item.draggable = true;
   const type = document.createElement("span");
   type.className = `column-type ${column.numeric ? "numeric" : "categorical"}`;
-  type.textContent = column.numeric ? "#" : "A";
+  // A temporal column is numeric (`ddviz.compute.temporal`), marked apart.
+  type.textContent = column.temporal ? "◷" : column.numeric ? "#" : "A";
   const name = document.createElement("span");
   name.className = "column-name";
   name.textContent = column.name;
@@ -108,7 +109,7 @@ function columnItem(column, sharesState, rows) {
   }
   item.append(type, name, share);
   item.addEventListener("dragstart", (event) => {
-    beginDrag({ name: column.name, numeric: column.numeric });
+    beginDrag({ name: column.name, numeric: column.numeric, temporal: column.temporal });
     event.dataTransfer.setData("text/plain", column.name);
     event.dataTransfer.effectAllowed = "copyMove";
   });

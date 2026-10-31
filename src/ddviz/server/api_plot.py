@@ -190,6 +190,7 @@ def plot_router(
                 wrap_cols,
                 smoothing,
                 shape_size,
+                await source.temporal(),
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error

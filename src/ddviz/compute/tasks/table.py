@@ -47,7 +47,7 @@ def _cached_rows(parts: dict[str, list[str]], index: list[int]) -> pl.DataFrame:
     # One lazy frame for every slice: a new scan parses the footers again.
     # Slices are read one after another; reading 100 rows spread over 100 row
     # groups at once peaked at 8.7GB on 7 columns of 100M rows.
-    frame = scan_columns(parts, INDEX)
+    frame = scan_columns(parts, INDEX, numbers=False)
     found = [frame.slice(start, length).collect() for start, length in _spans(index)]
     if not found:
         return frame.head(0).collect()

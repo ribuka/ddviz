@@ -102,8 +102,9 @@ class Source:
         Returns
         -------
         list of dict
-            ``{"name", "dtype", "numeric"}`` of each column, in the order the
-            columns first appear in the files.
+            ``{"name", "dtype", "numeric", "temporal"}`` of each column, in
+            the order the columns first appear in the files
+            (`ddviz.compute.tasks.columns.run_schema`).
         """
         if self._schema is None:
             files = await asyncio.to_thread(
@@ -116,9 +117,11 @@ class Source:
             )
             self.files = files
             stored = self.cache.dir / SCHEMA_JSON
+            found = None
             if stored.exists():
                 found = json.loads(stored.read_text(encoding="utf-8"))
-            else:
+            # A schema stored before columns had their temporal kind is read again.
+            if found is None or any("temporal" not in c for c in found["columns"]):
                 found = await self._read_schema()
             self.rows = found["rows"]
             self.casts = found["casts"]
@@ -148,6 +151,10 @@ class Source:
     async def numeric(self) -> dict[str, bool]:
         """Return whether each column is numeric."""
         return {c["name"]: c["numeric"] for c in await self.schema()}
+
+    async def temporal(self) -> dict[str, str]:
+        """Return the kind of each temporal column (`ddviz.shared.temporal.KINDS`)."""
+        return {c["name"]: c["temporal"] for c in await self.schema() if c["temporal"]}
 
     def parts(self, column: str) -> list[str]:
         """Return the column's parts in the cache, one per source file."""

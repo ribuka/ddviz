@@ -16,6 +16,7 @@
 // bar for a gradient, or its intervals in colors spread over the scale. A
 // right click on the bar or on the title opens the scale's menu.
 import { cssColor, levelColors } from "./colorscale.js";
+import { formatTemporal } from "./temporal.js";
 
 export const INACTIVE_OPACITY = 0.1;
 
@@ -189,7 +190,7 @@ export class Legend {
     ticks.className = "colorbar-ticks";
     for (const value of [hi, (lo + hi) / 2, lo]) {
       const tick = document.createElement("span");
-      tick.textContent = formatTick(value);
+      tick.textContent = formatTick(value, this.color.temporal);
       ticks.append(tick);
     }
     bar.append(strip, ticks);
@@ -267,6 +268,9 @@ function shapeCanvas(kernel) {
   return canvas;
 }
 
-function formatTick(value) {
+// Returns a tick of a gradient: a datetime, date or time column's (`kind`) as such.
+function formatTick(value, kind) {
+  const temporal = formatTemporal(kind, value);
+  if (temporal !== null) return temporal;
   return Number.isInteger(value) ? String(value) : Number(value.toPrecision(4)).toString();
 }

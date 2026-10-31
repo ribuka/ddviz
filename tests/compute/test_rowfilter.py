@@ -161,6 +161,7 @@ def test_summary_of_a_numeric_column(
         "max": finite.max(),
         "numeric": True,
         "integer": False,
+        "temporal": None,
     }
 
 
