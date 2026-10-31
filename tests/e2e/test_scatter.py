@@ -364,12 +364,14 @@ def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None
     task = status.inner_text()
     points.click(button="right")
     expect(menu.locator(".scale-menu-heading")).to_have_text("点の大きさ（全系列）")
-    menu.get_by_text("5 px", exact=True).click()
+    # The size of every series is still 7 px; picking it drops the level's 11 px.
+    expect(menu.locator(".scale-menu-item.checked")).to_have_count(0)
+    menu.get_by_text("7 px", exact=True).click()
     expect(status).not_to_have_text(task)
     page.wait_for_function(SETTLED)
-    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "5")
-    expect(shapes.first.locator("canvas")).to_have_attribute("width", "5")
-    expect(points).to_have_attribute("title", re.compile("5 px"))
+    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "7")
+    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
+    expect(points).to_have_attribute("title", re.compile("（7 px）"))
 
 
 # Number of painted pixels of the image layers.

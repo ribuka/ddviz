@@ -344,6 +344,7 @@ def test_parse_shape_sizes() -> None:
     """Each overlay level named takes one of `SHAPE_SIZES`; null is none."""
     assert parse_shape_sizes(None) == {}
     assert parse_shape_sizes({"p": 3, "q": 15}) == {"p": 3, "q": 15}
+    assert parse_shape_sizes({"__proto__": 9}) == {"__proto__": 9}
     for bad in ({"p": 4}, {"p": None}, {"p": "7"}):
         with pytest.raises(ValueError, match="shape_size"):
             parse_shape_sizes(bad)

@@ -83,7 +83,7 @@ const legend = new Legend(
   document.getElementById("legend"),
   () => layers.draw(),
   (event) =>
-    openScaleMenu(event, colorBins, setColorBins, recolor, current?.marker_size, setShapeSize),
+    openScaleMenu(event, colorBins, setColorBins, recolor, sharedSize(), setShapeSize),
   (event, kind, i) => {
     if (kind === "shape") {
       const level = current.overlay.levels[i];
@@ -91,7 +91,7 @@ const legend = new Legend(
         setLevelSize(current.overlay.column, level, size),
       );
     } else {
-      openShapeMenu(event, SIZE_HEADING, current?.marker_size, setShapeSize);
+      openShapeMenu(event, SIZE_HEADING, sharedSize(), setShapeSize);
     }
   },
 );
@@ -887,10 +887,21 @@ function setShapeSize(size) {
 
 // Draws the shapes of an overlay level in another size: the graph is plotted again.
 function setLevelSize(column, level, size) {
-  const sizes = levelSizes.get(column) ?? {};
+  // Level names come from the data: no prototype, so that "__proto__" is a
+  // name like the others.
+  const sizes = levelSizes.get(column) ?? Object.create(null);
   sizes[level] = size;
   levelSizes.set(column, sizes);
   if (plottedEncoding) plot(plottedEncoding);
+}
+
+// Returns the size of every series' markers drawn, checked in the menus of
+// the size of every series; null while overlay levels have sizes of their
+// own, so that picking any size, that one too, drops them.
+function sharedSize() {
+  if (!current) return null;
+  const sizes = current.overlay?.sizes ?? [];
+  return sizes.every((s) => s === current.marker_size) ? current.marker_size : null;
 }
 
 // Returns the text of the size of a result's markers (its meta), for the
@@ -989,7 +1000,7 @@ elementBar = new ElementBar(
   (elements) => builder.setElements(elements),
   (event) => openSmoothMenu(event, smoothing, setSmoothing),
   (event) => {
-    if (current) openShapeMenu(event, SIZE_HEADING, current.marker_size, setShapeSize);
+    if (current) openShapeMenu(event, SIZE_HEADING, sharedSize(), setShapeSize);
   },
 );
 elementBar.setSmoothText(smoothingText(smoothing));
