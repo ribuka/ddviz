@@ -26,3 +26,12 @@ wheels/
 
 # Playwright traces of failed E2E tests
 /test-results/
+
+# data
+/data/
+
+# notebooks
+/notebooks/
+
+# lnk
+*.lnk
