@@ -9,15 +9,10 @@ import polars as pl
 
 from ddviz.compute.png import encode_levels, encode_mask
 from ddviz.compute.raster import atlas, by_series, pixels, series_layer
-from ddviz.compute.shapes import spread
+from ddviz.compute.shapes import spread, spread_top
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.manifest import IMAGES
-from ddviz.shared.shapes import kernel
-
-
-def _shape(series: int, shapes: int, size: int) -> np.ndarray | None:
-    """Return the marker shape of a series, or None without an overlay (`shapes` 0)."""
-    return kernel(series % shapes, size) if shapes else None
+from ddviz.shared.shapes import marker
 
 
 def write_images(
@@ -26,8 +21,8 @@ def write_images(
     grid: BinGrid,
     ncol: int,
     colors: list[str],
-    shapes: int = 0,
-    size: int = 0,
+    shapes: int,
+    size: int,
 ) -> list[list[int] | None]:
     """Write one PNG per series into the images file; return where each lies.
 
@@ -48,12 +43,12 @@ def write_images(
         Panels to a row of tiles.
     colors : list of str
         Color of each series.
-    shapes : int, optional
+    shapes : int
         Number of overlay levels: each pixel of series ``s`` spreads into
-        the shape of overlay level ``s % shapes`` (`ddviz.shared.shapes`).
-        0 without an overlay.
-    size : int, optional
-        Size of the shapes in pixels.
+        the shape of overlay level ``s % shapes``, or into a filled circle
+        with 0, without an overlay (`ddviz.shared.shapes.marker`).
+    size : int
+        Size of the markers in pixels.
 
     Returns
     -------
@@ -66,10 +61,7 @@ def write_images(
     offset = 0
     with open(out / IMAGES, "wb") as file:
         for s, at in by_series(keys, grid):
-            layer = series_layer(pixel[at], grid)
-            shape = _shape(s, shapes, size)
-            if shape is not None:
-                layer = spread(layer, shape)
+            layer = spread(series_layer(pixel[at], grid), marker(s, shapes, size))
             png = encode_mask(atlas(layer, ncol), colors[s])
             file.write(png)
             images[s] = [offset, len(png)]
@@ -102,11 +94,12 @@ def write_gradient(
     out: Path,
     keys: np.ndarray,
     values: pl.Series,
+    rows: np.ndarray,
     grid: BinGrid,
     ncol: int,
     color_range: tuple[float, float],
-    shapes: int = 0,
-    size: int = 0,
+    shapes: int,
+    size: int,
 ) -> list[list[int] | None]:
     """Write the PNGs of a gradient into the images file, one per series; return where each lies.
 
@@ -123,15 +116,18 @@ def write_gradient(
         Keys of the non-empty bins.
     values : polars.Series
         Color value of each bin's representative row.
+    rows : numpy.ndarray
+        Index of each bin's representative row.
     grid : BinGrid
         Key space of the bins.
     ncol : int
         Panels to a row of tiles.
     color_range : tuple of float
         Values of gray 1 and gray 255.
-    shapes, size : int, optional
-        Number of overlay levels and size of their shapes, as in
-        `write_images`; where shapes overlap, the larger gray wins.
+    shapes, size : int
+        Number of overlay levels and size of the markers, as in
+        `write_images`; where the markers of a series overlap, the point of
+        the largest row is on top (`ddviz.compute.shapes.spread_top`).
 
     Returns
     -------
@@ -145,10 +141,13 @@ def write_gradient(
     offset = 0
     with open(out / IMAGES, "wb") as file:
         for s, at in by_series(keys, grid):
-            layer = series_layer(pixel[at], grid, grays[at])
-            shape = _shape(s, shapes, size)
-            if shape is not None:
-                layer = spread(layer, shape)
+            layer = spread_top(
+                pixel[at],
+                grays[at],
+                rows[at],
+                (grid.n_panels, grid.height, grid.width),
+                marker(s, shapes, size),
+            )
             png = encode_levels(atlas(layer, ncol))
             file.write(png)
             images[s] = [offset, len(png)]

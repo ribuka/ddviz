@@ -97,7 +97,7 @@ export function openSmoothMenu(event, smoothing, onPick) {
   document.body.append(menu);
   const { innerWidth, innerHeight } = window;
   const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(event.clientX, innerWidth - rect.width - 4)}px`;
-  menu.style.top = `${Math.min(event.clientY, innerHeight - rect.height - 4)}px`;
+  menu.style.left = `${Math.max(4, Math.min(event.clientX, innerWidth - rect.width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(event.clientY, innerHeight - rect.height - 4))}px`;
   open = menu;
 }

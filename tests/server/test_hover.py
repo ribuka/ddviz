@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import struct
+import zlib
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -11,13 +13,12 @@ import polars as pl
 import pytest
 
 from ddviz.compute.raster import occupancy
-from ddviz.compute.tasks.images import gradient_grays
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.server.hover import HOVER_DISTANCE, HoverIndex
 from ddviz.shared.keys import BinGrid
-from ddviz.shared.manifest import PlotManifest
+from ddviz.shared.manifest import IMAGES, PlotManifest
 from ddviz.shared.scatter import ScatterSpec
-from ddviz.shared.shapes import kernel
+from ddviz.shared.shapes import marker
 
 
 @pytest.fixture
@@ -71,17 +72,19 @@ def test_lookup_snaps_to_the_nearest_point_within_the_hover_distance(
 
 
 def test_lookup_scales_the_hover_distance_by_pixels_per_bin(index: HoverIndex) -> None:
-    """Zoomed in so that a bin spans 30px, a cursor one bin off a point finds nothing."""
-    bx, by = _occupied(index, 0, 1)
+    """Zoomed in so that a bin spans 30px, a cursor 3 bins off a lone point (off its circle) finds nothing."""
     occ = index._occupancy[0]
-    # A neighbor that is empty, so the cursor is off every point.
-    for dx in (1, -1):
-        if 0 <= bx + dx < occ.shape[1] and occ[by, bx + dx] == 0:
-            fx = bx + dx + 0.5
+    height, width = occ.shape
+    for by, bx in np.argwhere(occ):
+        if not (3 <= by < height - 3 and 3 <= bx < width - 3):
+            continue
+        if occ[by - 3 : by + 4, bx - 3 : bx + 4].sum() == 1:
+            fx = bx + 3.5
             assert index.lookup(0, fx, by + 0.5, 30.0, 30.0, [2, 1, 0]) is None
-            assert index.lookup(0, fx, by + 0.5, 1.0, 1.0, [2, 1, 0]) is not None
+            hit = index.lookup(0, fx, by + 0.5, 1.0, 1.0, [2, 1, 0])
+            assert (hit["bx"], hit["by"]) == (bx, by)
             return
-    pytest.skip("no empty neighbor next to the chosen pixel")
+    pytest.skip("no lone point")
 
 
 def _run(tmp_path: Path, spec: ScatterSpec, hover_bytes: int | None) -> Path:
@@ -142,14 +145,11 @@ def test_without_room_for_the_axes_no_hover_files_are_written(
     index.close()
 
 
-def _overlay_index(
-    points: list[tuple[int, int, int]], colors: list[float] | None = None
-) -> HoverIndex:
+def _overlay_index(points: list[tuple[int, int, int]]) -> HoverIndex:
     """Return an index of one panel of 30 x 20 bins, one color and two overlay levels (a circle and a square of 7px).
 
     Each point ``(series, bx, by)`` is a bin of one row, whose index is the
-    point's position in `points`; with `colors`, a gradient over [0, 1]
-    colors them.
+    point's position in `points`.
     """
     index = HoverIndex.__new__(HoverIndex)
     index.grid = BinGrid(n_panels=1, n_series=2, width=30, height=20)
@@ -160,10 +160,7 @@ def _overlay_index(
     index._index = order.astype(np.int64)
     index._occupancy = occupancy(index._keys, index.grid)
     index._columns = []
-    index._shapes = [kernel(i, 7)[::-1] for i in range(2)]
-    index._grays = None
-    if colors is not None:
-        index._grays = gradient_grays(pl.Series(colors), (0.0, 1.0))[order]
+    index._shapes = [marker(i, 2, 7)[::-1] for i in range(2)]
     return index
 
 
@@ -181,68 +178,75 @@ def test_lookup_finds_the_topmost_marker_shape_over_the_cursor() -> None:
     assert (hit["bx"], hit["by"]) == (13, 10)
 
 
-def test_lookup_of_overlapping_shapes_of_one_series_finds_the_one_drawn() -> None:
-    """Of one series, a point's own bin shows over a neighbor's shape, and else a gradient's larger gray does."""
-    index = _overlay_index([(1, 10, 10), (1, 13, 10)], colors=[0.8, 0.04])
+def test_lookup_of_overlapping_shapes_of_one_series_finds_the_largest_row() -> None:
+    """Of one series, the point of the largest row is drawn on top, even over another point's own bin."""
+    index = _overlay_index([(1, 10, 10), (1, 13, 10)])
     hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])
-    assert (hit["row"], hit["bx"]) == (0, 10)
-    # Two squares cover the empty bin (10, 10): the larger gray shows there.
-    index = _overlay_index([(1, 7, 10), (1, 13, 10)], colors=[0.8, 0.04])
+    assert (hit["row"], hit["bx"]) == (1, 13)
+    index = _overlay_index([(1, 13, 10), (1, 10, 10)])
     hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])
-    assert (hit["row"], hit["bx"]) == (0, 7)
-    index = _overlay_index([(1, 7, 10), (1, 13, 10)], colors=[0.04, 0.8])
+    assert (hit["row"], hit["bx"]) == (1, 10)
+    # Two squares cover the empty bin (10, 10): the larger row shows there.
+    index = _overlay_index([(1, 7, 10), (1, 13, 10)])
     assert index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])["row"] == 1
 
 
-def test_lookup_picks_the_drawn_gray_without_the_color_column(tmp_path: Path) -> None:
-    """With the color column left out of the hover files, the larger gray still shows where two shapes of a series overlap."""
-
-    def plot(x: list[float], name: str, hover_bytes: int | None = None) -> Path:
-        """Plot two squares of a series (rows 0 and 1, the first grayer) at `x`, and two corner points."""
-        path = tmp_path / f"{name}.parquet"
-        pl.DataFrame(
-            {
-                "x": [*x, 0.0, 29.0],
-                "y": [10.0, 10.0, 0.0, 19.0],
-                "c": [0.8, 0.04, 0.5, 0.5],
-                # Level q is the second shape, a square outline.
-                "o": ["q", "q", "p", "p"],
-            }
-        ).write_parquet(path)
-        # The last hover column goes first.
-        columns = ["x", "y", "o", "c"]
-        spec = ScatterSpec(
-            files={c: [str(path)] for c in columns},
-            x=["x"],
-            y=["y"],
-            color="c",
-            row=None,
-            col=None,
-            width=400,
-            height=300,
-            hover=columns,
-            gradient=True,
-            overlay="o",
-            hover_bytes=hover_bytes,
-        )
-        out = tmp_path / name
-        out.mkdir()
-        run_plot(spec, out, lambda _: None)
-        return out
-
-    first = PlotManifest.read(plot([7.0, 8.0], "first"))
-    (lo, hi), width = first.x_ranges[0], first.grid.width
-    # Squares 3 bins to a side, 6 bins apart: their sides share bin 103.
-    x = [lo + (b + 0.5) * (hi - lo) / width for b in (100, 106)]
-    full = PlotManifest.read(plot(x, "full"))
-    # Too little room for every column: the color column is left out.
-    index = HoverIndex(plot(x, "task", full.hover_bytes - 1))
+def test_a_gradient_shows_and_hovers_the_largest_row_where_circles_overlap(
+    tmp_path: Path,
+) -> None:
+    """Without an overlay, points are 5px circles; where two overlap, the later row's gray is drawn and hovered."""
+    path = tmp_path / "g.parquet"
+    pl.DataFrame(
+        {
+            "x": [5.0, 5.06, 0.0, 10.0],
+            "y": [5.0, 5.0, 0.0, 10.0],
+            "c": [0.8, 0.04, 0.5, 0.5],
+        }
+    ).write_parquet(path)
+    spec = ScatterSpec(
+        files={c: [str(path)] for c in ("x", "y", "c")},
+        x=["x"],
+        y=["y"],
+        color="c",
+        row=None,
+        col=None,
+        width=400,
+        height=300,
+        hover=["x", "y", "c"],
+        gradient=True,
+    )
+    out = tmp_path / "task"
+    out.mkdir()
+    run_plot(spec, out, lambda _: None)
+    index = HoverIndex(out)
     try:
-        assert index.manifest.hover_dropped == ["c"]
         _, _, by, bx = index.grid.unpack(np.asarray(index._keys))
-        assert sorted(bx.tolist())[1:3] == [100, 106]
-        y0 = int(by[bx == 100][0])
-        hit = index.lookup(0, 103.5, y0 + 0.5, 1.0, 1.0, [1, 0])
-        assert (hit["row"], hit["bx"]) == (0, 100)
+        rows = np.asarray(index._index)
+        x0, x1 = int(bx[rows == 0][0]), int(bx[rows == 1][0])
+        y0 = int(by[rows == 0][0])
+        assert 0 < x1 - x0 <= 4
+        # Row 1 covers row 0's own bin, as plotly draws it later.
+        hit = index.lookup(0, x0 + 0.5, y0 + 0.5, 1.0, 1.0, [0])
+        assert (hit["row"], hit["bx"]) == (1, x1)
+        layer = _gradient_layer(out, index)
+        assert layer[y0, x0] == layer[y0, x1] < 128
     finally:
         index.close()
+
+
+def _gradient_layer(out: Path, index: HoverIndex) -> np.ndarray:
+    """Return the grays of a one-panel gradient's image, row 0 at the bottom."""
+    offset, length = index.manifest.images[0]
+    png = (out / IMAGES).read_bytes()[offset : offset + length]
+    width, height = struct.unpack(">II", png[16:24])
+    data = b""
+    at = 8
+    while at < len(png):
+        size, kind = struct.unpack(">I4s", png[at : at + 8])
+        if kind == b"IDAT":
+            data += png[at + 8 : at + 8 + size]
+        at += 12 + size
+    raw = np.frombuffer(zlib.decompress(data), dtype=np.uint8).reshape(height, -1)
+    # Filter type 0 on every line (`ddviz.compute.png`).
+    assert (raw[:, 0] == 0).all()
+    return raw[:, 1 : width + 1]

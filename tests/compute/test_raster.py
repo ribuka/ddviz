@@ -33,13 +33,11 @@ def test_by_series_groups_the_keys_of_each_series() -> None:
 
 
 def test_series_layer_sets_the_pixels_of_its_keys() -> None:
-    """A series' layer holds its bins in every panel, or their values."""
+    """A series' layer holds its bins in every panel."""
     grid = BinGrid(n_panels=2, n_series=2, width=4, height=2)
     keys = np.array([grid.pack(0, 1, 1, 2), grid.pack(1, 1, 0, 3)])
     layer = series_layer(pixels(keys, grid), grid)
     assert np.argwhere(layer).tolist() == [[0, 1, 2], [1, 0, 3]]
-    values = series_layer(pixels(keys, grid), grid, np.array([7, 9], np.uint8))
-    assert values[0, 1, 2] == 7 and values[1, 0, 3] == 9 and values.sum() == 16
 
 
 def test_atlas_puts_each_panel_in_its_tile() -> None:

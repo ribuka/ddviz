@@ -1,8 +1,10 @@
 // The menu of a numeric color column's scale, opened by a right click on its
 // color bar or legend title: draw it as a gradient or cut it into intervals
 // (by the width of the values or by the number of rows), pick the color set,
-// and reverse the scale's direction.
+// and reverse the scale's direction. A gradient's legend has no markers, so
+// its menu also has the size of the points (shapemenu.js).
 import { COLOR_SETS, scale } from "./colorscale.js";
+import { SIZE_HEADING, SIZES } from "./shapemenu.js";
 
 // Numbers of intervals offered (`ddviz.server.plan.COLOR_BINS`).
 const COUNTS = [2, 3, 5, 10];
@@ -32,8 +34,10 @@ window.addEventListener("keydown", (event) => {
 // Opens the menu at a right click; the counts and the way to cut are two
 // lists, so that each count shows once. `bins` is the current cutting ({n, by})
 // or null for a gradient. `onBins` gets the cutting picked (null for a
-// gradient); `onScale` runs after a new color set or direction.
-export function openScaleMenu(event, bins, onBins, onScale) {
+// gradient); `onScale` runs after a new color set or direction. For a
+// gradient, `size` is the size of the markers and `onSize` gets the size
+// picked.
+export function openScaleMenu(event, bins, onBins, onScale, size, onSize) {
   close();
   const menu = document.createElement("div");
   menu.className = "scale-menu";
@@ -83,10 +87,16 @@ export function openScaleMenu(event, bins, onBins, onScale) {
     scale.reverse = !scale.reverse;
     onScale();
   });
+  if (bins === null) {
+    heading(SIZE_HEADING);
+    for (const pick of SIZES) {
+      item(`${pick} px`, pick === size, () => pick !== size && onSize(pick));
+    }
+  }
   document.body.append(menu);
   const { innerWidth, innerHeight } = window;
   const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(event.clientX, innerWidth - rect.width - 4)}px`;
-  menu.style.top = `${Math.min(event.clientY, innerHeight - rect.height - 4)}px`;
+  menu.style.left = `${Math.max(4, Math.min(event.clientX, innerWidth - rect.width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(event.clientY, innerHeight - rect.height - 4))}px`;
   open = menu;
 }

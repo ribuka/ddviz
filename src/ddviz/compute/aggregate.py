@@ -644,7 +644,7 @@ def aggregate(
             selected = selected.join(
                 colors, on=INDEX, how="left", maintain_order="left"
             )
-            selected = selected.select(KEY, COUNT, spec.color)
+            selected = selected.select(KEY, COUNT, INDEX, spec.color)
         else:
             selected = selected.select(KEY, COUNT)
         selected_rows = (

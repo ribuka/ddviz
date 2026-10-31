@@ -10,7 +10,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from ddviz.compute.aggregate import COUNT, aggregate
+from ddviz.compute.aggregate import COUNT, INDEX, aggregate
 from ddviz.compute.cuts import cut_labels, find_cuts
 from ddviz.compute.tasks.plot import run_plot, run_selection
 from ddviz.server.encoding import Encoding
@@ -246,7 +246,7 @@ def test_gradient_writes_one_image_of_grays(tmp_path: Path, path: Path) -> None:
         selection=Selection(x="x", y="y", x_range=[-1.0, 1.0], y_range=[-1.0, 1.0]),
     )
     agg = aggregate(sel, selection_only=True)
-    assert agg.selected.columns == ["__key", COUNT, "v"]
+    assert agg.selected.columns == ["__key", COUNT, INDEX, "v"]
     layer = tmp_path / "layer"
     layer.mkdir()
     run_selection(sel, layer, lambda _: None)

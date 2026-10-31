@@ -10,11 +10,13 @@
 // the overlay levels (marker shapes) are two legends, each toggled on its
 // own: a series (a pair of a color and an overlay level) is inactive when
 // either of its levels is. A right click on an item's marker opens the menu
-// of the markers (`onMarkerMenu`): the size of the shapes.
+// of the markers (`onMarkerMenu`): the size of the markers (the overlay's
+// shapes, or the circles of the points without one).
 //
 // A numeric color column shows its scale instead (colorscale.js): a color
 // bar for a gradient, or its intervals in colors spread over the scale. A
-// right click on the bar or on the title opens the scale's menu.
+// right click on the bar or on the title opens the scale's menu, which for a
+// gradient also has the size of the markers.
 import { cssColor, levelColors } from "./colorscale.js";
 import { formatTemporal } from "./temporal.js";
 
@@ -148,16 +150,13 @@ export class Legend {
       event.preventDefault();
       this.isolate(kind, i);
     });
-    // The markers have options only while shapes are drawn: their size.
-    if (this.meta.overlay) {
-      marker.classList.add("menu");
-      marker.title = "右クリックで形の大きさを変える";
-      marker.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        this.onMarkerMenu(event);
-      });
-    }
+    marker.classList.add("menu");
+    marker.title = "右クリックで点の大きさを変える";
+    marker.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.onMarkerMenu(event);
+    });
     return item;
   }
 

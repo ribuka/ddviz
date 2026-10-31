@@ -201,7 +201,6 @@ def _overlay(manifest: PlotManifest) -> dict | None:
     return {
         "column": spec.overlay,
         "levels": [str(v) for v in levels],
-        "size": spec.shape_size,
         "kernels": [
             kernel(i, spec.shape_size).astype(int).tolist() for i in range(len(levels))
         ],
@@ -386,6 +385,8 @@ def build_figure(manifest: PlotManifest) -> dict:
         "series": [str(v) for v in levels["color"]],
         "color": _color_scale(manifest),
         "overlay": _overlay(manifest),
+        # Size in pixels of the markers (`ddviz.shared.shapes.marker`).
+        "marker_size": spec.shape_size,
         "colors": manifest.colors,
         "images": manifest.images,
         "ncol": layout.ncol,

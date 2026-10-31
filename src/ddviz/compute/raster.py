@@ -60,9 +60,7 @@ def by_series(keys: np.ndarray, grid: BinGrid) -> Iterator[tuple[int, np.ndarray
         yield int(ordered[start]), order[start:end]
 
 
-def series_layer(
-    pixel: np.ndarray, grid: BinGrid, values: np.ndarray | None = None
-) -> np.ndarray:
+def series_layer(pixel: np.ndarray, grid: BinGrid) -> np.ndarray:
     """Return a layer of every panel with the given pixels set.
 
     Parameters
@@ -71,17 +69,14 @@ def series_layer(
         Pixels (`pixels`) of one series' keys.
     grid : BinGrid
         Key space of the bins.
-    values : numpy.ndarray, optional
-        uint8 value of each pixel; True without.
 
     Returns
     -------
     numpy.ndarray
-        Boolean (or uint8) array of shape ``(n_panels, height, width)``.
+        Boolean array of shape ``(n_panels, height, width)``.
     """
-    dtype = bool if values is None else np.uint8
-    dense = np.zeros(grid.n_panels * grid.height * grid.width, dtype=dtype)
-    dense[pixel] = True if values is None else values
+    dense = np.zeros(grid.n_panels * grid.height * grid.width, dtype=bool)
+    dense[pixel] = True
     return dense.reshape(grid.n_panels, grid.height, grid.width)
 
 

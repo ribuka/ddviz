@@ -7,9 +7,11 @@ from dataclasses import asdict, dataclass, field
 # Default of the most levels a color, overlay, row or col column may have
 # (`ScatterSpec.max_levels`).
 MAX_LEVELS = 100
-# Default size in pixels of the marker shapes of the overlay levels
-# (`ScatterSpec.shape_size`).
+# Default size in pixels of the markers (`ScatterSpec.shape_size`): the
+# shapes of the overlay levels, and the filled circles of the points without
+# an overlay.
 SHAPE_SIZE = 7
+POINT_SIZE = 5
 # The x column of a graph whose X is empty: a categorical column of one
 # level, so that every row lies in one band. It is no column of the data;
 # the scan makes it (`ddviz.compute.scan.scan_columns`).
@@ -310,12 +312,14 @@ class ScatterSpec:
         draws only the lines.
     overlay : str or None
         Column whose levels draw the points in marker shapes
-        (`ddviz.shared.shapes`), or None for plain pixels. The series are
+        (`ddviz.shared.shapes`), or None for filled circles. The series are
         then the pairs of a color level and an overlay level: series ``s``
         has color level ``s // n`` and overlay level ``s % n``, where ``n``
         counts the overlay levels.
     shape_size : int
-        Width and height in pixels of the marker shapes, odd.
+        Width and height in pixels of the markers, odd: the overlay's
+        shapes, or the circles without an overlay
+        (`ddviz.shared.shapes.marker`).
     temporal : dict of str to str
         The kind of each temporal column read (`ddviz.shared.temporal.KINDS`).
         Such a column is numeric: it is read as numbers
@@ -347,7 +351,7 @@ class ScatterSpec:
     box: bool = False
     smooth: Smoothing | None = None
     overlay: str | None = None
-    shape_size: int = SHAPE_SIZE
+    shape_size: int = POINT_SIZE
     temporal: dict[str, str] = field(default_factory=dict)
 
     def box_pairs(self) -> set[tuple[str, str]]:
