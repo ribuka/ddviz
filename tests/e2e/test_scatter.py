@@ -425,3 +425,66 @@ def test_the_mode_bar_saves_the_plot_data(app_page: Page) -> None:
     status = page.locator("#status").text_content()
     assert f" {table['count'].sum():,} 行" in status
     expect(menu).to_have_count(0)
+
+
+def drop_at(page: Page, column: str, role: str, x: float, y: float) -> None:
+    """Drag a column from the list onto a role's zone at a point relative to the zone, and wait for the plot."""
+    source = page.locator("#columns .column").filter(
+        has=page.get_by_text(column, exact=True)
+    )
+    zone = page.locator(f'.zone[data-role="{role}"]')
+    source.drag_to(zone, target_position={"x": x, "y": y})
+    page.wait_for_function(SETTLED)
+
+
+def test_axis_drops_replace_except_near_chip_edges_and_on_the_plus(
+    app_page: Page,
+) -> None:
+    """On X and Y, a drop away from the chips' edges replaces the nearest chip; one near an edge or on the "+" goes in as an n-th axis."""
+    page = app_page
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    x_zone = page.locator('.zone[data-role="x"]')
+    y_zone = page.locator('.zone[data-role="y"]')
+    x_names = x_zone.locator(".chip-name")
+    y_names = y_zone.locator(".chip-name")
+
+    # The empty end of the zone, far from the chip, replaces it.
+    zone = x_zone.bounding_box()
+    drop_at(page, "y", "x", zone["width"] - 4, zone["height"] / 2)
+    expect(x_names).to_have_text(["y"])
+    # The "+" after the chips goes in last.
+    plus = x_zone.locator(".zone-add").bounding_box()
+    zone = x_zone.bounding_box()
+    drop_at(
+        page, "x", "x", plus["x"] - zone["x"] + plus["width"] / 2, zone["height"] / 2
+    )
+    expect(x_names).to_have_text(["y", "x"])
+    # Just outside a chip's leading edge goes in before it.
+    chip = x_zone.locator(".chip").first.bounding_box()
+    drop_at(page, "facet", "x", chip["x"] - zone["x"] - 6, zone["height"] / 2)
+    expect(x_names).to_have_text(["facet", "y", "x"])
+
+    # Y runs top to bottom: the empty bottom end replaces the last chip.
+    zone = y_zone.bounding_box()
+    drop_at(page, "x", "y", zone["width"] / 2, zone["height"] - 4)
+    expect(y_names).to_have_text(["x"])
+    # Just inside a chip's top edge goes in above it.
+    chip = y_zone.locator(".chip").first.bounding_box()
+    drop_at(page, "y", "y", zone["width"] / 2, chip["y"] - zone["y"] + 4)
+    expect(y_names).to_have_text(["y", "x"])
+
+
+def test_the_side_stacks_overlay_color_and_the_legend(app_page: Page) -> None:
+    """The pane right of the figure holds Overlay, then Color, then the legend, top to bottom."""
+    page = app_page
+    tops = [
+        page.locator(selector).bounding_box()["y"]
+        for selector in [
+            '#side [data-role="overlay"]',
+            '#side [data-role="color"]',
+            "#legend",
+        ]
+    ]
+    assert tops == sorted(tops)
