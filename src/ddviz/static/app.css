@@ -1181,12 +1181,20 @@ button {
   display: flex;
   flex-direction: column;
   min-width: 170px;
+  /* A small window scrolls the menu instead of pushing its top off screen. */
+  box-sizing: border-box;
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
   padding: 4px 0;
   background: #fff;
   border: 1px solid #ccc;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgb(0 0 0 / 20%);
   font-size: 12px;
+}
+
+.scale-menu > * {
+  flex: none;
 }
 
 .scale-menu-heading {

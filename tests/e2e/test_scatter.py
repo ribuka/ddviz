@@ -403,6 +403,17 @@ def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     page.wait_for_function(SETTLED)
     page.wait_for_function(PAINTED_PIXEL)
 
+    # In a low window the longer menu stays on screen and scrolls.
+    page.set_viewport_size({"width": 1280, "height": 400})
+    page.wait_for_function(SETTLED)
+    bar.click(button="right")
+    box = menu.bounding_box()
+    assert box["y"] >= 0 and box["y"] + box["height"] <= 400
+    expect(menu.get_by_text("15 px", exact=True)).not_to_be_in_viewport()
+    item = menu.get_by_text("2 個", exact=True)
+    item.scroll_into_view_if_needed()
+    expect(item).to_be_in_viewport()
+
 
 def overlaps(a: dict, b: dict) -> bool:
     """Whether two bounding boxes overlap."""
