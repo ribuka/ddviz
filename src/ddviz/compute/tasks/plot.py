@@ -70,6 +70,7 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     bitmask = occupancy(keys, agg.grid)
     colors = _colors(spec, agg.grid.n_series, agg.levels)
     shapes = _shapes(spec, agg.levels)
+    sizes = spec.marker_sizes(agg.levels["overlay"])
     if spec.gradient:
         images = write_gradient(
             out,
@@ -80,11 +81,11 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
             agg.layout.ncol,
             agg.color_range,
             shapes,
-            spec.shape_size,
+            sizes,
         )
     else:
         images = write_images(
-            out, keys, agg.grid, agg.layout.ncol, colors, shapes, spec.shape_size
+            out, keys, agg.grid, agg.layout.ncol, colors, shapes, sizes
         )
 
     emit({"type": "progress", "stage": "write"})
@@ -155,6 +156,7 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     emit({"type": "progress", "stage": "raster"})
     keys = agg.selected[KEY].to_numpy()
     shapes = _shapes(spec, agg.levels)
+    sizes = spec.marker_sizes(agg.levels["overlay"])
     if spec.gradient:
         images = write_gradient(
             out,
@@ -165,12 +167,12 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
             agg.layout.ncol,
             agg.color_range,
             shapes,
-            spec.shape_size,
+            sizes,
         )
     else:
         colors = _colors(spec, agg.grid.n_series, agg.levels)
         images = write_images(
-            out, keys, agg.grid, agg.layout.ncol, colors, shapes, spec.shape_size
+            out, keys, agg.grid, agg.layout.ncol, colors, shapes, sizes
         )
     SelectionManifest(
         selection=spec.selection,

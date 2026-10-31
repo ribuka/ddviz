@@ -198,11 +198,14 @@ def _overlay(manifest: PlotManifest) -> dict | None:
     if spec.overlay is None:
         return None
     levels = manifest.levels["overlay"]
+    sizes = spec.marker_sizes(levels)
     return {
         "column": spec.overlay,
         "levels": [str(v) for v in levels],
+        # Size in pixels of each level's shapes (`ScatterSpec.marker_sizes`).
+        "sizes": sizes if levels else [],
         "kernels": [
-            kernel(i, spec.shape_size).astype(int).tolist() for i in range(len(levels))
+            kernel(i, sizes[i]).astype(int).tolist() for i in range(len(levels))
         ],
     }
 
@@ -385,7 +388,9 @@ def build_figure(manifest: PlotManifest) -> dict:
         "series": [str(v) for v in levels["color"]],
         "color": _color_scale(manifest),
         "overlay": _overlay(manifest),
-        # Size in pixels of the markers (`ddviz.shared.shapes.marker`).
+        # Size in pixels of the markers of every series
+        # (`ddviz.shared.shapes.marker`); an overlay level may have its own
+        # (`overlay.sizes`).
         "marker_size": spec.shape_size,
         "colors": manifest.colors,
         "images": manifest.images,

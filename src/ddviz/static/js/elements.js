@@ -7,7 +7,9 @@
 // columns alone (`ddviz.server.plan.has_box_pair`), smoothing lines a numeric X column and
 // a numeric Y column (`ddviz.server.plan.has_smooth_pair`): without them,
 // their icon cannot be pressed either. A right click on the smoothing
-// lines' icon opens their menu (smoothmenu.js).
+// lines' icon opens their menu (smoothmenu.js), and one on the points' icon
+// the menu of the size of the markers (shapemenu.js) while a scatter plot
+// is drawn; otherwise, nothing opens.
 
 const ELEMENTS = [
   {
@@ -34,14 +36,18 @@ const ELEMENTS = [
 
 export class ElementBar {
   // `root` takes the icons; `onChange` gets the chosen elements, in the
-  // order of `ELEMENTS`, after each toggle; `onSmoothMenu` the right click's
-  // event on the smoothing lines' icon.
-  constructor(root, onChange, onSmoothMenu) {
+  // order of `ELEMENTS`, after each toggle; `onSmoothMenu` and
+  // `onPointsMenu` the right click's event on the smoothing lines' icon and
+  // on the points' icon.
+  constructor(root, onChange, onSmoothMenu, onPointsMenu) {
     this.chosen = new Set(["points"]);
     // Elements the graph cannot have now, though they can be drawn.
     this.blocked = new Set(["box", "smooth"]);
     // How the smoothing lines are fitted, shown in their icon's title.
     this.smoothText = "";
+    // Size of the markers of the graph drawn, shown in the points' icon's
+    // title; null while none is drawn, when the icon has no menu.
+    this.pointsText = null;
     this.onChange = onChange;
     this.buttons = ELEMENTS.map((element) => {
       const button = document.createElement("button");
@@ -55,6 +61,12 @@ export class ElementBar {
         button.addEventListener("contextmenu", (event) => {
           event.preventDefault();
           if (this.usable(element)) onSmoothMenu(event);
+        });
+      }
+      if (element.name === "points") {
+        button.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          if (this.pointsMenu()) onPointsMenu(event);
         });
       }
       root.append(button);
@@ -85,6 +97,19 @@ export class ElementBar {
     this.render();
     if (changed) this.emit();
     return changed;
+  }
+
+  // Whether the points' icon opens the menu of the markers' size: while a
+  // scatter plot (a graph with the points element) is drawn.
+  pointsMenu() {
+    return this.pointsText !== null && this.chosen.has("points");
+  }
+
+  // Shows the size of the markers drawn in the points' icon's title, or
+  // null when no graph is drawn.
+  setPointsText(text) {
+    this.pointsText = text;
+    this.render();
   }
 
   // Shows how the smoothing lines are fitted in their icon's title.
@@ -121,9 +146,15 @@ export class ElementBar {
       button.classList.toggle("on", on);
       button.setAttribute("aria-pressed", String(on));
       button.disabled = !this.usable(element);
+      const points = element.name === "points" && this.pointsMenu();
       const label =
-        element.name === "smooth" && this.smoothText ? `${element.label}（${this.smoothText}）` : element.label;
-      const menu = element.name === "smooth" ? "。右クリックで方式を選ぶ" : "";
+        element.name === "smooth" && this.smoothText
+          ? `${element.label}（${this.smoothText}）`
+          : points
+            ? `${element.label}（${this.pointsText}）`
+            : element.label;
+      const menu =
+        element.name === "smooth" ? "。右クリックで方式を選ぶ" : points ? "。右クリックで大きさを変える" : "";
       button.title = !element.drawn
         ? `${label}（まだ描けない）`
         : this.blocked.has(element.name)

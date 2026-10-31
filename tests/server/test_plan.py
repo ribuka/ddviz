@@ -12,6 +12,7 @@ from ddviz.server.plan import (
     has_box_pair,
     parse_filters,
     parse_shape_size,
+    parse_shape_sizes,
     parse_smoothing,
     parse_wrap_cols,
     scatter_spec,
@@ -337,3 +338,28 @@ def test_scatter_keeps_the_kinds_of_the_temporal_columns_it_reads() -> None:
     assert spec.temporal == {"t": "datetime", "d": "date"}
     assert spec.categorical == []
     assert "row" in spec.binned
+
+
+def test_parse_shape_sizes() -> None:
+    """Each overlay level named takes one of `SHAPE_SIZES`; null is none."""
+    assert parse_shape_sizes(None) == {}
+    assert parse_shape_sizes({"p": 3, "q": 15}) == {"p": 3, "q": 15}
+    assert parse_shape_sizes({"__proto__": 9}) == {"__proto__": 9}
+    for bad in ({"p": 4}, {"p": None}, {"p": "7"}):
+        with pytest.raises(ValueError, match="shape_size"):
+            parse_shape_sizes(bad)
+
+
+def test_overlay_levels_take_their_own_sizes() -> None:
+    """A level named in `shape_sizes` takes its size, the others `shape_size`; without shapes, none."""
+    files = {c: [f"{c}.parquet"] for c in ("a", "b", "g", "o")}
+    shapes = Encoding(x=("a",), y=("b",), color="g", overlay="o")
+    spec = scatter_spec(
+        shapes, files, 400, 300, ["#000000"], shape_size=9, shape_sizes={"q": 3}
+    )
+    assert spec.marker_sizes(["p", "q", "r"]) == [9, 3, 9]
+    assert spec.marker_sizes([]) == [9]
+    circles = Encoding(x=("a",), y=("b",), overlay="o")
+    spec = scatter_spec(circles, files, 400, 300, ["#000000"], shape_sizes={"q": 3})
+    assert spec.shape_sizes == {}
+    assert spec.marker_sizes(["q"]) == [POINT_SIZE]

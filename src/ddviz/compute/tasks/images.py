@@ -22,7 +22,7 @@ def write_images(
     ncol: int,
     colors: list[str],
     shapes: int,
-    size: int,
+    sizes: list[int],
 ) -> list[list[int] | None]:
     """Write one PNG per series into the images file; return where each lies.
 
@@ -47,8 +47,10 @@ def write_images(
         Number of overlay levels: each pixel of series ``s`` spreads into
         the shape of overlay level ``s % shapes``, or into a filled circle
         with 0, without an overlay (`ddviz.shared.shapes.marker`).
-    size : int
-        Size of the markers in pixels.
+    sizes : list of int
+        Size of the markers in pixels: series ``s`` takes item
+        ``s % len(sizes)``, one per overlay level
+        (`ddviz.shared.scatter.ScatterSpec.marker_sizes`).
 
     Returns
     -------
@@ -61,7 +63,9 @@ def write_images(
     offset = 0
     with open(out / IMAGES, "wb") as file:
         for s, at in by_series(keys, grid):
-            layer = spread(series_layer(pixel[at], grid), marker(s, shapes, size))
+            layer = spread(
+                series_layer(pixel[at], grid), marker(s, shapes, sizes[s % len(sizes)])
+            )
             png = encode_mask(atlas(layer, ncol), colors[s])
             file.write(png)
             images[s] = [offset, len(png)]
@@ -99,7 +103,7 @@ def write_gradient(
     ncol: int,
     color_range: tuple[float, float],
     shapes: int,
-    size: int,
+    sizes: list[int],
 ) -> list[list[int] | None]:
     """Write the PNGs of a gradient into the images file, one per series; return where each lies.
 
@@ -124,8 +128,10 @@ def write_gradient(
         Panels to a row of tiles.
     color_range : tuple of float
         Values of gray 1 and gray 255.
-    shapes, size : int
-        Number of overlay levels and size of the markers, as in
+    shapes : int
+        Number of overlay levels, as in `write_images`.
+    sizes : list of int
+        Size of the markers, as in
         `write_images`; where the markers of a series overlap, the point of
         the largest row is on top (`ddviz.compute.shapes.spread_top`).
 
@@ -146,7 +152,7 @@ def write_gradient(
                 grays[at],
                 rows[at],
                 (grid.n_panels, grid.height, grid.width),
-                marker(s, shapes, size),
+                marker(s, shapes, sizes[s % len(sizes)]),
             )
             png = encode_levels(atlas(layer, ncol))
             file.write(png)

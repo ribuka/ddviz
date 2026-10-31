@@ -250,3 +250,13 @@ def _gradient_layer(out: Path, index: HoverIndex) -> np.ndarray:
     # Filter type 0 on every line (`ddviz.compute.png`).
     assert (raw[:, 0] == 0).all()
     return raw[:, 1 : width + 1]
+
+
+def test_lookup_reaches_as_far_as_each_level_s_own_size() -> None:
+    """A level's larger shapes answer farther than the first level's size."""
+    index = _overlay_index([(0, 5, 10), (1, 14, 10)])
+    # The circle of level 0 is 3px, the square of level 1 15px: its left
+    # side is 7 bins from its center.
+    index._shapes = [marker(0, 2, 3)[::-1], marker(1, 2, 15)[::-1]]
+    hit = index.lookup(0, 7.5, 10.5, 1.0, 1.0, [1, 0])
+    assert (hit["series"], hit["bx"], hit["by"]) == (1, 14, 10)

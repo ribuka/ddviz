@@ -323,7 +323,7 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
 
 
 def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
-    """Overlay beside color shows a legend of shapes, toggled on its own; a marker's menu changes their size, which plots again."""
+    """Overlay beside color shows a legend of shapes, toggled on its own; a marker's menu changes its level's size, the points' icon every level's."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
@@ -345,13 +345,33 @@ def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None
     task = status.inner_text()
     shapes.nth(1).locator(".legend-marker").click(button="right")
     menu = page.locator(".shape-menu")
+    expect(menu.locator(".scale-menu-heading")).to_have_text(
+        re.compile("^形「.+」の大きさ$")
+    )
     expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
     menu.get_by_text("11 px", exact=True).click()
     expect(menu).to_have_count(0)
     expect(status).not_to_have_text(task)
     page.wait_for_function(SETTLED)
-    expect(shapes.first.locator("canvas")).to_have_attribute("width", "11")
+    # Only that level's shapes grow.
+    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "11")
+    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
     page.wait_for_function(PAINTED_PIXEL)
+    points = page.locator('#elements .element[data-element="points"]')
+    expect(points).to_have_attribute("title", re.compile("7〜11 px"))
+
+    # The points' icon sizes every level, dropping the level's own size.
+    task = status.inner_text()
+    points.click(button="right")
+    expect(menu.locator(".scale-menu-heading")).to_have_text("点の大きさ（全系列）")
+    # The size of every series is still 7 px; picking it drops the level's 11 px.
+    expect(menu.locator(".scale-menu-item.checked")).to_have_count(0)
+    menu.get_by_text("7 px", exact=True).click()
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "7")
+    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
+    expect(points).to_have_attribute("title", re.compile("（7 px）"))
 
 
 # Number of painted pixels of the image layers.
@@ -367,14 +387,27 @@ PAINTED_COUNT = """() => {
 def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     app_page: Page,
 ) -> None:
-    """Without an overlay the points are 5px circles; the marker's menu, or a gradient's color bar menu, changes their size."""
+    """Without an overlay the points are 5px circles; the points' icon, the marker's menu, or a gradient's color bar menu changes their size."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
+    # Without a scatter plot, the points' icon opens no menu.
+    points = page.locator('#elements .element[data-element="points"]')
+    points.click(button="right")
+    expect(page.locator(".shape-menu")).to_have_count(0)
     place(page, "x", "x", plots=False)
     place(page, "y", "y")
     page.wait_for_function(PAINTED_PIXEL)
     small = page.evaluate(PAINTED_COUNT)
+    expect(points).to_have_attribute(
+        "title", re.compile("5 px.*右クリックで大きさを変える")
+    )
+    points.click(button="right")
+    menu = page.locator(".shape-menu")
+    expect(menu.locator(".scale-menu-heading")).to_have_text("点の大きさ（全系列）")
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("5 px")
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
 
     status = page.locator("#status")
     task = status.inner_text()
@@ -395,7 +428,7 @@ def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     task = status.inner_text()
     bar.click(button="right")
     menu = page.locator(".scale-menu")
-    expect(menu.get_by_text("点の大きさ（凡例全体）")).to_be_visible()
+    expect(menu.get_by_text("点の大きさ（全系列）")).to_be_visible()
     expect(menu.locator(".scale-menu-item.checked").last).to_have_text("9 px")
     menu.get_by_text("3 px", exact=True).click()
     expect(menu).to_have_count(0)

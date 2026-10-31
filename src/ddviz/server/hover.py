@@ -44,13 +44,16 @@ class HoverIndex:
             (c.name, np.load(out / c.file, mmap_mode="r"), c.labels)
             for c in self.manifest.columns
         ]
-        # The marker of each overlay level, or the circle without an
-        # overlay, rows from the bottom as the bins: a series' points cover
-        # the bins of their marker (`ddviz.compute.shapes`).
+        # The marker of each overlay level, in its size, or the circle
+        # without an overlay, rows from the bottom as the bins: a series'
+        # points cover the bins of their marker (`ddviz.compute.shapes`).
         spec = self.manifest.spec
-        shapes = len(self.manifest.levels["overlay"]) if spec.overlay else 0
+        levels = self.manifest.levels["overlay"]
+        shapes = len(levels) if spec.overlay else 0
+        sizes = spec.marker_sizes(levels)
         self._shapes = [
-            marker(i, shapes, spec.shape_size)[::-1] for i in range(max(shapes, 1))
+            marker(i, shapes, sizes[i % len(sizes)])[::-1]
+            for i in range(max(shapes, 1))
         ]
 
     def close(self) -> None:
@@ -82,7 +85,7 @@ class HoverIndex:
         cx, cy = math.floor(fx), math.floor(fy)
         if not (0 <= cx < grid.width and 0 <= cy < grid.height):
             return None
-        half = self._shapes[0].shape[0] // 2
+        half = max(shape.shape[0] for shape in self._shapes) // 2
         x0, y0 = max(cx - half, 0), max(cy - half, 0)
         x1, y1 = min(cx + half + 1, grid.width), min(cy + half + 1, grid.height)
         rank = {s: i for i, s in enumerate(order)}
@@ -91,7 +94,11 @@ class HoverIndex:
             by, bx = int(py) + y0, int(px) + x0
             for s, i in self._series_at(panel, by, bx).items():
                 shape = self._shapes[s % len(self._shapes)]
-                if not shape[cy - by + half, cx - bx + half]:
+                h = shape.shape[0] // 2
+                dy, dx = cy - by + h, cx - bx + h
+                if not (0 <= dy < len(shape) and 0 <= dx < len(shape)):
+                    continue
+                if not shape[dy, dx]:
                     continue
                 score = (
                     -rank.get(s, len(order) + grid.n_series - s),

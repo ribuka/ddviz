@@ -320,6 +320,9 @@ class ScatterSpec:
         Width and height in pixels of the markers, odd: the overlay's
         shapes, or the circles without an overlay
         (`ddviz.shared.shapes.marker`).
+    shape_sizes : dict of str to int
+        Size of the shapes of single overlay levels, by the level's name
+        (`marker_sizes`), in place of `shape_size`.
     temporal : dict of str to str
         The kind of each temporal column read (`ddviz.shared.temporal.KINDS`).
         Such a column is numeric: it is read as numbers
@@ -352,6 +355,7 @@ class ScatterSpec:
     smooth: Smoothing | None = None
     overlay: str | None = None
     shape_size: int = POINT_SIZE
+    shape_sizes: dict[str, int] = field(default_factory=dict)
     temporal: dict[str, str] = field(default_factory=dict)
 
     def box_pairs(self) -> set[tuple[str, str]]:
@@ -407,6 +411,26 @@ class ScatterSpec:
             plots nor smoothing lines.
         """
         return self.points or (x, y) not in self.box_pairs() | self.smooth_pairs()
+
+    def marker_sizes(self, overlay_levels: list) -> list[int]:
+        """Return the size of the markers of each overlay level.
+
+        Parameters
+        ----------
+        overlay_levels : list
+            The overlay's levels drawn.
+
+        Returns
+        -------
+        list of int
+            The size of each level's shapes, from `shape_sizes` by the
+            level's name or else `shape_size`; series ``s`` takes item
+            ``s % len``. Without an overlay (or levels), the one size of the
+            circles.
+        """
+        if self.overlay is None or not overlay_levels:
+            return [self.shape_size]
+        return [self.shape_sizes.get(str(v), self.shape_size) for v in overlay_levels]
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.
