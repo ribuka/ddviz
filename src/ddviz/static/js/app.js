@@ -10,6 +10,7 @@ import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
+import { StatusLine, Toasts, errorText } from "./notice.js";
 import { openScaleMenu } from "./scalemenu.js";
 import { DEFAULT_SHAPE_SIZE, openShapeMenu } from "./shapemenu.js";
 import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
@@ -17,7 +18,7 @@ import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
 import { linearRange } from "./temporal.js";
 
-const status = document.getElementById("status");
+const statusLine = new StatusLine(document.getElementById("status"), new Toasts(document.getElementById("toasts")));
 const hoverWarning = document.getElementById("hover-warning");
 const info = document.getElementById("info");
 const gd = document.getElementById("plot");
@@ -70,7 +71,7 @@ events.onmessage = (event) => {
     return;
   }
   converting.hidden = true;
-  status.textContent = `task ${message.task}: ${message.stage}`;
+  statusLine.show(`task ${message.task}: ${message.stage}`);
 };
 
 // The overview (whole data range) as the server sent it with the size it was
@@ -261,7 +262,7 @@ async function plot(encoding) {
     shape_size: shapeSize,
   };
   requestedSize = size;
-  status.textContent = "集約中…";
+  statusLine.show("集約中…");
   const mine = ++generation;
   plotting = mine;
   const started = performance.now();
@@ -283,7 +284,7 @@ async function plot(encoding) {
   const text = await response.text();
   if (!response.ok) {
     converting.hidden = true;
-    status.textContent = `エラー: ${text}`;
+    statusLine.error(errorText(text));
     return;
   }
   converting.hidden = true;
@@ -316,7 +317,7 @@ async function plot(encoding) {
   gd.on("plotly_deselect", () => {
     if (!ownReact) clearSelection();
   });
-  status.textContent = rowsText(meta);
+  statusLine.show(rowsText(meta));
   const bitmaps = await images;
   if (overview?.meta !== meta) {
     closeImages(bitmaps);
@@ -531,7 +532,7 @@ async function followSelection() {
     layers.setSelection({ box });
   }
   selection.base = meta.task;
-  status.textContent = "選んだ行を集約中…";
+  statusLine.show("選んだ行を集約中…");
   // Once the server holds the selection, it is asked again by its facet
   // levels, which the server keeps, not by the panel's index.
   const { panel, x_range, y_range } = box;
@@ -545,7 +546,7 @@ async function followSelection() {
   if (!response.ok) {
     // Killed by a newer aggregation: asked again once its result is drawn.
     selection.base = null;
-    if (response.status !== 409) status.textContent = `エラー: ${await response.text()}`;
+    if (response.status !== 409) statusLine.error(errorText(await response.text()));
     return;
   }
   const layer = await response.json();
@@ -565,7 +566,7 @@ async function followSelection() {
   selection.layer = layer;
   selection.held = true;
   layers.setSelection({ meta, bitmaps });
-  status.textContent = `選んだ行：${layer.rows.toLocaleString()} 行（${layer.task_seconds.toFixed(1)} 秒）`;
+  statusLine.show(`選んだ行：${layer.rows.toLocaleString()} 行（${layer.task_seconds.toFixed(1)} 秒）`);
   // A new filter changes the selected rows: the table starts again.
   const key = filtersKey(meta.filters);
   if (selection.fresh || selection.filters !== key) {
@@ -585,7 +586,7 @@ function clearSelection(server = true) {
   table.show(null);
   if (server) {
     fetch("/api/selection", { method: "DELETE" });
-    if (current) status.textContent = rowsText(current);
+    if (current) statusLine.show(rowsText(current));
   }
 }
 
@@ -608,7 +609,7 @@ async function showOverview() {
   setPending(false);
   shownSize = size;
   await draw(figure.data, figure.layout, meta, bitmaps);
-  status.textContent = rowsText(meta);
+  statusLine.show(rowsText(meta));
   setInfo();
 }
 
@@ -626,7 +627,7 @@ async function requestOverview() {
   const size = stageSize();
   requestedSize = size;
   requested = { x: [], y: [] };
-  status.textContent = "大きさに合わせて集約中…";
+  statusLine.show("大きさに合わせて集約中…");
   setPending(true);
   const started = performance.now();
   const response = await fetch("/api/overview", {
@@ -637,7 +638,7 @@ async function requestOverview() {
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
     setPending(false);
-    status.textContent = `エラー: ${await response.text()}`;
+    statusLine.error(errorText(await response.text()));
     return;
   }
   const { figure, meta } = await response.json();
@@ -659,7 +660,7 @@ async function requestOverview() {
   hideHover();
   if (!drawn) await draw(figure.data, figure.layout, meta, bitmaps);
   if (mine === generation) setPending(false);
-  status.textContent = rowsText(meta);
+  statusLine.show(rowsText(meta));
   setInfo();
 }
 
@@ -671,7 +672,7 @@ async function requestView({ x: xRanges, y: yRanges }) {
   const size = stageSize();
   requestedSize = size;
   requested = { x: xRanges, y: yRanges };
-  status.textContent = "表示範囲を集約中…";
+  statusLine.show("表示範囲を集約中…");
   setPending(true);
   const started = performance.now();
   const response = await fetch("/api/view", {
@@ -682,7 +683,7 @@ async function requestView({ x: xRanges, y: yRanges }) {
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
     setPending(false);
-    status.textContent = `エラー: ${await response.text()}`;
+    statusLine.error(errorText(await response.text()));
     return;
   }
   const { figure, meta } = await response.json();
@@ -705,7 +706,7 @@ async function requestView({ x: xRanges, y: yRanges }) {
   // The images and the panels' placement change; the axes stay where the user put them.
   if (!drawn) await draw(figure.data, withShownRanges(figure.layout, meta), meta, bitmaps);
   if (mine === generation) setPending(false);
-  status.textContent = rowsText(meta, "表示範囲に ");
+  statusLine.show(rowsText(meta, "表示範囲に "));
   setInfo();
 }
 
@@ -815,7 +816,7 @@ function clearPlot() {
   stage.classList.remove("scrolls");
   sticky.set(null);
   empty.hidden = false;
-  status.textContent = "";
+  statusLine.show("");
   hoverWarning.hidden = true;
 }
 

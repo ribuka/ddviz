@@ -932,8 +932,95 @@ button {
   font-size: 12px;
 }
 
-#hover-warning {
+/* An error or a warning starts with its icon, so that it is not missed
+   (Issue #31): a red circle for an error, an amber triangle for a warning. */
+.notice-error {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.notice-warning {
   color: #b45309;
+  font-weight: 600;
+}
+
+.notice-error::before,
+.notice-warning::before {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 5px;
+  vertical-align: -2px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+
+.notice-error::before {
+  content: "!" / "エラー";
+  border-radius: 50%;
+  background: #dc2626;
+}
+
+.notice-warning::before {
+  content: "!" / "警告";
+  width: 16px;
+  line-height: 17px;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  background: #f59e0b;
+}
+
+/* Error toasts stack at the top right, above the page. */
+#toasts {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: min(480px, calc(100vw - 24px));
+  z-index: 100;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #fca5a5;
+  border-left: 4px solid #dc2626;
+  border-radius: 6px;
+  background: #fef2f2;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+
+.toast::before {
+  flex: none;
+  margin-top: 1px;
+}
+
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  max-height: 8em;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.toast-close {
+  flex: none;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: #7f1d1d;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
 }
 
 #statusbar details {
