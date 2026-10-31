@@ -6,7 +6,7 @@ import re
 
 import polars as pl
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 pytestmark = pytest.mark.e2e
 
@@ -698,3 +698,41 @@ def test_the_side_stacks_overlay_color_and_the_legend(app_page: Page) -> None:
         ]
     ]
     assert tops == sorted(tops)
+
+
+def test_the_column_list_keeps_its_items_while_the_shares_are_counted(
+    app_page: Page,
+) -> None:
+    """While the shares are counted the list asks again every second; an answer listing the same columns keeps their items, and a drag from one still drops.
+
+    A replaced item under the pointer while it is pressed made Chrome drop the
+    drag now and then (Issue #37).
+    """
+    page = app_page
+
+    def pending(route: Route) -> None:
+        # Keep the shares pending, so that the list keeps asking again.
+        found = route.fetch().json()
+        found["shares"] = "pending"
+        found["rows"] = None
+        for column in found["columns"]:
+            column["nonnull"] = None
+            column["share"] = None
+        route.fulfill(json=found)
+
+    page.route("**/api/columns?*", pending)
+    page.reload()
+    source = page.locator("#columns .column").filter(
+        has=page.get_by_text("y", exact=True)
+    )
+    expect(source).to_be_visible()
+    source.evaluate("(item) => { window.shownItem = item; }")
+    with page.expect_response("**/api/columns?*") as answer:
+        pass
+    answer.value.finished()
+    # The answer is shown in the task after its body arrives.
+    page.evaluate("() => new Promise((r) => setTimeout(r, 100))")
+    assert page.evaluate("() => window.shownItem.isConnected")
+    zone = page.locator('.zone[data-role="y"]')
+    source.drag_to(zone)
+    expect(zone.locator(".chip-name")).to_have_text("y")

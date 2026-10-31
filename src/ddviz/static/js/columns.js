@@ -4,6 +4,9 @@
 // Each shows its rows with a value, which the server counts after Load, over
 // a bar as long as their share of the rows; until then the list asks again
 // every second, and the controls that filter and sort by the share wait.
+// An answer that lists the same columns as shown updates their shares in
+// place: a replaced item under the pointer between its mouse down and its
+// `dragstart` makes Chrome drop the drag.
 import { beginDrag } from "./builder.js";
 
 const LIMIT = 200;
@@ -44,7 +47,7 @@ export function attachColumnList(root) {
     const shares = { pending: "（非 null の行数を計算中）", failed: "（非 null の行数は求められませんでした）" }[found.shares] ?? "";
     count.textContent = `${found.total.toLocaleString()} 列中 ${found.matched.toLocaleString()} 件${shown}${shares}`;
     for (const control of [hideEmpty, minShare, orderButton]) control.disabled = found.shares !== "done";
-    list.replaceChildren(...found.columns.map((c) => columnItem(c, found.shares, found.rows)));
+    showColumns(list, found);
     if (found.shares === "pending") timer = setTimeout(search, PENDING_RETRY_MS);
   }
 
@@ -85,10 +88,24 @@ function compactCount(count, rows) {
   return count < rows && text === COMPACT.format(rows) ? `<${text}` : text;
 }
 
-function columnItem(column, sharesState, rows) {
+// Show the answer's columns, keeping the items when they are the same columns
+// in the same order (the answers while the shares are counted).
+function showColumns(list, found) {
+  const items = [...list.children];
+  const same =
+    items.length === found.columns.length &&
+    items.every((item, i) => item.dataset.name === found.columns[i].name);
+  if (!same) {
+    list.replaceChildren(...found.columns.map(columnItem));
+  }
+  found.columns.forEach((column, i) => showShare(list.children[i], column, found.shares, found.rows));
+}
+
+function columnItem(column) {
   const item = document.createElement("div");
   item.className = "column";
   item.draggable = true;
+  item.dataset.name = column.name;
   const type = document.createElement("span");
   type.className = `column-type ${column.numeric ? "numeric" : "categorical"}`;
   // A temporal column is numeric (`ddviz.compute.temporal`), marked apart.
@@ -98,15 +115,6 @@ function columnItem(column, sharesState, rows) {
   name.textContent = column.name;
   const share = document.createElement("span");
   share.className = "column-share";
-  if (column.nonnull === null) {
-    share.classList.add("unknown");
-    share.textContent = sharesState === "pending" ? "…" : "?";
-    item.title = `${column.name}（${column.dtype}）`;
-  } else {
-    share.textContent = compactCount(column.nonnull, rows);
-    share.style.setProperty("--share", `${column.share * 100}%`);
-    item.title = `${column.name}（${column.dtype}、非 null ${column.nonnull.toLocaleString()} 行）`;
-  }
   item.append(type, name, share);
   item.addEventListener("dragstart", (event) => {
     beginDrag({ name: column.name, numeric: column.numeric, temporal: column.temporal });
@@ -114,4 +122,19 @@ function columnItem(column, sharesState, rows) {
     event.dataTransfer.effectAllowed = "copyMove";
   });
   return item;
+}
+
+function showShare(item, column, sharesState, rows) {
+  const share = item.querySelector(".column-share");
+  if (column.nonnull === null) {
+    share.classList.add("unknown");
+    share.textContent = sharesState === "pending" ? "…" : "?";
+    share.style.removeProperty("--share");
+    item.title = `${column.name}（${column.dtype}）`;
+  } else {
+    share.classList.remove("unknown");
+    share.textContent = compactCount(column.nonnull, rows);
+    share.style.setProperty("--share", `${column.share * 100}%`);
+    item.title = `${column.name}（${column.dtype}、非 null ${column.nonnull.toLocaleString()} 行）`;
+  }
 }
