@@ -16,6 +16,9 @@ from ddviz.workers.jobs import WorkerJob
 OnEvent = Callable[[int, dict], None]
 
 _CREATE_NO_WINDOW = 0x08000000
+# Exit code of a fail-fast abort on Windows (STATUS_STACK_BUFFER_OVERRUN):
+# polars (Rust) ends so when an allocation fails, as past the job's memory cap.
+_FAIL_FAST = 0xC0000409
 
 
 def worker_command() -> list[str]:
@@ -29,6 +32,35 @@ def worker_command() -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable, "--worker"]
     return [sys.executable, "-m", "ddviz.workers.worker"]
+
+
+def exit_message(code: int, memory_limit: int | None) -> str:
+    """Return the error shown for a worker that exited before ending its task.
+
+    Parameters
+    ----------
+    code : int
+        Exit code of the worker.
+    memory_limit : int or None
+        Cap on the workers' memory in bytes (`WorkerJob.memory_limit`).
+
+    Returns
+    -------
+    str
+        The message, in Japanese.
+    """
+    if code == _FAIL_FAST:
+        cause = (
+            f"メモリの上限（{memory_limit / 2**30:.1f}GB。物理メモリの半分）を超えたとみられる"
+            if memory_limit
+            else "メモリが足りなかったとみられる"
+        )
+        return (
+            f"処理のプロセスが異常終了した（終了コード 0x{code:08X}）。{cause}。"
+            "行数の多いデータでは、集約がメモリの上限を超えることがある"
+        )
+    shown = f"0x{code:08X}" if code >= 0x80000000 else str(code)
+    return f"処理のプロセスが異常終了した（終了コード {shown}）"
 
 
 class _Running:
@@ -160,7 +192,10 @@ class WorkerPool:
         if not running.finished and not running.cancelled:
             self._on_event(
                 running.task_id,
-                {"type": "error", "message": f"worker exited with code {code}"},
+                {
+                    "type": "error",
+                    "message": exit_message(code, self._job.memory_limit),
+                },
             )
 
     def close(self) -> None:
