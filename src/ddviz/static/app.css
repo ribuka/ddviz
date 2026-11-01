@@ -1,5 +1,78 @@
 /* The page fills the window: the column list on the left, the graph
    builder (drop zones around the plot area) in the middle, a status bar below. */
+/* Colors by role (docs/spec.md, "画面の色と数字"). Rules use these instead
+   of writing a color, so a later dark mode only redefines them here. */
+:root {
+  /* the accent: chosen, dragged over, numeric */
+  --accent: #2a6fdb;
+  --accent-bg: #e3edff;
+  --accent-share: #cfe0fa;
+  --accent-on-border: #4a7bd0;
+  --accent-on-bg: #e5eefc;
+  --accent-on-text: #1f4f9f;
+  --categorical: #d9822b;
+  --filtered: #b35c00;
+
+  /* text, from dark to light */
+  --text: #222;
+  --text-table: #1f2328;
+  --text-sub: #444;
+  --text-muted: #555;
+  --text-table-muted: #5f6b7a;
+  --text-faint: #666;
+  --text-icon: #789;
+  --text-hint: #888;
+  --text-placeholder: #999;
+  --text-unknown: #aaa;
+  --text-disabled: #bbb;
+  --text-disabled-icon: #c4c4c4;
+  --text-on-color: #fff;
+
+  /* surfaces */
+  --bg: #fff;
+  --bg-zone: #fcfcfc;
+  --bg-table-header: #f8fafc;
+  --bg-pane: #f6f6f6;
+  --bg-paper: #f5f5f5; /* ddviz.server.figure.PAPER_COLOR */
+  --bg-card-head: #f3f6fb;
+  --bg-hover: #eef4ff;
+  --bg-hover-gray: #f2f2f2;
+  --bg-menu-hover: #eef3fb;
+  --bg-chip: #e8eef9;
+  --bg-pressed: #e3e3e3;
+  --bg-tip: rgb(0 0 0 / 75%);
+  --bg-veil: rgb(255 255 255 / 70%);
+  --track: #ddd;
+
+  /* borders */
+  --border: #ccc;
+  --border-dashed: #bbb;
+  --border-strong: #aaa; /* ddviz.server.figure.FRAME_COLOR */
+  --border-card: #d4d9e4;
+  --border-table: #d8dee4;
+  --border-separator: #e4e4e4;
+  --border-light: #eee;
+  --edge: rgb(0 0 0 / 25%);
+  --edge-light: rgb(0 0 0 / 15%);
+  --ring: #000;
+
+  /* errors and warnings */
+  --error: #dc2626;
+  --error-text: #b91c1c;
+  --error-strong: #7f1d1d;
+  --error-border: #fca5a5;
+  --error-bg: #fef2f2;
+  --error-menu: #b00020;
+  --danger: #c00;
+  --warning: #f59e0b;
+  --warning-text: #b45309;
+
+  /* what floats over the page (menus, toasts) and the table's drawer */
+  --shadow-float: 0 4px 12px rgb(0 0 0 / 18%);
+  --radius-float: 6px;
+  --shadow-drawer: 0 -2px 8px rgb(0 0 0 / 8%);
+}
+
 html,
 body {
   height: 100%;
@@ -11,8 +84,8 @@ body {
   margin: 0;
   font-family: "Segoe UI", sans-serif;
   font-size: 13px;
-  background: #fff;
-  color: #222;
+  background: var(--bg);
+  color: var(--text);
 }
 
 #app {
@@ -34,7 +107,7 @@ button {
   width: 240px;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #ccc;
+  border-right: 1px solid var(--border);
   min-height: 0;
 }
 
@@ -56,7 +129,7 @@ button {
   gap: 8px;
   padding: 6px 0;
   border: 0;
-  background: #f6f6f6;
+  background: var(--bg-pane);
   cursor: pointer;
   overflow: hidden;
 }
@@ -66,17 +139,17 @@ button {
 }
 
 #left-strip:hover {
-  background: #eef4ff;
+  background: var(--bg-hover);
 }
 
 .strip-text {
   writing-mode: vertical-rl;
   white-space: nowrap;
-  color: #444;
+  color: var(--text-sub);
 }
 
 #left-strip.filtered .strip-text {
-  color: #b35c00;
+  color: var(--filtered);
   font-weight: 600;
 }
 
@@ -102,7 +175,7 @@ button {
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  background: #f6f6f6;
+  background: var(--bg-pane);
   font-weight: 600;
 }
 
@@ -111,12 +184,12 @@ button {
   border: 0;
   background: none;
   padding: 0 4px;
-  color: #666;
+  color: var(--text-faint);
   cursor: pointer;
 }
 
 .pane-head button:hover {
-  color: #2a6fdb;
+  color: var(--accent);
 }
 
 /* ---- filter pane ---- */
@@ -125,13 +198,13 @@ button {
   max-height: 55%;
   display: flex;
   flex-direction: column;
-  border-top: 1px solid #ccc;
+  border-top: 1px solid var(--border);
 }
 
 #filters.over {
-  outline: 2px solid #2a6fdb;
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
-  background: #e3edff;
+  background: var(--accent-bg);
 }
 
 .filter-head {
@@ -144,7 +217,7 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #b35c00;
+  color: var(--filtered);
   font-weight: normal;
   font-size: 12px;
 }
@@ -165,16 +238,16 @@ button {
 .filter-drop {
   margin: 6px 8px 8px;
   padding: 8px;
-  border: 1px dashed #bbb;
+  border: 1px dashed var(--border-dashed);
   border-radius: 4px;
-  color: #999;
+  color: var(--text-placeholder);
   font-size: 12px;
   text-align: center;
 }
 
 .filter-card {
   margin: 6px 8px 0;
-  border: 1px solid #d4d9e4;
+  border: 1px solid var(--border-card);
   border-radius: 4px;
 }
 
@@ -183,7 +256,7 @@ button {
   align-items: center;
   gap: 6px;
   padding: 2px 4px 2px 6px;
-  background: #f3f6fb;
+  background: var(--bg-card-head);
 }
 
 .filter-card-name {
@@ -199,12 +272,12 @@ button {
   border: 0;
   background: none;
   padding: 0 3px;
-  color: #789;
+  color: var(--text-icon);
   cursor: pointer;
 }
 
 .filter-card-remove:hover {
-  color: #c00;
+  color: var(--danger);
 }
 
 .filter-card-body {
@@ -216,21 +289,21 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #666;
+  color: var(--text-faint);
 }
 
 .filter-reset {
   margin-left: auto;
-  border: 1px solid #ccc;
+  border: 1px solid var(--border);
   border-radius: 3px;
-  background: #fff;
+  background: var(--bg);
   padding: 0 6px;
   font-size: 11px;
   cursor: pointer;
 }
 
 .filter-reset:disabled {
-  color: #bbb;
+  color: var(--text-disabled);
   cursor: default;
 }
 
@@ -253,11 +326,11 @@ button {
   content: "";
   left: 0;
   right: 0;
-  background: #ddd;
+  background: var(--track);
 }
 
 .filter-slider-fill {
-  background: #2a6fdb;
+  background: var(--accent);
 }
 
 .filter-slider input {
@@ -278,9 +351,9 @@ button {
   appearance: none;
   width: 12px;
   height: 16px;
-  border: 1px solid #2a6fdb;
+  border: 1px solid var(--accent);
   border-radius: 3px;
-  background: #fff;
+  background: var(--bg);
   pointer-events: auto;
   cursor: ew-resize;
 }
@@ -338,7 +411,7 @@ button {
 }
 
 .filter-level:hover {
-  background: #eef4ff;
+  background: var(--bg-hover);
 }
 
 .filter-level-name {
@@ -350,7 +423,7 @@ button {
 }
 
 .filter-level-count {
-  color: #888;
+  color: var(--text-hint);
   font-variant-numeric: tabular-nums;
 }
 
@@ -367,15 +440,15 @@ button {
 }
 
 .column-kinds button {
-  border: 1px solid #ccc;
+  border: 1px solid var(--border);
   border-radius: 3px;
-  background: #fff;
+  background: var(--bg);
   padding: 1px 8px;
   cursor: pointer;
 }
 
 .column-kinds button.on {
-  background: #e3e3e3;
+  background: var(--bg-pressed);
 }
 
 .column-shares {
@@ -397,16 +470,16 @@ button {
 }
 
 .column-order {
-  border: 1px solid #ccc;
+  border: 1px solid var(--border);
   border-radius: 3px;
-  background: #fff;
+  background: var(--bg);
   padding: 0 6px;
   font: inherit;
   cursor: pointer;
 }
 
 .column-order.on {
-  background: #e3e3e3;
+  background: var(--bg-pressed);
 }
 
 .column-shares :disabled {
@@ -415,8 +488,9 @@ button {
 
 .column-count {
   padding: 0 8px 4px;
-  color: #666;
+  color: var(--text-faint);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .column-list {
@@ -435,24 +509,24 @@ button {
 }
 
 .column:hover {
-  background: #eef4ff;
+  background: var(--bg-hover);
 }
 
 .column-type {
   flex: none;
   width: 14px;
   border-radius: 2px;
-  color: #fff;
+  color: var(--text-on-color);
   font-size: 11px;
   text-align: center;
 }
 
 .column-type.numeric {
-  background: #2a6fdb;
+  background: var(--accent);
 }
 
 .column-type.categorical {
-  background: #d9822b;
+  background: var(--categorical);
 }
 
 .column-name {
@@ -468,15 +542,15 @@ button {
   width: 42px;
   border-radius: 2px;
   --share: 0%;
-  background: linear-gradient(to right, #cfe0fa var(--share), transparent var(--share));
-  color: #555;
+  background: linear-gradient(to right, var(--accent-share) var(--share), transparent var(--share));
+  color: var(--text-muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
 .column-share.unknown {
-  color: #aaa;
+  color: var(--text-unknown);
 }
 
 /* ---- graph builder: zones around the plot area ---- */
@@ -513,19 +587,19 @@ button {
   padding: 0;
   display: grid;
   place-items: center;
-  border: 1px solid #ccc;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: #fff;
-  color: #555;
+  background: var(--bg);
+  color: var(--text-muted);
   cursor: pointer;
 }
 .element.on {
-  border-color: #4a7bd0;
-  background: #e5eefc;
-  color: #1f4f9f;
+  border-color: var(--accent-on-border);
+  background: var(--accent-on-bg);
+  color: var(--accent-on-text);
 }
 .element:disabled {
-  color: #c4c4c4;
+  color: var(--text-disabled-icon);
   border-style: dashed;
   cursor: not-allowed;
 }
@@ -557,9 +631,9 @@ button {
   justify-content: center;
   gap: 4px;
   padding: 3px;
-  border: 1px dashed #bbb;
+  border: 1px dashed var(--border-dashed);
   border-radius: 4px;
-  background: #fcfcfc;
+  background: var(--bg-zone);
   overflow: hidden;
 }
 
@@ -580,17 +654,17 @@ button {
 
 .zone.filled {
   border-style: solid;
-  border-color: #d4d9e4;
-  background: #fff;
+  border-color: var(--border-card);
+  background: var(--bg);
 }
 
 .zone.over {
-  border-color: #2a6fdb;
-  background: #e3edff;
+  border-color: var(--accent);
+  background: var(--accent-bg);
 }
 
 .zone-label {
-  color: #999;
+  color: var(--text-placeholder);
   font-size: 11px;
 }
 
@@ -600,7 +674,7 @@ button {
 
 /* X and Y take more columns after the placed ones (n-th axes). */
 .zone-add {
-  color: #bbb;
+  color: var(--text-disabled);
   padding: 0 6px;
 }
 
@@ -611,7 +685,7 @@ button {
   max-width: 100%;
   padding: 1px 2px 1px 8px;
   border-radius: 10px;
-  background: #e8eef9;
+  background: var(--bg-chip);
   cursor: grab;
   white-space: nowrap;
 }
@@ -621,7 +695,7 @@ button {
 }
 
 .chip.target {
-  outline: 2px solid #2a6fdb;
+  outline: 2px solid var(--accent);
 }
 
 .chip-name {
@@ -633,12 +707,12 @@ button {
   border: 0;
   background: none;
   padding: 0 3px;
-  color: #789;
+  color: var(--text-icon);
   cursor: pointer;
 }
 
 .chip-remove:hover {
-  color: #c00;
+  color: var(--danger);
 }
 
 #drop-tip {
@@ -649,8 +723,8 @@ button {
   pointer-events: none;
   padding: 4px 12px;
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.75);
-  color: #fff;
+  background: var(--bg-tip);
+  color: var(--text-on-color);
   font-size: 12px;
   z-index: 50;
 }
@@ -658,7 +732,7 @@ button {
 #drop-line {
   position: fixed;
   pointer-events: none;
-  background: #2a6fdb;
+  background: var(--accent);
   border-radius: 1px;
   z-index: 50;
 }
@@ -691,7 +765,7 @@ button {
 }
 
 .legend-item:hover {
-  background: #f2f2f2;
+  background: var(--bg-hover-gray);
 }
 
 .legend-item.inactive {
@@ -699,7 +773,7 @@ button {
 }
 
 .legend-item.empty {
-  color: #999;
+  color: var(--text-placeholder);
 }
 
 /* The marker of an item; a right click on it opens
@@ -756,7 +830,7 @@ button {
    figure's color (`ddviz.server.figure.PAPER_COLOR`). */
 #stage.scrolls #scroller {
   overflow: auto;
-  background: #f5f5f5;
+  background: var(--bg-paper);
 }
 
 #canvas {
@@ -770,7 +844,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: var(--text-placeholder);
   pointer-events: none;
 }
 
@@ -781,11 +855,6 @@ button {
 /* ---- table of the selected rows: a drawer over the bottom of the plot
    area, which keeps its size. The look follows awesome-datatable. ---- */
 #table {
-  --dt-fg: #1f2328;
-  --dt-muted: #5f6b7a;
-  --dt-border: #d8dee4;
-  --dt-header-bg: #f8fafc;
-  --dt-accent: #1a73e8;
   position: absolute;
   left: 0;
   right: 0;
@@ -793,10 +862,10 @@ button {
   height: 260px;
   display: flex;
   flex-direction: column;
-  background: #fff;
-  border-top: 1px solid var(--dt-border);
-  box-shadow: 0 -2px 8px rgb(0 0 0 / 0.08);
-  color: var(--dt-fg);
+  background: var(--bg);
+  border-top: 1px solid var(--border-table);
+  box-shadow: var(--shadow-drawer);
+  color: var(--text-table);
   font-size: 12px;
   z-index: 20;
 }
@@ -842,9 +911,10 @@ button {
 }
 
 .table-pager {
-  color: var(--dt-muted);
+  color: var(--text-table-muted);
   min-width: 6em;
   text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .table-note {
@@ -852,19 +922,19 @@ button {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--dt-muted);
+  color: var(--text-table-muted);
 }
 
 .table-bar button {
-  border: 1px solid var(--dt-border);
+  border: 1px solid var(--border-table);
   border-radius: 6px;
-  background: #fff;
+  background: var(--bg);
   padding: 0 8px;
   cursor: pointer;
 }
 
 .table-bar button:disabled {
-  color: #bbb;
+  color: var(--text-disabled);
   cursor: default;
 }
 
@@ -872,7 +942,7 @@ button {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  border-top: 1px solid var(--dt-border);
+  border-top: 1px solid var(--border-table);
 }
 
 .table-inner,
@@ -886,12 +956,12 @@ button {
   width: 120px;
   height: 24px;
   padding: 3px 8px;
-  border-right: 1px solid var(--dt-border);
-  border-bottom: 1px solid var(--dt-border);
+  border-right: 1px solid var(--border-table);
+  border-bottom: 1px solid var(--border-table);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  background: #fff;
+  background: var(--bg);
 }
 
 .tc.num {
@@ -901,19 +971,19 @@ button {
 
 .tc.th {
   font-weight: 600;
-  background: var(--dt-header-bg);
+  background: var(--bg-table-header);
   z-index: 2;
 }
 
 .tc.plot.th {
-  color: var(--dt-accent);
+  color: var(--accent);
 }
 
 .tc.ti {
   width: 90px;
-  color: var(--dt-muted);
+  color: var(--text-table-muted);
   text-align: right;
-  background: var(--dt-header-bg);
+  background: var(--bg-table-header);
   z-index: 1;
 }
 
@@ -927,20 +997,21 @@ button {
   gap: 12px;
   align-items: flex-start;
   padding: 3px 8px;
-  border-top: 1px solid #ccc;
-  color: #555;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* An error or a warning starts with its icon, so that it is not missed
    (Issue #31): a red circle for an error, an amber triangle for a warning. */
 .notice-error {
-  color: #b91c1c;
+  color: var(--error-text);
   font-weight: 600;
 }
 
 .notice-warning {
-  color: #b45309;
+  color: var(--warning-text);
   font-weight: 600;
 }
 
@@ -951,7 +1022,7 @@ button {
   height: 14px;
   margin-right: 5px;
   vertical-align: -2px;
-  color: #fff;
+  color: var(--text-on-color);
   font-size: 11px;
   font-weight: 700;
   line-height: 14px;
@@ -961,7 +1032,7 @@ button {
 .notice-error::before {
   content: "!" / "エラー";
   border-radius: 50%;
-  background: #dc2626;
+  background: var(--error);
 }
 
 .notice-warning::before {
@@ -969,7 +1040,7 @@ button {
   width: 16px;
   line-height: 17px;
   clip-path: polygon(50% 0, 100% 100%, 0 100%);
-  background: #f59e0b;
+  background: var(--warning);
 }
 
 /* Error toasts stack at the top right, above the page. */
@@ -990,11 +1061,11 @@ button {
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid #fca5a5;
-  border-left: 4px solid #dc2626;
-  border-radius: 6px;
-  background: #fef2f2;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--error-border);
+  border-left: 4px solid var(--error);
+  border-radius: var(--radius-float);
+  background: var(--error-bg);
+  box-shadow: var(--shadow-float);
   font-size: 13px;
   /* Only toasts move: they come in from the right and leave faster than they
      came (docs/spec.md, "画面の動き"). EXIT_MS in notice.js is the 150ms. */
@@ -1047,7 +1118,7 @@ button {
   padding: 0 4px;
   border: none;
   background: none;
-  color: #7f1d1d;
+  color: var(--error-strong);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
@@ -1065,13 +1136,14 @@ button {
   position: absolute;
   pointer-events: none;
   padding: 4px 6px;
-  border: 1px solid #fff;
+  border: 1px solid var(--text-on-color);
   border-radius: 3px;
-  color: #fff;
+  color: var(--text-on-color);
   font-size: 12px;
   line-height: 1.4;
   white-space: pre;
   z-index: 10;
+  font-variant-numeric: tabular-nums;
 }
 
 #hover-ring {
@@ -1080,7 +1152,7 @@ button {
   width: 10px;
   height: 10px;
   margin: -6px 0 0 -6px;
-  border: 1px solid #000;
+  border: 1px solid var(--ring);
   border-radius: 50%;
   z-index: 10;
 }
@@ -1095,7 +1167,7 @@ button {
 /* Tells after Load which columns were cast to a common type (casts.js). */
 #casts {
   max-width: 640px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 13px;
 }
@@ -1113,7 +1185,7 @@ button {
 #casts th,
 #casts td {
   padding: 2px 8px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border-light);
   text-align: left;
 }
 
@@ -1129,7 +1201,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--bg-veil);
   z-index: 100;
 }
 
@@ -1139,9 +1211,9 @@ button {
 
 #converting .box {
   padding: 16px 24px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: #fff;
+  background: var(--bg);
 }
 
 #converting progress {
@@ -1194,7 +1266,7 @@ button {
 .colorbar-strip {
   flex: none;
   width: 14px;
-  border: 1px solid #aaa;
+  border: 1px solid var(--border-strong);
 }
 
 .colorbar-ticks {
@@ -1202,7 +1274,8 @@ button {
   flex-direction: column;
   justify-content: space-between;
   font-size: 11px;
-  color: #444;
+  color: var(--text-sub);
+  font-variant-numeric: tabular-nums;
 }
 
 .scale-menu {
@@ -1216,10 +1289,10 @@ button {
   max-height: calc(100vh - 8px);
   overflow-y: auto;
   padding: 4px 0;
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 20%);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-float);
+  box-shadow: var(--shadow-float);
   font-size: 12px;
 }
 
@@ -1229,7 +1302,7 @@ button {
 
 .scale-menu-heading {
   padding: 6px 12px 2px;
-  color: #888;
+  color: var(--text-hint);
   font-size: 11px;
 }
 
@@ -1244,7 +1317,7 @@ button {
 }
 
 .scale-menu-item:hover {
-  background: #eef3fb;
+  background: var(--bg-menu-hover);
 }
 
 .scale-menu-item.checked::before {
@@ -1255,7 +1328,7 @@ button {
 
 .scale-menu-separator {
   margin: 4px 0;
-  border-top: 1px solid #e4e4e4;
+  border-top: 1px solid var(--border-separator);
 }
 
 /* An item that opens a submenu beside the menu (shapemenu.js). */
@@ -1267,7 +1340,7 @@ button {
   content: "▸";
   position: absolute;
   right: 10px;
-  color: #888;
+  color: var(--text-hint);
 }
 
 /* The level's color, in place of a check mark. */
@@ -1278,7 +1351,7 @@ button {
   width: 10px;
   height: 10px;
   margin-top: -5px;
-  border: 1px solid rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--edge);
   box-sizing: border-box;
 }
 
@@ -1297,17 +1370,17 @@ button {
   width: 16px;
   height: 16px;
   padding: 0;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  border: 1px solid var(--edge-light);
   cursor: pointer;
 }
 
 .color-cell:hover {
-  outline: 1px solid #555;
+  outline: 1px solid var(--text-muted);
 }
 
 /* The level's color now. */
 .color-cell.current {
-  outline: 2px solid #222;
+  outline: 2px solid var(--text);
   outline-offset: 1px;
 }
 
@@ -1343,9 +1416,10 @@ button {
 .sticky-strip {
   position: absolute;
   overflow: hidden;
-  background: #f5f5f5;
+  background: var(--bg-paper);
   font: 12px "Open Sans", verdana, arial, sans-serif;
-  color: #444;
+  color: var(--text-sub);
+  font-variant-numeric: tabular-nums;
 }
 
 .sticky-strip > span {
@@ -1371,7 +1445,7 @@ button {
 .data-menu-error {
   max-width: 260px;
   padding: 4px 12px;
-  border-top: 1px solid #eee;
-  color: #b00020;
+  border-top: 1px solid var(--border-light);
+  color: var(--error-menu);
   font-size: 12px;
 }
