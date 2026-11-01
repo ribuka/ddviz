@@ -574,6 +574,22 @@ def overlaps(a: dict, b: dict) -> bool:
     )
 
 
+# Scrolls a scroller to a left position and draws for it (a scroll event, also
+# when it does not move), then waits two frames: the scroll event of a move
+# comes before the next frame's animation frame callbacks.
+SCROLL_AND_SETTLE = """async (s, left) => {
+  s.scrollLeft = left;
+  s.dispatchEvent(new Event("scroll"));
+  for (let i = 0; i < 2; i++) await new Promise((resolve) => requestAnimationFrame(resolve));
+}"""
+
+# The bounding boxes of elements in the viewport, all read in one go.
+BOXES = """(els) => els.map((e) => {
+  const { x, y, width, height } = e.getBoundingClientRect();
+  return { x, y, width, height };
+})"""
+
+
 def test_the_mode_bar_shows_without_hover_and_stays_in_sight(app_page: Page) -> None:
     """The mode bar shows with the pointer off the plot, apart from the facet labels, and stays at the top right of a grid that scrolls."""
     page = app_page
@@ -594,17 +610,17 @@ def test_the_mode_bar_shows_without_hover_and_stays_in_sight(app_page: Page) -> 
     expect(labels).to_have_count(2)
 
     for left in [0, 10_000]:
-        page.locator("#scroller").evaluate(
-            "(s, left) => { s.scrollLeft = left; s.dispatchEvent(new Event('scroll')); }",
-            left,
-        )
+        # A scroll that moves fires its own scroll event a frame later, which
+        # rebuilds the labels: wait for it, then read the boxes at once, so
+        # that no label is replaced (and has no box) between two reads.
+        page.locator("#scroller").evaluate(SCROLL_AND_SETTLE, left)
         box = mode_bar.bounding_box()
         assert stage["x"] <= box["x"]
         assert box["x"] + box["width"] <= stage["x"] + stage["width"]
         assert stage["y"] <= box["y"] < stage["y"] + 30
-        for label in labels.all():
-            if label.is_visible():
-                assert not overlaps(box, label.bounding_box())
+        for label in labels.evaluate_all(BOXES):
+            if label["width"] and label["height"]:
+                assert not overlaps(box, label)
         # The button on top takes the click, not the strip under it.
         mode_bar.locator('[data-val="zoom"]').click()
         assert (
