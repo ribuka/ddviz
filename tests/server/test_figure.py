@@ -362,3 +362,59 @@ def test_a_datetime_or_time_axis_is_a_date_axis(tmp_path: Path) -> None:
     assert lo < first < hi
     assert result["meta"]["temporal"] == temporal
     assert result["meta"]["color"]["temporal"] == "datetime"
+
+
+def _worst_spec(tmp_path: Path, **roles: object) -> ScatterSpec:
+    """Return a spec over a file whose level names are long, empty or markup."""
+    path = tmp_path / "worst.parquet"
+    long = "level_" + "x" * 100
+    pl.DataFrame(
+        {
+            "x": [float(i) for i in range(9)],
+            "y": [float(i) for i in range(9)],
+            "g": [long, "", "<b>bold</b>"] * 3,
+        }
+    ).write_parquet(path)
+    defaults: dict = {"row": None, "col": None, "color": None}
+    return ScatterSpec(
+        files={c: [str(path)] for c in ["x", "y", "g"]},
+        x=["x"],
+        y=["y"],
+        width=900,
+        height=500,
+        hover=["x", "y", "g"],
+        **{**defaults, **roles},
+    )
+
+
+def test_long_facet_labels_are_cut_to_their_panels(tmp_path: Path) -> None:
+    """A facet label wider than its panel ends in "…" and keeps its whole text as its hover text."""
+    result = _figure(_worst_spec(tmp_path, col="g", row="g"), tmp_path / "task")
+    labels = result["figure"]["layout"]["annotations"]
+    cut = [a for a in labels if a["text"].endswith("…")]
+    assert {a.get("textangle") for a in cut} == {None, 90}
+    assert all(a["hovertext"] == "g = level_" + "x" * 100 for a in cut)
+    # The level is kept; the short ones are whole.
+    texts = [a["text"] for a in labels]
+    assert "g = （空文字列）" in texts
+    assert "g = &lt;b&gt;bold&lt;/b&gt;" in texts
+
+
+def test_the_page_gets_facet_labels_as_text(tmp_path: Path) -> None:
+    """A scrolled grid's labels, which the page sets as text, are not escaped."""
+    spec = replace(_worst_spec(tmp_path, col="g"), width=300, height=200)
+    result = _figure(spec, tmp_path / "task")
+    assert result["meta"]["scroll"]
+    texts = [a["text"] for a in result["meta"]["facet_labels"]]
+    assert "g = <b>bold</b>" in texts
+
+
+def test_long_categorical_ticks_are_cut_and_numbers_write_e(tmp_path: Path) -> None:
+    """A category tick ends in "…" past its band; an empty level shows its placeholder; numeric ticks write "1e+300"."""
+    spec = replace(_worst_spec(tmp_path), x=["g"], categorical=["g"])
+    layout = _figure(spec, tmp_path / "task")["figure"]["layout"]
+    ticks = layout["xaxis"]["ticktext"]
+    assert "（空文字列）" in ticks
+    assert "&lt;b&gt;bold&lt;/b&gt;" in ticks
+    assert any(t.startswith("level_") and t.endswith("…") for t in ticks)
+    assert layout["yaxis"]["exponentformat"] == "e"

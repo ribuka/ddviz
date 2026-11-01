@@ -299,6 +299,7 @@ button {
   background: var(--bg);
   padding: 0 6px;
   font-size: 11px;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -682,7 +683,10 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  max-width: 100%;
+  /* Along the text: the width of X's chip, the height of Y's and Group Y's
+     (vertical writing), so that a long name ends in "…" there too. */
+  max-inline-size: 100%;
+  min-inline-size: 0;
   padding: 1px 2px 1px 8px;
   border-radius: 10px;
   background: var(--bg-chip);
@@ -699,6 +703,7 @@ button {
 }
 
 .chip-name {
+  min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -749,9 +754,21 @@ button {
   overflow: auto;
 }
 
+/* A long column name or level ends in "…" in the side pane; the tooltip
+   has it whole (docs/spec.md, "最悪のデータでの表示"). */
 .legend-title {
   margin: 2px 4px 4px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .legend-item {
@@ -848,8 +865,23 @@ button {
   pointer-events: none;
 }
 
-#empty[hidden] {
+#empty[hidden],
+#no-rows[hidden] {
   display: none;
+}
+
+/* Over an aggregated plot that has no rows: its panels are drawn, empty. */
+#no-rows {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 32px);
+  padding: 6px 12px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-muted);
+  pointer-events: none;
 }
 
 /* ---- table of the selected rows: a drawer over the bottom of the plot
@@ -1124,7 +1156,17 @@ button {
   cursor: pointer;
 }
 
+/* One line: a long message (a path in an error) ends in "…"; its tooltip,
+   and the toast of an error, have it whole. */
+#status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 #statusbar details {
+  flex: none;
   margin-left: auto;
 }
 
@@ -1141,7 +1183,11 @@ button {
   color: var(--text-on-color);
   font-size: 12px;
   line-height: 1.4;
-  white-space: pre;
+  /* A long name or value wraps instead of running past the plot area. */
+  width: max-content;
+  max-width: 360px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   z-index: 10;
   font-variant-numeric: tabular-nums;
 }
@@ -1434,6 +1480,12 @@ button {
 .sticky-strip .tick.x,
 .sticky-strip .facet.col {
   transform: translateX(-50%);
+}
+
+/* A facet label shows its whole text as a tooltip (sticky.js): it takes the
+   pointer, the rest of the strips lets it through to the plot. */
+.sticky-strip .facet {
+  pointer-events: auto;
 }
 
 .sticky-strip .facet.row {

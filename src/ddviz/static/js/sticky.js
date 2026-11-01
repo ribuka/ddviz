@@ -105,10 +105,10 @@ export class StickyLabels {
     for (const a of meta.facet_labels) {
       if (a.textangle === 90) {
         const y = size.t + (1 - a.y) * size.h - sy - t;
-        rows.push(label("facet row", a.text, { left: "4px", top: `${y}px` }));
+        rows.push(facetLabel("facet row", a, { left: "4px", top: `${y}px` }));
       } else {
         const x = size.l + a.x * size.w - sx;
-        cols.push(label("facet col", a.text, { left: `${x}px`, bottom: "2px" }));
+        cols.push(facetLabel("facet col", a, { left: `${x}px`, bottom: "2px" }));
       }
     }
     left.replaceChildren(...yTicks);
@@ -116,6 +116,15 @@ export class StickyLabels {
     top.replaceChildren(...cols);
     right.replaceChildren(...rows);
   }
+}
+
+// Returns a facet label's element. One cut to fit its panels
+// (`ddviz.server.labeltext`) has its whole text as its tooltip, as plotly's
+// hover text has it when the grid fits; it takes the pointer (app.css).
+function facetLabel(className, a, style) {
+  const span = label(className, a.text, style);
+  if (a.hovertext) span.title = a.hovertext;
+  return span;
 }
 
 // Returns a label element. A tick's text is plotly's, made from a number, and
