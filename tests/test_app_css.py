@@ -9,9 +9,6 @@ import pytest
 
 CSS = Path(__file__).resolve().parents[1] / "src" / "ddviz" / "static" / "app.css"
 COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(")
-# Rules that still write their colors: the pending view is being changed by
-# Issue #45, and moves to the variables once that change is in.
-LITERAL_COLORS = {"#plot.pending .image-layers", "#pending"}
 
 
 def _rules() -> list[tuple[str, str]]:
@@ -51,7 +48,7 @@ def test_colors_come_from_root_variables() -> None:
     written = [
         (sel, line.strip())
         for sel, body in _rules()
-        if sel != ":root" and sel not in LITERAL_COLORS
+        if sel != ":root"
         for line in body.split(";")
         if COLOR.search(line)
     ]
