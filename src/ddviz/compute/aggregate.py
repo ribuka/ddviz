@@ -239,8 +239,9 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
     many = {c: len(v) for c, v in column_levels.items() if len(v) > spec.max_levels}
     if many:
         raise ValueError(
-            f"too many levels (at most {spec.max_levels}): "
-            + ", ".join(f"{c} has {n}" for c, n in many.items())
+            f"水準が上限の {spec.max_levels} 個を超えるため描けない（"
+            + "、".join(f"{c} は {n:,} 個" for c, n in many.items())
+            + "）。フィルタで水準を絞るか、別の列を使う"
         )
     cuts = {
         role: find_cuts(_scan(spec, [roles[role]]), roles[role], binning)

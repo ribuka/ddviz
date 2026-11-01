@@ -31,6 +31,17 @@ function seriesName(meta, s) {
   return names.join(", ");
 }
 
+// Puts the label right of the cursor, or left of it where the right has no
+// room, and keeps it inside the plot (a label wider than the room left of
+// the cursor, of long names, would start left of the plot).
+function placeLabel(label, gd, cx, cy) {
+  const width = label.offsetWidth;
+  const flip = cx + 12 + width > gd.clientWidth;
+  const left = flip ? cx - 12 - width : cx + 12;
+  label.style.left = `${Math.max(0, left)}px`;
+  label.style.top = `${Math.max(0, cy - label.offsetHeight / 2)}px`;
+}
+
 // Returns where the cursor is: its panel, its position in bins, and the
 // screen pixels per bin, or null away from every panel.
 function locate(gd, meta, event) {
@@ -140,10 +151,7 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     ring.hidden = false;
     ring.style.left = `${cx}px`;
     ring.style.top = `${cy}px`;
-    const width = label.offsetWidth;
-    const flip = cx + 12 + width > gd.clientWidth;
-    label.style.left = `${flip ? cx - 12 - width : cx + 12}px`;
-    label.style.top = `${cy - label.offsetHeight / 2}px`;
+    placeLabel(label, gd, cx, cy);
   }
 
   // Shows the numbers of a box plot beside the cursor: no lookup, the meta
@@ -174,10 +182,7 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     const rect = gd.getBoundingClientRect();
     const cx = event.clientX - rect.left;
     const cy = event.clientY - rect.top;
-    const width = label.offsetWidth;
-    const flip = cx + 12 + width > gd.clientWidth;
-    label.style.left = `${flip ? cx - 12 - width : cx + 12}px`;
-    label.style.top = `${cy - label.offsetHeight / 2}px`;
+    placeLabel(label, gd, cx, cy);
   }
 
   async function pump() {

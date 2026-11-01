@@ -19,6 +19,7 @@
 // right click on the bar, on the title or on an interval's marker opens the
 // scale's menu, which also has the size of the markers.
 import { cssColor, levelColors } from "./colorscale.js";
+import { levelText } from "./names.js";
 import { formatTemporal } from "./temporal.js";
 
 export const INACTIVE_OPACITY = 0.1;
@@ -107,7 +108,7 @@ export class Legend {
   colorNodes() {
     const colors = levelColors(this.meta);
     const items = this.series.map((name, i) =>
-      this.item("color", i, this.title === null ? "全体" : name, (swatch) => {
+      this.item("color", i, this.title === null ? "全体" : levelText(name), (swatch) => {
         swatch.style.background = colors[i];
       }),
     );
@@ -123,8 +124,9 @@ export class Legend {
     const title = document.createElement("div");
     title.className = "legend-title shapes";
     title.textContent = column;
+    title.title = column;
     const items = this.shapes.map((name, i) =>
-      this.item("shape", i, name, (swatch) => {
+      this.item("shape", i, levelText(name), (swatch) => {
         swatch.classList.add("shape");
         swatch.append(shapeCanvas(kernels[i]));
       }),
@@ -138,14 +140,18 @@ export class Legend {
     item.className = "legend-item";
     item.classList.toggle("inactive", this.off[kind].has(i));
     item.classList.toggle("empty", this.empty[kind].has(i));
-    if (this.empty[kind].has(i)) item.title = "表示範囲とフィルタの条件に合う行が無い";
     const marker = document.createElement("span");
     marker.className = "legend-marker";
     const swatch = document.createElement("span");
     swatch.className = "swatch";
     paint(swatch);
     marker.append(swatch);
-    item.append(marker, text);
+    // A long name ends in "…" within the side pane; its tooltip has it whole.
+    const name = document.createElement("span");
+    name.className = "legend-name";
+    name.textContent = text;
+    item.title = this.empty[kind].has(i) ? `${text}\n表示範囲とフィルタの条件に合う行が無い` : text;
+    item.append(marker, name);
     if (this.empty[kind].has(i)) item.append(" （行なし）");
     item.addEventListener("click", () => this.toggle(kind, i));
     item.addEventListener("contextmenu", (event) => {
@@ -174,9 +180,10 @@ export class Legend {
     const title = document.createElement("div");
     title.className = "legend-title";
     title.textContent = this.title;
+    title.title = this.title;
     if (this.color.kind !== "levels") {
       title.classList.add("scale");
-      title.title = "右クリックで色の付け方を変える";
+      title.title = `${this.title}\n右クリックで色の付け方を変える`;
       title.addEventListener("contextmenu", (event) => {
         event.preventDefault();
         this.onMenu(event);
@@ -280,5 +287,8 @@ function shapeCanvas(kernel) {
 function formatTick(value, kind) {
   const temporal = formatTemporal(kind, value);
   if (temporal !== null) return temporal;
+  // An integer of 16 digits or more is shown as 4 significant digits, as the
+  // others, so that the tick fits the side pane.
+  if (Math.abs(value) >= 1e15) return value.toPrecision(4);
   return Number.isInteger(value) ? String(value) : Number(value.toPrecision(4)).toString();
 }

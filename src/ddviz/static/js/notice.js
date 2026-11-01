@@ -29,6 +29,8 @@ export class StatusLine {
   show(text) {
     this.element.classList.remove("notice-error");
     this.element.textContent = text;
+    // The bar shows one line; a long message ends in "…" (app.css).
+    this.element.title = text;
   }
 
   // Shows an error with its icon, and tells of it in a toast too.
@@ -36,6 +38,7 @@ export class StatusLine {
     const message = `エラー: ${text}`;
     this.element.classList.add("notice-error");
     this.element.textContent = message;
+    this.element.title = message;
     this.toasts.show(message);
   }
 }

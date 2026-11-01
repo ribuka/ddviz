@@ -9,9 +9,9 @@ labels and facet labels of a grid that scrolls (``static/js/sticky.js``).
 
 from __future__ import annotations
 
-import html
 from dataclasses import asdict
 
+from ddviz.server.labeltext import facet_text, fit_text, level_text, plotly_text
 from ddviz.shared.layout import (
     MARGIN_BOTTOM,
     MARGIN_LEFT,
@@ -35,6 +35,12 @@ PLOT_COLOR = "#fff"
 _FRAME = {"showline": True, "mirror": True, "linecolor": FRAME_COLOR, "linewidth": 1}
 # Half the width of a band of a categorical axis (`ddviz.compute.bands.BAND`).
 BAND = 0.4
+# Room between the tick labels of a categorical axis, and from a y tick label
+# to the left edge, in pixels.
+TICK_PAD = 6
+# Numeric ticks write an exponent as "1e+300", not plotly's "1×10³⁰⁰": the
+# left margin had room for the exponent only, without the digits before it.
+EXPONENT = {"exponentformat": "e"}
 
 
 def _axis_suffix(panel: int) -> str:
@@ -42,9 +48,17 @@ def _axis_suffix(panel: int) -> str:
     return "" if panel == 0 else str(panel + 1)
 
 
-def _label(column: str | None, level: object) -> str:
-    """Return a facet label."""
-    return f"{column} = {level}"
+def _fitted(label: dict, text: str, shown: str) -> dict:
+    """Return a facet label showing `shown`; one cut from `text` keeps it whole as its hover text."""
+    if shown != text:
+        label["hovertext"] = text
+    return {"text": shown, **label}
+
+
+def _for_plotly(label: dict) -> dict:
+    """Return a facet label for plotly, which reads its text as markup; the page's strips set it as text."""
+    escaped = {k: plotly_text(label[k]) for k in ("text", "hovertext") if k in label}
+    return {**label, **escaped}
 
 
 def _facet_labels(
@@ -56,64 +70,67 @@ def _facet_labels(
     the column's name is on the chip of its drop zone.
     """
     labels = []
+    width = layout.width - MARGIN_LEFT - MARGIN_RIGHT
+    height = layout.height - MARGIN_TOP - MARGIN_BOTTOM
     if spec.wrap:
         for panel, level in enumerate(levels["col"]):
             prow, pcol = divmod(panel, layout.ncol)
             lo, hi = layout.x_domain(pcol)
-            labels.append(
-                {
-                    "text": str(level),
-                    "x": (lo + hi) / 2,
-                    "y": layout.y_domain(prow)[1],
-                    "xanchor": "center",
-                    "yanchor": "bottom",
-                    "xref": "paper",
-                    "yref": "paper",
-                    "showarrow": False,
-                }
-            )
+            label = {
+                "x": (lo + hi) / 2,
+                "y": layout.y_domain(prow)[1],
+                "xanchor": "center",
+                "yanchor": "bottom",
+                "xref": "paper",
+                "yref": "paper",
+                "showarrow": False,
+            }
+            text = level_text(level)
+            labels.append(_fitted(label, text, fit_text(text, (hi - lo) * width)))
         return labels
     if spec.col is not None:
         for col, level in enumerate(levels["col"]):
             lo = layout.x_domain(col * axes.nx)[0]
             hi = layout.x_domain(col * axes.nx + axes.nx - 1)[1]
-            labels.append(
-                {
-                    "text": _label(spec.col, level),
-                    "x": (lo + hi) / 2,
-                    "y": 1,
-                    # plotly's "auto" anchors a label left of the middle
-                    # third by its left end, right of it by its right end.
-                    "xanchor": "center",
-                    "yanchor": "bottom",
-                    "xref": "paper",
-                    "yref": "paper",
-                    "showarrow": False,
-                }
-            )
+            label = {
+                "x": (lo + hi) / 2,
+                "y": 1,
+                # plotly's "auto" anchors a label left of the middle
+                # third by its left end, right of it by its right end.
+                "xanchor": "center",
+                "yanchor": "bottom",
+                "xref": "paper",
+                "yref": "paper",
+                "showarrow": False,
+            }
+            shown = facet_text(spec.col, level, (hi - lo) * width)
+            labels.append(_fitted(label, f"{spec.col} = {level_text(level)}", shown))
     if spec.row is not None:
         for row, level in enumerate(levels["row"]):
             lo = layout.y_domain(row * axes.ny + axes.ny - 1)[0]
             hi = layout.y_domain(row * axes.ny)[1]
-            labels.append(
-                {
-                    "text": _label(spec.row, level),
-                    "x": 1,
-                    "y": (lo + hi) / 2,
-                    "xanchor": "left",
-                    "yanchor": "middle",
-                    "xshift": 4,
-                    "textangle": 90,
-                    "xref": "paper",
-                    "yref": "paper",
-                    "showarrow": False,
-                }
-            )
+            label = {
+                "x": 1,
+                "y": (lo + hi) / 2,
+                "xanchor": "left",
+                "yanchor": "middle",
+                "xshift": 4,
+                "textangle": 90,
+                "xref": "paper",
+                "yref": "paper",
+                "showarrow": False,
+            }
+            shown = facet_text(spec.row, level, (hi - lo) * height)
+            labels.append(_fitted(label, f"{spec.row} = {level_text(level)}", shown))
     return labels
 
 
-def _band_ticks(manifest: PlotManifest, column: str) -> dict:
-    """Return the ticks of an axis column: a categorical one's levels at the middle of their bands, else plotly's."""
+def _band_ticks(manifest: PlotManifest, column: str, room: float | None) -> dict:
+    """Return the ticks of an axis column: a categorical one's levels at the middle of their bands, else plotly's.
+
+    A level longer than its room (``room`` pixels: its band's width on an x
+    axis; None on a y axis, whose ticks have the left margin) ends in "…".
+    """
     levels = manifest.axis_levels.get(column)
     if levels is None:
         return {}
@@ -121,11 +138,16 @@ def _band_ticks(manifest: PlotManifest, column: str) -> dict:
         ticks = _series_ticks(manifest)
     else:
         ticks = dict(enumerate(levels))
+    if room is None:
+        room = MARGIN_LEFT - TICK_PAD
+    else:
+        room = room / max(len(ticks), 1) - TICK_PAD
+    texts = [fit_text(level_text(v), room) for v in ticks.values()]
     # plotly reads tick text as its own markup; the levels are the data's.
     return {
         "tickmode": "array",
         "tickvals": list(ticks),
-        "ticktext": [html.escape(str(v), quote=False) for v in ticks.values()],
+        "ticktext": [plotly_text(t) for t in texts],
         "showgrid": False,
     }
 
@@ -318,7 +340,8 @@ def build_figure(manifest: PlotManifest) -> dict:
             "range": list(x_ranges[xi]),
             "showticklabels": not layout.scroll and bottom,
             "zeroline": False,
-            **_band_ticks(manifest, spec.x[xi]),
+            **EXPONENT,
+            **_band_ticks(manifest, spec.x[xi], layout.panel_width),
             **_date_axis(spec, spec.x[xi]),
             **_FRAME,
             **({"matches": x_axes[xi]} if x_axis != x_axes[xi] else {}),
@@ -329,7 +352,8 @@ def build_figure(manifest: PlotManifest) -> dict:
             "range": list(y_ranges[yj]),
             "showticklabels": not layout.scroll and pcol == 0,
             "zeroline": False,
-            **_band_ticks(manifest, spec.y[yj]),
+            **EXPONENT,
+            **_band_ticks(manifest, spec.y[yj], None),
             **_date_axis(spec, spec.y[yj]),
             **_FRAME,
             **({"matches": y_axes[yj]} if y_axis != y_axes[yj] else {}),
@@ -358,10 +382,10 @@ def build_figure(manifest: PlotManifest) -> dict:
     if spec.wrap:
         # A wrapped grid's labels lie between its panels: plotly draws them,
         # and they scroll with their panels.
-        fig_layout["annotations"] += labels
+        fig_layout["annotations"] += [_for_plotly(a) for a in labels]
         labels = []
     elif not layout.scroll:
-        fig_layout["annotations"] += labels
+        fig_layout["annotations"] += [_for_plotly(a) for a in labels]
     # plotly leaves out the axes of a subplot without traces.
     data = [
         {

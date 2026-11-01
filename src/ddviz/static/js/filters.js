@@ -10,6 +10,7 @@
 // box) is left or Enter is pressed in it, or 0.4s after the last tick, so that a few ticks in
 // a row aggregate once.
 import { draggedColumn } from "./builder.js";
+import { levelText } from "./names.js";
 import { formatTemporal, isDateKind, parseTemporal } from "./temporal.js";
 
 const TICK_SETTLE_MS = 400;
@@ -21,6 +22,9 @@ const MS_PER_DAY = 86_400_000;
 // Returns a number short enough for the pane.
 export function formatNumber(value) {
   if (!Number.isFinite(value)) return String(value);
+  // An integer of 16 digits or more (1e300 too) takes 4 significant digits,
+  // as the others: with every digit it ran out of the card.
+  if (Math.abs(value) >= 1e15) return value.toPrecision(4);
   if (Number.isInteger(value)) return value.toLocaleString();
   return String(Number(value.toPrecision(4)));
 }
@@ -369,8 +373,8 @@ export class FilterPane {
       });
       const text = document.createElement("span");
       text.className = "filter-level-name";
-      text.textContent = level;
-      text.title = level;
+      text.textContent = levelText(level);
+      text.title = levelText(level);
       const num = document.createElement("span");
       num.className = "filter-level-count";
       num.textContent = n.toLocaleString();

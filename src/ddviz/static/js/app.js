@@ -106,6 +106,8 @@ const legend = new Legend(
 const layers = new ImageLayers(gd, legend);
 const sticky = new StickyLabels(document.getElementById("scroller"), gd);
 const empty = document.getElementById("empty");
+// Over a plot whose whole result has no rows, which draws empty panels.
+const noRows = document.getElementById("no-rows");
 // Decoded images on the canvas; freed when replaced, unless the overview's.
 let shownImages = null;
 // Size of the plot area that the latest request was made for, and that the
@@ -245,7 +247,16 @@ function showImages(meta, bitmaps) {
 function setOverview(next) {
   const old = overview?.bitmaps;
   overview = next;
+  showNoRows(next.meta);
   if (old && old !== shownImages && old !== next.bitmaps) closeImages(old);
+}
+
+// Tells, over the plot, that its whole result has no rows: the filter's
+// conditions leave none, or the drawn columns have no values together. A
+// zoomed view without rows does not count: the legend tells of that.
+function showNoRows(meta) {
+  noRows.hidden = meta.rows !== 0;
+  noRows.textContent = meta.filters.length ? "フィルタの条件に合う行が無い" : "描く列に値のある行が無い";
 }
 
 // Fetches and decodes the images of a result, timing it; null on failure
@@ -863,6 +874,7 @@ function clearPlot() {
   stage.classList.remove("scrolls");
   sticky.set(null);
   empty.hidden = false;
+  noRows.hidden = true;
   statusLine.show("");
   hoverWarning.hidden = true;
 }
