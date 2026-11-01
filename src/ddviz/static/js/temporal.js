@@ -72,3 +72,74 @@ export function parseTemporal(kind, text) {
 export function linearRange(axis, range = axis.range) {
   return range.map((v) => axis.r2l(v));
 }
+
+const MS_PER_MINUTE = 60_000;
+// How many doubles next to `ms`'s seconds `secondsOf` tries.
+const ROUND_TRIP_STEPS = 4;
+
+// Returns the double `step` doubles above (below, negative) the double x >= 0.
+function nextDouble(x, step) {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  view.setBigUint64(0, view.getBigUint64(0) + BigInt(step));
+  return view.getFloat64(0);
+}
+
+// Returns the seconds after `minute` that plotly reads `ms` back from: it
+// reads date text as the minute's milliseconds + the seconds * 1000
+// (`dateTime2ms`), which may round to a double next to `ms`.
+function secondsOf(ms, minute) {
+  const seconds = (ms - minute) / 1000;
+  for (let i = 0; i <= ROUND_TRIP_STEPS; i++) {
+    for (const s of i ? [nextDouble(seconds, i), seconds > 0 ? nextDouble(seconds, -i) : seconds] : [seconds]) {
+      if (s < 60 && minute + s * 1000 === ms) return s;
+    }
+  }
+  return seconds;
+}
+
+// Returns milliseconds on a date axis as the date text plotly takes them as:
+// "2026-10-31 12:34:56.789", in UTC. plotly reads a number on a date axis (a
+// range, a box) at the browser's local time, but date text and the axis's
+// `r2l` at UTC; the server's milliseconds are UTC (wall-clock time). plotly
+// reads the text back as the same double (`secondsOf`): a range under a
+// second spans few doubles, and one off is another range to the page.
+export function dateText(ms) {
+  let minute = Math.floor(ms / MS_PER_MINUTE) * MS_PER_MINUTE;
+  // The division may round up to the next minute.
+  if (minute > ms) minute -= MS_PER_MINUTE;
+  const date = new Date(minute);
+  const year = date.getUTCFullYear();
+  const y = year < 0 ? `-${pad(-year, 4)}` : pad(year, 4);
+  const day = `${y}-${pad(date.getUTCMonth() + 1, 2)}-${pad(date.getUTCDate(), 2)}`;
+  // The shortest decimals that read as the same double; under 1e-6, where
+  // `String` writes an exponent, all its decimals (at most 100 for one over
+  // 1e-15) without trailing zeros.
+  const seconds = secondsOf(ms, minute);
+  const text = seconds === 0 || seconds >= 1e-6 ? String(seconds) : seconds.toFixed(100).replace(/\.?0+$/, "");
+  const time = `${pad(date.getUTCHours(), 2)}:${pad(date.getUTCMinutes(), 2)}:${seconds < 10 ? "0" : ""}${text}`;
+  return `${day} ${time}`;
+}
+
+// Returns a range in linear units (milliseconds on a date axis) as plotly
+// takes it on the layout axis `axis`: date text (`dateText`) on a date axis.
+export function plotlyRange(axis, range) {
+  return axis?.type === "date" ? range.map(dateText) : range;
+}
+
+// Returns a plotly layout whose axis ranges and selection boxes, in linear
+// units, are as plotly takes them (`plotlyRange`).
+export function forPlotly(layout) {
+  const out = { ...layout };
+  for (const [key, value] of Object.entries(layout)) {
+    if (/^[xy]axis\d*$/.test(key) && value.range) out[key] = { ...value, range: plotlyRange(value, value.range) };
+  }
+  if (layout.selections) {
+    out.selections = layout.selections.map((box) => {
+      const [x0, x1] = plotlyRange(layout[box.xref.replace(/^x/, "xaxis")], [box.x0, box.x1]);
+      const [y0, y1] = plotlyRange(layout[box.yref.replace(/^y/, "yaxis")], [box.y0, box.y1]);
+      return { ...box, x0, x1, y0, y1 };
+    });
+  }
+  return out;
+}

@@ -17,7 +17,7 @@ import { levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
 import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
-import { linearRange } from "./temporal.js";
+import { forPlotly, linearRange, plotlyRange } from "./temporal.js";
 
 const statusLine = new StatusLine(document.getElementById("status"), new Toasts(document.getElementById("toasts")));
 const hoverWarning = document.getElementById("hover-warning");
@@ -347,7 +347,7 @@ async function plot(encoding) {
   showImages(meta, null);
   Plotly.purge(gd);
   drawnKey = figureKey(figure.data, figure.layout);
-  await Plotly.newPlot(gd, figure.data, figure.layout, PLOT_CONFIG);
+  await Plotly.newPlot(gd, figure.data, forPlotly(figure.layout), PLOT_CONFIG);
   timings.plot = Math.round(performance.now() - drawStarted);
   layers.attach();
   sticky.attach();
@@ -385,7 +385,9 @@ function rowsText(meta, where = "") {
   return `task ${meta.task}: ${where}${meta.rows.toLocaleString()} 行${drawn}${filtered}`;
 }
 
-// Returns whether two ranges are equal up to a small part of their span.
+// Returns whether two ranges are equal up to a small part of their span. A
+// date axis's range comes back from plotly as the same milliseconds
+// (`dateText`), however short it is.
 function sameRange(a, b) {
   const tol = Math.abs(b[1] - b[0]) * 1e-9;
   return Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol;
@@ -449,7 +451,7 @@ function rangeUpdate(layout) {
   const update = {};
   for (const [key, value] of Object.entries(layout)) {
     if (/^[xy]axis\d*$/.test(key) && !sameRange(linearRange(gd._fullLayout[key]), value.range)) {
-      update[`${key}.range`] = [...value.range];
+      update[`${key}.range`] = plotlyRange(value, value.range);
     }
   }
   return Object.keys(update).length ? update : null;
@@ -481,7 +483,7 @@ async function draw(data, layout, meta, bitmaps) {
   } else {
     ownReact = true;
     try {
-      await Plotly.react(gd, data, withSelectionBox(layout, meta));
+      await Plotly.react(gd, data, forPlotly(withSelectionBox(layout, meta)));
     } finally {
       ownReact = false;
     }

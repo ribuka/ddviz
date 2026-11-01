@@ -1,4 +1,8 @@
-"""E2E: a datetime column on an axis, in the hover and in the filter pane."""
+"""E2E: a datetime column on an axis, in the hover and in the filter pane.
+
+The browser runs in Asia/Tokyo: plotly reads a number on a date axis at the
+browser's local time, and the axes must show the data's (UTC) times anyway.
+"""
 
 from __future__ import annotations
 
@@ -17,15 +21,37 @@ pytestmark = pytest.mark.e2e
 # Naive, as a Parquet datetime without a time zone.
 START = dt.datetime(2026, 10, 31)  # noqa: DTZ001
 ROWS = 1000
+# Returns the range of the x axis on screen, as milliseconds.
+SHOWN_X_RANGE = """() => {
+  const axis = document.getElementById("plot")._fullLayout.xaxis;
+  return axis.range.map((v) => axis.r2l(v));
+}"""
+
+
+def epoch_ms(at: dt.datetime) -> float:
+    """Return a naive datetime as milliseconds since the epoch, read as UTC."""
+    return (at - dt.datetime(1970, 1, 1)).total_seconds() * 1000  # noqa: DTZ001
 
 
 @pytest.fixture
-def temporal_frame() -> pl.DataFrame:
-    """Return rows one minute apart, with y their index and took their seconds."""
+def browser_context_args(browser_context_args: dict) -> dict:
+    """Run the browser 9 hours off UTC."""
+    return {**browser_context_args, "timezone_id": "Asia/Tokyo"}
+
+
+@pytest.fixture
+def step() -> dt.timedelta:
+    """Return the time between two rows."""
+    return dt.timedelta(minutes=1)
+
+
+@pytest.fixture
+def temporal_frame(step: dt.timedelta) -> pl.DataFrame:
+    """Return rows `step` (and a microsecond) apart, with y their index and took their seconds."""
     return pl.DataFrame(
         {
             "at": [
-                START + dt.timedelta(minutes=i, microseconds=i) for i in range(ROWS)
+                START + i * step + dt.timedelta(microseconds=i) for i in range(ROWS)
             ],
             "took": [dt.timedelta(seconds=i) for i in range(ROWS)],
             "y": [float(i) for i in range(ROWS)],
@@ -59,6 +85,13 @@ def test_a_datetime_axis_hovers_and_filters_as_dates(
         == "date"
     )
     expect(page.locator("#plot .xtick text").first).to_contain_text("2026")
+    # The axis shows the rows' times, not those 9 hours later, and the page
+    # takes it for the overview: nothing is aggregated again.
+    low, high = page.evaluate(SHOWN_X_RANGE)
+    first, last = temporal_frame["at"][0], temporal_frame["at"][-1]
+    assert epoch_ms(first) - 3_600_000 < low <= epoch_ms(first)
+    assert epoch_ms(last) <= high < epoch_ms(last) + 3_600_000
+    expect(page.locator("#status")).not_to_contain_text("表示範囲")
 
     page.mouse.move(pixel["x"], pixel["y"])
     label = page.locator("#hover-label")
@@ -97,6 +130,34 @@ def test_a_datetime_axis_hovers_and_filters_as_dates(
     )
     kept = ROWS - 15 * 60
     expect(page.locator("#status")).to_contain_text(f"{kept:,} 行（フィルタ後）")
+    assert errors == []
+
+
+@pytest.mark.parametrize("step", [dt.timedelta(microseconds=500)])
+def test_a_datetime_axis_under_a_second_draws_its_points(
+    app_page: Page, temporal_frame: pl.DataFrame
+) -> None:
+    """Datetimes within a second on X draw their points, on an axis of their range, and hover them."""
+    page = app_page
+    errors: list[object] = []
+    page.on("pageerror", lambda error: errors.append(error))
+    place(page, "at", "x", plots=False)
+    place(page, "y", "y")
+    pixel = page.wait_for_function(PAINTED_PIXEL).json_value()
+    expect(page.locator("#status")).not_to_contain_text("表示範囲")
+    low, high = page.evaluate(SHOWN_X_RANGE)
+    first, last = temporal_frame["at"][0], temporal_frame["at"][-1]
+    # The axis pads the data's range by a few hundredths of it.
+    pad = (epoch_ms(last) - epoch_ms(first)) * 0.1
+    assert epoch_ms(first) - pad < low <= epoch_ms(first)
+    assert epoch_ms(last) <= high < epoch_ms(last) + pad
+
+    page.mouse.move(pixel["x"], pixel["y"])
+    label = page.locator("#hover-label")
+    expect(label).to_be_visible()
+    lines = dict(line.split(": ", 1) for line in label.inner_text().splitlines())
+    row = temporal_frame.row(int(lines["行番号"]), named=True)
+    assert lines["at"] == f"{row['at']:%Y-%m-%d %H:%M:%S.%f}"
     assert errors == []
 
 
