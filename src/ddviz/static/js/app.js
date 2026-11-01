@@ -385,13 +385,11 @@ function rowsText(meta, where = "") {
   return `task ${meta.task}: ${where}${meta.rows.toLocaleString()} 行${drawn}${filtered}`;
 }
 
-// Returns whether two ranges are equal up to a small part of their span, or
-// up to the precision of their values: a range under a second of a date axis
-// (milliseconds since 1970) spans few steps of a double, and its date text
-// (`dateText`) comes back from plotly a step or two off.
+// Returns whether two ranges are equal up to a small part of their span. A
+// date axis's range comes back from plotly as the same milliseconds
+// (`dateText`), however short it is.
 function sameRange(a, b) {
-  const precision = Math.max(Math.abs(b[0]), Math.abs(b[1])) * Number.EPSILON * 16;
-  const tol = Math.max(Math.abs(b[1] - b[0]) * 1e-9, precision);
+  const tol = Math.abs(b[1] - b[0]) * 1e-9;
   return Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol;
 }
 
