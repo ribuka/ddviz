@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ddviz.server.labeltext import (
     EMPTY_LEVEL,
-    NARROW_PX,
+    MARGIN,
     WIDE_PX,
     facet_text,
     fit_text,
@@ -21,24 +21,25 @@ def test_an_empty_level_shows_a_placeholder() -> None:
     assert level_text(3) == "3"
 
 
-def test_wide_characters_count_wider() -> None:
-    """A CJK or full-width character takes the wide width, the others the narrow."""
-    assert text_width("ab") == 2 * NARROW_PX
-    assert text_width("日本Ａ") == 3 * WIDE_PX
+def test_characters_count_their_measured_width() -> None:
+    """An ASCII character takes its measured width, "W" wider than "i"; a CJK one the wide width; all with the margin."""
+    assert text_width("W") > 3 * text_width("i")
+    assert text_width("日本Ａ") == 3 * WIDE_PX * MARGIN
+    assert text_width("🙂") > text_width("日")
 
 
 def test_a_text_that_fits_stays_whole() -> None:
     """A text no wider than its room is not cut."""
-    assert fit_text("abc", 3 * NARROW_PX) == "abc"
+    assert fit_text("abc", text_width("abc")) == "abc"
 
 
 def test_a_long_text_ends_in_an_ellipsis_within_its_room() -> None:
     """A cut text keeps its longest head that fits with the "…"."""
-    text = "x" * 200
-    fitted = fit_text(text, 100)
-    assert fitted.endswith("…")
-    assert text_width(fitted[:-1]) + NARROW_PX <= 100
-    assert text_width(fitted[:-1]) + 2 * NARROW_PX > 100
+    for text in ["x" * 200, "W" * 200 + "a", "i" * 300]:
+        fitted = fit_text(text, 100)
+        assert fitted.endswith("…")
+        assert text_width(fitted) <= 100
+        assert text_width(text[: len(fitted)] + "…") > 100
     assert fit_text(text, 1) == "…"
     assert fit_text("日本語の長い水準の名前", 5 * WIDE_PX).endswith("…")
 

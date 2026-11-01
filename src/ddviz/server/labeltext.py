@@ -15,10 +15,33 @@ import unicodedata
 # Shown for a level that is an empty string; the same as `EMPTY_LEVEL` in
 # ``static/js/names.js``.
 EMPTY_LEVEL = "（空文字列）"
-# Width of a character of plotly's 12px font, in pixels: a wide one (CJK) and
-# the others. Taken a little wide, so that a fitted label is not cut.
+# Width of each ASCII character in plotly's 12px font ('"Open Sans", verdana,
+# arial, sans-serif'), in pixels, measured in Chrome on Windows 11
+# (2026-11-01; docs/spec.md, "最悪のデータでの表示"). A wide or full-width
+# character (CJK) takes `WIDE_PX`, an emoji or other symbol `SYMBOL_PX`, any
+# other `OTHER_PX` (the widest of the common ASCII). `MARGIN` leaves room for
+# a font that draws a little wider (another fallback, as on the CI runner).
+_ASCII_PX = {
+    **dict.fromkeys("0123456789$*_`", 7.63),
+    **dict.fromkeys("#+<=>^~w", 9.82),
+    **dict.fromkeys("()-/:;[\\]|", 5.45),
+    **dict.fromkeys("{}", 7.62),
+    **dict.fromkeys(",.", 4.37),
+    " ": 4.22, "!": 4.72, '"': 5.51, "%": 12.91, "&": 8.72, "'": 3.22,
+    "?": 6.54, "@": 12.0,
+    "A": 8.2, "B": 8.23, "C": 8.38, "D": 9.25, "E": 7.59, "F": 6.9, "G": 9.3,
+    "H": 9.02, "I": 5.05, "J": 5.46, "K": 8.31, "L": 6.68, "M": 10.11,
+    "N": 8.98, "O": 9.45, "P": 7.24, "Q": 9.45, "R": 8.34, "S": 8.2, "T": 7.39,
+    "U": 8.78, "V": 8.2, "W": 11.87, "X": 8.22, "Y": 7.38, "Z": 8.22,
+    "a": 7.21, "b": 7.48, "c": 6.25, "d": 7.48, "e": 7.15, "f": 4.22, "g": 7.48,
+    "h": 7.59, "i": 3.29, "j": 4.13, "k": 7.1, "l": 3.29, "m": 11.67, "n": 7.59,
+    "o": 7.28, "p": 7.48, "q": 7.48, "r": 5.12, "s": 6.25, "t": 4.73, "u": 7.59,
+    "v": 7.1, "x": 7.1, "y": 7.1, "z": 6.3,
+}
 WIDE_PX = 12.0
-NARROW_PX = 7.0
+SYMBOL_PX = 16.5
+OTHER_PX = 9.82
+MARGIN = 1.1
 ELLIPSIS = "…"
 # Fewest characters of a facet column's name kept before its level is cut instead.
 MIN_NAME = 4
@@ -52,13 +75,23 @@ def text_width(text: str) -> float:
     Returns
     -------
     float
-        Its width in pixels: `WIDE_PX` for each wide or full-width
-        character, `NARROW_PX` for the others.
+        Its width in pixels, taken `MARGIN` times wider than measured.
     """
-    return sum(
-        WIDE_PX if unicodedata.east_asian_width(c) in "WF" else NARROW_PX
-        for c in text
-    )
+    return MARGIN * sum(_char_width(c) for c in text)
+
+
+def _char_width(c: str) -> float:
+    """Return the measured width of one character in pixels (see `_ASCII_PX`)."""
+    if c in _ASCII_PX:
+        return _ASCII_PX[c]
+    # An emoji (outside the basic plane) is wider than a CJK character.
+    if ord(c) > 0xFFFF:
+        return SYMBOL_PX
+    if unicodedata.east_asian_width(c) in "WF":
+        return WIDE_PX
+    if unicodedata.category(c) == "So":
+        return SYMBOL_PX
+    return OTHER_PX
 
 
 def fit_text(text: str, pixels: float) -> str:
@@ -79,7 +112,7 @@ def fit_text(text: str, pixels: float) -> str:
     """
     if text_width(text) <= pixels:
         return text
-    room = pixels - NARROW_PX
+    room = pixels - text_width(ELLIPSIS)
     used = 0.0
     for i, c in enumerate(text):
         used += text_width(c)
@@ -114,7 +147,7 @@ def facet_text(column: str, level: object, pixels: float) -> str:
     if text_width(text) <= pixels:
         return text
     room = pixels - text_width(suffix)
-    if room >= MIN_NAME * NARROW_PX:
+    if room >= text_width(column[:MIN_NAME] + ELLIPSIS):
         return fit_text(column, room) + suffix
     return fit_text(level_text(level), pixels)
 

@@ -1482,6 +1482,12 @@ button {
   transform: translateX(-50%);
 }
 
+/* A facet label shows its whole text as a tooltip (sticky.js): it takes the
+   pointer, the rest of the strips lets it through to the plot. */
+.sticky-strip .facet {
+  pointer-events: auto;
+}
+
 .sticky-strip .facet.row {
   writing-mode: vertical-rl;
   transform: translateY(-50%);
