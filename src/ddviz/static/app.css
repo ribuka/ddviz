@@ -996,6 +996,36 @@ button {
   background: #fef2f2;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   font-size: 13px;
+  /* Only toasts move: they come in from the right and leave faster than they
+     came (docs/spec.md, "画面の動き"). EXIT_MS in notice.js is the 150ms. */
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+
+@starting-style {
+  .toast {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+.toast.toast-leaving {
+  opacity: 0;
+  transform: translateX(16px);
+  transition-duration: 150ms;
+  pointer-events: none;
+}
+
+/* Without animation effects (often off over RDP), toasts only fade. */
+@media (prefers-reduced-motion: reduce) {
+  .toast.toast-leaving {
+    transform: none;
+  }
+
+  @starting-style {
+    .toast {
+      transform: none;
+    }
+  }
 }
 
 .toast::before {

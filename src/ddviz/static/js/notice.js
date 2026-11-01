@@ -3,6 +3,8 @@
 
 const TOAST_MS = 10000;
 const MAX_TOASTS = 3;
+// The exit of a closing toast; the same as `.toast-leaving` in app.css.
+const EXIT_MS = 150;
 
 // Returns the message of an error response: its `detail` when it is JSON
 // (FastAPI's errors), else the text itself.
@@ -40,13 +42,26 @@ export class StatusLine {
 
 // The stack of error toasts at the top right. Each closes by its button or
 // by itself after a while; the same message again replaces its toast.
+//
+// The timer stops while the pointer is on the toast or the window is hidden,
+// and goes on with the time left (Issue #46). A closing toast plays its exit
+// (`.toast-leaving` in app.css) and leaves the DOM after EXIT_MS; until then
+// it no longer counts as shown and cannot be closed again.
 export class Toasts {
   constructor(container) {
     this.container = container;
+    document.addEventListener("visibilitychange", () => {
+      for (const toast of this.shown()) this.resume(toast);
+    });
+  }
+
+  // The toasts that are not leaving, oldest first.
+  shown() {
+    return [...this.container.querySelectorAll(".toast:not(.toast-leaving)")];
   }
 
   show(text) {
-    for (const old of this.container.querySelectorAll(".toast")) {
+    for (const old of this.shown()) {
       if (old.dataset.text === text) this.close(old);
     }
     const toast = document.createElement("div");
@@ -64,14 +79,40 @@ export class Toasts {
     close.textContent = "×";
     close.addEventListener("click", () => this.close(toast));
     toast.append(message, close);
+    toast.left = TOAST_MS;
+    toast.hovered = false;
+    toast.addEventListener("mouseenter", () => {
+      toast.hovered = true;
+      this.resume(toast);
+    });
+    toast.addEventListener("mouseleave", () => {
+      toast.hovered = false;
+      this.resume(toast);
+    });
     this.container.append(toast);
-    toast.timer = setTimeout(() => this.close(toast), TOAST_MS);
-    const shown = this.container.querySelectorAll(".toast");
-    for (const extra of [...shown].slice(0, Math.max(0, shown.length - MAX_TOASTS))) this.close(extra);
+    this.resume(toast);
+    const shown = this.shown();
+    for (const extra of shown.slice(0, Math.max(0, shown.length - MAX_TOASTS))) this.close(extra);
+  }
+
+  // Runs the toast's timer, or stops it while it is hovered or the window is
+  // hidden, keeping the time left.
+  resume(toast) {
+    if (toast.timer !== undefined) {
+      clearTimeout(toast.timer);
+      toast.timer = undefined;
+      toast.left -= performance.now() - toast.started;
+    }
+    if (toast.hovered || document.hidden) return;
+    toast.started = performance.now();
+    toast.timer = setTimeout(() => this.close(toast), Math.max(0, toast.left));
   }
 
   close(toast) {
+    if (toast.classList.contains("toast-leaving")) return;
     clearTimeout(toast.timer);
-    toast.remove();
+    toast.timer = undefined;
+    toast.classList.add("toast-leaving");
+    setTimeout(() => toast.remove(), EXIT_MS);
   }
 }
