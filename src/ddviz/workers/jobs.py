@@ -131,6 +131,8 @@ class WorkerJob:
 
     def __init__(self, memory_limit: int | None) -> None:
         self._handle = None
+        #: The cap in force: None off Windows, where there is no job.
+        self.memory_limit = memory_limit if _IS_WINDOWS else None
         if not _IS_WINDOWS:
             return
         k32 = _kernel32()
