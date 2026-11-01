@@ -84,6 +84,8 @@ def test_a_scatter_plot_draws_and_hovers(
     row = scatter_frame.row(int(lines["行番号"]), named=True)
     for column in ["x", "y"]:
         assert float(lines[column]) == pytest.approx(row[column], rel=1e-5)
+    # Without a color column the pixel's count names no series ("None" once).
+    assert re.fullmatch(r"\d+ 行", lines["このピクセル"])
 
 
 def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:

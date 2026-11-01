@@ -26,7 +26,10 @@ function formatValue(value, kind = null) {
 function seriesName(meta, s) {
   const shapes = meta.color.shapes;
   const names = [];
-  if (meta.color.kind !== "gradient") names.push(meta.series[Math.floor(s / shapes)]);
+  // Without a color column the one series has no name (the server sends "None").
+  if (meta.color.column !== null && meta.color.kind !== "gradient") {
+    names.push(meta.series[Math.floor(s / shapes)]);
+  }
   if (meta.overlay) names.push(meta.overlay.levels[s % shapes]);
   return names.join(", ");
 }
