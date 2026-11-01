@@ -125,7 +125,7 @@ MOVES = """async () => {
   const toast = document.querySelector("#toasts .toast");
   const transitions = () => toast.getAnimations().map(a => a.transitionProperty).sort();
   const entering = transitions();
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  for (const animation of toast.getAnimations()) animation.finish();
   toast.querySelector(".toast-close").click();
   return [entering, transitions()];
 }"""
