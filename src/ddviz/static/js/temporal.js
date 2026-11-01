@@ -72,3 +72,51 @@ export function parseTemporal(kind, text) {
 export function linearRange(axis, range = axis.range) {
   return range.map((v) => axis.r2l(v));
 }
+
+const MS_PER_MINUTE = 60_000;
+const NS_PER_MINUTE = 60e9;
+
+// Returns milliseconds on a date axis as the date text plotly takes them as:
+// "2026-10-31 12:34:56.789000000", in UTC. plotly reads a number on a date
+// axis (a range, a box) at the browser's local time, but date text and the
+// axis's `r2l` at UTC; the server's milliseconds are UTC (wall-clock time).
+// The text keeps nanoseconds of the second: a double of milliseconds since
+// 1970 holds less.
+export function dateText(ms) {
+  let minute = Math.floor(ms / MS_PER_MINUTE) * MS_PER_MINUTE;
+  let ns = Math.round((ms - minute) * 1e6);
+  if (ns >= NS_PER_MINUTE) {
+    minute += MS_PER_MINUTE;
+    ns -= NS_PER_MINUTE;
+  }
+  const date = new Date(minute);
+  const year = date.getUTCFullYear();
+  const y = year < 0 ? `-${pad(-year, 4)}` : pad(year, 4);
+  const day = `${y}-${pad(date.getUTCMonth() + 1, 2)}-${pad(date.getUTCDate(), 2)}`;
+  const seconds = Math.floor(ns / 1e9);
+  const time = `${pad(date.getUTCHours(), 2)}:${pad(date.getUTCMinutes(), 2)}:${pad(seconds, 2)}`;
+  return `${day} ${time}.${pad(ns - seconds * 1e9, 9)}`;
+}
+
+// Returns a range in linear units (milliseconds on a date axis) as plotly
+// takes it on the layout axis `axis`: date text (`dateText`) on a date axis.
+export function plotlyRange(axis, range) {
+  return axis?.type === "date" ? range.map(dateText) : range;
+}
+
+// Returns a plotly layout whose axis ranges and selection boxes, in linear
+// units, are as plotly takes them (`plotlyRange`).
+export function forPlotly(layout) {
+  const out = { ...layout };
+  for (const [key, value] of Object.entries(layout)) {
+    if (/^[xy]axis\d*$/.test(key) && value.range) out[key] = { ...value, range: plotlyRange(value, value.range) };
+  }
+  if (layout.selections) {
+    out.selections = layout.selections.map((box) => {
+      const [x0, x1] = plotlyRange(layout[box.xref.replace(/^x/, "xaxis")], [box.x0, box.x1]);
+      const [y0, y1] = plotlyRange(layout[box.yref.replace(/^y/, "yaxis")], [box.y0, box.y1]);
+      return { ...box, x0, x1, y0, y1 };
+    });
+  }
+  return out;
+}
