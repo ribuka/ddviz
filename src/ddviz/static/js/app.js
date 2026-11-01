@@ -481,13 +481,29 @@ async function draw(data, layout, meta, bitmaps) {
 }
 
 // Marks the drawn images as a stand-in while a view is aggregated: they fade
-// and a notice shows, so that they are not taken for the result. Once a
-// result is drawn, the selection follows it.
+// and a notice shows, so that they are not taken for the result. They mark it
+// only when no result came within `PENDING_DELAY_MS`: a mark that flashes on
+// a fast result makes it look slow. Once a result is drawn, the selection
+// follows it, however soon it came.
+const PENDING_DELAY_MS = 200;
 const pending = document.getElementById("pending");
+let waiting = false;
+let pendingTimer = 0;
 function setPending(on) {
-  gd.classList.toggle("pending", on);
-  pending.hidden = !on;
-  if (!on) followSelection();
+  waiting = on;
+  clearTimeout(pendingTimer);
+  if (on) {
+    // A request that supersedes one already marked keeps the mark.
+    if (pending.hidden) pendingTimer = setTimeout(markPending, PENDING_DELAY_MS);
+    return;
+  }
+  gd.classList.remove("pending");
+  pending.hidden = true;
+  followSelection();
+}
+function markPending() {
+  gd.classList.add("pending");
+  pending.hidden = false;
 }
 
 // The selection: the box drawn on a panel of the drawn result (its data
@@ -540,7 +556,7 @@ function onSelected(event) {
   selection = { box, base: null, bitmaps: null, fresh: true };
   layers.setSelection({ box });
   // An aggregation in flight would be killed; the selection waits for its result.
-  if (pending.hidden && !plotting) followSelection();
+  if (!waiting && !plotting) followSelection();
 }
 
 // Asks for the selected rows' layer over the drawn result, unless asked already.

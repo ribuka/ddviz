@@ -736,3 +736,54 @@ def test_the_column_list_keeps_its_items_while_the_shares_are_counted(
     zone = page.locator('.zone[data-role="y"]')
     source.drag_to(zone)
     expect(zone.locator(".chip-name")).to_have_text("y")
+
+
+# Records whether the notice of a pending aggregation shows from now on.
+WATCH_PENDING = """() => {
+  const notice = document.getElementById("pending");
+  window.pendingShown = false;
+  new MutationObserver(() => {
+    if (!notice.hidden) window.pendingShown = true;
+  }).observe(notice, { attributes: true });
+}"""
+
+
+def test_the_pending_mark_shows_only_on_a_slow_result(app_page: Page) -> None:
+    """A zoom fades the images and shows "集約中…" only when its result takes long; a fast one is drawn without them (Issue #45)."""
+    page = app_page
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    page.wait_for_function(PAINTED_PIXEL)
+    plot = page.locator("#plot")
+    notice = page.locator("#pending")
+
+    # A result that comes at once is drawn without the mark.
+    page.evaluate(WATCH_PENDING)
+    page.route("**/api/view", lambda route: route.continue_())
+    page.evaluate("Plotly.relayout('plot', {'xaxis.range': [0.2, 0.8]})")
+    expect(page.locator("#status")).to_contain_text("表示範囲")
+    page.wait_for_function(SETTLED)
+    assert not page.evaluate("window.pendingShown")
+    expect(plot).not_to_have_class(re.compile(r"\bpending\b"))
+    page.unroute("**/api/view")
+
+    # A result held back is marked once the delay passes, and unmarked when drawn.
+    held: list[Route] = []
+
+    def hold(route: Route) -> None:
+        held.append(route)
+
+    page.route("**/api/view", hold)
+    page.evaluate("Plotly.relayout('plot', {'xaxis.range': [0.3, 0.7]})")
+    page.wait_for_function(
+        "() => document.getElementById('status').textContent.includes('表示範囲を集約中')"
+    )
+    expect(notice).to_be_hidden()
+    expect(plot).not_to_have_class(re.compile(r"\bpending\b"))
+    expect(notice).to_be_visible()
+    expect(plot).to_have_class(re.compile(r"\bpending\b"))
+    assert len(held) == 1
+    held[0].continue_()
+    page.wait_for_function(SETTLED)
+    expect(notice).to_be_hidden()
+    expect(plot).not_to_have_class(re.compile(r"\bpending\b"))
