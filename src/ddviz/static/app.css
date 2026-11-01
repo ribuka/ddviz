@@ -673,12 +673,6 @@ button {
   display: none;
 }
 
-/* X and Y take more columns after the placed ones (n-th axes). */
-.zone-add {
-  color: var(--text-disabled);
-  padding: 0 6px;
-}
-
 .chip {
   display: inline-flex;
   align-items: center;

@@ -663,10 +663,8 @@ def drop_at(page: Page, column: str, role: str, x: float, y: float) -> None:
     page.wait_for_function(SETTLED)
 
 
-def test_axis_drops_replace_except_near_chip_edges_and_on_the_plus(
-    app_page: Page,
-) -> None:
-    """On X and Y, a drop away from the chips' edges replaces the nearest chip; one near an edge or on the "+" goes in as an n-th axis."""
+def test_axis_drops_split_the_zone_into_a_region_per_axis(app_page: Page) -> None:
+    """On X and Y, the zone is split into a region per axis: the first quarter of the n-th goes in before the n-th axis, the last quarter after it, the middle half replaces it."""
     page = app_page
     expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
     place(page, "x", "x", plots=False)
@@ -676,30 +674,86 @@ def test_axis_drops_replace_except_near_chip_edges_and_on_the_plus(
     x_names = x_zone.locator(".chip-name")
     y_names = y_zone.locator(".chip-name")
 
-    # The empty end of the zone, far from the chip, replaces it.
+    # X runs left to right. One axis: the whole zone is its region.
     zone = x_zone.bounding_box()
-    drop_at(page, "y", "x", zone["width"] - 4, zone["height"] / 2)
+    middle = zone["height"] / 2
+    drop_at(page, "y", "x", zone["width"] * 0.4, middle)
     expect(x_names).to_have_text(["y"])
-    # The "+" after the chips goes in last.
-    plus = x_zone.locator(".zone-add").bounding_box()
-    zone = x_zone.bounding_box()
-    drop_at(
-        page, "x", "x", plus["x"] - zone["x"] + plus["width"] / 2, zone["height"] / 2
-    )
+    drop_at(page, "x", "x", zone["width"] * 0.9, middle)
     expect(x_names).to_have_text(["y", "x"])
-    # Just outside a chip's leading edge goes in before it.
-    chip = x_zone.locator(".chip").first.bounding_box()
-    drop_at(page, "facet", "x", chip["x"] - zone["x"] - 6, zone["height"] / 2)
-    expect(x_names).to_have_text(["facet", "y", "x"])
+    # Two axes: the end of the first half goes in between them.
+    zone = x_zone.bounding_box()
+    drop_at(page, "facet", "x", zone["width"] * 0.45, middle)
+    expect(x_names).to_have_text(["y", "facet", "x"])
+    # Three axes: the middle of the third replaces the third.
+    zone = x_zone.bounding_box()
+    drop_at(page, "color", "x", zone["width"] * 5 / 6, middle)
+    expect(x_names).to_have_text(["y", "facet", "color"])
 
-    # Y runs top to bottom: the empty bottom end replaces the last chip.
+    # Y runs top to bottom: the start of the zone goes in first.
     zone = y_zone.bounding_box()
-    drop_at(page, "x", "y", zone["width"] / 2, zone["height"] - 4)
-    expect(y_names).to_have_text(["x"])
-    # Just inside a chip's top edge goes in above it.
-    chip = y_zone.locator(".chip").first.bounding_box()
-    drop_at(page, "y", "y", zone["width"] / 2, chip["y"] - zone["y"] + 4)
-    expect(y_names).to_have_text(["y", "x"])
+    center = zone["width"] / 2
+    drop_at(page, "x", "y", center, zone["height"] * 0.1)
+    expect(y_names).to_have_text(["x", "y"])
+    # The start of the second half goes in between them.
+    zone = y_zone.bounding_box()
+    drop_at(page, "facet", "y", center, zone["height"] * 0.55)
+    expect(y_names).to_have_text(["x", "facet", "y"])
+    # The middle of the first third replaces the first.
+    zone = y_zone.bounding_box()
+    drop_at(page, "color", "y", center, zone["height"] / 6)
+    expect(y_names).to_have_text(["color", "facet", "y"])
+
+
+def test_axis_drop_marks_follow_the_regions(app_page: Page) -> None:
+    """While dragging over X, the tip, the line and the outline follow the regions: the middle outlines the column it replaces, the ends show a line."""
+    page = app_page
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    x_zone = page.locator('.zone[data-role="x"]')
+    tip = page.locator("#drop-tip")
+    line = page.locator("#drop-line")
+    source = page.locator("#columns .column").filter(
+        has=page.get_by_text("facet", exact=True)
+    )
+    # Playwright's mouse fires no dragover while the button is held: send
+    # the drag's events to the elements instead.
+    data = page.evaluate_handle("() => new DataTransfer()")
+    source.dispatch_event("dragstart", {"dataTransfer": data})
+    zone = x_zone.bounding_box()
+    middle = zone["y"] + zone["height"] / 2
+
+    def over(share: float) -> None:
+        x_zone.dispatch_event(
+            "dragover",
+            {
+                "dataTransfer": data,
+                "clientX": zone["x"] + zone["width"] * share,
+                "clientY": middle,
+            },
+        )
+
+    over(0.5)
+    expect(tip).to_have_text("X の x を置き換える")
+    expect(x_zone.locator(".chip.target")).to_have_count(1)
+    expect(line).to_be_hidden()
+    over(0.9)
+    expect(tip).to_have_text("X の x の右に第 2 軸として挿入")
+    expect(x_zone.locator(".chip.target")).to_have_count(0)
+    expect(line).to_be_visible()
+    # The line stands right of the chip, not at the end of the region.
+    chip = x_zone.locator(".chip").bounding_box()
+    box = line.bounding_box()
+    assert chip["x"] + chip["width"] <= box["x"] < chip["x"] + chip["width"] + 6
+    over(0.1)
+    expect(tip).to_have_text("X の x の左に第 1 軸として挿入")
+    box = line.bounding_box()
+    assert chip["x"] - 6 < box["x"] + box["width"] <= chip["x"]
+    page.evaluate("() => document.dispatchEvent(new DragEvent('dragend'))")
+    expect(tip).to_be_hidden()
+    # The end of the last region goes in last: no "+" after the chips.
+    expect(page.locator(".zone-add")).to_have_count(0)
 
 
 def test_the_side_stacks_overlay_color_and_the_legend(app_page: Page) -> None:
