@@ -17,12 +17,18 @@ TOKEN = "secret-of-the-e2e-run"
 
 
 @pytest.fixture
-def app_url(tmp_path: Path, scatter_path: Path) -> Iterator[str]:
+def settings() -> Settings:
+    """Return the settings of the served app; a test parametrizes it to change them."""
+    return Settings()
+
+
+@pytest.fixture
+def app_url(tmp_path: Path, scatter_path: Path, settings: Settings) -> Iterator[str]:
     """Serve `scatter_path` in a thread on a free port and return its URL."""
     root = tmp_path / "run"
     root.mkdir()
     app = create_app(
-        str(scatter_path), False, root, tmp_path / "cache", Settings(), TOKEN
+        str(scatter_path), False, root, tmp_path / "cache", settings, TOKEN
     )
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")

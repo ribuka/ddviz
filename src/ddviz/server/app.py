@@ -52,7 +52,7 @@ def create_app(
     cache_root : pathlib.Path
         Directory of the column cache; kept across runs.
     settings : Settings
-        Limits of the column cache.
+        The settings (`ddviz.server.settings`).
     token : str
         Secret of this run; requests without it are refused with 403.
 
@@ -87,6 +87,11 @@ def create_app(
     @app.get("/")
     async def index() -> FileResponse:
         return FileResponse(STATIC / "index.html")
+
+    @app.get("/api/settings")
+    async def page_settings() -> dict:
+        """Return the settings the page draws with: the opacity of the legend's inactive series."""
+        return {"inactive_opacity": settings.plot.legend.inactive_opacity}
 
     app.include_router(source_router(source, settings.columns.max_listed))
     app.include_router(

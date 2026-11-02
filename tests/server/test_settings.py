@@ -10,6 +10,7 @@ from ddviz.server.settings import (
     CacheSettings,
     ColumnsSettings,
     HoverSettings,
+    LegendSettings,
     PlotSettings,
     load_settings,
     settings_path,
@@ -90,4 +91,27 @@ def test_hover_limit_must_be_a_positive_number(tmp_path: Path, value: str) -> No
     path = tmp_path / "settings.toml"
     path.write_text(f"[hover]\nmax_temp_gb = {value}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="max_temp_gb"):
+        load_settings(path)
+
+
+@pytest.mark.parametrize("value", ["0", "0.0", "0.5", "1", "1.0"])
+def test_inactive_opacity_is_read(tmp_path: Path, value: str) -> None:
+    """``plot.legend.inactive_opacity`` from 0 to 1 is read; without it the default is 0.1."""
+    path = tmp_path / "settings.toml"
+    path.write_text(
+        f"[plot]\nmax_levels = 80\n\n[plot.legend]\ninactive_opacity = {value}\n",
+        encoding="utf-8",
+    )
+    plot = load_settings(path).plot
+    assert plot.legend.inactive_opacity == float(value)
+    assert plot.max_levels == 80
+    assert LegendSettings().inactive_opacity == 0.1
+
+
+@pytest.mark.parametrize("value", ["-0.1", "1.5", "true", '"0.5"', "nan", "inf"])
+def test_inactive_opacity_must_be_from_0_to_1(tmp_path: Path, value: str) -> None:
+    """An inactive_opacity that is not a number from 0 to 1 is refused."""
+    path = tmp_path / "settings.toml"
+    path.write_text(f"[plot.legend]\ninactive_opacity = {value}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="plot.legend.inactive_opacity"):
         load_settings(path)

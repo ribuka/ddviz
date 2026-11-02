@@ -264,13 +264,19 @@ def plot_router(
         sx: float,
         sy: float,
         order: str = "",
+        hidden: str = "",
     ) -> dict:
-        """Return the row under the cursor in a result, or that the result is gone."""
+        """Return the row under the cursor in a result, or that the result is gone.
+
+        `order` lists the series from the top drawn layer down; `hidden`
+        the series drawn invisible (inactive at opacity 0), which never answer.
+        """
         index = results.opened(task)
         if index is None:
             return {"stale": True}
         series = [int(s) for s in order.split(",") if s]
-        return {"hit": index.lookup(panel, fx, fy, sx, sy, series)}
+        skip = frozenset(int(s) for s in hidden.split(",") if s)
+        return {"hit": index.lookup(panel, fx, fy, sx, sy, series, skip)}
 
     @router.get("/api/plot-data/{task}")
     async def plot_data(task: int, format: str) -> FileResponse:

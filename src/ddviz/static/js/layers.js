@@ -3,12 +3,12 @@
 // legend click redraws the canvas instead of the figure.
 import { POINTS_UNDER_BOXES, drawBoxes } from "./boxes.js";
 import { colorsNow, decode, seriesColors } from "./colorscale.js";
-import { INACTIVE_OPACITY } from "./legend.js";
 import { drawSmooths } from "./smooth.js";
 
 // Opacity of every row while rows are selected; the selected rows are drawn
-// again at full opacity. Above the legend's inactive opacity, so that a
-// faded series still differs from an inactive one.
+// again at full opacity. Above the legend's default inactive opacity (0.1),
+// so that a faded series still differs from an inactive one; an inactive
+// opacity set at 0.25 or above blurs the two, as the user chose.
 const SELECTION_DIM = 0.25;
 
 function axisKey(id) {
@@ -112,8 +112,7 @@ export class ImageLayers {
     const { meta, bitmaps, selection } = this;
     if (!meta || !bitmaps) return;
     ctx.imageSmoothingEnabled = false;
-    const inactive = this.legend.inactive;
-    const alpha = (s) => (inactive.has(s) ? INACTIVE_OPACITY : 1);
+    const alpha = (s) => this.legend.opacity(s);
     // With a selection every row fades, and the selected rows are drawn
     // again on top, in every panel.
     const dim = selection ? SELECTION_DIM : 1;

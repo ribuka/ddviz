@@ -13,6 +13,8 @@ from ddviz.shared.scatter import MAX_LEVELS
 # Most columns the column list shows by default. 1,000 lists as fast as 200
 # did; thousands make each search slow to draw (`docs/spec.md`, "列リストの件数").
 MAX_LISTED = 1000
+# Opacity of the series made inactive in the legend (`docs/spec.md`, "凡例クリック").
+INACTIVE_OPACITY = 0.1
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,20 @@ class CacheSettings:
 
 
 @dataclass(frozen=True)
+class LegendSettings:
+    """Looks of the legend's series.
+
+    Parameters
+    ----------
+    inactive_opacity : float
+        Opacity, from 0 to 1, of the series made inactive in the legend; 0
+        hides them, and the hover does not find them.
+    """
+
+    inactive_opacity: float = INACTIVE_OPACITY
+
+
+@dataclass(frozen=True)
 class PlotSettings:
     """Limits of a plot.
 
@@ -39,9 +55,12 @@ class PlotSettings:
     ----------
     max_levels : int
         Most levels a categorical column on color, Group X or Group Y may have.
+    legend : LegendSettings
+        Looks of the legend's series.
     """
 
     max_levels: int = MAX_LEVELS
+    legend: LegendSettings = LegendSettings()
 
 
 @dataclass(frozen=True)
@@ -125,7 +144,8 @@ def load_settings(path: Path | None = None) -> Settings:
     ------
     ValueError
         When ``plot.max_levels`` or ``columns.max_listed`` is not a positive
-        integer, or ``hover.max_temp_gb`` is not a positive number.
+        integer, ``hover.max_temp_gb`` is not a positive number, or
+        ``plot.legend.inactive_opacity`` is not a number from 0 to 1.
     """
     path = path or settings_path()
     data = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -133,6 +153,18 @@ def load_settings(path: Path | None = None) -> Settings:
     default = CacheSettings()
     max_levels = _positive_int(data, "plot", "max_levels", MAX_LEVELS)
     max_listed = _positive_int(data, "columns", "max_listed", MAX_LISTED)
+    inactive_opacity = (
+        data.get("plot", {}).get("legend", {}).get("inactive_opacity", INACTIVE_OPACITY)
+    )
+    if (
+        isinstance(inactive_opacity, bool)
+        or not isinstance(inactive_opacity, int | float)
+        or not 0 <= inactive_opacity <= 1
+    ):
+        raise ValueError(
+            "plot.legend.inactive_opacity needs a number from 0 to 1: "
+            f"{inactive_opacity!r}"
+        )
     hover = data.get("hover", {})
     max_temp_gb = hover.get("max_temp_gb")
     if max_temp_gb is not None and (
@@ -150,7 +182,10 @@ def load_settings(path: Path | None = None) -> Settings:
                 cache.get("max_unused_days", default.max_unused_days)
             ),
         ),
-        plot=PlotSettings(max_levels=max_levels),
+        plot=PlotSettings(
+            max_levels=max_levels,
+            legend=LegendSettings(inactive_opacity=float(inactive_opacity)),
+        ),
         hover=HoverSettings()
         if max_temp_gb is None
         else HoverSettings(max_temp_bytes=int(max_temp_gb * 2**30)),

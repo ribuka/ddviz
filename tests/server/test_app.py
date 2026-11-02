@@ -14,7 +14,13 @@ from fastapi.testclient import TestClient
 
 from ddviz.server.app import create_app
 from ddviz.server.auth import COOKIE
-from ddviz.server.settings import ColumnsSettings, HoverSettings, Settings
+from ddviz.server.settings import (
+    ColumnsSettings,
+    HoverSettings,
+    LegendSettings,
+    PlotSettings,
+    Settings,
+)
 from ddviz.shared.scatter import POINT_SIZE
 from ddviz.shared.shapes import SHAPES, kernel
 
@@ -109,6 +115,21 @@ def test_columns_carry_their_non_null_rows(
     for column in found["columns"]:
         assert column["nonnull"] == counts[column["name"]]
         assert column["share"] == counts[column["name"]] / rows
+
+
+def test_the_page_reads_the_inactive_opacity(
+    tmp_path: Path, scatter_path: Path
+) -> None:
+    """``GET /api/settings`` gives the page ``plot.legend.inactive_opacity``."""
+    settings = Settings(plot=PlotSettings(legend=LegendSettings(inactive_opacity=0.0)))
+    app = create_app(
+        str(scatter_path), False, tmp_path / "run", tmp_path / "cache", settings, TOKEN
+    )
+    (tmp_path / "run").mkdir()
+    with TestClient(app) as client:
+        assert client.get("/api/settings").status_code == 403
+        client.get("/", params={"token": TOKEN})
+        assert client.get("/api/settings").json() == {"inactive_opacity": 0.0}
 
 
 def test_columns_list_as_many_as_the_settings_allow(

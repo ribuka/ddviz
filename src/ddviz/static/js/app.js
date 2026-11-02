@@ -105,6 +105,14 @@ const legend = new Legend(
   },
 );
 const layers = new ImageLayers(gd, legend);
+// The opacity of the legend's inactive series (`plot.legend.inactive_opacity`).
+fetch("/api/settings")
+  .then((response) => (response.ok ? response.json() : null))
+  .then((settings) => {
+    if (!settings) return;
+    legend.inactiveOpacity = settings.inactive_opacity;
+    layers.draw();
+  });
 const sticky = new StickyLabels(document.getElementById("scroller"), gd);
 const empty = document.getElementById("empty");
 // Over a plot whose whole result has no rows, which draws empty panels.

@@ -21,10 +21,12 @@ function span(box, nSeries) {
 }
 
 // Returns the box plot of panel `p` of `meta` at data position (x, y): over
-// its box or its whiskers, else null.
-export function boxAt(meta, p, x, y) {
+// its box or its whiskers, else null. The boxes of the series in `hidden`
+// (drawn invisible) are not found.
+export function boxAt(meta, p, x, y, hidden = new Set()) {
   const nSeries = meta.grid.n_series;
   for (const box of meta.panels[p]?.boxes ?? []) {
+    if (hidden.has(box[1])) continue;
     const { middle, half } = span(box, nSeries);
     if (Math.abs(x - middle) <= half && y >= box[3] && y <= box[7]) return box;
   }

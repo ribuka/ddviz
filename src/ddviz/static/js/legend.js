@@ -19,12 +19,18 @@
 // bar for a gradient, or its intervals in colors spread over the scale. A
 // right click on the bar, on the title or on an interval's marker opens the
 // scale's menu, which also has the size of the markers.
+//
+// An inactive series is drawn at `inactiveOpacity` (`plot.legend.
+// inactive_opacity` of the settings, `GET /api/settings`); at 0 it is hidden,
+// and the hover does not find it (`hidden`). The legend's own inactive items
+// stay at app.css's opacity, so that they can be clicked back at 0.
 import { cssColor, levelColors } from "./colorscale.js";
 import { levelText } from "./names.js";
 import { shapeCanvas } from "./shapepanel.js";
 import { formatTemporal } from "./temporal.js";
 
-export const INACTIVE_OPACITY = 0.1;
+// Until the settings come.
+const INACTIVE_OPACITY = 0.1;
 
 export class Legend {
   // `element` holds the items; `onChange` runs after each click, `onMenu`
@@ -43,6 +49,18 @@ export class Legend {
     this.off = { color: new Set(), shape: new Set() };
     this.inactive = new Set();
     this.empty = { color: new Set(), shape: new Set() };
+    this.inactiveOpacity = INACTIVE_OPACITY;
+  }
+
+  // Returns the opacity series `s` is drawn at.
+  opacity(s) {
+    return this.inactive.has(s) ? this.inactiveOpacity : 1;
+  }
+
+  // Returns the series drawn invisible (inactive at opacity 0), which the
+  // hover does not find.
+  hidden() {
+    return this.inactiveOpacity === 0 ? this.inactive : new Set();
   }
 
   // Shows the levels of a result (its meta): the color column is the title
