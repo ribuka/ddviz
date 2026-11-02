@@ -8,6 +8,7 @@ It fetches the WebView2 fixed-version runtime once (into
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -31,18 +32,29 @@ WEBVIEW2_URL = (
 def _check_signature(path: Path) -> None:
     """Fail unless the file carries a valid Authenticode signature of Microsoft."""
     script = (
+        "$ErrorActionPreference = 'Stop'; "
         f"$s = Get-AuthenticodeSignature -LiteralPath '{path}'; "
         '"$($s.Status)|$($s.SignerCertificate.Subject)"'
     )
-    out = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", script],
+    # Started from PowerShell 7 (pwsh, the shell of a GitHub Actions step),
+    # Windows PowerShell inherits PSModulePath with the modules of 7 first and
+    # fails to load Get-AuthenticodeSignature; without it, it uses its own.
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+    proc = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
         capture_output=True,
         text=True,
-        check=True,
-    ).stdout.strip()
+        check=False,
+        env=env,
+    )
+    out = proc.stdout.strip()
     status, _, subject = out.partition("|")
-    if status != "Valid" or "O=Microsoft Corporation" not in subject:
-        raise RuntimeError(f"bad signature on {path}: {out}")
+    if (
+        proc.returncode != 0
+        or status != "Valid"
+        or "O=Microsoft Corporation" not in subject
+    ):
+        raise RuntimeError(f"bad signature on {path}: {out} {proc.stderr.strip()}")
 
 
 def fetch_webview2() -> Path:
