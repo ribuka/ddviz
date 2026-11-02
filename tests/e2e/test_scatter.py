@@ -434,6 +434,23 @@ def test_a_color_level_takes_a_color_picked_on_its_marker(app_page: Page) -> Non
     page.wait_for_function(f"() => !({HAS_COLOR})([0, 0, 0])")
     assert len(plots) == asked
 
+    # The code field is in HEX from the start: a bad code is marked, a good
+    # one (with or without "#", 3 or 6 digits) is picked with Enter.
+    marker.click(button="right")
+    menu.get_by_text("色", exact=True).hover()
+    code = panel.locator(".color-hex-input")
+    expect(code).to_have_value("#1f77b4")
+    code.fill("#12345")
+    code.press("Enter")
+    expect(code).to_have_class(re.compile("invalid"))
+    expect(menu).to_be_visible()
+    code.fill("0f0")
+    code.press("Enter")
+    expect(menu).to_have_count(0)
+    expect(swatch).to_have_css("background-color", "rgb(0, 255, 0)")
+    page.wait_for_function(HAS_COLOR, arg=[0, 255, 0])
+    assert len(plots) == asked
+
     # The color stays while the color column does, and goes with another.
     marker.click(button="right")
     menu.get_by_text("色", exact=True).hover()
@@ -450,6 +467,8 @@ def test_a_color_level_takes_a_color_picked_on_its_marker(app_page: Page) -> Non
     legend.locator(".colorbar").click(button="right")
     page.locator(".scale-menu").get_by_text("3 個", exact=True).click()
     page.wait_for_function(SETTLED)
+    # The title is the column's name alone, without how it is cut.
+    expect(legend.locator(".legend-title")).to_have_text("x")
     marker = legend.locator(".legend-marker").first
     expect(marker).to_have_attribute("title", "右クリックで色の付け方を変える")
     marker.click(button="right")
@@ -505,7 +524,7 @@ PAINTED_COUNT = """() => {
 def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     app_page: Page,
 ) -> None:
-    """Without an overlay the points are 5px circles; the points' icon, the marker's menu, or a gradient's color bar menu changes their size."""
+    """Without an overlay the points are 5px circles; the points' icon, or a gradient's color bar menu changes their size. Without a color column the legend shows no item."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
@@ -529,9 +548,11 @@ def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
 
     status = page.locator("#status")
     task = status.inner_text()
+    # A single color has no legend: the points' icon opens the menu.
     legend = page.locator("#legend")
-    legend.locator(".legend-marker").first.click(button="right")
-    menu = page.locator(".shape-menu")
+    expect(legend.locator(".legend-item")).to_have_count(0)
+    expect(legend.locator(".legend-title")).to_have_count(0)
+    points.click(button="right")
     expect(menu.locator(".scale-menu-item.checked")).to_have_text("5 px")
     menu.get_by_text("9 px", exact=True).click()
     expect(menu).to_have_count(0)
@@ -756,6 +777,38 @@ def test_axis_drop_marks_follow_the_regions(app_page: Page) -> None:
     expect(tip).to_be_hidden()
     # The end of the last region goes in last: no "+" after the chips.
     expect(page.locator(".zone-add")).to_have_count(0)
+
+
+def test_group_y_reads_top_to_bottom_and_the_kind_tabs_show_the_chosen(
+    app_page: Page,
+) -> None:
+    """Group Y is not rotated, as plotly's row labels, while Y is; the column list speaks English and fills the chosen kind's tab."""
+    page = app_page
+    expect(page.locator("#columns .column").first).to_be_visible()
+    expect(page.locator(".column-search")).to_have_attribute("placeholder", "Search ...")
+    expect(page.locator(".filter-drop")).to_have_text("Drop a column to filter")
+    tabs = page.locator(".column-kinds button")
+    expect(tabs).to_have_text(["All", "Numeric", "Categorical"])
+    on = {"background-color": "rgb(42, 111, 219)", "color": "rgb(255, 255, 255)"}
+    for name, value in on.items():
+        expect(tabs.nth(0)).to_have_css(name, value)
+    tabs.nth(1).click()
+    expect(tabs.nth(1)).to_have_class(re.compile(r"\bon\b"))
+    for name, value in on.items():
+        expect(tabs.nth(1)).to_have_css(name, value)
+    expect(tabs.nth(0)).not_to_have_css("background-color", on["background-color"])
+    tabs.nth(0).click()
+
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    place(page, "facet", "row")
+    expect(page.locator('.zone[data-role="row"]')).to_have_css("transform", "none")
+    expect(page.locator('.zone[data-role="y"]')).not_to_have_css("transform", "none")
+    # Read from the top: the name starts above the "×".
+    chip = page.locator('.zone[data-role="row"] .chip')
+    name = chip.locator(".chip-name").bounding_box()
+    remove = chip.locator(".chip-remove").bounding_box()
+    assert name["y"] < remove["y"]
 
 
 def test_the_side_stacks_overlay_color_and_the_legend(app_page: Page) -> None:

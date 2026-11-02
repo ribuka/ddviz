@@ -24,7 +24,6 @@ import { formatTemporal } from "./temporal.js";
 
 export const INACTIVE_OPACITY = 0.1;
 
-const BY_TEXT = { rows: "行数", values: "値の幅" };
 // Color of the shapes in the overlay's legend.
 const SHAPE_COLOR = "#444";
 
@@ -48,7 +47,7 @@ export class Legend {
   }
 
   // Shows the levels of a result (its meta): the color column is the title
-  // (none for a single color). A result of the same levels keeps their
+  // (none for a single color, which shows no color legend).A result of the same levels keeps their
   // state. Its images (one per series) mark the levels without rows.
   set(meta) {
     const shapes = meta.overlay?.levels ?? [];
@@ -105,18 +104,18 @@ export class Legend {
     this.element.replaceChildren(...nodes);
   }
 
+  // The color legend: none for a single color (Color empty), whose one item
+  // would tell nothing. The title is the column's name alone: the intervals'
+  // items and the scale's menu tell how a numeric column is cut.
   colorNodes() {
+    if (this.title === null) return [];
     const colors = levelColors(this.meta);
     const items = this.series.map((name, i) =>
-      this.item("color", i, this.title === null ? "全体" : levelText(name), (swatch) => {
+      this.item("color", i, levelText(name), (swatch) => {
         swatch.style.background = colors[i];
       }),
     );
-    if (this.title === null) return items;
-    const title = this.titleElement();
-    const { bins } = this.color;
-    if (bins) title.append(`（${BY_TEXT[bins.by]}で ${bins.n} 等分）`);
-    return [title, ...items];
+    return [this.titleElement(), ...items];
   }
 
   shapeNodes() {
