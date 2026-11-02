@@ -292,8 +292,26 @@ E2E テスト（2026-10-30 決定）：
 
 - 版はリポジトリの直下の `VERSION` の 1 か所にだけ書く。`pyproject.toml` は `dynamic = ["version"]` にし、hatch が `VERSION` から読む。
 - 理由：リリースのワークフロー（`.github/workflows/release.yml`）と版を上げる手順は `VERSION` だけを書き換える。`pyproject.toml` にも版を書くと、2 つがずれる。
-- main で `VERSION` が変わると、リリースのワークフローがタグ `v<版>` と GitHub のリリースを作る。
+- main で `VERSION` が変わると、リリースのワークフローがタグ `v<版>` と GitHub のリリースを作り、exe を添付する（「リリースの exe」）。
 - リモートは GitHub の private のリポジトリ `ribuka/ddviz`（2026-10-30 作成）。main への push とプルリクエストで CI（`.github/workflows/ci.yml`）が動く。
+
+#### リリースの exe（2026-11-02 決定。Issue #71。計測は「CI での exe のビルド」）
+
+- リリースには、配布フォルダ（`dist\ddviz`）の zip `ddviz-<版>-win-x64.zip` を 1 つ添付する。中の一番上は `ddviz\` のフォルダ。zip は Windows の `tar -a`（`%SystemRoot%\System32\tar.exe`。Git の GNU tar ではない）で作る。GitHub Releases の添付は 1 ファイル 2 GiB までなので、分けない。
+- ワークフローは 2 つに分ける。
+  - `.github/workflows/exe.yml`：windows-latest で `packaging/build.py` を動かし、`packaging/smoke.py` で確かめ、zip を run の artifact（1 日で消える。圧縮し直さない `compression-level: 0`）に置く。権限は読み取りだけ。`workflow_call`（`ref` を受け取り、zip の名前を返す）で `release.yml` から呼ぶほか、`packaging/**`・`exe.yml`・`release.yml` を変えたプルリクエストでも動かし、リリースの前にビルドが壊れていないことを見る。
+  - `.github/workflows/release.yml`：今までどおりタグとリリースを作った後、`exe.yml` にタグを渡してビルドし、別のジョブ（ubuntu-latest、`contents: write`）が artifact を受け取って `gh release upload --clobber` で添付する。理由：書き込みの権限を、外から取ってきたもの（WebView2、PyPI の依存）を動かすビルドのジョブに渡さない。
+- タグが既にあるとき、push では今までどおり何もしない。手動の実行（`workflow_dispatch`）では、タグ（`v<VERSION>`）からビルドし直して zip を差し替える。ビルドに失敗して zip の無いリリースができたときや、添付し直したいときに使う。タグの無い版を手動で実行すると、push と同じくタグとリリースを作って添付する。
+- 2 つのリリースの実行が重ならないよう、`release.yml` に `concurrency: release`（取り消さない）を付ける。
+- 確かめ方（`packaging/smoke.py`）：小さな Parquet を書き、`ddviz.exe --worker` に nonnull のタスクを渡して、`ready` から `done` までのメッセージと結果の件数を確かめる。polars と pyarrow を exe の中で動かす。窓は開かない（CI の runner に画面が無い）。`uv run packaging/smoke.py <exe>` で、展開した zip の exe も確かめられる。
+- `packaging/build.py` の WebView2 の署名の確認は、Windows PowerShell（`powershell`）を `PSModulePath` を外した環境で起動する。理由：GitHub Actions の Windows の step の既定のシェルは PowerShell 7（pwsh）で、そこから起動した Windows PowerShell は 7 のモジュールを先に並べた `PSModulePath` を引き継ぎ、`Get-AuthenticodeSignature` を読めずに空の結果を返した（CI で失敗し、手元でも pwsh から起動して再現した。2026-11-02）。PowerShell のエラーで止まるよう `$ErrorActionPreference = 'Stop'` にし、失敗したときは stderr もエラーに含める。
+
+WebView2 の固定版の再配布の条件（2026-11-02 確認）：
+
+- Microsoft の WebView2 のダウンロードページにも「Distribute your app and the WebView2 Runtime」にも、ライセンスの文へのリンクや再配布の条件は書かれていない。後者は、固定版を展開してアプリと一緒に配る手順だけを書いている。
+- ライセンスの文は、ScanCode LicenseDB の `ms-edge-webview2`（Microsoft Software License Terms、第三者の写し）で読んだ。Section 2 の Distributable Code の条件：アプリに主な機能を足すこと、配布先と利用者に、この条件と同じ以上に Microsoft を守る条件（Section 9 の通知を含む）に同意させること、コードは Microsoft（ダウンロードサイトを含む）から直接取ること（`build.py` は Microsoft の URL から取り、Microsoft の署名を確かめる）、Microsoft の商標で Microsoft が出したように見せないこと。ライセンスの文のファイルを同梱することは求めていない。Section 4(c) は、ソフトウェアの中の Microsoft の通知を消したり変えたりすることを禁じる。Section 9 は、SmartScreen（既定で有効）を無効にしないなら、利用者に SmartScreen が含まれ情報を Microsoft に送ることを知らせることを求める。pywebview 6.2.1 は SmartScreen を無効にしていない（`IsReputationCheckingRequired` を設定していない）。
+- 固定版のフォルダには、Chromium などのオープンソースのライセンスを表示する `show_third_party_software_licenses.bat`（`msedgewebview2.exe --embedded-browser-webview=show-credits` を呼ぶ）が入っている。`build.py` はフォルダを丸ごとコピーするので、そのまま配布フォルダに入る。
+- 今は、リポジトリが private で、リリースはリポジトリに入れる人にしか見えない。ライセンスの文や利用者への通知を同梱するかは決めていない（「未確認事項」）。
 
 #### Python の版と CPU の前提（2026-10-30）
 
@@ -1403,6 +1421,23 @@ B の細かい集約（全体図の集約に足す分。代表行の値は含め
 - Windows 11 の `C:\Program Files` には、2 つの SID の読み取り（フォルダ自身には RX、中へは継承するだけの GENERIC_READ | GENERIC_EXECUTE）が既に付いていた。その下にコピーした固定版は継承で権限を得るので、確認だけで済み、管理者のコマンドは要らない見込み。`C:\Users\Public` と `C:\ProgramData` には付いていない。判定は、継承するだけの ACE と、フォルダ自身に効く ACE の両方を見る。
 - メッセージボックスの文は Ctrl+C でコピーできる（Windows の MessageBox の機能）ので、メッセージにそう書いた。
 
+### CI での exe のビルド（2026-11-02。Issue #71）
+
+`.github/workflows/exe.yml` を、PR #82 で windows-latest に流した（run 41394777816）。WebView2 の固定版は毎回 Microsoft から取る（キャッシュしない）。
+
+| step | 時間 |
+| --- | --- |
+| Build（依存の取得、WebView2 の .cab の取得・署名の確認・展開、PyInstaller、コピー） | 57 秒（うち .cab の取得と署名の確認まで約 13 秒） |
+| Smoke test（`packaging/smoke.py`） | 2 秒 |
+| Zip（`tar -a`） | 28 秒 |
+| artifact に上げる | 6 秒 |
+| ジョブ全体 | 1 分 50 秒 |
+
+- zip は `ddviz-0.1.0-win-x64.zip`、425,221,782 バイト（405.5 MiB）。2 GiB の上限の約 1/5。「最小構成の exe」（2026-10-28）の 375MB より約 30MB 大きい（その後に足した依存とコードの分と見ているが、内訳は測っていない）。展開すると 991 MiB（`du -sm`）。
+- 手元（Windows 11 Pro 26200）で、WebView2 を取得済みのときの `packaging/build.py` は 43 秒。
+- artifact の zip を手元に落とし、Windows の `tar -x` で展開して確かめた：`packaging/smoke.py <展開した exe>` が通った。展開した `ddviz.exe` を Parquet ファイルを引数に窓付きで起動し、WebView2 のリモートデバッグ（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=…`）で見ると、起動から 2.0 秒でページが開き、2.4 秒で列の欄にファイルの列名が出た。WebView2 は展開したフォルダの `webview2\msedgewebview2.exe`（7 プロセス）で動いた。窓を閉じる（`CloseMainWindow`）と終了コード 0 で終わり、展開したフォルダから動くプロセスは残らなかった。
+- リリースへの添付そのもの（`release.yml` の attach のジョブ）は、タグとリリースを作らないと動かないため、まだ動かしていない。最初の版のリリースで確かめる。
+
 ### 画像の層の持ち方の比較（2026-10-28）
 
 「次のアクション」の旧 1 番。画像の層の持ち方を見直し、描画と凡例のクリックを速くするために、exe（WebView2 固定版 156.0.4314.50、Windows 11）で測った。
@@ -1851,7 +1886,8 @@ unning`）を残し、次の起動で前回の異常終了を知らせるメッ�
 - [ ] 固定版 120 以降の権限（「WebView2 の固定版の権限」）が Server 2016 の実機で効くか。実機も VM も無く、手元の Windows 11 では権限が無くても動くため、判定と付与の処理は単体テストと、Windows 11 の一時フォルダへの実際の付与と読み戻しでだけ確かめた。未確認の点：2 つの SID を付けた固定版 156 が Server 2016 で実際に描画できるか（2 つで足りるか）。Server 2016 の Python が返すビルド番号が 14393 か。Server 2016 の `C:\Program Files` に 2 つの SID（特に ALL RESTRICTED APPLICATION PACKAGES）が継承する形で付いているか（付いていれば、管理者がその下にコピーするだけで動く）。管理者が付けた後、一般ユーザーの確認が DACL を読めて通るか。中のファイルに、フォルダからの継承を断った ACL が残っている場合は確認で見落とす（フォルダの DACL だけを読むため）
 - [ ] Server 2016 で動く WebView2 固定版の最新版はどれか。今は固定版 156.0.4314.50（2026-10-28）。Python は 3.13 に固定した（共有サーバーで動く実績あり。「Python の版と CPU の前提」）
 - [x] ズームで集約し直した画像に差し替えるときの速度：image トレース 500 本の `Plotly.react` は exe で 0.54〜0.80 秒で、大半は 100 パネルの軸の描き直しだった。画像を canvas に移し、軸を描き直さずに画像だけを差し替えて 17〜24ms になった（「画像の層の持ち方の比較」）
-- [ ] exe（PyInstaller）で pyarrow が動くか（非 null の割合のタスク）。開発環境でだけ確かめた（2026-10-29）
+- [x] exe（PyInstaller）で pyarrow が動くか（非 null の割合のタスク）：動く。`packaging/smoke.py` が exe の worker に nonnull のタスクを実行させ、手元と CI で通った（2026-11-02。「CI での exe のビルド」）
+- [ ] WebView2 の固定版を同梱した zip を、リポジトリに入れない人に配るとき（リポジトリかリリースを公開するときを含む）、ライセンスの文や利用者への通知（SmartScreen）を同梱するか。条件は「リリースの exe」に書いた。今は private のリポジトリのリリースなので決めていない（ユーザー判断が要る）
 - [x] exe 化した後の polars の import 時間：`ddviz.exe --worker` が `ready` を返すまで 0.36〜0.38 秒で、開発環境（1.07〜1.11 秒）の約 1/3。exe の起動だけで約 0.2 秒（「最小構成の exe」）
 - [x] 1 億行のファイルを列分割するときのピークメモリが頭打ちになるか：1 列ずつ書けば、1 億行（1 行グループ 100 万行でも 1000 万行でも）で約 1.0GB に収まる。まとめて書く列数に比例して増える（「遅延変換の試作」）
 - [ ] 10 万列 × 1 億行の実規模で、初回の待ち（フッタ解析 + 列ごとの変換）が見込みどおりか。合成データでは作れない（writer が 1000 万チャンクで 4GB を超える）ため、フッタ解析と 1 億行の変換を別々に測って足した
