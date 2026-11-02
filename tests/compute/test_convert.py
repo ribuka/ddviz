@@ -22,18 +22,18 @@ from ddviz.shared.tasks import ConvertTask
 def _schema(source: Path, out: Path) -> dict:
     """Run the schema task on an input and return its manifest."""
     out.mkdir()
-    run_schema([str(f) for f in parquet_files(source)], out, lambda _: None)
+    run_schema([str(f) for f in parquet_files([source])], out, lambda _: None)
     return read_manifest(out)
 
 
 def _convert(source: Path, tmp_path: Path, columns: list[str]) -> dict[str, list[str]]:
     """Convert `columns` of an input into a column cache and return the parts of each."""
-    files = parquet_files(source)
+    files = parquet_files([source])
     manifest = _schema(source, tmp_path / "schema")
     dtypes = {
         c["name"]: c["dtype"] for c in manifest["columns"] if c["name"] in columns
     }
-    cache = ColumnCache(tmp_path / "cache", source, files)
+    cache = ColumnCache(tmp_path / "cache", [source], files)
     parts = {c: [str(p) for p in cache.parts(c, dtypes[c])] for c in columns}
     task = ConvertTask(
         str(tmp_path / "schema" / SCHEMA),

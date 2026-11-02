@@ -33,7 +33,7 @@ TOKEN = "secret-of-the-run"
 def server(tmp_path: Path, scatter_path: Path) -> Iterator[TestClient]:
     """Serve `scatter_path` with its task outputs and column cache under `tmp_path`; no token yet."""
     app = create_app(
-        str(scatter_path),
+        [str(scatter_path)],
         False,
         tmp_path / "run",
         tmp_path / "cache",
@@ -123,7 +123,12 @@ def test_the_page_reads_the_inactive_opacity(
     """``GET /api/settings`` gives the page ``plot.legend.inactive_opacity``."""
     settings = Settings(plot=PlotSettings(legend=LegendSettings(inactive_opacity=0.0)))
     app = create_app(
-        str(scatter_path), False, tmp_path / "run", tmp_path / "cache", settings, TOKEN
+        [str(scatter_path)],
+        False,
+        tmp_path / "run",
+        tmp_path / "cache",
+        settings,
+        TOKEN,
     )
     (tmp_path / "run").mkdir()
     with TestClient(app) as client:
@@ -138,7 +143,12 @@ def test_columns_list_as_many_as_the_settings_allow(
     """The search returns ``columns.max_listed`` columns at most, whatever the page asks."""
     settings = Settings(columns=ColumnsSettings(max_listed=2))
     app = create_app(
-        str(scatter_path), False, tmp_path / "run", tmp_path / "cache", settings, TOKEN
+        [str(scatter_path)],
+        False,
+        tmp_path / "run",
+        tmp_path / "cache",
+        settings,
+        TOKEN,
     )
     (tmp_path / "run").mkdir()
     with TestClient(app) as started:
@@ -319,7 +329,7 @@ def test_summary(client: TestClient) -> None:
 def folder_client(tmp_path: Path, folder_path: Path) -> Iterator[TestClient]:
     """Serve the folder `folder_path` with the token in a cookie."""
     app = create_app(
-        str(folder_path),
+        [str(folder_path)],
         False,
         tmp_path / "run",
         tmp_path / "cache",
@@ -332,11 +342,34 @@ def folder_client(tmp_path: Path, folder_path: Path) -> Iterator[TestClient]:
         yield started
 
 
+@pytest.fixture
+def files_client(tmp_path: Path, folder_path: Path) -> Iterator[TestClient]:
+    """Serve the Parquet files of `folder_path`, given out of order, as one input."""
+    files = ["part-10.parquet", "part-1.parquet", "part-2.parquet", "part-1.parquet"]
+    app = create_app(
+        [str(folder_path / f) for f in files],
+        False,
+        tmp_path / "run",
+        tmp_path / "cache",
+        Settings(),
+        TOKEN,
+    )
+    (tmp_path / "run").mkdir()
+    with TestClient(app) as started:
+        assert started.get("/", params={"token": TOKEN}).status_code == 200
+        yield started
+
+
+@pytest.mark.parametrize("served", ["folder_client", "files_client"])
 def test_a_folder_plots_selects_and_lists_as_one_table(
-    folder_client: TestClient, folder_frame: pl.DataFrame
+    served: str, request: pytest.FixtureRequest, folder_frame: pl.DataFrame
 ) -> None:
-    """A folder's files read as one table: its casts are told, and plot, table and summary work."""
-    client = folder_client
+    """A folder's files, or several files, read as one table in natural order.
+
+    Its casts are told, and plot, table and summary work; a file given twice
+    is read once.
+    """
+    client = request.getfixturevalue(served)
     source = client.get("/api/source").json()
     assert source["files"] == 3
     assert source["rows"] == folder_frame.height
@@ -366,6 +399,26 @@ def test_a_folder_plots_selects_and_lists_as_one_table(
     assert summary["nulls"] == folder_frame["n"].null_count()
 
 
+def test_several_paths_with_a_folder_are_refused(
+    tmp_path: Path, folder_path: Path, scatter_path: Path
+) -> None:
+    """Several paths must all be files; a folder among them fails Load with 400."""
+    app = create_app(
+        [str(scatter_path), str(folder_path)],
+        False,
+        tmp_path / "run",
+        tmp_path / "cache",
+        Settings(),
+        TOKEN,
+    )
+    (tmp_path / "run").mkdir()
+    with TestClient(app) as client:
+        client.get("/", params={"token": TOKEN})
+        response = client.get("/api/schema")
+    assert response.status_code == 400
+    assert str(folder_path) in response.json()["detail"]
+
+
 def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
     client: TestClient, tmp_path: Path, scatter_path: Path
 ) -> None:
@@ -378,7 +431,7 @@ def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
     assert unlimited["files"] and unlimited["dropped"] == []
     settings = Settings(hover=HoverSettings(max_temp_bytes=unlimited["bytes"] + 1000))
     app = create_app(
-        str(scatter_path),
+        [str(scatter_path)],
         False,
         tmp_path / "limited",
         tmp_path / "cache",
@@ -656,7 +709,12 @@ def test_plot_data_needs_the_hover_files(tmp_path: Path, scatter_path: Path) -> 
     """A result without hover files kept no bins: its data is refused with the reason."""
     settings = Settings(hover=HoverSettings(max_temp_bytes=1))
     app = create_app(
-        str(scatter_path), False, tmp_path / "run", tmp_path / "cache", settings, TOKEN
+        [str(scatter_path)],
+        False,
+        tmp_path / "run",
+        tmp_path / "cache",
+        settings,
+        TOKEN,
     )
     (tmp_path / "run").mkdir()
     with TestClient(app) as limited:

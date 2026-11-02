@@ -304,7 +304,7 @@ def plot_router(
         return FileResponse(
             end.out / file,
             media_type=FORMATS[format],
-            filename=file_name(source.path, format, datetime.now().astimezone()),
+            filename=file_name(source.paths, format, datetime.now().astimezone()),
             background=BackgroundTask(end.discard),
         )
 

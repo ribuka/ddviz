@@ -93,7 +93,7 @@ def test_table_page_reads_columns_from_the_files_of_a_folder(
             x="x", y="y", x_range=[-0.5, 0.5], y_range=[-0.5, 0.5], col="p"
         ),
     )
-    files = parquet_files(folder_path)
+    files = parquet_files([folder_path])
     run_schema([str(f) for f in files], tmp_path, lambda _: None)
     schema = {c["name"]: c["dtype"] for c in read_manifest(tmp_path)["columns"]}
     source = SourceFiles(

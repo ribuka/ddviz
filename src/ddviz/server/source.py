@@ -1,8 +1,9 @@
-"""The input the server plots, a Parquet file or a folder of them: its schema, column cache and per-column facts.
+"""The input the server plots, a Parquet file, a folder of them or several files: its schema, column cache and per-column facts.
 
 The schema is read on the first request (Load) and kept in the column cache
 until a source file is added, removed or changed. The files of a folder are
-read one after another as one table (`ddviz.shared.inputs`). Columns a plot
+read one after another as one table, and so are several files
+(`ddviz.shared.inputs`). Columns a plot
 uses for the first time are converted into the column cache before the plot
 task, and the plot reads them from there. The share of non-null values of
 each column is measured once after Load and kept in the cache; the filter
@@ -23,7 +24,7 @@ from ddviz.server.errors import ensure_done
 from ddviz.server.plan import parse_filters
 from ddviz.server.settings import Settings
 from ddviz.shared.cache import SCHEMA, ColumnCache, evict
-from ddviz.shared.inputs import parquet_files
+from ddviz.shared.inputs import parquet_files, unique
 from ddviz.shared.scatter import Filter
 from ddviz.shared.tasks import (
     ConvertTask,
@@ -46,8 +47,9 @@ class Source:
 
     Parameters
     ----------
-    path : str
-        Parquet file, or folder of Parquet files, to plot.
+    paths : list of str
+        Absolute paths of the input: a Parquet file, a folder of Parquet
+        files, or several Parquet files read one after another as one table.
     recursive : bool
         For a folder, also read the files in its subfolders.
     cache_root : pathlib.Path
@@ -60,13 +62,13 @@ class Source:
 
     def __init__(
         self,
-        path: str,
+        paths: list[str],
         recursive: bool,
         cache_root: Path,
         settings: Settings,
         broker: TaskBroker,
     ) -> None:
-        self.path = path
+        self.paths = [str(p) for p in unique([Path(p) for p in paths])]
         self.recursive = recursive
         self._cache_root = cache_root
         self._settings = settings
@@ -107,13 +109,17 @@ class Source:
             (`ddviz.compute.tasks.columns.run_schema`).
         """
         if self._schema is None:
-            files = await asyncio.to_thread(
-                parquet_files, Path(self.path), self.recursive
-            )
+            paths = [Path(p) for p in self.paths]
+            try:
+                files = await asyncio.to_thread(parquet_files, paths, self.recursive)
+            except ValueError as error:
+                raise HTTPException(400, str(error)) from error
             if not files:
-                raise HTTPException(400, f"Parquet ファイルがありません：{self.path}")
+                raise HTTPException(
+                    400, f"Parquet ファイルがありません：{self.paths[0]}"
+                )
             self.cache = await asyncio.to_thread(
-                ColumnCache, self._cache_root, Path(self.path), files
+                ColumnCache, self._cache_root, paths, files
             )
             self.files = files
             stored = self.cache.dir / SCHEMA_JSON

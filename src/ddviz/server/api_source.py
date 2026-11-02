@@ -41,7 +41,7 @@ def source_router(source: Source, max_listed: int) -> APIRouter:
         """
         await source.schema()
         return {
-            "path": source.path,
+            "paths": source.paths,
             "files": len(source.files),
             "rows": sum(source.rows),
             "casts": source.casts,
