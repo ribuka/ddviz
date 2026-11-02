@@ -15,6 +15,10 @@ HOVER_DISTANCE = 20
 # Cap on the search window in bins, for views zoomed out so far that a bin
 # is much smaller than a pixel.
 _MAX_WINDOW = 256
+# Most keys matched at once when the hover passes over the hidden series:
+# about 8MB of keys, so that 10,000 series by the bins near the cursor do
+# not take hundreds of MB.
+_MAX_KEYS_AT_ONCE = 2**20
 
 
 class HoverIndex:
@@ -72,13 +76,13 @@ class HoverIndex:
         return {int(s): int(i) for s, i in zip(series[hit], found[hit], strict=True)}
 
     def _covering(
-        self, panel: int, fx: float, fy: float, order: list[int]
+        self, panel: int, fx: float, fy: float, order: list[int], hidden: frozenset[int]
     ) -> tuple[int, int, int] | None:
         """Return the bin and series of the topmost marker that covers the cursor's bin, or None.
 
-        Of the series whose markers cover it, the first in `order` (else the
-        last series) wins, and of its bins, the one drawn on top
-        (`ddviz.compute.shapes.spread_top`): the one whose row has the
+        Of the series whose markers cover it, not in `hidden`, the first in
+        `order` (else the last series) wins, and of its bins, the one drawn
+        on top (`ddviz.compute.shapes.spread_top`): the one whose row has the
         largest index.
         """
         grid = self.grid
@@ -93,6 +97,8 @@ class HoverIndex:
         for py, px in np.argwhere(self._occupancy[panel, y0:y1, x0:x1]):
             by, bx = int(py) + y0, int(px) + x0
             for s, i in self._series_at(panel, by, bx).items():
+                if s in hidden:
+                    continue
                 shape = self._shapes[s % len(self._shapes)]
                 h = shape.shape[0] // 2
                 dy, dx = cy - by + h, cx - bx + h
@@ -109,15 +115,22 @@ class HoverIndex:
         return None if best is None else best[1:]
 
     def _nearest_pixel(
-        self, panel: int, fx: float, fy: float, sx: float, sy: float
+        self,
+        panel: int,
+        fx: float,
+        fy: float,
+        sx: float,
+        sy: float,
+        hidden: frozenset[int],
     ) -> tuple[int, int] | None:
-        """Return the occupied bin nearest the cursor within the hover distance."""
+        """Return the bin nearest the cursor within the hover distance with rows of a series not in `hidden`."""
         grid = self.grid
         cx, cy = math.floor(fx), math.floor(fy)
         if (
             0 <= cx < grid.width
             and 0 <= cy < grid.height
             and self._occupancy[panel, cy, cx]
+            and self._series_at(panel, cy, cx).keys() - hidden
         ):
             return cx, cy
         rx = min(math.ceil(HOVER_DISTANCE / sx), _MAX_WINDOW)
@@ -130,10 +143,45 @@ class HoverIndex:
         if len(xs) == 0:
             return None
         d2 = ((xs + x0 + 0.5 - fx) * sx) ** 2 + ((ys + y0 + 0.5 - fy) * sy) ** 2
-        best = int(np.argmin(d2))
-        if d2[best] > HOVER_DISTANCE**2:
+        near = d2 <= HOVER_DISTANCE**2
+        xs, ys, d2 = xs[near] + x0, ys[near] + y0, d2[near]
+        if hidden:
+            return self._nearest_shown(panel, xs, ys, d2, hidden)
+        if len(d2) == 0:
             return None
-        return int(xs[best] + x0), int(ys[best] + y0)
+        best = int(np.argmin(d2))
+        return int(xs[best]), int(ys[best])
+
+    def _nearest_shown(
+        self,
+        panel: int,
+        xs: np.ndarray,
+        ys: np.ndarray,
+        d2: np.ndarray,
+        hidden: frozenset[int],
+    ) -> tuple[int, int] | None:
+        """Return the nearest of the bins `xs`, `ys` (squared distances `d2`) with rows of a series not in `hidden`.
+
+        The bins are matched nearest first, a chunk at a time, so that the
+        keys of the shown series by the bins never take more than
+        `_MAX_KEYS_AT_ONCE` at once (up to 10,000 series by some hundred bins).
+        """
+        grid = self.grid
+        shown = np.setdiff1d(np.arange(grid.n_series), list(hidden))
+        if len(shown) == 0:
+            return None
+        order = np.argsort(d2, kind="stable")
+        step = max(1, _MAX_KEYS_AT_ONCE // len(shown))
+        last = len(self._keys) - 1
+        for start in range(0, len(order), step):
+            chunk = order[start : start + step]
+            keys = grid.pack(panel, shown[:, None], ys[chunk], xs[chunk])
+            found = np.searchsorted(self._keys, keys).clip(max=last)
+            keep = np.flatnonzero((self._keys[found] == keys).any(axis=0))
+            if len(keep):
+                best = chunk[keep[0]]
+                return int(xs[best]), int(ys[best])
+        return None
 
     def _value(self, array: np.ndarray, labels: list | None, i: int) -> object:
         """Return a hover value as JSON-ready Python."""
@@ -145,7 +193,14 @@ class HoverIndex:
         return value
 
     def lookup(
-        self, panel: int, fx: float, fy: float, sx: float, sy: float, order: list[int]
+        self,
+        panel: int,
+        fx: float,
+        fy: float,
+        sx: float,
+        sy: float,
+        order: list[int],
+        hidden: frozenset[int] = frozenset(),
     ) -> dict | None:
         """Return the row plotly would show under the cursor.
 
@@ -165,6 +220,9 @@ class HoverIndex:
             Screen pixels per bin along x and y.
         order : list of int
             Series from the top drawn layer down.
+        hidden : frozenset of int, optional
+            Series drawn invisible (inactive at opacity 0): their points
+            never answer, as if they had no rows.
 
         Returns
         -------
@@ -174,17 +232,18 @@ class HoverIndex:
         """
         if self._occupancy is None:
             return None
-        covering = self._covering(panel, fx, fy, order)
+        covering = self._covering(panel, fx, fy, order, hidden)
         if covering is not None:
             bx, by, series = covering
             found = self._series_at(panel, by, bx)
         else:
-            pixel = self._nearest_pixel(panel, fx, fy, sx, sy)
+            pixel = self._nearest_pixel(panel, fx, fy, sx, sy, hidden)
             if pixel is None:
                 return None
             bx, by = pixel
             found = self._series_at(panel, by, bx)
-            series = next((s for s in order if s in found), max(found))
+            shown = found.keys() - hidden
+            series = next((s for s in order if s in shown), max(shown))
         i = found[series]
         return {
             "series": series,
@@ -192,7 +251,9 @@ class HoverIndex:
             "by": by,
             "row": int(self._index[i]),
             "count": int(self._count[i]),
-            "pixel_count": sum(int(self._count[j]) for j in found.values()),
+            "pixel_count": sum(
+                int(self._count[j]) for s, j in found.items() if s not in hidden
+            ),
             "values": {
                 name: self._value(array, labels, i)
                 for name, array, labels in self._columns

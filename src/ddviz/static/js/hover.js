@@ -107,7 +107,9 @@ export function attachHover(gd, getMeta, legend, onTiming) {
       hide();
       return;
     }
-    const box = boxAt(meta, at.panel, at.x0 + at.fx * at.dxBin, at.y0 + at.fy * at.dyBin);
+    // The series drawn invisible (inactive at opacity 0) are not found.
+    const hidden = legend.hidden();
+    const box = boxAt(meta, at.panel, at.x0 + at.fx * at.dxBin, at.y0 + at.fy * at.dyBin, hidden);
     if (box) {
       showBox(meta, at.panel, box, event);
       return;
@@ -121,6 +123,7 @@ export function attachHover(gd, getMeta, legend, onTiming) {
       sx: at.sx,
       sy: at.sy,
       order: order.join(","),
+      hidden: [...hidden].join(","),
     });
     const started = performance.now();
     const response = await fetch(`/api/hover?${query}`);

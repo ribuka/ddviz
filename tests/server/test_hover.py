@@ -260,3 +260,27 @@ def test_lookup_reaches_as_far_as_each_level_s_own_size() -> None:
     index._shapes = [marker(SHAPES[0], 3)[::-1], marker(SHAPES[1], 15)[::-1]]
     hit = index.lookup(0, 7.5, 10.5, 1.0, 1.0, [1, 0])
     assert (hit["series"], hit["bx"], hit["by"]) == (1, 14, 10)
+
+
+def test_lookup_skips_the_hidden_series() -> None:
+    """Series drawn invisible never answer: not under a shape, not as the nearest point, nor in the pixel's count."""
+    index = _overlay_index([(0, 10, 10), (1, 10, 10), (1, 13, 10), (0, 19, 10)])
+    hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0], frozenset({1}))
+    assert (hit["series"], hit["bx"], hit["by"]) == (0, 10, 10)
+    assert hit["pixel_count"] == 1
+    # Off the shapes, the nearest bin of series 1 is passed over for one of series 0.
+    hit = index.lookup(0, 15.5, 10.5, 1.0, 1.0, [1, 0], frozenset({1}))
+    assert (hit["series"], hit["bx"], hit["by"]) == (0, 19, 10)
+    hit = index.lookup(0, 15.5, 10.5, 1.0, 1.0, [1, 0])
+    assert (hit["series"], hit["bx"], hit["by"]) == (1, 13, 10)
+    assert index.lookup(0, 15.5, 10.5, 1.0, 1.0, [1, 0], frozenset({0, 1})) is None
+
+
+def test_hidden_series_are_passed_over_a_chunk_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With one key matched at a time, the nearest bin of a shown series still answers."""
+    monkeypatch.setattr("ddviz.server.hover._MAX_KEYS_AT_ONCE", 1)
+    index = _overlay_index([(1, 13, 10), (1, 14, 10), (0, 19, 10), (0, 21, 10)])
+    hit = index.lookup(0, 15.5, 10.5, 1.0, 1.0, [1, 0], frozenset({1}))
+    assert (hit["series"], hit["bx"], hit["by"]) == (0, 19, 10)

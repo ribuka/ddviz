@@ -8,6 +8,8 @@ import polars as pl
 import pytest
 from playwright.sync_api import Page, Route, expect
 
+from ddviz.server.settings import LegendSettings, PlotSettings, Settings
+
 pytestmark = pytest.mark.e2e
 
 # Returns a painted pixel of the image layers in client coordinates, or null.
@@ -322,6 +324,41 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
     ).height
     expect(status).to_contain_text(f": {kept:,} 行")
     expect(page.locator(".filter-summary")).to_have_text("（1）label: 「r12」を含む")
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [Settings(plot=PlotSettings(legend=LegendSettings(inactive_opacity=0.0)))],
+)
+def test_inactive_series_at_opacity_0_vanish_and_do_not_hover(app_page: Page) -> None:
+    """With ``plot.legend.inactive_opacity = 0``, inactive series draw nothing and the hover does not find them; their legend items stay clickable."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    for column, role in [("y", "y"), ("color", "color")]:
+        place(page, column, role)
+    pixel = page.wait_for_function(PAINTED_PIXEL).json_value()
+    page.mouse.move(pixel["x"], pixel["y"])
+    expect(page.locator("#hover-label")).to_be_visible()
+    page.mouse.move(0, 0)
+
+    items = page.locator("#legend .legend-item")
+    expect(items).to_have_count(3)
+    for i in range(3):
+        items.nth(i).click()
+    expect(page.locator("#legend .legend-item.inactive")).to_have_count(3)
+    # The legend's own items stay at app.css's opacity.
+    expect(items.first).to_have_css("opacity", "0.35")
+    page.wait_for_function(f"() => ({PAINTED_PIXEL})() === null")
+    with page.expect_response(lambda r: "/api/hover" in r.url) as hover:
+        page.mouse.move(pixel["x"], pixel["y"])
+    assert "hidden=" in hover.value.url
+    assert hover.value.json()["hit"] is None
+    expect(page.locator("#hover-label")).to_be_hidden()
+
+    items.first.click()
+    page.wait_for_function(PAINTED_PIXEL)
 
 
 def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
