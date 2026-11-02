@@ -21,7 +21,7 @@ def write_images(
     grid: BinGrid,
     ncol: int,
     colors: list[str],
-    shapes: int,
+    shapes: list[str | None],
     sizes: list[int],
 ) -> list[list[int] | None]:
     """Write one PNG per series into the images file; return where each lies.
@@ -43,10 +43,12 @@ def write_images(
         Panels to a row of tiles.
     colors : list of str
         Color of each series.
-    shapes : int
-        Number of overlay levels: each pixel of series ``s`` spreads into
-        the shape of overlay level ``s % shapes``, or into a filled circle
-        with 0, without an overlay (`ddviz.shared.shapes.marker`).
+    shapes : list of str or None
+        Shape of the markers: each pixel of series ``s`` spreads into item
+        ``s % len(shapes)``, the shape of its overlay level, or into a
+        filled circle for None, without an overlay
+        (`ddviz.shared.shapes.marker`,
+        `ddviz.shared.scatter.ScatterSpec.marker_shapes`).
     sizes : list of int
         Size of the markers in pixels: series ``s`` takes item
         ``s % len(sizes)``, one per overlay level
@@ -64,7 +66,8 @@ def write_images(
     with open(out / IMAGES, "wb") as file:
         for s, at in by_series(keys, grid):
             layer = spread(
-                series_layer(pixel[at], grid), marker(s, shapes, sizes[s % len(sizes)])
+                series_layer(pixel[at], grid),
+                marker(shapes[s % len(shapes)], sizes[s % len(sizes)]),
             )
             png = encode_mask(atlas(layer, ncol), colors[s])
             file.write(png)
@@ -102,7 +105,7 @@ def write_gradient(
     grid: BinGrid,
     ncol: int,
     color_range: tuple[float, float],
-    shapes: int,
+    shapes: list[str | None],
     sizes: list[int],
 ) -> list[list[int] | None]:
     """Write the PNGs of a gradient into the images file, one per series; return where each lies.
@@ -128,8 +131,8 @@ def write_gradient(
         Panels to a row of tiles.
     color_range : tuple of float
         Values of gray 1 and gray 255.
-    shapes : int
-        Number of overlay levels, as in `write_images`.
+    shapes : list of str or None
+        Shape of the markers, as in `write_images`.
     sizes : list of int
         Size of the markers, as in
         `write_images`; where the markers of a series overlap, the point of
@@ -152,7 +155,7 @@ def write_gradient(
                 grays[at],
                 rows[at],
                 (grid.n_panels, grid.height, grid.width),
-                marker(s, shapes, sizes[s % len(sizes)]),
+                marker(shapes[s % len(shapes)], sizes[s % len(sizes)]),
             )
             png = encode_levels(atlas(layer, ncol))
             file.write(png)

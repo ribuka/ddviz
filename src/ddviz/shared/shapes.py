@@ -57,13 +57,29 @@ def _outline(filled: np.ndarray) -> np.ndarray:
     return filled & ~interior
 
 
-def kernel(level: int, size: int) -> np.ndarray:
-    """Return the shape of an overlay level.
+def default_shape(level: int) -> str:
+    """Return the shape an overlay level takes when none is picked for it.
 
     Parameters
     ----------
     level : int
         Index of the overlay level; the shapes cycle over `SHAPES`.
+
+    Returns
+    -------
+    str
+        One of `SHAPES`.
+    """
+    return SHAPES[level % len(SHAPES)]
+
+
+def kernel(name: str, size: int) -> np.ndarray:
+    """Return a shape of the overlay levels.
+
+    Parameters
+    ----------
+    name : str
+        One of `SHAPES`.
     size : int
         Width and height in pixels, odd.
 
@@ -72,7 +88,8 @@ def kernel(level: int, size: int) -> np.ndarray:
     numpy.ndarray
         Boolean array of shape ``(size, size)``, row 0 at the top.
     """
-    name = SHAPES[level % len(SHAPES)]
+    if name not in SHAPES:
+        raise ValueError(f"unknown shape: {name}")
     if name.endswith("-filled"):
         return _filled(name.removesuffix("-filled"), size)
     filled = _filled(name, size)
@@ -81,16 +98,15 @@ def kernel(level: int, size: int) -> np.ndarray:
     return _outline(filled)
 
 
-def marker(series: int, shapes: int, size: int) -> np.ndarray:
+def marker(shape: str | None, size: int) -> np.ndarray:
     """Return the marker a series' points are drawn in.
 
     Parameters
     ----------
-    series : int
-        The series (`ddviz.shared.scatter.ScatterSpec.overlay`).
-    shapes : int
-        Number of overlay levels; 0 without an overlay, whose points are
-        filled circles.
+    shape : str or None
+        The shape of the series' overlay level, one of `SHAPES`
+        (`ddviz.shared.scatter.ScatterSpec.marker_shapes`); None without an
+        overlay, whose points are filled circles.
     size : int
         Width and height in pixels, odd.
 
@@ -101,7 +117,7 @@ def marker(series: int, shapes: int, size: int) -> np.ndarray:
         center is always set: a point covers its own pixel, even inside an
         outline.
     """
-    shape = kernel(series % shapes, size) if shapes else _filled("circle", size)
-    shape = shape.copy()
-    shape[size // 2, size // 2] = True
-    return shape
+    out = kernel(shape, size) if shape is not None else _filled("circle", size)
+    out = out.copy()
+    out[size // 2, size // 2] = True
+    return out

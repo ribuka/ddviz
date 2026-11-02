@@ -376,6 +376,84 @@ def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None
     expect(points).to_have_attribute("title", re.compile("（7 px）"))
 
 
+
+def test_an_overlay_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> None:
+    """An overlay item's marker opens a menu whose shape panel redraws the level in another shape; another overlay column drops it."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    for column, role in [("y", "y"), ("color", "color"), ("facet", "overlay")]:
+        place(page, column, role)
+    page.wait_for_function(PAINTED_PIXEL)
+    legend = page.locator("#legend")
+    shapes = legend.locator(".legend-item").filter(has=page.locator("canvas"))
+    expect(shapes).to_have_count(2)
+    sample = shapes.nth(1).locator("canvas")
+    before = sample.evaluate("(canvas) => canvas.toDataURL()")
+    marker = shapes.nth(1).locator(".legend-marker")
+    expect(marker).to_have_attribute(
+        "title", "右クリックでこの水準の形と大きさを変える"
+    )
+
+    # The color legend's markers have no shape item.
+    legend.locator(".legend-marker").first.click(button="right")
+    menu = page.locator(".shape-menu")
+    expect(menu.locator(".color-item")).to_have_count(1)
+    expect(menu.locator(".shape-item")).to_have_count(0)
+    page.keyboard.press("Escape")
+
+    status = page.locator("#status")
+    task = status.inner_text()
+    marker.click(button="right")
+    expect(menu.locator(".scale-menu-item").first).to_have_text("形")
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
+    menu.get_by_text("形", exact=True).hover()
+    panel = page.locator(".shape-panel")
+    expect(panel).to_be_visible()
+    expect(panel.locator(".shape-cell")).to_have_count(12)
+    # The second level takes the second shape.
+    expect(panel.locator(".shape-cell.current")).to_have_attribute(
+        "data-shape", "square"
+    )
+    # Away to a size, the panel closes.
+    menu.get_by_text("9 px", exact=True).hover()
+    expect(panel).to_have_count(0)
+    menu.get_by_text("形", exact=True).hover()
+    panel.locator('.shape-cell[data-shape="x"]').click()
+    expect(menu).to_have_count(0)
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    page.wait_for_function(PAINTED_PIXEL)
+    assert sample.evaluate("(canvas) => canvas.toDataURL()") != before
+
+    marker.click(button="right")
+    menu.get_by_text("形", exact=True).hover()
+    expect(panel.locator(".shape-cell.current")).to_have_attribute("data-shape", "x")
+    # The size stays as it was.
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
+    task = status.inner_text()
+    panel.get_by_text("既定の形に戻す").click()
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    assert sample.evaluate("(canvas) => canvas.toDataURL()") == before
+
+    # The shape stays while the overlay column does, and goes with another,
+    # even one drawn without a color column (overlay alone sends no shapes).
+    marker.click(button="right")
+    menu.get_by_text("形", exact=True).hover()
+    panel.locator('.shape-cell[data-shape="x"]').click()
+    page.wait_for_function(SETTLED)
+    assert sample.evaluate("(canvas) => canvas.toDataURL()") != before
+    page.locator('.zone[data-role="color"] .chip-remove').click()
+    page.wait_for_function(SETTLED)
+    place(page, "color", "overlay")
+    place(page, "facet", "overlay")
+    place(page, "color", "color")
+    page.wait_for_function(PAINTED_PIXEL)
+    assert sample.evaluate("(canvas) => canvas.toDataURL()") == before
+
+
 # Whether the image layers have a pixel of the color [r, g, b].
 HAS_COLOR = """([r, g, b]) => {
   const canvas = document.querySelector("canvas.image-layers");

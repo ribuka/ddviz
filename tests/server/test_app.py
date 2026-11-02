@@ -16,6 +16,7 @@ from ddviz.server.app import create_app
 from ddviz.server.auth import COOKIE
 from ddviz.server.settings import ColumnsSettings, HoverSettings, Settings
 from ddviz.shared.scatter import POINT_SIZE
+from ddviz.shared.shapes import SHAPES, kernel
 
 ENCODING = {"x": ["x"], "y": ["y"], "color": "color", "col": "facet"}
 SIZE = {"width": 400, "height": 300}
@@ -550,6 +551,24 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
     assert meta["overlay"]["sizes"] == [9, 3]
     assert [len(k) for k in meta["overlay"]["kernels"]] == [9, 3]
     bad = {"encoding": encoding, **SIZE, "shape_sizes": {"q": 4}}
+    assert client.post("/api/plot", json=bad).status_code == 400
+
+    # A level takes a shape of its own, drawn in the legend in its size.
+    meta = client.post(
+        "/api/plot",
+        json={
+            "encoding": encoding,
+            **SIZE,
+            "shape_sizes": {"q": 9},
+            "level_shapes": {"q": "x"},
+        },
+    ).json()["meta"]
+    assert meta["overlay"]["shapes"] == [SHAPES[0], "x"]
+    assert meta["overlay"]["kernels"][1] == kernel("x", 9).astype(int).tolist()
+    choices = meta["overlay"]["choices"]
+    assert [c["name"] for c in choices] == list(SHAPES)
+    assert choices[3]["kernel"] == kernel(SHAPES[3], 9).astype(int).tolist()
+    bad = {"encoding": encoding, **SIZE, "level_shapes": {"q": "star"}}
     assert client.post("/api/plot", json=bad).status_code == 400
 
 

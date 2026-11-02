@@ -15,6 +15,7 @@ from ddviz.shared.scatter import (
     ScatterSpec,
     Smoothing,
 )
+from ddviz.shared.shapes import SHAPES
 
 # A numeric column on Group X or Group Y is cut into this many intervals of
 # about the same number of rows, unless it has at most this many values,
@@ -250,6 +251,7 @@ def scatter_spec(
     shape_size: int | None = None,
     temporal: dict[str, str] | None = None,
     shape_sizes: dict[str, int] | None = None,
+    level_shapes: dict[str, str] | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -307,6 +309,10 @@ def scatter_spec(
         Size of the shapes of single overlay levels, by the level's name
         (`parse_shape_sizes`), in place of `shape_size`; dropped without
         shapes (overlay alone colors the series).
+    level_shapes : dict of str to str, optional
+        Shape of single overlay levels, by the level's name
+        (`parse_level_shapes`), in place of the shape of the level's place;
+        dropped without shapes, as `shape_sizes`.
 
     Returns
     -------
@@ -377,6 +383,7 @@ def scatter_spec(
         overlay=overlay,
         shape_size=shape_size or (POINT_SIZE if overlay is None else SHAPE_SIZE),
         shape_sizes=dict(shape_sizes or {}) if overlay is not None else {},
+        level_shapes=dict(level_shapes or {}) if overlay is not None else {},
         temporal={c: k for c, k in (temporal or {}).items() if c in read},
     )
 
@@ -506,6 +513,35 @@ def parse_shape_sizes(raw: dict[str, object] | None) -> dict[str, int]:
         if sizes[level] is None:
             raise ValueError(f"shape_sizes has no size for {level!r}")
     return sizes
+
+
+def parse_level_shapes(raw: dict[str, object] | None) -> dict[str, str]:
+    """Return the shapes the page asks for single overlay levels, checked.
+
+    Parameters
+    ----------
+    raw : dict of str to object, or None
+        A level's name to one of `ddviz.shared.shapes.SHAPES`, or None for
+        none.
+
+    Returns
+    -------
+    dict of str to str
+        The shape of each level named.
+
+    Raises
+    ------
+    ValueError
+        For anything else.
+    """
+    if raw is None:
+        return {}
+    for level, shape in raw.items():
+        if not isinstance(shape, str) or shape not in SHAPES:
+            raise ValueError(
+                f"level_shapes has no shape of {SHAPES} for {level!r}: {shape}"
+            )
+    return dict(raw)
 
 
 def parse_wrap_cols(raw: object) -> int | None:

@@ -18,7 +18,7 @@ from ddviz.server.hover import HOVER_DISTANCE, HoverIndex
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.manifest import IMAGES, PlotManifest
 from ddviz.shared.scatter import ScatterSpec
-from ddviz.shared.shapes import marker
+from ddviz.shared.shapes import SHAPES, marker
 
 
 @pytest.fixture
@@ -160,7 +160,7 @@ def _overlay_index(points: list[tuple[int, int, int]]) -> HoverIndex:
     index._index = order.astype(np.int64)
     index._occupancy = occupancy(index._keys, index.grid)
     index._columns = []
-    index._shapes = [marker(i, 2, 7)[::-1] for i in range(2)]
+    index._shapes = [marker(SHAPES[i], 7)[::-1] for i in range(2)]
     return index
 
 
@@ -257,6 +257,6 @@ def test_lookup_reaches_as_far_as_each_level_s_own_size() -> None:
     index = _overlay_index([(0, 5, 10), (1, 14, 10)])
     # The circle of level 0 is 3px, the square of level 1 15px: its left
     # side is 7 bins from its center.
-    index._shapes = [marker(0, 2, 3)[::-1], marker(1, 2, 15)[::-1]]
+    index._shapes = [marker(SHAPES[0], 3)[::-1], marker(SHAPES[1], 15)[::-1]]
     hit = index.lookup(0, 7.5, 10.5, 1.0, 1.0, [1, 0])
     assert (hit["series"], hit["bx"], hit["by"]) == (1, 14, 10)

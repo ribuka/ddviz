@@ -1484,6 +1484,55 @@ button {
   pointer-events: none;
 }
 
+/* The level's shape, in place of a check mark. */
+.shape-item-swatch {
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  line-height: 0;
+}
+
+/* ---- shape panel of an overlay level (shapepanel.js) ---- */
+.shape-panel {
+  min-width: 0;
+}
+
+.shape-grid {
+  display: grid;
+  gap: 2px;
+  padding: 4px 8px 6px;
+}
+
+/* A shape in the figure's pixels, twice as large. */
+.shape-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--edge-light);
+  background: none;
+  cursor: pointer;
+}
+
+.shape-cell:hover {
+  background: var(--bg-hover);
+}
+
+.shape-cell canvas {
+  width: 18px;
+  height: 18px;
+  image-rendering: pixelated;
+}
+
+/* The level's shape now. */
+.shape-cell.current {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
 /* ---- labels of a grid that scrolls (sticky.js) ---- */
 /* Strips along the edges of the plot area, in the figure's color
    (`ddviz.server.figure.PAPER_COLOR`), with plotly's label font. */

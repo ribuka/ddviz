@@ -5,9 +5,11 @@
 // shapes, opened by a right click on that level's marker in the overlay's
 // legend. Picking the size of every series drops the sizes of single levels.
 //
-// The menu of a color level's marker also picks the level's color, in a
-// panel opened as a submenu (colorpanel.js).
+// The menu of a color level's marker also picks the level's color, and that
+// of an overlay level's marker the level's shape, each in a panel opened as
+// a submenu (colorpanel.js, shapepanel.js).
 import { colorPanel } from "./colorpanel.js";
+import { shapeCanvas, shapePanel } from "./shapepanel.js";
 
 export const SIZES = [3, 5, 7, 9, 11, 15];
 export const SIZE_HEADING = "点の大きさ（全系列）";
@@ -18,7 +20,7 @@ export function levelHeading(level) {
 }
 
 let open = null;
-// The color panel open beside the menu, or null.
+// The panel open beside the menu (of the color or the shape), or null.
 let sub = null;
 
 function closeSub() {
@@ -42,12 +44,16 @@ window.addEventListener("keydown", (event) => {
 // Opens the menu at a right click, under `heading`. `size` is the current
 // size; `onPick` gets the size picked. With `color` ({current, onPick}: the
 // level's color and what gets the color picked, or null for the palette's),
-// the menu first has the item that opens the color panel.
-export function openShapeMenu(event, heading, size, onPick, color = null) {
+// the menu first has the item that opens the color panel; with `shape`
+// ({current, choices, onPick}: the level's shape, the shapes it can take as
+// `meta.overlay.choices` and what gets the shape picked, or null for the
+// shape of the level's place), the item that opens the shape panel.
+export function openShapeMenu(event, heading, size, onPick, { color = null, shape = null } = {}) {
   close();
   const menu = document.createElement("div");
   menu.className = "scale-menu shape-menu";
   if (color) menu.append(colorItem(color), menuGap());
+  if (shape) menu.append(shapeItem(shape), menuGap());
   const head = document.createElement("div");
   head.className = "scale-menu-heading";
   head.textContent = heading;
@@ -81,16 +87,31 @@ function menuGap() {
 
 // The item that opens the color panel beside it, on hover or on a click.
 function colorItem({ current, onPick }) {
-  const row = document.createElement("button");
-  row.type = "button";
-  row.className = "scale-menu-item has-sub color-item";
   const swatch = document.createElement("span");
   swatch.className = "color-item-swatch";
   swatch.style.background = current;
-  row.append(swatch, "色");
+  return subItem("color-item", swatch, "色", (pick) => colorPanel(current, pick), onPick);
+}
+
+// The item that opens the shape panel beside it, on hover or on a click.
+function shapeItem({ current, choices, onPick }) {
+  const swatch = document.createElement("span");
+  swatch.className = "shape-item-swatch";
+  const now = choices.find((choice) => choice.name === current);
+  if (now) swatch.append(shapeCanvas(now.kernel));
+  return subItem("shape-item", swatch, "形", (pick) => shapePanel(current, choices, pick), onPick);
+}
+
+// An item that opens a panel (`panel(pick)`, where `pick` closes the menu
+// and passes the value picked to `onPick`) beside the menu.
+function subItem(className, swatch, label, panel, onPick) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = `scale-menu-item has-sub ${className}`;
+  row.append(swatch, label);
   const show = () => {
     if (sub) return;
-    sub = colorPanel(current, (picked) => {
+    sub = panel((picked) => {
       close();
       onPick(picked);
     });

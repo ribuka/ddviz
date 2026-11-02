@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+from ddviz.shared.shapes import default_shape
+
 # Default of the most levels a color, overlay, row or col column may have
 # (`ScatterSpec.max_levels`).
 MAX_LEVELS = 100
@@ -323,6 +325,10 @@ class ScatterSpec:
     shape_sizes : dict of str to int
         Size of the shapes of single overlay levels, by the level's name
         (`marker_sizes`), in place of `shape_size`.
+    level_shapes : dict of str to str
+        Shape of single overlay levels, by the level's name
+        (`marker_shapes`), one of `ddviz.shared.shapes.SHAPES`, in place of
+        the shape the level's place takes.
     temporal : dict of str to str
         The kind of each temporal column read (`ddviz.shared.temporal.KINDS`).
         Such a column is numeric: it is read as numbers
@@ -356,6 +362,7 @@ class ScatterSpec:
     overlay: str | None = None
     shape_size: int = POINT_SIZE
     shape_sizes: dict[str, int] = field(default_factory=dict)
+    level_shapes: dict[str, str] = field(default_factory=dict)
     temporal: dict[str, str] = field(default_factory=dict)
 
     def box_pairs(self) -> set[tuple[str, str]]:
@@ -431,6 +438,30 @@ class ScatterSpec:
         if self.overlay is None or not overlay_levels:
             return [self.shape_size]
         return [self.shape_sizes.get(str(v), self.shape_size) for v in overlay_levels]
+
+    def marker_shapes(self, overlay_levels: list) -> list[str | None]:
+        """Return the shape of the markers of each overlay level.
+
+        Parameters
+        ----------
+        overlay_levels : list
+            The overlay's levels drawn.
+
+        Returns
+        -------
+        list of str or None
+            The shape of each level (`ddviz.shared.shapes.SHAPES`), from
+            `level_shapes` by the level's name or else the one of its place
+            (`ddviz.shared.shapes.default_shape`); series ``s`` takes item
+            ``s % len``. Without an overlay (or levels), ``[None]``: the
+            filled circles.
+        """
+        if self.overlay is None or not overlay_levels:
+            return [None]
+        return [
+            self.level_shapes.get(str(v), default_shape(i))
+            for i, v in enumerate(overlay_levels)
+        ]
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.
