@@ -1,4 +1,8 @@
-r"""Read access of app packages to the bundled WebView2 fixed-version runtime.
+r"""Find the WebView2 runtime: read access to a fixed version, or the installed one.
+
+An administrator may place a fixed-version runtime in ``webview2`` next to the
+exe (ddviz does not bundle one); without it, the exe uses the runtime
+installed on the PC (Evergreen), found in the registry.
 
 On Windows 10 and its servers (Server 2016 among them), the fixed-version
 runtime 120 and later runs its renderers in an AppContainer, so the runtime
@@ -308,7 +312,7 @@ def ensure_access(folder: Path, build: int) -> bool:
     Parameters
     ----------
     folder : pathlib.Path
-        The bundled fixed-version runtime.
+        The fixed-version runtime next to the exe.
     build : int
         The build number of Windows.
 
@@ -346,3 +350,44 @@ def windows_build() -> int:
         E.g. 14393 on Server 2016.
     """
     return sys.getwindowsversion().build
+
+
+# The stable channel's client of EdgeUpdate, as pywebview 6.2.1 looks it up
+# (`webview.platforms.winforms._is_chromium`): per machine, then per user.
+_RUNTIME_CLIENT = r"Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+_RUNTIME_KEYS = (
+    ("HKEY_LOCAL_MACHINE", rf"SOFTWARE\WOW6432Node\{_RUNTIME_CLIENT}"),
+    ("HKEY_CURRENT_USER", rf"SOFTWARE\{_RUNTIME_CLIENT}"),
+)
+
+
+def _read_pv(root: str, key: str) -> str | None:
+    """Return the ``pv`` value of a registry key; None when the key or value is missing."""
+    import winreg
+
+    try:
+        with winreg.OpenKey(getattr(winreg, root), key) as handle:
+            value, _ = winreg.QueryValueEx(handle, "pv")
+    except OSError:
+        return None
+    return str(value)
+
+
+def installed_runtime_version() -> str | None:
+    """Return the version of the WebView2 Runtime installed on the PC (Evergreen).
+
+    Reads the registry as pywebview does, without importing pywebview's
+    private function (which loads pythonnet).
+
+    Returns
+    -------
+    str or None
+        E.g. ``"156.0.4314.58"``; None when no runtime is installed. An
+        empty version or ``0.0.0.0`` (left by an uninstall) is skipped, as
+        pywebview skips it.
+    """
+    for root, key in _RUNTIME_KEYS:
+        version = _read_pv(root, key)
+        if version not in (None, "", "0.0.0.0"):
+            return version
+    return None

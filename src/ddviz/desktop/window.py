@@ -22,7 +22,12 @@ import uvicorn
 import webview
 
 from ddviz.desktop.runlog import RunLog, app_data_dir
-from ddviz.desktop.webview2_access import denied_message, ensure_access, windows_build
+from ddviz.desktop.webview2_access import (
+    denied_message,
+    ensure_access,
+    installed_runtime_version,
+    windows_build,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -62,15 +67,24 @@ document.getElementById("cancel").onclick = () => call("cancel");
 
 _MB_ICONWARNING = 0x30
 
+NO_RUNTIME_MESSAGE = (
+    "WebView2 のランタイムが見つかりません。\n\n"
+    "次のどちらかを行ってから、もう一度起動してください。\n"
+    "- Microsoft Edge WebView2 Runtime（Evergreen 版）をインストールする。\n"
+    "- WebView2 の固定版ランタイムを Microsoft のページから取り、展開したフォルダを"
+    "「webview2」という名前で ddviz.exe と同じフォルダに置く。\n\n"
+    "https://developer.microsoft.com/microsoft-edge/webview2/"
+)
 
-def bundled_runtime() -> Path | None:
-    """Return the WebView2 fixed-version runtime shipped next to the exe.
+
+def fixed_runtime() -> Path | None:
+    """Return where an administrator may place a WebView2 fixed-version runtime.
 
     Returns
     -------
     pathlib.Path or None
-        The runtime folder; None in development, where the installed
-        (Evergreen) runtime is used.
+        The ``webview2`` folder next to the exe, which may not exist; None in
+        development, where the installed (Evergreen) runtime is used.
     """
     if not getattr(sys, "frozen", False):
         return None
@@ -232,7 +246,8 @@ def run_window(
         Exit code: 0 when the run ended normally.
     """
     # Before the run log: a run that stops here did not end abnormally.
-    if not _use_bundled_runtime():
+    runtime = _choose_runtime()
+    if runtime is None:
         return 1
     log = RunLog()
     try:
@@ -242,6 +257,7 @@ def run_window(
                 f"ログ：{log.path}\n\n"
                 "問題が続く場合は、このログを開発者に送ってください。"
             )
+        _log.info("using %s", runtime)
         if not _run(paths, recursive, make_app, label):
             return 1
         log.finish()
@@ -250,27 +266,32 @@ def run_window(
         log.close()
 
 
-def _use_bundled_runtime() -> bool:
-    """Point pywebview at the bundled WebView2 runtime, readable by its renderers.
+def _choose_runtime() -> str | None:
+    """Pick the WebView2 runtime: the fixed version next to the exe, else the installed one.
 
     Returns
     -------
-    bool
-        False when the runtime is missing, or lacks the access that the
-        Windows 10 line needs and the user cannot grant it; the user has
-        been told why. True in development, where nothing is bundled.
+    str or None
+        The runtime picked, for the run log (which opens only later), e.g.
+        ``"the installed WebView2 Runtime 156.0.4314.58"``. None when neither
+        is there, or the fixed version lacks the access that the Windows 10
+        line needs and the user cannot grant it; the user has been told why.
+        In development pywebview finds the installed runtime by itself.
     """
-    runtime = bundled_runtime()
+    runtime = fixed_runtime()
     if runtime is None:
-        return True
-    if not runtime.is_dir():
-        show_warning(f"WebView2 のランタイムが見つかりません：{runtime}")
-        return False
-    if not ensure_access(runtime, windows_build()):
-        show_warning(denied_message(runtime))
-        return False
-    webview.settings["WEBVIEW2_RUNTIME_PATH"] = str(runtime)
-    return True
+        return "the WebView2 Runtime that pywebview finds"
+    if runtime.is_dir():
+        if not ensure_access(runtime, windows_build()):
+            show_warning(denied_message(runtime))
+            return None
+        webview.settings["WEBVIEW2_RUNTIME_PATH"] = str(runtime)
+        return f"the WebView2 Runtime in {runtime}"
+    version = installed_runtime_version()
+    if version is None:
+        show_warning(NO_RUNTIME_MESSAGE)
+        return None
+    return f"the installed WebView2 Runtime {version}"
 
 
 class _Chooser:

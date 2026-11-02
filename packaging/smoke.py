@@ -2,7 +2,8 @@ r"""Check that the built exe can run a worker task: ``dist\ddviz\ddviz.exe``.
 
 Run from the repository root with ``uv run packaging/smoke.py`` after
 ``packaging/build.py``, or ``uv run packaging/smoke.py <exe>`` for an exe
-elsewhere (an unzipped release). It writes a small Parquet file, starts
+elsewhere (an unzipped release). It checks that the notices of the WebView2
+SDK are next to the exe and that no WebView2 Runtime is. It then writes a small Parquet file, starts
 ``ddviz.exe --worker`` and has it count the non-null values (polars and
 pyarrow, inside the exe), then checks the counts. The window is not opened:
 a CI runner has no desktop to show it on.
@@ -22,6 +23,7 @@ import pyarrow.parquet as pq
 ROOT = Path(__file__).resolve().parents[1]
 EXE = ROOT / "dist" / "ddviz" / "ddviz.exe"
 TIMEOUT_S = 120
+NOTICES = ("LICENSE-WebView2-SDK.txt", "NOTICE.txt")
 
 
 def run_worker(exe: Path, task: dict) -> list[dict]:
@@ -52,6 +54,22 @@ def run_worker(exe: Path, task: dict) -> list[dict]:
     return [json.loads(line) for line in proc.stdout.splitlines() if line]
 
 
+def check_layout(folder: Path) -> None:
+    """Fail unless the folder has the notices and no bundled WebView2 Runtime.
+
+    Parameters
+    ----------
+    folder : pathlib.Path
+        The folder of the exe.
+    """
+    for name in NOTICES:
+        path = folder / name
+        if not path.is_file() or path.stat().st_size == 0:
+            raise RuntimeError(f"missing or empty: {path}")
+    if (folder / "webview2").exists():
+        raise RuntimeError(f"a WebView2 Runtime is bundled: {folder / 'webview2'}")
+
+
 def main(argv: list[str]) -> int:
     """Run the check.
 
@@ -66,6 +84,7 @@ def main(argv: list[str]) -> int:
         Exit code.
     """
     exe = Path(argv[0]).resolve() if argv else EXE
+    check_layout(exe.parent)
     with tempfile.TemporaryDirectory(prefix="ddviz-smoke-") as tmp:
         data = Path(tmp) / "data.parquet"
         pq.write_table(pa.table({"x": [1.0, None, 3.0], "g": ["a", "b", None]}), data)

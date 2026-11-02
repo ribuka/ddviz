@@ -1,4 +1,4 @@
-"""Tests of the read access of app packages to the bundled WebView2 runtime."""
+"""Tests of finding the WebView2 runtime: the fixed version next to the exe, or the installed one."""
 
 from __future__ import annotations
 
@@ -170,6 +170,52 @@ def test_the_access_is_really_granted_on_a_folder_of_ones_own(tmp_path: Path) ->
     assert missing_sids(read_aces(tmp_path / "sub")) == []
 
 
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ({"HKEY_LOCAL_MACHINE": "156.0.4314.58"}, "156.0.4314.58"),
+        ({"HKEY_CURRENT_USER": "155.0.1.2"}, "155.0.1.2"),
+        (
+            {"HKEY_LOCAL_MACHINE": "0.0.0.0", "HKEY_CURRENT_USER": "155.0.1.2"},
+            "155.0.1.2",
+        ),
+        ({}, None),
+        ({"HKEY_LOCAL_MACHINE": ""}, None),
+        ({"HKEY_LOCAL_MACHINE": "0.0.0.0", "HKEY_CURRENT_USER": "0.0.0.0"}, None),
+    ],
+)
+def test_installed_runtime_version_reads_the_machine_then_the_user(
+    monkeypatch: pytest.MonkeyPatch, values: dict[str, str], expected: str | None
+) -> None:
+    """The version under HKLM wins, then HKCU; missing, empty and 0.0.0.0 mean none."""
+    read: list[tuple[str, str]] = []
+
+    def read_pv(root: str, key: str) -> str | None:
+        read.append((root, key))
+        return values.get(root)
+
+    monkeypatch.setattr(webview2_access, "_read_pv", read_pv)
+    assert webview2_access.installed_runtime_version() == expected
+    guid = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    keys = [
+        (
+            "HKEY_LOCAL_MACHINE",
+            rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{guid}",
+        ),
+        ("HKEY_CURRENT_USER", rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{guid}"),
+    ]
+    assert read == keys[: len(read)]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="reads the registry")
+def test_installed_runtime_version_reads_a_missing_key_as_none() -> None:
+    """A key that does not exist is read as no value, not an error."""
+    assert (
+        webview2_access._read_pv("HKEY_CURRENT_USER", r"SOFTWARE\ddviz-no-such-key")
+        is None
+    )
+
+
 @pytest.fixture
 def warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Collect the message boxes the window would show."""
@@ -180,39 +226,85 @@ def warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return shown
 
 
+@pytest.fixture
+def exe_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Run as the exe in a folder of its own."""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "ddviz.exe"))
+    return tmp_path
+
+
+def _installed(monkeypatch: pytest.MonkeyPatch, version: str | None) -> None:
+    monkeypatch.setattr(window, "installed_runtime_version", lambda: version)
+
+
 def test_development_uses_the_installed_runtime(
     monkeypatch: pytest.MonkeyPatch, warnings: list[str]
 ) -> None:
-    """Without a bundled runtime nothing is checked."""
-    monkeypatch.setattr(window, "bundled_runtime", lambda: None)
-    assert window._use_bundled_runtime()
+    """Outside the exe nothing is checked: pywebview finds the installed runtime."""
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    _installed(monkeypatch, None)
+    assert window._choose_runtime() == "the WebView2 Runtime that pywebview finds"
     assert warnings == []
     assert "WEBVIEW2_RUNTIME_PATH" not in webview.settings
 
 
-def test_the_window_stops_with_the_command_when_the_access_is_denied(
-    monkeypatch: pytest.MonkeyPatch, warnings: list[str], tmp_path: Path
+def test_the_exe_uses_the_fixed_version_next_to_it(
+    monkeypatch: pytest.MonkeyPatch, warnings: list[str], exe_dir: Path
 ) -> None:
-    """The message box shows the administrator's command with the bundled folder."""
-    monkeypatch.setattr(window, "bundled_runtime", lambda: tmp_path)
-    monkeypatch.setattr(window, "ensure_access", lambda folder, build: False)
-    assert not window._use_bundled_runtime()
-    assert warnings == [denied_message(tmp_path)]
-    assert "WEBVIEW2_RUNTIME_PATH" not in webview.settings
-
-
-def test_the_window_uses_a_runtime_with_the_access(
-    monkeypatch: pytest.MonkeyPatch, warnings: list[str], tmp_path: Path
-) -> None:
-    """A ready runtime is handed to pywebview without a message."""
+    """A webview2 folder next to the exe wins over the installed runtime, once readable."""
+    runtime = exe_dir / "webview2"
+    runtime.mkdir()
     checked: list[tuple[Path, int]] = []
-    monkeypatch.setattr(window, "bundled_runtime", lambda: tmp_path)
     monkeypatch.setattr(
         window,
         "ensure_access",
         lambda folder, build: checked.append((folder, build)) or True,
     )
-    assert window._use_bundled_runtime()
-    assert checked == [(tmp_path, 14393)]
+    _installed(monkeypatch, "156.0.4314.58")
+    assert window._choose_runtime() == f"the WebView2 Runtime in {runtime}"
+    assert checked == [(runtime, 14393)]
     assert warnings == []
-    assert webview.settings["WEBVIEW2_RUNTIME_PATH"] == str(tmp_path)
+    assert webview.settings["WEBVIEW2_RUNTIME_PATH"] == str(runtime)
+
+
+def test_the_exe_stops_with_the_command_when_the_access_is_denied(
+    monkeypatch: pytest.MonkeyPatch, warnings: list[str], exe_dir: Path
+) -> None:
+    """The message box shows the administrator's command with the runtime folder."""
+    runtime = exe_dir / "webview2"
+    runtime.mkdir()
+    monkeypatch.setattr(window, "ensure_access", lambda folder, build: False)
+    _installed(monkeypatch, "156.0.4314.58")
+    assert window._choose_runtime() is None
+    assert warnings == [denied_message(runtime)]
+    assert "WEBVIEW2_RUNTIME_PATH" not in webview.settings
+
+
+def test_the_exe_uses_the_installed_runtime_without_a_fixed_version(
+    monkeypatch: pytest.MonkeyPatch, warnings: list[str], exe_dir: Path
+) -> None:
+    """Without webview2 next to the exe, pywebview is left to the installed runtime."""
+    monkeypatch.setattr(window, "ensure_access", lambda folder, build: pytest.fail())
+    _installed(monkeypatch, "156.0.4314.58")
+    assert window._choose_runtime() == "the installed WebView2 Runtime 156.0.4314.58"
+    assert warnings == []
+    assert "WEBVIEW2_RUNTIME_PATH" not in webview.settings
+
+
+def test_the_exe_tells_how_to_get_a_runtime_when_there_is_none(
+    monkeypatch: pytest.MonkeyPatch, warnings: list[str], exe_dir: Path
+) -> None:
+    """With no runtime at all, the message names both ways and Microsoft's page."""
+    _installed(monkeypatch, None)
+    assert window._choose_runtime() is None
+    expected = (
+        "WebView2 のランタイムが見つかりません。\n\n"
+        "次のどちらかを行ってから、もう一度起動してください。\n"
+        "- Microsoft Edge WebView2 Runtime（Evergreen 版）をインストールする。\n"
+        "- WebView2 の固定版ランタイムを Microsoft のページから取り、展開したフォルダを"
+        "「webview2」という名前で ddviz.exe と同じフォルダに置く。\n\n"
+        "https://developer.microsoft.com/microsoft-edge/webview2/"
+    )
+    assert warnings == [expected]
+    assert "WEBVIEW2_RUNTIME_PATH" not in webview.settings

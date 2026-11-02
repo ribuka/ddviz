@@ -21,9 +21,6 @@ wheels/
 # tmp
 /tmp/
 
-# WebView2 fixed-version runtime, fetched by packaging/build.py
-/packaging/webview2/
-
 # Playwright traces of failed E2E tests
 /test-results/
 

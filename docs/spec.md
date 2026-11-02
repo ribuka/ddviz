@@ -8,7 +8,7 @@
 | --- | --- |
 | 実行形態 | exe 単体。オフライン環境で動作する。exe 1 ファイルでなくてもよく、フォルダ（zip）で配布してよい（2026-10-26 ユーザー回答） |
 | 対象 OS | Windows 11、Windows Server 2016 |
-| Server 2016 の環境 | Edge・WebView2 Runtime は入っておらず、追加のインストールもできない。必要なものはすべて ddviz に同梱する。RDP で複数のユーザーが同時にログインする共有サーバーとして使われる。延長サポートが終わる 2027-01 以降も、当面ずっと対応する（いずれも 2026-10-26 ユーザー回答） |
+| Server 2016 の環境 | Edge・WebView2 Runtime は入っておらず、追加のインストールもできない。必要なものはすべて ddviz に同梱する（WebView2 の固定版だけは、2026-11-02 ユーザー判断で同梱をやめ、管理者が置く。「リリースの exe」）。RDP で複数のユーザーが同時にログインする共有サーバーとして使われる。延長サポートが終わる 2027-01 以降も、当面ずっと対応する（いずれも 2026-10-26 ユーザー回答） |
 | メモリ | 16GB RAM の PC で問題なく動くこと |
 | 入力 | Parquet ファイル、Parquet を格納したフォルダ、または複数の Parquet ファイルを指定して Load する（フォルダは 2026-10-30 実装。複数のファイルは 2026-11-02 実装（Issue #72）。「入力がフォルダのとき」） |
 | データ置き場 | ローカル SSD。ネットワークドライブは想定しない |
@@ -57,7 +57,7 @@
 
 ## 技術スタック
 
-UI は Web の経路（FastAPI のサーバー + WebView2 の固定版ランタイムを同梱した pywebview の窓）で作る（2026-10-26 ユーザー判断）。理由は「Server 2016 と使い捨てプロセスの観点での比較」。画面は htmx を使わず、ビルド工程の無い素の JS（ES モジュール）で書き、描画には plotly.js を同梱する（2026-10-31 ユーザー判断）。理由は「htmx を使わない理由」。以下は検討した 3 案。
+UI は Web の経路（FastAPI のサーバー + WebView2 の固定版ランタイムを同梱した pywebview の窓）で作る（2026-10-26 ユーザー判断）。固定版の同梱は後にやめた（2026-11-02 に同梱をやめ、Server 2016 では管理者が exe の横に置く形にした。「リリースの exe」）。理由は「Server 2016 と使い捨てプロセスの観点での比較」。画面は htmx を使わず、ビルド工程の無い素の JS（ES モジュール）で書き、描画には plotly.js を同梱する（2026-10-31 ユーザー判断）。理由は「htmx を使わない理由」。以下は検討した 3 案。
 
 | 案 | 使う言語 | 長所 | 短所 |
 | --- | --- | --- | --- |
@@ -85,7 +85,7 @@ UI に送るデータの量は、データの行数ではなく画面の大き�
 
 | 観点 | htmx 案・SPA 案 | PySide6 + pyqtgraph 案 |
 | --- | --- | --- |
-| Server 2016 での表示 | WebView2 の固定版ランタイムを同梱し、pywebview（pythonnet と .NET Framework 4.6.2 以上が要る）で窓を開く | Qt の DLL を同梱するだけ。ただし 1607 は公式の対象外 |
+| Server 2016 での表示 | WebView2 の固定版ランタイムを同梱し、pywebview（pythonnet と .NET Framework 4.6.2 以上が要る）で窓を開く（2026-11-02 に同梱をやめ、Server 2016 では管理者が exe の横に置く形にした。「リリースの exe」） | Qt の DLL を同梱するだけ。ただし 1607 は公式の対象外 |
 | RDP の共有サーバー | localhost のポートは、同じ機械の他のユーザーからも見える。ランダムなポートとトークンによる認証が要る（「UI のサーバーと使い捨てプロセスの通信」の「認証」）。WebView2 のユーザーデータは、各ユーザーの LOCALAPPDATA に置く | ポートを開かないので問題なし |
 | 使い捨てプロセスとの連携 | 1 リクエストを 1 タスクにし、サーバーが子プロセスを起動して PNG を受け取る。操作が来たら古い子を kill する。進捗は SSE で送る | QProcess のシグナルで終了と進捗を受け取り、kill する。差は小さい |
 | 軸・ズーム・パン | 自前の JS で書く | pyqtgraph の ImageItem と軸、ズームとパンが最初から使える |
@@ -96,7 +96,7 @@ UI に送るデータの量は、データの行数ではなく画面の大き�
 
 Server 2016 の実機も VM も、試す環境は無い（2026-10-26 ユーザー回答）。そのため、Qt 6 が 1607 で動くかを出荷前に確かめられない。
 
-決定：htmx 案（2026-10-26）。画面は後に htmx を使わない形にした（「htmx を使わない理由」）。描画には plotly.js を同梱し、WebView2 の固定版ランタイムを同梱して pywebview で窓を開く。理由：試す環境が無いなら、Server 2016 を公式にサポートしている WebView2 の経路を選ぶほうが安全なため。Web 案で余分に要るもの（固定版ランタイム、pythonnet、localhost の認証）は、手間は増えるが動作は読める。当初は PySide6 案を推したが、それは実機で確認できることが前提だった。
+決定：htmx 案（2026-10-26）。画面は後に htmx を使わない形にした（「htmx を使わない理由」）。描画には plotly.js を同梱し、WebView2 の固定版ランタイムを同梱して pywebview で窓を開く（2026-11-02 に同梱をやめ、Server 2016 では管理者が exe の横に置く形にした。「リリースの exe」）。理由：試す環境が無いなら、Server 2016 を公式にサポートしている WebView2 の経路を選ぶほうが安全なため。Web 案で余分に要るもの（固定版ランタイム、pythonnet、localhost の認証）は、手間は増えるが動作は読める。当初は PySide6 案を推したが、それは実機で確認できることが前提だった。
 
 #### htmx を使わない理由（2026-10-31）
 
@@ -229,8 +229,8 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 | 観点 | 決定 | 理由 |
 | --- | --- | --- |
 | 子の起動 | `subprocess.Popen` で自分自身を起動する。exe では `ddviz.exe --worker`、開発環境では `sys.executable -m ddviz.workers.worker`。`multiprocessing` は使わない | 起動するものがコマンドラインで決まり、exe でも開発環境でも同じ形で書ける。`multiprocessing` の spawn は main を import し直すため、PyInstaller では `freeze_support()` が要るうえ、渡すものを pickle する必要がある |
-| exe の形式 | PyInstaller の onedir（フォルダで配布）。`uv run --group build packaging/build.py` で `dist\ddviz` を作る。WebView2 の固定版は `ddviz.exe` と同じフォルダの `webview2\` に、設定は `config\` に置く（2026-10-28。「最小構成の exe」） | onefile は、起動のたびに一時フォルダへ展開し、ブートローダーと本体の 2 プロセスで動く。子を起動するたびに展開が走るので、待機プロセスの起動が遅くなる。フォルダでの配布は許されている（「要件」） |
-| WebView2 の固定版の権限 | Windows 10 系（ビルド番号が 22000 未満。Server 2016 は 14393）では、窓を開く前に、同梱の固定版のフォルダ（`ddviz.exe` の隣の `webview2\`）に ALL RESTRICTED APPLICATION PACKAGES（`S-1-15-2-2`）と ALL APPLICATION PACKAGES（`S-1-15-2-1`）の読み取りが付いているかを確かめる。無ければ Microsoft の文書のコマンド（`icacls <フォルダ> /grant *S-1-15-2-2:(OI)(CI)(RX) *S-1-15-2-1:(OI)(CI)(RX)`）で付けてみて、読み直す。それでも無ければ（一般ユーザーにフォルダのアクセス許可を変える権限が無いとき）、管理者が実行するコマンド（実際のパス入り）をメッセージボックスで示して終了する。Windows 11 と開発環境（exe でないとき）は何もしない。配布の手順（`docs/shared-install.md`）にも同じコマンドを書く（2026-10-30 ユーザー判断。実装は `src/ddviz/desktop/webview2_access.py`。計測は「最小構成の exe」の「固定版の権限の確認と付与」） | 固定版 120 以降は、Windows 10 系でこの権限が無いと動かない（「最小構成の exe」の公式のサポート情報）。自分のフォルダに展開したユーザーは所有者なので、何もせずに動く。管理者が共有の場所（Program Files など）に置くときは、管理者が 1 回実行するだけで済み、忘れても原因とコマンドがすぐわかる。比べた案：起動時に付けるだけ（共有の場所では一般ユーザーに権限が無く失敗する）、手順に書くだけ（忘れると WebView2 が理由のわからない形で起動しない。フォルダをコピーし直すと付けた権限が消える）。確認はフォルダの ACL（DACL）を Win32 API（`GetNamedSecurityInfoW`）で読むだけにし、起動を遅くしない。`icacls` の出力はアカウント名が OS の言語で変わる（日本語の Windows 11 では ALL RESTRICTED APPLICATION PACKAGES が日本語で出る）ので、SID で比べる。付けた権限が無いことに気づかないまま WebView2 が起動に失敗するより、窓を開く前に止まるほうがよい。止まったときは実行中の目印ファイル（「アプリの終了と異常終了」）を置く前なので、管理者が直した後の起動で「前回は正常に終了しませんでした」と出ない |
+| exe の形式 | PyInstaller の onedir（フォルダで配布）。`uv run --group build packaging/build.py` で `dist\ddviz` を作る。設定は `config\` に置く。WebView2 の固定版は同梱しない。管理者が置くときは `ddviz.exe` と同じフォルダの `webview2\` に置く（2026-10-28。「最小構成の exe」。固定版の同梱は 2026-11-02 にやめた。「リリースの exe」） | onefile は、起動のたびに一時フォルダへ展開し、ブートローダーと本体の 2 プロセスで動く。子を起動するたびに展開が走るので、待機プロセスの起動が遅くなる。フォルダでの配布は許されている（「要件」） |
+| WebView2 の固定版の権限 | Windows 10 系（ビルド番号が 22000 未満。Server 2016 は 14393）では、窓を開く前に、管理者が置いた固定版のフォルダ（`ddviz.exe` の隣の `webview2\`）に ALL RESTRICTED APPLICATION PACKAGES（`S-1-15-2-2`）と ALL APPLICATION PACKAGES（`S-1-15-2-1`）の読み取りが付いているかを確かめる。無ければ Microsoft の文書のコマンド（`icacls <フォルダ> /grant *S-1-15-2-2:(OI)(CI)(RX) *S-1-15-2-1:(OI)(CI)(RX)`）で付けてみて、読み直す。それでも無ければ（一般ユーザーにフォルダのアクセス許可を変える権限が無いとき）、管理者が実行するコマンド（実際のパス入り）をメッセージボックスで示して終了する。Windows 11 と開発環境（exe でないとき）は何もしない。配布の手順（`docs/shared-install.md`）にも同じコマンドを書く（2026-10-30 ユーザー判断。実装は `src/ddviz/desktop/webview2_access.py`。計測は「最小構成の exe」の「固定版の権限の確認と付与」） | 固定版 120 以降は、Windows 10 系でこの権限が無いと動かない（「最小構成の exe」の公式のサポート情報）。自分のフォルダに展開したユーザーは所有者なので、何もせずに動く。管理者が共有の場所（Program Files など）に置くときは、管理者が 1 回実行するだけで済み、忘れても原因とコマンドがすぐわかる。比べた案：起動時に付けるだけ（共有の場所では一般ユーザーに権限が無く失敗する）、手順に書くだけ（忘れると WebView2 が理由のわからない形で起動しない。フォルダをコピーし直すと付けた権限が消える）。確認はフォルダの ACL（DACL）を Win32 API（`GetNamedSecurityInfoW`）で読むだけにし、起動を遅くしない。`icacls` の出力はアカウント名が OS の言語で変わる（日本語の Windows 11 では ALL RESTRICTED APPLICATION PACKAGES が日本語で出る）ので、SID で比べる。付けた権限が無いことに気づかないまま WebView2 が起動に失敗するより、窓を開く前に止まるほうがよい。止まったときは実行中の目印ファイル（「アプリの終了と異常終了」）を置く前なので、管理者が直した後の起動で「前回は正常に終了しませんでした」と出ない |
 | 終わったタスクの扱い（2026-10-30） | 子が `done` か `error` を出したら、そのタスクは終わったとして扱い、子のプロセスが終了の途中でも、次のタスクを渡すときに kill せず、出力のディレクトリも消さない（`ddviz.workers.runner._Running.finished`。読み取り用のスレッドが、通知を送るのと同じロックの中で立てる） | 子は `done` の後もプロセスの終了（polars の後始末）にしばらくかかる。その間に次のタスクを渡すと、以前は走っているものとして kill し、出力を消していた。UI のサーバーは `done` を受けて出力を開くので、ホバー用のファイルが無いと 500 になった（X を外しても Y だけで描くようにした E2E で、`done` の直後に次の描画を出して起きた。単体テストでは `done` の直後に次のタスクを渡すと毎回消えた） |
 | 待機プロセス | polars を import 済み（フッタは未解析）の子を 1 つ立てておく。タスクを渡したらすぐ次の待機プロセスを立てる | import の約 0.7 秒を隠す（「プロセス構成」の案 1） |
 | タスクの受け渡し | 子の stdin に JSON を 1 行書く（グラフ仕様、読むファイル、出力先） | 受け渡しは約 0.05ms（下記「計測結果」）。ポートもファイルの監視も要らない |
@@ -319,14 +319,28 @@ E2E テスト（2026-10-30 決定）：
 - タグが既にあるとき、push では今までどおり何もしない。手動の実行（`workflow_dispatch`）では、タグ（`v<VERSION>`）からビルドし直して zip を差し替える。ビルドに失敗して zip の無いリリースができたときや、添付し直したいときに使う。タグの無い版を手動で実行すると、push と同じくタグとリリースを作って添付する。
 - 2 つのリリースの実行が重ならないよう、`release.yml` に `concurrency: release`（取り消さない）を付ける。
 - 確かめ方（`packaging/smoke.py`）：小さな Parquet を書き、`ddviz.exe --worker` に nonnull のタスクを渡して、`ready` から `done` までのメッセージと結果の件数を確かめる。polars と pyarrow を exe の中で動かす。窓は開かない（CI の runner に画面が無い）。`uv run packaging/smoke.py <exe>` で、展開した zip の exe も確かめられる。
-- `packaging/build.py` の WebView2 の署名の確認は、Windows PowerShell（`powershell`）を `PSModulePath` を外した環境で起動する。理由：GitHub Actions の Windows の step の既定のシェルは PowerShell 7（pwsh）で、そこから起動した Windows PowerShell は 7 のモジュールを先に並べた `PSModulePath` を引き継ぎ、`Get-AuthenticodeSignature` を読めずに空の結果を返した（CI で失敗し、手元でも pwsh から起動して再現した。2026-11-02）。PowerShell のエラーで止まるよう `$ErrorActionPreference = 'Stop'` にし、失敗したときは stderr もエラーに含める。
+- zip には WebView2 の固定版ランタイムを入れない（2026-11-02 ユーザー判断。Issue #84）。配布でのオフラインの共有サーバー（WebView2 の無い Server 2016）への対応を、必須の要件から外す。理由：固定版の再配布には、下の 4 つの条件が付く。固定版が要るのは WebView2 の無い Server 2016 だけで、Windows 11 と更新の当たった Windows 10 には Evergreen 版が最初から入っている。Server 2016 では、その組織の管理者が Microsoft のページで条件に同意して固定版を取り、exe の横に置けば済む（手順は `docs/shared-install.md`）。ddviz の開発者は Microsoft のランタイムを再配布しない。zip も小さくなる。それまでの案は、初回起動時の同意画面で同意を取ることだった（通知だけでは「同意させる」として弱い）が、同梱をやめたので要らない。
+- `packaging/build.py` は、ネットから何も取らない（Microsoft のダウンロードの URL もリポジトリから無くなった）。PyInstaller の後に、`config\` と次の 2 つのファイルを `ddviz.exe` と同じ階層へバイト列のままコピーする。2 つとも UTF-8（BOM なし）、改行は CRLF（`.gitattributes` の `packaging/*.txt text eol=crlf`）。理由：Server 2016 のメモ帳は LF だけの改行を正しく表示しない（1809 で対応）。`packaging/smoke.py` は、2 つが空でなくあることと、`webview2\` が無いことも確かめる。
+  - `LICENSE-WebView2-SDK.txt`：pywebview が exe に入れる WebView2 の SDK の DLL のライセンス。NuGet の `Microsoft.Web.WebView2` 1.0.3856.49 の nupkg の `LICENSE.txt`（BSD 3-Clause）を、改行だけ CRLF にしたもの。BSD はバイナリの配布で条文の同梱を求める。`tests/test_packaging_notice.py` が、改行を LF に戻した SHA-256 で nupkg のものと同じことを確かめる。
+  - `NOTICE.txt`：英語、ASCII の文字だけ。SDK の版と、配布フォルダに実際に入っている DLL の名前（`Microsoft.Web.WebView2.Core.dll`、`Microsoft.Web.WebView2.WinForms.dll`、`WebView2Loader.dll`）、ランタイムは同梱しないこと。pywebview を上げて SDK の版が変わったら、2 つのファイルとテストのハッシュを直す。
+- 起動時のランタイムの選び方（exe のとき。`src/ddviz/desktop/window.py` の `_choose_runtime`。開発環境では何もしない）：
+  1. `ddviz.exe` の横に `webview2\` があれば、それを使う（`WEBVIEW2_RUNTIME_PATH`）。権限の確認と付与（「WebView2 の固定版の権限」）も行う。ログに `using the WebView2 Runtime in <フォルダ>` を出す。
+  2. 無ければ、PC にインストールされた WebView2 のランタイム（Evergreen 版）を探し、見つかれば `WEBVIEW2_RUNTIME_PATH` を設定せずに進む（pywebview がそれを使う）。ログに `using the installed WebView2 Runtime <版>` を出す。
+  3. どちらも無ければ、Evergreen 版のインストールか、固定版を `webview2` の名前で置くことを、Microsoft のページの URL とともにメッセージボックスで示し、終了コード 1 で終わる。実行中の目印のファイルを置く前に止まる。
+  - 横の固定版を先にする理由：管理者が版を固定したいときに、置くだけで済む。権限の処理もそのまま使える。
+  - インストール済みかは、`webview2_access.installed_runtime_version` が、レジストリの `pv` を `HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}`、`HKEY_CURRENT_USER\SOFTWARE\Microsoft\EdgeUpdate\Clients\{同}` の順に読んで決める。pywebview 6.2.1 の `_is_chromium`（`webview/platforms/winforms.py`）と同じキーで、安定版の GUID だけを見る。空と `0.0.0.0`（アンインストールの跡）は飛ばして次を見る（pywebview も飛ばす）。pywebview の `_is_chromium` は呼ばない。理由：私的な関数で、import すると pythonnet を読み込む。
+  - SmartScreen には触らない。同梱しないので、通知の義務が無い。
 
-WebView2 の固定版の再配布の条件（2026-11-02 確認）：
+WebView2 の固定版の再配布の条件（2026-11-02 確認。同梱をやめた理由）：
 
-- Microsoft の WebView2 のダウンロードページにも「Distribute your app and the WebView2 Runtime」にも、ライセンスの文へのリンクや再配布の条件は書かれていない。後者は、固定版を展開してアプリと一緒に配る手順だけを書いている。
-- ライセンスの文は、ScanCode LicenseDB の `ms-edge-webview2`（Microsoft Software License Terms、第三者の写し）で読んだ。Section 2 の Distributable Code の条件：アプリに主な機能を足すこと、配布先と利用者に、この条件と同じ以上に Microsoft を守る条件（Section 9 の通知を含む）に同意させること、コードは Microsoft（ダウンロードサイトを含む）から直接取ること（`build.py` は Microsoft の URL から取り、Microsoft の署名を確かめる）、Microsoft の商標で Microsoft が出したように見せないこと。ライセンスの文のファイルを同梱することは求めていない。Section 4(c) は、ソフトウェアの中の Microsoft の通知を消したり変えたりすることを禁じる。Section 9 は、SmartScreen（既定で有効）を無効にしないなら、利用者に SmartScreen が含まれ情報を Microsoft に送ることを知らせることを求める。pywebview 6.2.1 は SmartScreen を無効にしていない（`IsReputationCheckingRequired` を設定していない）。
-- 固定版のフォルダには、Chromium などのオープンソースのライセンスを表示する `show_third_party_software_licenses.bat`（`msedgewebview2.exe --embedded-browser-webview=show-credits` を呼ぶ）が入っている。`build.py` はフォルダを丸ごとコピーするので、そのまま配布フォルダに入る。
-- 今は、リポジトリが private で、リリースはリポジトリに入れる人にしか見えない。ライセンスの文や利用者への通知を同梱するかは決めていない（「未確認事項」）。
+- 原文は、WebView2 のページ（https://developer.microsoft.com/microsoft-edge/webview2/）で固定版の「Download」を押すと出る画面「MICROSOFT EDGE WEBVIEW2 RUNTIME (FIXED VERSION)」にある。2026-11-02 に 156.0.4314.58 で読んだ。再配布には次の条件が付く。
+  - 利用者に、同じ以上に Microsoft を守る条件へ同意させる（2(b)(ii)）。確実に取るには、初回起動時の同意画面が要る。
+  - Microsoft を補償する（2(b)(iv)）。
+  - ダウンロードサイトを第三者に提供しない（2(c)(iii)）。
+  - SmartScreen について利用者に知らせる（4(b)・8）。
+- それまでは ScanCode LicenseDB の第三者の写し（`ms-edge-webview2`）で読んでいた。Microsoft の「Distribute your app and the WebView2 Runtime」には条件が書かれていない。
+- これらの条件を避けるため、固定版を同梱しないことにした（上）。同梱をやめた後も、pywebview が exe に入れる SDK の DLL は残る。そのライセンスは BSD 3-Clause（NuGet の `Microsoft.Web.WebView2` 1.0.3856.49 の `LICENSE.txt`）で、条文を同梱する（上の `LICENSE-WebView2-SDK.txt`）。
+- pywebview、pythonnet、polars など、Python のパッケージのライセンスの同梱は別に扱う。
 
 #### Python の版と CPU の前提（2026-10-30）
 
@@ -1902,7 +1916,7 @@ unning`）を残し、次の起動で前回の異常終了を知らせるメッ�
 - [ ] Server 2016 で動く WebView2 固定版の最新版はどれか。今は固定版 156.0.4314.50（2026-10-28）。Python は 3.13 に固定した（共有サーバーで動く実績あり。「Python の版と CPU の前提」）
 - [x] ズームで集約し直した画像に差し替えるときの速度：image トレース 500 本の `Plotly.react` は exe で 0.54〜0.80 秒で、大半は 100 パネルの軸の描き直しだった。画像を canvas に移し、軸を描き直さずに画像だけを差し替えて 17〜24ms になった（「画像の層の持ち方の比較」）
 - [x] exe（PyInstaller）で pyarrow が動くか（非 null の割合のタスク）：動く。`packaging/smoke.py` が exe の worker に nonnull のタスクを実行させ、手元と CI で通った（2026-11-02。「CI での exe のビルド」）
-- [ ] WebView2 の固定版を同梱した zip を、リポジトリに入れない人に配るとき（リポジトリかリリースを公開するときを含む）、ライセンスの文や利用者への通知（SmartScreen）を同梱するか。条件は「リリースの exe」に書いた。今は private のリポジトリのリリースなので決めていない（ユーザー判断が要る）
+- [x] WebView2 の固定版を同梱した zip を配るとき、ライセンスの文や利用者への通知を同梱するか：固定版を同梱しないことにした。zip には SDK の BSD の条文と `NOTICE.txt` だけを入れ、Server 2016 では管理者が固定版を取って exe の横に置く（2026-11-02 ユーザー判断。Issue #84。「リリースの exe」）
 - [x] exe 化した後の polars の import 時間：`ddviz.exe --worker` が `ready` を返すまで 0.36〜0.38 秒で、開発環境（1.07〜1.11 秒）の約 1/3。exe の起動だけで約 0.2 秒（「最小構成の exe」）
 - [x] 1 億行のファイルを列分割するときのピークメモリが頭打ちになるか：1 列ずつ書けば、1 億行（1 行グループ 100 万行でも 1000 万行でも）で約 1.0GB に収まる。まとめて書く列数に比例して増える（「遅延変換の試作」）
 - [ ] 10 万列 × 1 億行の実規模で、初回の待ち（フッタ解析 + 列ごとの変換）が見込みどおりか。合成データでは作れない（writer が 1000 万チャンクで 4GB を超える）ため、フッタ解析と 1 億行の変換を別々に測って足した
