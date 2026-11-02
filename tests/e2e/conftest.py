@@ -28,7 +28,7 @@ def app_url(tmp_path: Path, scatter_path: Path, settings: Settings) -> Iterator[
     root = tmp_path / "run"
     root.mkdir()
     app = create_app(
-        str(scatter_path), False, root, tmp_path / "cache", settings, TOKEN
+        [str(scatter_path)], False, root, tmp_path / "cache", settings, TOKEN
     )
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")

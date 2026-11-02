@@ -32,19 +32,20 @@ STATIC = Path(__file__).parents[1] / "static"
 
 
 def create_app(
-    data_path: str,
+    data_paths: list[str],
     recursive: bool,
     root: Path,
     cache_root: Path,
     settings: Settings,
     token: str,
 ) -> FastAPI:
-    """Create the UI server for one Parquet file or a folder of them.
+    """Create the UI server for a Parquet file, a folder of them or several files.
 
     Parameters
     ----------
-    data_path : str
-        Parquet file, or folder of Parquet files, to plot.
+    data_paths : list of str
+        Parquet file, folder of Parquet files, or several Parquet files, to
+        plot (`ddviz.server.source.Source`).
     recursive : bool
         For a folder, also read the files in its subfolders.
     root : pathlib.Path
@@ -62,7 +63,7 @@ def create_app(
         The application.
     """
     broker = TaskBroker(root)
-    source = Source(data_path, recursive, cache_root, settings, broker)
+    source = Source(data_paths, recursive, cache_root, settings, broker)
     results = Results()
 
     @asynccontextmanager
