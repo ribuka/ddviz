@@ -448,8 +448,11 @@ button {
   cursor: pointer;
 }
 
+/* The chosen kind stands out: filled with the accent, its text white. */
 .column-kinds button.on {
-  background: var(--bg-pressed);
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--text-on-color);
 }
 
 .column-shares {
@@ -651,6 +654,12 @@ button {
 /* Y runs top to bottom, as its panels stack: the rotated zone reverses. */
 .zone.vertical[data-role="y"] {
   flex-direction: row-reverse;
+}
+
+/* Group Y reads top to bottom, as plotly's row labels beside it: not
+   rotated, its chips already run top to bottom. */
+.zone.vertical[data-role="row"] {
+  transform: none;
 }
 
 .zone.filled {
@@ -1422,6 +1431,37 @@ button {
 .color-cell.current {
   outline: 2px solid var(--text);
   outline-offset: 1px;
+}
+
+/* The field for a code in HEX (the native picker opens on RGB). */
+.color-hex {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.color-hex-input {
+  width: 72px;
+  padding: 1px 4px;
+  font: inherit;
+  font-family: monospace;
+  color: var(--text);
+}
+
+.color-hex-input.invalid {
+  outline: 1px solid var(--danger);
+}
+
+.color-hex-apply {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  padding: 0 6px;
+  font: inherit;
+  cursor: pointer;
 }
 
 /* The native picker, opened from "その他の色…": kept rendered, out of sight. */

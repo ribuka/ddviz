@@ -19,11 +19,11 @@
           <span>列</span>
           <button type="button" class="left-close" title="列とフィルタの欄を左へ畳む">◀</button>
         </div>
-        <input class="column-search" type="search" placeholder="列名で検索（空白で区切ると、すべてを含む列）">
+        <input class="column-search" type="search" placeholder="Search ...">
         <div class="column-kinds">
-          <button type="button" data-kind="" class="on">すべて</button>
-          <button type="button" data-kind="numeric">数値</button>
-          <button type="button" data-kind="categorical">カテゴリ</button>
+          <button type="button" data-kind="" class="on">All</button>
+          <button type="button" data-kind="numeric">Numeric</button>
+          <button type="button" data-kind="categorical">Categorical</button>
         </div>
         <div class="column-shares">
           <label title="値がすべて null の列を除く"><input type="checkbox" class="column-hide-empty"> null だけの列を隠す</label>
@@ -41,7 +41,7 @@
         </header>
         <div class="filter-body">
           <div class="filter-list"></div>
-          <div class="filter-drop">列をここにドラッグすると、その列で行を絞る</div>
+          <div class="filter-drop">Drop a column to filter</div>
         </div>
       </section>
       <div class="left-resize" title="ドラッグで欄の幅を変える"></div>
