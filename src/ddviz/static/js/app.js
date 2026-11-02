@@ -88,18 +88,18 @@ const legend = new Legend(
     openScaleMenu(event, colorBins, setColorBins, recolor, sharedSize(), setShapeSize),
   (event, kind, i) => {
     if (kind === "shape") {
-      const level = current.overlay.levels[i];
-      openShapeMenu(event, levelHeading(level), current.overlay.sizes[i], (size) =>
-        setLevelSize(current.overlay.column, level, size),
-      );
+      const { column, levels, sizes, shapes, choices } = current.overlay;
+      const level = levels[i];
+      openShapeMenu(event, levelHeading(level), sizes[i], (size) => setLevelSize(column, level, size), {
+        shape: { current: shapes[i], choices, onPick: (shape) => setLevelShape(column, level, shape) },
+      });
     } else if (current.color.kind === "bins") {
       // The intervals take their colors from the scale.
       openScaleMenu(event, colorBins, setColorBins, recolor, sharedSize(), setShapeSize);
     } else {
       const level = current.series[i];
       openShapeMenu(event, SIZE_HEADING, sharedSize(), setShapeSize, {
-        current: levelColors(current)[i],
-        onPick: (color) => setLevelColor(level, color),
+        color: { current: levelColors(current)[i], onPick: (color) => setLevelColor(level, color) },
       });
     }
   },
@@ -141,6 +141,12 @@ let shapeSize = null;
 // overlay legend's markers; kept for every graph, dropped when the size of
 // every series is picked.
 const levelSizes = new Map();
+// Shapes of single overlay levels, by level name, of the overlay column
+// `column` (`ddviz.server.plan.parse_level_shapes`), picked in the panel of
+// the menu of the overlay legend's markers. They stay while the overlay
+// column does, as the colors picked for the color levels: a graph of
+// another overlay column drops them.
+const levelShapes = { column: undefined, shapes: Object.create(null) };
 // Wrapped panels to a row, or null to make them closest to square
 // (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
 // The user sets it in the Wrap zone, beside its chip.
@@ -316,6 +322,7 @@ async function plot(encoding) {
     smooth: smoothing,
     shape_size: shapeSize,
     shape_sizes: (encoding.color !== null && levelSizes.get(encoding.overlay)) || null,
+    level_shapes: encoding.color !== null ? pickedShapes(encoding.overlay) : null,
   };
   requestedSize = size;
   statusLine.show("集約中…");
@@ -949,6 +956,25 @@ function setLevelSize(column, level, size) {
   const sizes = levelSizes.get(column) ?? Object.create(null);
   sizes[level] = size;
   levelSizes.set(column, sizes);
+  if (plottedEncoding) plot(plottedEncoding);
+}
+
+// Returns the shapes picked for the levels of an overlay column, or null for
+// none; the shapes of another column are dropped.
+function pickedShapes(column) {
+  if (column !== levelShapes.column) {
+    levelShapes.column = column;
+    levelShapes.shapes = Object.create(null);
+  }
+  return Object.keys(levelShapes.shapes).length ? levelShapes.shapes : null;
+}
+
+// Draws the points of an overlay level in another shape, or in the shape of
+// its place again (null): the graph is plotted again.
+function setLevelShape(column, level, shape) {
+  pickedShapes(column);
+  if (shape === null) delete levelShapes.shapes[level];
+  else levelShapes.shapes[level] = shape;
   if (plottedEncoding) plot(plottedEncoding);
 }
 

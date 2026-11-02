@@ -12,7 +12,8 @@
 // either of its levels is. A right click on an item's marker opens the menu
 // of the markers (`onMarkerMenu`): on a color item, the level's color and the
 // size of every series' markers, or the scale's menu for the intervals of a
-// numeric column; on an overlay item, the size of the level's shapes.
+// numeric column; on an overlay item, the level's shape and the size of its
+// shapes.
 //
 // A numeric color column shows its scale instead (colorscale.js): a color
 // bar for a gradient, or its intervals in colors spread over the scale. A
@@ -20,12 +21,10 @@
 // scale's menu, which also has the size of the markers.
 import { cssColor, levelColors } from "./colorscale.js";
 import { levelText } from "./names.js";
+import { shapeCanvas } from "./shapepanel.js";
 import { formatTemporal } from "./temporal.js";
 
 export const INACTIVE_OPACITY = 0.1;
-
-// Color of the shapes in the overlay's legend.
-const SHAPE_COLOR = "#444";
 
 export class Legend {
   // `element` holds the items; `onChange` runs after each click, `onMenu`
@@ -169,7 +168,7 @@ export class Legend {
 
   // The tooltip of a marker of a legend (`kind` "color" or "shape").
   markerTip(kind) {
-    if (kind === "shape") return "右クリックでこの形の大きさを変える";
+    if (kind === "shape") return "右クリックでこの水準の形と大きさを変える";
     if (this.color.kind === "bins") return "右クリックで色の付け方を変える";
     return "右クリックで色と点の大きさを変える";
   }
@@ -264,22 +263,6 @@ export class Legend {
     const down = [...Array(nSeries).keys()].reverse();
     return [...down.filter((s) => !this.inactive.has(s)), ...down.filter((s) => this.inactive.has(s))];
   }
-}
-
-// Draws a marker shape (`meta.overlay.kernels`, rows from the top) a pixel
-// per cell.
-function shapeCanvas(kernel) {
-  const canvas = document.createElement("canvas");
-  canvas.width = kernel.length;
-  canvas.height = kernel.length;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = SHAPE_COLOR;
-  kernel.forEach((row, y) => {
-    row.forEach((on, x) => {
-      if (on) ctx.fillRect(x, y, 1, 1);
-    });
-  });
-  return canvas;
 }
 
 // Returns a tick of a gradient: a datetime, date or time column's (`kind`) as such.

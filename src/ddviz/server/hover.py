@@ -49,11 +49,11 @@ class HoverIndex:
         # points cover the bins of their marker (`ddviz.compute.shapes`).
         spec = self.manifest.spec
         levels = self.manifest.levels["overlay"]
-        shapes = len(levels) if spec.overlay else 0
-        sizes = spec.marker_sizes(levels)
         self._shapes = [
-            marker(i, shapes, sizes[i % len(sizes)])[::-1]
-            for i in range(max(shapes, 1))
+            marker(shape, size)[::-1]
+            for shape, size in zip(
+                spec.marker_shapes(levels), spec.marker_sizes(levels), strict=True
+            )
         ]
 
     def close(self) -> None:

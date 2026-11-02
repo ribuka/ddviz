@@ -17,6 +17,7 @@ class PlotRequest(BaseModel):
     smooth: dict | None = None
     shape_size: int | None = None
     shape_sizes: dict[str, object] | None = None
+    level_shapes: dict[str, object] | None = None
 
 
 class SizeRequest(BaseModel):

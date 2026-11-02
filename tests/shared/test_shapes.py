@@ -5,13 +5,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ddviz.shared.shapes import SHAPES, kernel
+from ddviz.shared.shapes import SHAPES, default_shape, kernel
 
 
 @pytest.mark.parametrize("size", [3, 7, 15])
 def test_every_shape_is_centered_and_distinct(size: int) -> None:
     """Each shape fits its size, covers its center or a ring around it, and differs from the others."""
-    kernels = [kernel(i, size) for i in range(len(SHAPES))]
+    kernels = [kernel(name, size) for name in SHAPES]
     for k in kernels:
         assert k.shape == (size, size) and k.dtype == bool
         assert k.any()
@@ -23,10 +23,17 @@ def test_every_shape_is_centered_and_distinct(size: int) -> None:
 
 def test_shapes_cycle_and_point_the_right_way() -> None:
     """The levels cycle over the shapes; a triangle up is wide at the bottom."""
-    assert np.array_equal(kernel(len(SHAPES), 7), kernel(0, 7))
-    up = kernel(SHAPES.index("triangle-up-filled"), 7)
+    assert [default_shape(i) for i in range(len(SHAPES))] == list(SHAPES)
+    assert default_shape(len(SHAPES) + 1) == SHAPES[1]
+    up = kernel("triangle-up-filled", 7)
     assert up[0].sum() == 1 and up[-1].sum() == 7
-    down = kernel(SHAPES.index("triangle-down-filled"), 7)
+    down = kernel("triangle-down-filled", 7)
     assert np.array_equal(down, up[::-1])
     # An outline leaves its middle empty.
-    assert not kernel(SHAPES.index("square"), 7)[3, 3]
+    assert not kernel("square", 7)[3, 3]
+
+
+def test_an_unknown_shape_is_refused() -> None:
+    """Only the names of `SHAPES` are shapes."""
+    with pytest.raises(ValueError, match="unknown shape"):
+        kernel("star", 7)

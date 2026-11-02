@@ -22,7 +22,7 @@ from ddviz.shared.layout import (
 )
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import ONE_BAND, ScatterSpec
-from ddviz.shared.shapes import kernel
+from ddviz.shared.shapes import SHAPES, kernel
 from ddviz.shared.temporal import DATE_KINDS
 
 # Each plot area is white with a frame line around it, on a light gray
@@ -41,6 +41,9 @@ TICK_PAD = 6
 # Numeric ticks write an exponent as "1e+300", not plotly's "1×10³⁰⁰": the
 # left margin had room for the exponent only, without the digits before it.
 EXPONENT = {"exponentformat": "e"}
+# Size in pixels of the shapes drawn in the panel that picks a level's
+# shape (`_overlay`).
+CHOICE_SIZE = 9
 
 
 def _axis_suffix(panel: int) -> str:
@@ -221,13 +224,21 @@ def _overlay(manifest: PlotManifest) -> dict | None:
         return None
     levels = manifest.levels["overlay"]
     sizes = spec.marker_sizes(levels)
+    shapes = spec.marker_shapes(levels)
     return {
         "column": spec.overlay,
         "levels": [str(v) for v in levels],
         # Size in pixels of each level's shapes (`ScatterSpec.marker_sizes`).
         "sizes": sizes if levels else [],
+        # Shape of each level (`ScatterSpec.marker_shapes`).
+        "shapes": shapes if levels else [],
         "kernels": [
-            kernel(i, sizes[i]).astype(int).tolist() for i in range(len(levels))
+            kernel(shapes[i], sizes[i]).astype(int).tolist() for i in range(len(levels))
+        ],
+        # Every shape a level can take, drawn in the panel that picks one.
+        "choices": [
+            {"name": name, "kernel": kernel(name, CHOICE_SIZE).astype(int).tolist()}
+            for name in SHAPES
         ],
     }
 

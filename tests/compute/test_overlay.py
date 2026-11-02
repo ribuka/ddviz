@@ -18,7 +18,7 @@ from ddviz.server.hover import HoverIndex
 from ddviz.shared.manifest import IMAGES, PlotManifest
 from ddviz.shared.palette import DEFAULT_COLORS
 from ddviz.shared.scatter import ScatterSpec
-from ddviz.shared.shapes import marker
+from ddviz.shared.shapes import SHAPES, marker
 
 
 def _overlay_spec(spec: ScatterSpec) -> ScatterSpec:
@@ -76,7 +76,9 @@ def test_each_series_image_spreads_its_pixels_into_its_shape(
     for s, at in layers.items():
         offset, length = manifest.images[s]
         bits, color = _decode_mask(data[offset : offset + length])
-        expected = spread(series_layer(pixels(keys, grid)[at], grid), marker(s, 2, 5))
+        expected = spread(
+            series_layer(pixels(keys, grid)[at], grid), marker(SHAPES[s % 2], 5)
+        )
         assert np.array_equal(bits, atlas(expected, manifest.layout.ncol))
         assert color == bytes.fromhex(DEFAULT_COLORS[s // 2].removeprefix("#"))
         assert manifest.colors[s] == DEFAULT_COLORS[s // 2]
@@ -123,6 +125,24 @@ def test_an_overlay_level_is_drawn_in_its_own_size(
         bits, _ = _decode_mask(data[offset : offset + length])
         size = (5, 11)[s % 2]
         expected = spread(
-            series_layer(pixels(keys, grid)[at], grid), marker(s, 2, size)
+            series_layer(pixels(keys, grid)[at], grid), marker(SHAPES[s % 2], size)
         )
+        assert np.array_equal(bits, atlas(expected, manifest.layout.ncol))
+
+
+def test_an_overlay_level_is_drawn_in_its_own_shape(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """The points of a level in `level_shapes` take that shape; the other level's, the shape of its place."""
+    spec = replace(_overlay_spec(scatter_spec), level_shapes={"q": "triangle-down"})
+    run_plot(spec, tmp_path, lambda _: None)
+    manifest = PlotManifest.read(tmp_path)
+    data = (tmp_path / IMAGES).read_bytes()
+    keys = np.load(tmp_path / "keys.npy")
+    grid = manifest.grid
+    for s, at in by_series(keys, grid):
+        offset, length = manifest.images[s]
+        bits, _ = _decode_mask(data[offset : offset + length])
+        shape = (SHAPES[0], "triangle-down")[s % 2]
+        expected = spread(series_layer(pixels(keys, grid)[at], grid), marker(shape, 5))
         assert np.array_equal(bits, atlas(expected, manifest.layout.ncol))

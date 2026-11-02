@@ -11,6 +11,7 @@ from ddviz.server.plan import (
     drawn_columns,
     has_box_pair,
     parse_filters,
+    parse_level_shapes,
     parse_shape_size,
     parse_shape_sizes,
     parse_smoothing,
@@ -26,6 +27,7 @@ from ddviz.shared.scatter import (
     Filter,
     Smoothing,
 )
+from ddviz.shared.shapes import SHAPES
 
 
 def test_scatter_draws_every_axis_and_overlay_as_shapes() -> None:
@@ -363,3 +365,32 @@ def test_overlay_levels_take_their_own_sizes() -> None:
     spec = scatter_spec(circles, files, 400, 300, ["#000000"], shape_sizes={"q": 3})
     assert spec.shape_sizes == {}
     assert spec.marker_sizes(["q"]) == [POINT_SIZE]
+
+
+def test_parse_level_shapes() -> None:
+    """Each overlay level named takes one of `SHAPES`; two levels may take the same."""
+    assert parse_level_shapes(None) == {}
+    assert parse_level_shapes({"p": "x", "q": "x"}) == {"p": "x", "q": "x"}
+    assert parse_level_shapes({"__proto__": "circle"}) == {"__proto__": "circle"}
+    for bad in ({"p": "star"}, {"p": None}, {"p": 3}):
+        with pytest.raises(ValueError, match="level_shapes"):
+            parse_level_shapes(bad)
+
+
+def test_overlay_levels_take_their_own_shapes() -> None:
+    """A level named in `level_shapes` takes its shape, the others that of their place; without shapes, none."""
+    files = {c: [f"{c}.parquet"] for c in ("a", "b", "g", "o")}
+    shapes = Encoding(x=("a",), y=("b",), color="g", overlay="o")
+    spec = scatter_spec(
+        shapes, files, 400, 300, ["#000000"], level_shapes={"q": "diamond-filled"}
+    )
+    assert spec.marker_shapes(["p", "q", "r"]) == [
+        SHAPES[0],
+        "diamond-filled",
+        SHAPES[2],
+    ]
+    assert spec.marker_shapes([]) == [None]
+    circles = Encoding(x=("a",), y=("b",), overlay="o")
+    spec = scatter_spec(circles, files, 400, 300, ["#000000"], level_shapes={"q": "x"})
+    assert spec.level_shapes == {}
+    assert spec.marker_shapes(["q"]) == [None]
