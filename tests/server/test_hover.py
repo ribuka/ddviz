@@ -274,3 +274,13 @@ def test_lookup_skips_the_hidden_series() -> None:
     hit = index.lookup(0, 15.5, 10.5, 1.0, 1.0, [1, 0])
     assert (hit["series"], hit["bx"], hit["by"]) == (1, 13, 10)
     assert index.lookup(0, 15.5, 10.5, 1.0, 1.0, [1, 0], frozenset({0, 1})) is None
+
+
+def test_hidden_series_are_passed_over_a_chunk_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With one key matched at a time, the nearest bin of a shown series still answers."""
+    monkeypatch.setattr("ddviz.server.hover._MAX_KEYS_AT_ONCE", 1)
+    index = _overlay_index([(1, 13, 10), (1, 14, 10), (0, 19, 10), (0, 21, 10)])
+    hit = index.lookup(0, 15.5, 10.5, 1.0, 1.0, [1, 0], frozenset({1}))
+    assert (hit["series"], hit["bx"], hit["by"]) == (0, 19, 10)

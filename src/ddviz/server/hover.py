@@ -15,6 +15,10 @@ HOVER_DISTANCE = 20
 # Cap on the search window in bins, for views zoomed out so far that a bin
 # is much smaller than a pixel.
 _MAX_WINDOW = 256
+# Most keys matched at once when the hover passes over the hidden series:
+# about 8MB of keys, so that 10,000 series by the bins near the cursor do
+# not take hundreds of MB.
+_MAX_KEYS_AT_ONCE = 2**20
 
 
 class HoverIndex:
@@ -142,16 +146,42 @@ class HoverIndex:
         near = d2 <= HOVER_DISTANCE**2
         xs, ys, d2 = xs[near] + x0, ys[near] + y0, d2[near]
         if hidden:
-            # Only the bins with rows of a shown series count.
-            shown = np.setdiff1d(np.arange(grid.n_series), list(hidden))
-            keys = grid.pack(panel, shown[:, None], ys[None, :], xs[None, :])
-            found = np.searchsorted(self._keys, keys).clip(max=len(self._keys) - 1)
-            keep = (self._keys[found] == keys).any(axis=0)
-            xs, ys, d2 = xs[keep], ys[keep], d2[keep]
+            return self._nearest_shown(panel, xs, ys, d2, hidden)
         if len(d2) == 0:
             return None
         best = int(np.argmin(d2))
         return int(xs[best]), int(ys[best])
+
+    def _nearest_shown(
+        self,
+        panel: int,
+        xs: np.ndarray,
+        ys: np.ndarray,
+        d2: np.ndarray,
+        hidden: frozenset[int],
+    ) -> tuple[int, int] | None:
+        """Return the nearest of the bins `xs`, `ys` (squared distances `d2`) with rows of a series not in `hidden`.
+
+        The bins are matched nearest first, a chunk at a time, so that the
+        keys of the shown series by the bins never take more than
+        `_MAX_KEYS_AT_ONCE` at once (up to 10,000 series by some hundred bins).
+        """
+        grid = self.grid
+        shown = np.setdiff1d(np.arange(grid.n_series), list(hidden))
+        if len(shown) == 0:
+            return None
+        order = np.argsort(d2, kind="stable")
+        step = max(1, _MAX_KEYS_AT_ONCE // len(shown))
+        last = len(self._keys) - 1
+        for start in range(0, len(order), step):
+            chunk = order[start : start + step]
+            keys = grid.pack(panel, shown[:, None], ys[chunk], xs[chunk])
+            found = np.searchsorted(self._keys, keys).clip(max=last)
+            keep = np.flatnonzero((self._keys[found] == keys).any(axis=0))
+            if len(keep):
+                best = chunk[keep[0]]
+                return int(xs[best]), int(ys[best])
+        return None
 
     def _value(self, array: np.ndarray, labels: list | None, i: int) -> object:
         """Return a hover value as JSON-ready Python."""
