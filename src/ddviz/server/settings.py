@@ -10,6 +10,10 @@ from pathlib import Path
 
 from ddviz.shared.scatter import MAX_LEVELS
 
+# Most columns the column list shows by default. 1,000 lists as fast as 200
+# did; thousands make each search slow to draw (`docs/spec.md`, "列リストの件数").
+MAX_LISTED = 1000
+
 
 @dataclass(frozen=True)
 class CacheSettings:
@@ -41,6 +45,19 @@ class PlotSettings:
 
 
 @dataclass(frozen=True)
+class ColumnsSettings:
+    """Limits of the column list.
+
+    Parameters
+    ----------
+    max_listed : int
+        Most matching columns the column list shows.
+    """
+
+    max_listed: int = MAX_LISTED
+
+
+@dataclass(frozen=True)
 class HoverSettings:
     """Limits of the hover files.
 
@@ -66,11 +83,14 @@ class Settings:
         Limits of a plot.
     hover : HoverSettings
         Limits of the hover files.
+    columns : ColumnsSettings
+        Limits of the column list.
     """
 
     cache: CacheSettings = CacheSettings()
     plot: PlotSettings = PlotSettings()
     hover: HoverSettings = HoverSettings()
+    columns: ColumnsSettings = ColumnsSettings()
 
 
 def settings_path() -> Path:
@@ -104,20 +124,15 @@ def load_settings(path: Path | None = None) -> Settings:
     Raises
     ------
     ValueError
-        When ``plot.max_levels`` is not a positive integer, or
-        ``hover.max_temp_gb`` is not a positive number.
+        When ``plot.max_levels`` or ``columns.max_listed`` is not a positive
+        integer, or ``hover.max_temp_gb`` is not a positive number.
     """
     path = path or settings_path()
     data = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     cache = data.get("cache", {})
     default = CacheSettings()
-    max_levels = data.get("plot", {}).get("max_levels", MAX_LEVELS)
-    if (
-        isinstance(max_levels, bool)
-        or not isinstance(max_levels, int)
-        or max_levels < 1
-    ):
-        raise ValueError(f"plot.max_levels needs a positive integer: {max_levels!r}")
+    max_levels = _positive_int(data, "plot", "max_levels", MAX_LEVELS)
+    max_listed = _positive_int(data, "columns", "max_listed", MAX_LISTED)
     hover = data.get("hover", {})
     max_temp_gb = hover.get("max_temp_gb")
     if max_temp_gb is not None and (
@@ -139,4 +154,19 @@ def load_settings(path: Path | None = None) -> Settings:
         hover=HoverSettings()
         if max_temp_gb is None
         else HoverSettings(max_temp_bytes=int(max_temp_gb * 2**30)),
+        columns=ColumnsSettings(max_listed=max_listed),
     )
+
+
+def _positive_int(data: dict, table: str, key: str, default: int) -> int:
+    """Return ``data[table][key]``, or `default` without it.
+
+    Raises
+    ------
+    ValueError
+        When the value is not a positive integer.
+    """
+    value = data.get(table, {}).get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{table}.{key} needs a positive integer: {value!r}")
+    return value

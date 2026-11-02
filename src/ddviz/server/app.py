@@ -88,7 +88,7 @@ def create_app(
     async def index() -> FileResponse:
         return FileResponse(STATIC / "index.html")
 
-    app.include_router(source_router(source))
+    app.include_router(source_router(source, settings.columns.max_listed))
     app.include_router(
         plot_router(
             source,
