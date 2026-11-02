@@ -1,5 +1,10 @@
 name: Release
 
+# When VERSION changes on main, tags v<VERSION>, creates the release and
+# attaches the exe (ddviz-<VERSION>-win-x64.zip). If the tag already exists, a
+# push does nothing; a manual run builds the exe from the tag again and
+# replaces the zip on its release.
+
 on:
   workflow_dispatch:
   push:
@@ -8,12 +13,23 @@ on:
     paths:
       - VERSION
 
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
+
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      created: ${{ steps.tag.outputs.exists == 'false' }}
 
     steps:
       - uses: actions/checkout@v6
@@ -63,3 +79,32 @@ jobs:
             "$TAG" \
             --title "$TAG" \
             --generate-notes
+
+  exe:
+    needs: release
+    if: needs.release.outputs.created == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/exe.yml
+    with:
+      ref: ${{ needs.release.outputs.tag }}
+
+  attach:
+    needs: [release, exe]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.exe.outputs.zip }}
+
+      - name: Attach the exe to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload \
+            "${{ needs.release.outputs.tag }}" \
+            "${{ needs.exe.outputs.zip }}" \
+            --clobber \
+            --repo "${{ github.repository }}"

@@ -1,0 +1,75 @@
+name: Exe
+
+# Builds the folder for distribution (dist\ddviz), checks that the exe runs a
+# worker task, and keeps it zipped as ddviz-<VERSION>-win-x64.zip, an
+# artifact of the run for a day. The release workflow calls it with the tag
+# and attaches the zip to the release; a pull request that touches the
+# packaging or these workflows builds it to check.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - packaging/**
+      - .github/workflows/exe.yml
+      - .github/workflows/release.yml
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit, branch or tag to build
+        required: true
+        type: string
+    outputs:
+      zip:
+        description: Name of the zip and of its artifact
+        value: ${{ jobs.exe.outputs.zip }}
+
+permissions:
+  contents: read
+
+jobs:
+  exe:
+    name: Exe
+    runs-on: windows-latest
+    outputs:
+      zip: ${{ steps.zip.outputs.name }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Build
+        run: uv run --frozen --group build packaging/build.py
+
+      - name: Smoke test
+        run: uv run --frozen packaging/smoke.py
+
+      - name: Zip
+        id: zip
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $zip = "ddviz-$version-win-x64.zip"
+          # Windows' bsdtar, not Git's GNU tar: -a picks the format from the name.
+          & "$env:SystemRoot\System32\tar.exe" -a -c -f $zip -C dist ddviz
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $mb = [math]::Round((Get-Item $zip).Length / 1MB)
+          "$zip ($mb MB)" >> $env:GITHUB_STEP_SUMMARY
+          "name=$zip" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zip.outputs.name }}
+          path: ${{ steps.zip.outputs.name }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
