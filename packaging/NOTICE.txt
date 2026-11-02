@@ -1,0 +1,12 @@
+ddviz - third-party software notice
+
+This package includes the Microsoft Edge WebView2 SDK 1.0.3856.49
+(Microsoft.Web.WebView2.Core.dll, Microsoft.Web.WebView2.WinForms.dll and
+WebView2Loader.dll) from Microsoft Corporation, licensed under the terms in
+LICENSE-WebView2-SDK.txt.
+
+This package does not include the Microsoft Edge WebView2 Runtime. ddviz
+uses the WebView2 Runtime installed on the PC, or a WebView2 Runtime
+(Fixed Version) that you place in a folder named "webview2" next to
+ddviz.exe. The WebView2 Runtime is licensed to you by Microsoft under its
+own terms.

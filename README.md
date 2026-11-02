@@ -33,10 +33,10 @@ Windows のリポジトリのルートで実行します。
 uv run --group build packaging/build.py
 ```
 
-- 初回は WebView2 の固定版ランタイムをダウンロードし、Microsoft の署名を確かめてから `packaging/webview2/` に展開します（2 回目以降は再利用します）。
-- PyInstaller（onedir）で exe を作り、`dist\ddviz\` に出力します。WebView2 のランタイムは `dist\ddviz\webview2\`、設定は `dist\ddviz\config\` に置かれます。
+- PyInstaller（onedir）で exe を作り、`dist\ddviz\` に出力します。設定は `dist\ddviz\config\`、WebView2 の SDK のライセンスと通知（`LICENSE-WebView2-SDK.txt`・`NOTICE.txt`）は `ddviz.exe` の横に置かれます。ネットからは何も取りません。
+- WebView2 のランタイムは同梱しません。`ddviz.exe` は、横に `webview2\` のフォルダ（固定版）があればそれを、無ければ PC にインストールされた WebView2 のランタイムを使います。
 - 配布するときは `dist\ddviz` フォルダごと zip にして渡します。起動は `ddviz.exe` です。
 
-### 共有の場所に置くとき
+### WebView2 の入っていない PC（Windows Server 2016 など）や共有の場所に置くとき
 
 [docs/shared-install.md](docs/shared-install.md) を参照してください。
