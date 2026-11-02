@@ -1,6 +1,7 @@
 // The column list: the server searches the names (`GET /api/columns`) and
 // returns the first matches with their count, so a data set of 100,000
-// columns never sends them all. Each listed column can be dragged to a role.
+// columns never sends them all; how many it returns is `columns.max_listed`
+// of config/settings.toml. Each listed column can be dragged to a role.
 // Each shows its rows with a value, which the server counts after Load, over
 // a bar as long as their share of the rows; until then the list asks again
 // every second, and the controls that filter and sort by the share wait.
@@ -12,7 +13,6 @@
 // `dragstart` makes Chrome drop the drag.
 import { beginDrag } from "./builder.js";
 
-const LIMIT = 200;
 const SEARCH_DELAY_MS = 150;
 const PENDING_RETRY_MS = 1000;
 
@@ -35,7 +35,7 @@ export function attachColumnList(root) {
   async function search() {
     clearTimeout(timer);
     const mine = ++generation;
-    const query = new URLSearchParams({ q: input.value, limit: LIMIT });
+    const query = new URLSearchParams({ q: input.value });
     if (kind) query.set("kind", kind);
     const min = Number(minShare.value);
     if (min > 0) query.set("min_share", min / 100);

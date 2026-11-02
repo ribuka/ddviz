@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from ddviz.server.app import create_app
 from ddviz.server.auth import COOKIE
-from ddviz.server.settings import HoverSettings, Settings
+from ddviz.server.settings import ColumnsSettings, HoverSettings, Settings
 from ddviz.shared.scatter import POINT_SIZE
 
 ENCODING = {"x": ["x"], "y": ["y"], "color": "color", "col": "facet"}
@@ -108,6 +108,22 @@ def test_columns_carry_their_non_null_rows(
     for column in found["columns"]:
         assert column["nonnull"] == counts[column["name"]]
         assert column["share"] == counts[column["name"]] / rows
+
+
+def test_columns_list_as_many_as_the_settings_allow(
+    tmp_path: Path, scatter_path: Path
+) -> None:
+    """The search returns ``columns.max_listed`` columns at most, whatever the page asks."""
+    settings = Settings(columns=ColumnsSettings(max_listed=2))
+    app = create_app(
+        str(scatter_path), False, tmp_path / "run", tmp_path / "cache", settings, TOKEN
+    )
+    (tmp_path / "run").mkdir()
+    with TestClient(app) as started:
+        started.get("/", params={"token": TOKEN})
+        found = started.get("/api/columns", params={"limit": 200}).json()
+    assert found["matched"] == 5
+    assert [c["name"] for c in found["columns"]] == ["x", "y"]
 
 
 def test_plot_draws_and_serves_images(client: TestClient) -> None:

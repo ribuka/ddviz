@@ -8,13 +8,16 @@ from ddviz.server.columns import search_columns
 from ddviz.server.source import Source
 
 
-def source_router(source: Source) -> APIRouter:
+def source_router(source: Source, max_listed: int) -> APIRouter:
     """Return the routes of the file's columns.
 
     Parameters
     ----------
     source : Source
         The file plotted.
+    max_listed : int
+        Most matching columns the search returns (``columns.max_listed`` of
+        the settings).
 
     Returns
     -------
@@ -48,18 +51,23 @@ def source_router(source: Source) -> APIRouter:
     async def columns(
         q: str = "",
         kind: str | None = None,
-        limit: int = 200,
         min_share: float | None = None,
         order: str = "file",
     ) -> dict:
-        """Return the columns whose names hold every word of `q` (`ddviz.server.columns`).
+        """Return the first `max_listed` columns whose names hold every word of `q` (`ddviz.server.columns`).
 
         ``"shares"`` tells whether the non-null values are counted
         yet: ``"pending"``, ``"done"`` or ``"failed"``.
         """
         try:
             found = search_columns(
-                await source.schema(), q, kind, limit, source.nonnull, min_share, order
+                await source.schema(),
+                q,
+                kind,
+                max_listed,
+                source.nonnull,
+                min_share,
+                order,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
