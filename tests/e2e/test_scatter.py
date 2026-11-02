@@ -912,3 +912,84 @@ def test_the_pending_mark_shows_only_on_a_slow_result(app_page: Page) -> None:
     page.wait_for_function(SETTLED)
     expect(notice).to_be_hidden()
     expect(plot).not_to_have_class(re.compile(r"\bpending\b"))
+
+
+def test_a_right_click_on_the_plot_picks_the_drag_mode_and_resets_the_axes(
+    app_page: Page,
+) -> None:
+    """The plot's right-click menu checks the drag mode, switches it as the mode bar does, resets the axes to the overview without aggregating, and keeps a box selection."""
+    page = app_page
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    plots: list[str] = []
+    page.on(
+        "request",
+        lambda request: "/api/plot" in request.url and plots.append(request.url),
+    )
+    menu = page.locator(".plot-menu")
+    box = page.locator("#plot .nsewdrag").first.bounding_box()
+    cx = box["x"] + box["width"] / 2
+    cy = box["y"] + box["height"] / 2
+    status = page.locator("#status")
+
+    def dragmode() -> str:
+        return page.evaluate("document.getElementById('plot')._fullLayout.dragmode")
+
+    def pick(name: str, x: float = cx, y: float = cy) -> None:
+        page.mouse.click(x, y, button="right")
+        menu.get_by_role("button", name=name, exact=True).click()
+        expect(menu).to_have_count(0)
+
+    # Pan is the starting mode and is checked.
+    page.mouse.click(cx, cy, button="right")
+    expect(menu.locator(".checked")).to_have_text("Pan")
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
+
+    pick("Zoom")
+    assert dragmode() == "zoom"
+    expect(page.locator('#plot .modebar-btn[data-val="zoom"]')).to_have_class(
+        re.compile(r"\bactive\b")
+    )
+    page.mouse.move(cx - 60, cy - 60)
+    page.mouse.down()
+    page.mouse.move(cx + 60, cy + 60, steps=5)
+    page.mouse.up()
+    expect(status).to_contain_text("表示範囲に")
+    page.wait_for_function(SETTLED)
+
+    pick("Reset axes")
+    expect(status).not_to_contain_text("表示範囲に")
+    assert plots == []
+
+    pick("Box Select")
+    assert dragmode() == "select"
+    page.mouse.move(cx - 60, cy - 60)
+    page.mouse.down()
+    page.mouse.move(cx + 60, cy + 60, steps=5)
+    page.mouse.up()
+    table = page.locator("#table")
+    expect(table).to_be_visible()
+    selections = "document.getElementById('plot').layout.selections.length"
+    assert page.evaluate(selections) == 1
+    # Right clicks, also two in a row, inside and outside the box neither drop
+    # nor change the selection.
+    for x, y in [(cx, cy), (cx, cy), (box["x"] + 5, box["y"] + 5)]:
+        page.mouse.click(x, y, button="right")
+        expect(menu).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(table).to_be_visible()
+    assert page.evaluate(selections) == 1
+    assert dragmode() == "select"
+
+    # An axis's tick labels open the menu too (the x ticks lie under the table);
+    # the mode bar does not.
+    tick = page.locator("#plot .ytick text").first.bounding_box()
+    page.mouse.click(
+        tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2, button="right"
+    )
+    expect(menu).to_be_visible()
+    page.keyboard.press("Escape")
+    page.locator('#plot .modebar-btn[data-val="pan"]').click(button="right")
+    expect(menu).to_have_count(0)
+    assert plots == []

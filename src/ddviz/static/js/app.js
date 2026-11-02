@@ -12,6 +12,7 @@ import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { StatusLine, Toasts, errorText } from "./notice.js";
+import { openPlotMenu } from "./plotmenu.js";
 import { openScaleMenu } from "./scalemenu.js";
 import { levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
 import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
@@ -171,6 +172,22 @@ let requested = { x: [], y: [] };
 // drag waits for its end, so the figure does not change under the drag.
 let dragging = false;
 let dragEnded = null;
+// A right button press does not reach plotly: it would count toward a double
+// click (which resets the axes) and, in Box Select, drop the selection. The
+// right click opens the plot's menu instead (`plotmenu.js`).
+gd.addEventListener(
+  "mousedown",
+  (event) => {
+    if (event.button === 2) event.stopPropagation();
+  },
+  { capture: true },
+);
+gd.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  if (!gd._fullLayout || event.target.closest(".modebar")) return;
+  hideHover();
+  openPlotMenu(event, gd);
+});
 gd.addEventListener("mousedown", () => {
   dragging = true;
 });
