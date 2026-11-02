@@ -29,4 +29,5 @@
 
 ## Temporary files
 
-- Create all temporary scripts and investigation files under `tmp/` at the repository root, and delete them when the task is complete.
+- Create all temporary scripts and investigation files under `tmp/<task-name>/` at the repository root (one subdirectory per task), never directly in `tmp/`.
+- When the task is complete, delete only the files you created, then the empty `tmp/<task-name>/` with `rmdir`. NEVER delete `tmp/` itself or other subdirectories: other agents may be using them.
