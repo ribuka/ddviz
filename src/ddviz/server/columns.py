@@ -2,8 +2,42 @@
 
 from __future__ import annotations
 
+from ddviz.shared.natural import natural_key
+
 KINDS = ("numeric", "categorical")
-ORDERS = ("file", "nonnull")
+ORDERS = ("file", "name", "count")
+
+# The schema last ranked by name and its ranks: the natural keys of 100,000
+# names take about 0.7 s, and every search of the same input reuses them.
+_name_ranks: tuple[list[dict], list[int]] | None = None
+
+
+def _ranks_by_name(columns: list[dict]) -> list[int]:
+    """Return the place of each column in the natural order of the names.
+
+    The ranks of the last schema are kept: a source returns the same list
+    for every search (`ddviz.server.source.Source.schema`).
+
+    Parameters
+    ----------
+    columns : list of dict
+        The schema, ``{"name", ...}`` per column.
+
+    Returns
+    -------
+    list of int
+        The rank of each column, in the order of `columns`.
+    """
+    global _name_ranks
+    if _name_ranks is None or _name_ranks[0] is not columns:
+        order = sorted(
+            range(len(columns)), key=lambda i: natural_key(columns[i]["name"])
+        )
+        ranks = [0] * len(columns)
+        for rank, i in enumerate(order):
+            ranks[i] = rank
+        _name_ranks = (columns, ranks)
+    return _name_ranks[1]
 
 
 def search_columns(
@@ -22,7 +56,7 @@ def search_columns(
     Filters and order use the share of non-null values: every column shares
     the rows of the whole input, so it ranks and bounds the columns as their
     counts do. A column whose count is unknown passes `min_share` and comes
-    last in the order of shares.
+    last in the order of counts.
 
     Parameters
     ----------
@@ -42,7 +76,9 @@ def search_columns(
         Keep only the columns with at least this share; 0 is taken as more
         than 0, so that it drops the columns of nulls only.
     order : str
-        ``"file"`` for file order, ``"nonnull"`` for the highest share first.
+        ``"file"`` for file order, ``"name"`` for the natural order of the
+        names (`ddviz.shared.natural`, as the levels of a categorical
+        column), ``"count"`` for the most non-null values first.
 
     Returns
     -------
@@ -83,7 +119,10 @@ def search_columns(
         ):
             continue
         found.append(i)
-    if order == "nonnull":
+    if order == "name":
+        ranks = _ranks_by_name(columns)
+        found.sort(key=ranks.__getitem__)
+    elif order == "count":
         found.sort(key=lambda i: (shares[i] is None, -(shares[i] or 0.0)))
     return {
         "total": len(columns),
