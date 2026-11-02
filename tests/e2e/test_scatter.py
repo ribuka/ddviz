@@ -993,3 +993,51 @@ def test_a_right_click_on_the_plot_picks_the_drag_mode_and_resets_the_axes(
     page.locator('#plot .modebar-btn[data-val="pan"]').click(button="right")
     expect(menu).to_have_count(0)
     assert plots == []
+
+
+def test_sort_by_picks_name_or_count_and_picking_it_again_restores_the_file_order(
+    app_page: Page,
+) -> None:
+    """"Sort by" opens Name and Count, checks the order in use, and picking it again goes back to the file order; Count waits for the shares (Issue #67)."""
+    page = app_page
+    names = page.locator("#columns .column-name")
+    button = page.locator(".column-order")
+    menu = page.locator(".sort-menu")
+    expect(names).to_have_text(["x", "y", "label", "color", "facet"])
+    expect(page.locator(".column-hide-empty")).to_be_enabled()
+
+    def pick(text: str) -> None:
+        button.click()
+        menu.get_by_text(text, exact=True).click()
+        expect(menu).to_have_count(0)
+
+    button.click()
+    expect(menu.locator(".scale-menu-item")).to_have_text(["Name", "Count"])
+    expect(menu.locator(".checked")).to_have_count(0)
+    menu.get_by_text("Name", exact=True).click()
+    expect(names).to_have_text(["color", "facet", "label", "x", "y"])
+    expect(button).to_have_text("Sort by")
+    button.click()
+    expect(menu.locator(".checked")).to_have_text("Name")
+    menu.get_by_text("Count", exact=True).click()
+    # x and color hold a null each; ties keep the file order.
+    expect(names).to_have_text(["y", "label", "facet", "x", "color"])
+    pick("Count")
+    expect(names).to_have_text(["x", "y", "label", "color", "facet"])
+    button.click()
+    expect(menu.locator(".checked")).to_have_count(0)
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
+
+    def pending(route: Route) -> None:
+        found = route.fetch().json()
+        found["shares"] = "pending"
+        route.fulfill(json=found)
+
+    page.route("**/api/columns?*", pending)
+    page.reload()
+    expect(names.first).to_be_visible()
+    button.click()
+    expect(menu.get_by_text("Count", exact=True)).to_be_disabled()
+    menu.get_by_text("Name", exact=True).click()
+    expect(names).to_have_text(["color", "facet", "label", "x", "y"])

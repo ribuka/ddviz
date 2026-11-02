@@ -1375,6 +1375,15 @@ button {
   left: 8px;
 }
 
+.scale-menu-item:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.scale-menu-item:disabled:hover {
+  background: none;
+}
+
 .scale-menu-separator {
   margin: 4px 0;
   border-top: 1px solid var(--border-separator);

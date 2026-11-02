@@ -65,11 +65,23 @@ def test_min_share_zero_drops_columns_of_nulls_only() -> None:
     assert [c["name"] for c in found["columns"]] == ["Temp_A", "lot", "press_A"]
 
 
-def test_order_by_share_ranks_all_matches_before_the_limit() -> None:
+def test_order_by_count_ranks_all_matches_before_the_limit() -> None:
     """The highest shares come first, unknown last, over every match before the limit."""
-    found = search_columns(COLUMNS, "", None, 2, NONNULL, order="nonnull")
+    found = search_columns(COLUMNS, "", None, 2, NONNULL, order="count")
     assert [c["name"] for c in found["columns"]] == ["press_A", "Temp_A"]
-    found = search_columns(COLUMNS, "", None, 10, NONNULL, order="nonnull")
+    found = search_columns(COLUMNS, "", None, 10, NONNULL, order="count")
     assert [c["name"] for c in found["columns"]][-1] == "lot"
     with pytest.raises(ValueError, match="unknown order"):
-        search_columns(COLUMNS, "", None, 10, NONNULL, order="name")
+        search_columns(COLUMNS, "", None, 10, NONNULL, order="nonnull")
+
+
+def test_order_by_name_is_natural_over_all_matches_before_the_limit() -> None:
+    """Names sort as the levels do: digits by value, case ignored, before the limit."""
+    columns = [
+        {"name": name, "dtype": "Float64", "numeric": True}
+        for name in ["temp10", "Temp2", "lot", "temp1", "a"]
+    ]
+    found = search_columns(columns, "", None, 3, order="name")
+    assert [c["name"] for c in found["columns"]] == ["a", "lot", "temp1"]
+    found = search_columns(columns, "temp", None, 10, order="name")
+    assert [c["name"] for c in found["columns"]] == ["temp1", "Temp2", "temp10"]

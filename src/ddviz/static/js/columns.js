@@ -4,6 +4,9 @@
 // Each shows its rows with a value, which the server counts after Load, over
 // a bar as long as their share of the rows; until then the list asks again
 // every second, and the controls that filter and sort by the share wait.
+// "Sort by" opens a menu of Name (natural order) and Count (most values
+// first); the order in use is checked, and picking it again goes back to the
+// file order.
 // An answer that lists the same columns as shown updates their shares in
 // place: a replaced item under the pointer between its mouse down and its
 // `dragstart` makes Chrome drop the drag.
@@ -22,7 +25,9 @@ export function attachColumnList(root) {
   const count = root.querySelector(".column-count");
   const list = root.querySelector(".column-list");
   let kind = null;
-  let byShare = false;
+  // "file", "name" or "count" (`ddviz.server.columns.ORDERS`).
+  let order = "file";
+  let sharesDone = false;
   let timer = null;
   // Generation of the latest search, so that an older answer is dropped.
   let generation = 0;
@@ -35,7 +40,7 @@ export function attachColumnList(root) {
     const min = Number(minShare.value);
     if (min > 0) query.set("min_share", min / 100);
     else if (hideEmpty.checked) query.set("min_share", 0);
-    if (byShare) query.set("order", "nonnull");
+    if (order !== "file") query.set("order", order);
     const response = await fetch(`/api/columns?${query}`);
     if (mine !== generation) return;
     if (!response.ok) {
@@ -46,7 +51,10 @@ export function attachColumnList(root) {
     const shown = found.matched > found.columns.length ? `、上位 ${found.columns.length} 件を表示` : "";
     const shares = { pending: "（非 null の行数を計算中）", failed: "（非 null の行数は求められませんでした）" }[found.shares] ?? "";
     count.textContent = `${found.total.toLocaleString()} 列中 ${found.matched.toLocaleString()} 件${shown}${shares}`;
-    for (const control of [hideEmpty, minShare, orderButton]) control.disabled = found.shares !== "done";
+    sharesDone = found.shares === "done";
+    for (const control of [hideEmpty, minShare]) control.disabled = !sharesDone;
+    const countItem = sortMenu?.querySelector('[data-order="count"]');
+    if (countItem) countItem.disabled = !sharesDone;
     showColumns(list, found);
     if (found.shares === "pending") timer = setTimeout(search, PENDING_RETRY_MS);
   }
@@ -60,9 +68,12 @@ export function attachColumnList(root) {
   minShare.addEventListener("input", searchSoon);
   hideEmpty.addEventListener("change", search);
   orderButton.addEventListener("click", () => {
-    byShare = !byShare;
-    orderButton.classList.toggle("on", byShare);
-    search();
+    if (closeSortMenu()) return;
+    openSortMenu(orderButton, order, sharesDone, (picked) => {
+      order = picked === order ? "file" : picked;
+      orderButton.classList.toggle("on", order !== "file");
+      search();
+    });
   });
   for (const button of kinds) {
     button.addEventListener("click", () => {
@@ -72,6 +83,57 @@ export function attachColumnList(root) {
     });
   }
   return search();
+}
+
+// The open "Sort by" menu, or null.
+let sortMenu = null;
+
+// Closes the "Sort by" menu; tells whether it was open.
+function closeSortMenu() {
+  const wasOpen = sortMenu !== null;
+  sortMenu?.remove();
+  sortMenu = null;
+  return wasOpen;
+}
+
+window.addEventListener("pointerdown", (event) => {
+  if (sortMenu && !sortMenu.contains(event.target) && !event.target.closest?.(".column-order")) {
+    closeSortMenu();
+  }
+});
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeSortMenu();
+});
+
+// Opens the "Sort by" menu under `button`. Count waits for the non-null
+// values, as the share filters do; `pick` gets "name" or "count".
+function openSortMenu(button, order, sharesDone, pick) {
+  const menu = document.createElement("div");
+  menu.className = "scale-menu sort-menu";
+  for (const [key, text, title] of [
+    ["name", "Name", "列名の順（数字は値の順）"],
+    ["count", "Count", "非 null の行数が多い順"],
+  ]) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "scale-menu-item";
+    row.dataset.order = key;
+    row.classList.toggle("checked", order === key);
+    row.textContent = text;
+    row.title = order === key ? `${title}（もう一度押すと元の順に戻す）` : title;
+    row.disabled = key === "count" && !sharesDone;
+    row.addEventListener("click", () => {
+      closeSortMenu();
+      pick(key);
+    });
+    menu.append(row);
+  }
+  document.body.append(menu);
+  const rect = button.getBoundingClientRect();
+  const width = menu.getBoundingClientRect().width;
+  menu.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - width - 4))}px`;
+  menu.style.top = `${rect.bottom + 2}px`;
+  sortMenu = menu;
 }
 
 // A count of rows in the narrow share column: up to 3 significant digits
