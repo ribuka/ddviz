@@ -438,13 +438,18 @@ def test_an_overlay_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> 
     page.wait_for_function(SETTLED)
     assert sample.evaluate("(canvas) => canvas.toDataURL()") == before
 
-    # The shape stays while the overlay column does, and goes with another.
+    # The shape stays while the overlay column does, and goes with another,
+    # even one drawn without a color column (overlay alone sends no shapes).
     marker.click(button="right")
     menu.get_by_text("形", exact=True).hover()
     panel.locator('.shape-cell[data-shape="x"]').click()
     page.wait_for_function(SETTLED)
+    assert sample.evaluate("(canvas) => canvas.toDataURL()") != before
+    page.locator('.zone[data-role="color"] .chip-remove').click()
+    page.wait_for_function(SETTLED)
     place(page, "color", "overlay")
     place(page, "facet", "overlay")
+    place(page, "color", "color")
     page.wait_for_function(PAINTED_PIXEL)
     assert sample.evaluate("(canvas) => canvas.toDataURL()") == before
 

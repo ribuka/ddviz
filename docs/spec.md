@@ -821,7 +821,7 @@ overlay に列が無い散布図も、点のある画素を塗りつぶしの円
 - 反映：選ぶと集約し直す（`POST /api/plot` の `level_shapes`、水準の名前から形の名前。`ddviz.server.plan.parse_level_shapes` が `SHAPES` のどれかかを確かめ、違えば 400）。形は子プロセスが画素に広げて画像にしているので、大きさの変更と同じく再集約が要る。`ScatterSpec.level_shapes` に入り、`ScatterSpec.marker_shapes` が水準ごとの形（名前の無い水準は水準の順の既定の形）を返す。画像（`ddviz.compute.tasks.images`）、ホバー（`ddviz.server.hover.HoverIndex`）、凡例の見本（`overlay.kernels`）がこの形を使う。overlay が無いとき（overlay だけで色を分けるときも）は形が無いので使わない（サーバーが捨てる。`shape_sizes` と同じ）。
   - 2 つの水準に同じ形を選べる（Issue で決めた）。
   - 形と大きさは別の設定で、形を変えても大きさは残り、大きさを変えても形は残る。
-- 保持：選んだ形は、overlay の列と水準の名前ごとにページが持つ（`static/js/app.js` の `levelShapes`、`pickedShapes`）。overlay の列が同じあいだは残り、別の列のグラフを描いたら消す（同じ列に戻しても既定の形。「水準の色」と同じ。Issue で決めた）。水準の名前はデータの値なので、プロトタイプの無いオブジェクトに持つ（`__proto__` という水準のため。「点の大きさ」の個別の大きさと同じ）。`Encoding` には入れない。
+- 保持：選んだ形は、overlay の列と水準の名前ごとにページが持つ（`static/js/app.js` の `levelShapes`、`pickedShapes`）。overlay の列が同じあいだは残り、別の列のグラフを描いたら消す（同じ列に戻しても既定の形。「水準の色」と同じ。Issue で決めた）。Color が空で形を送らないグラフでも、overlay の列が変われば消す（2026-11-02 のクロスレビューの指摘。送るときにだけ列を比べていたので、Color を外して overlay を替え、元の列と Color に戻すと前の形が戻った）。水準の名前はデータの値なので、プロトタイプの無いオブジェクトに持つ（`__proto__` という水準のため。「点の大きさ」の個別の大きさと同じ）。`Encoding` には入れない。
   - 比べた案：列ごとに残す（形の大きさと同じ）。Issue で「別の列に変えたら既定の形に戻す」と決めていた。
 - 確かめたこと（2026-11-02）：Chrome（playwright）で、x × y、Color = color、Overlay = facet の図で、色の凡例のマーカーのメニューに「形」が無いこと、形の凡例の 2 つ目のマーカーのメニューの先頭が「形」で、カーソルを合わせると 12 個の格子が出て今の形（□）に枠が付くこと、× を選ぶと集約し直して凡例の見本が変わり、大きさの 7 px は残ること、「既定の形に戻す」で見本が元に戻ること、Overlay を別の列に替えて facet に戻すと既定の形に戻ることを確かめた（E2E は `tests/e2e/test_scatter.py` の `test_an_overlay_level_takes_a_shape_picked_on_its_marker`）。画像の形は単体テスト（`tests/compute/test_overlay.py`）。
 

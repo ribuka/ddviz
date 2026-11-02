@@ -313,6 +313,9 @@ async function plot(encoding) {
   clearSelection(false);
   const size = stageSize();
   plottedEncoding = encoding;
+  // Another overlay column drops the shapes picked, with or without a color
+  // column: overlay alone colors the series and sends none.
+  const shapes = pickedShapes(encoding.overlay);
   const body = {
     encoding,
     ...size,
@@ -322,7 +325,7 @@ async function plot(encoding) {
     smooth: smoothing,
     shape_size: shapeSize,
     shape_sizes: (encoding.color !== null && levelSizes.get(encoding.overlay)) || null,
-    level_shapes: encoding.color !== null ? pickedShapes(encoding.overlay) : null,
+    level_shapes: encoding.color !== null ? shapes : null,
   };
   requestedSize = size;
   statusLine.show("集約中…");
