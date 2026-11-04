@@ -180,9 +180,11 @@ export function axisAt(event, gd, meta) {
   return (axis === "x" ? meta.x_numeric : meta.y_numeric)[index] ? { axis, index } : null;
 }
 
-// Writes a number into a field: as short as it reads back the same.
+// Writes a number into a field, as the shortest text that reads back the
+// same number: a rounded one could make the range of a deep zoom empty, or
+// change the settings when they are applied again.
 function numberText(value) {
-  return value === null || value === undefined ? "" : String(Number(value.toPrecision(12)));
+  return value === null || value === undefined ? "" : String(value);
 }
 
 let open = null;

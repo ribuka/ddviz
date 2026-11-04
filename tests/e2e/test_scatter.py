@@ -1245,3 +1245,33 @@ def test_a_double_click_on_a_categorical_axis_opens_no_dialog(app_page: Page) ->
     page.mouse.dblclick(tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2)
     page.wait_for_timeout(300)
     expect(page.locator("dialog.axis-dialog")).to_have_count(0)
+
+
+def test_the_strips_of_a_scrolled_grid_open_the_axis_dialog(app_page: Page) -> None:
+    """Scrolled, the tick labels in the strips open their axis's dialog, not the plot's reset; a range of many digits comes back whole."""
+    page = app_page
+    page.set_viewport_size({"width": 800, "height": 600})
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    place(page, "facet", "col")
+    expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
+    page.locator("#scroller").evaluate(SCROLL_AND_SETTLE, 10_000)
+    assert page.locator("#scroller").evaluate("(s) => s.scrollLeft") > 0
+    dialog = page.locator("dialog.axis-dialog")
+    full = "document.getElementById('plot')._fullLayout"
+
+    for side, title in [("y", "Y 軸: y"), ("x", "X 軸: x")]:
+        tick = page.locator(f".sticky-strip .tick.{side}").evaluate_all(BOXES)[-1]
+        page.mouse.dblclick(
+            tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2
+        )
+        expect(dialog.locator("h2")).to_have_text(title)
+        shown = page.evaluate(f"{full}.{side}axis.range")
+        values = [
+            float(dialog.locator(f"input[name={name}]").input_value())
+            for name in ["min", "max"]
+        ]
+        # The fields hold the very numbers of the range.
+        assert values == shown
+        dialog.get_by_role("button", name="キャンセル").click()
+        expect(dialog).to_have_count(0)

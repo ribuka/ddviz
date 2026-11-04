@@ -224,7 +224,7 @@ gd.addEventListener(
   "mousedown",
   (event) => {
     if (event.button !== 0) return;
-    const hit = axisAt(event, gd, current);
+    const hit = axisUnder(event);
     const last = axisPress;
     axisPress = null;
     if (!hit) return;
@@ -240,6 +240,17 @@ gd.addEventListener(
   },
   { capture: true },
 );
+
+// Returns the numeric axis column whose tick labels are under a pointer
+// event, as `{axis, index}`, or null: in the strips of a grid that scrolls
+// (`sticky.js`), which let the pointer through to the panels, or on plotly's
+// own labels.
+function axisUnder(event) {
+  const strip = sticky.axisAt(event.clientX, event.clientY);
+  if (!strip) return axisAt(event, gd, current);
+  const index = strip.axis === "x" ? strip.panel.x : strip.panel.y;
+  return current[`${strip.axis}_numeric`][index] ? { axis: strip.axis, index } : null;
+}
 
 // Opens the dialog of the axis column `index` of `axis` ("x" or "y") of the drawn result.
 function openAxis({ axis, index }) {
