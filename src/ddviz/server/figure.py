@@ -173,6 +173,20 @@ def _date_axis(spec: ScatterSpec, column: str) -> dict:
     return axis
 
 
+def _numeric_axis(manifest: PlotManifest, column: str) -> bool:
+    """Return whether an axis column is drawn on a numeric axis: not categorical, temporal or the one band.
+
+    The page sets the range, ticks and reference lines of such an axis
+    (``static/js/axisdialog.js``).
+    """
+    spec = manifest.spec
+    return (
+        column != ONE_BAND
+        and column not in manifest.axis_levels
+        and column not in spec.temporal
+    )
+
+
 def _series_ticks(manifest: PlotManifest) -> dict[float, str]:
     """Return the ticks of the one band (`ddviz.shared.scatter.ONE_BAND`): each series' name under its box.
 
@@ -295,7 +309,9 @@ def build_figure(manifest: PlotManifest) -> dict:
         `ddviz.shared.temporal.KINDS`: a datetime, date or time axis is
         plotly's date axis over milliseconds),
         the axes that hold the range of each x and y column (``x_axes``,
-        ``y_axes``), the bin grid, the data range of each column, where each
+        ``y_axes``), whether each x and y column is on a numeric axis
+        (``x_numeric``, ``y_numeric``: not categorical, temporal or the
+        one band), the bin grid, the data range of each column, where each
         series' PNG lies in the images file (`ddviz.shared.manifest.IMAGES`; its
         panels are tiles, ``ncol`` to a row, as `ddviz.compute.raster.atlas`),
         whether the grid scrolls, its facet labels (plotly annotations in
@@ -417,6 +433,8 @@ def build_figure(manifest: PlotManifest) -> dict:
         "y_columns": spec.y,
         "x_axes": x_axes,
         "y_axes": y_axes,
+        "x_numeric": [_numeric_axis(manifest, c) for c in spec.x],
+        "y_numeric": [_numeric_axis(manifest, c) for c in spec.y],
         "grid": asdict(manifest.grid),
         "x_ranges": [list(r) for r in x_ranges],
         "y_ranges": [list(r) for r in y_ranges],

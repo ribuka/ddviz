@@ -85,6 +85,8 @@ export class StickyLabels {
       if (p % ncol === 0) {
         const ya = full[axisKey(panel.yaxis)];
         for (const tick of ya?._vals ?? []) {
+          // Minor ticks (the axis dialog's) have no labels.
+          if (tick.minor) continue;
           const y = ya._offset + ya.l2p(tick.x) - sy - t;
           yTicks.push(label("tick y", tick.text, { right: "4px", top: `${y}px` }, true));
         }
@@ -94,6 +96,7 @@ export class StickyLabels {
       if (p + ncol >= count) {
         const xa = full[axisKey(panel.xaxis)];
         for (const tick of xa?._vals ?? []) {
+          if (tick.minor) continue;
           const x = xa._offset + xa.l2p(tick.x) - sx;
           xTicks.push(label("tick x", tick.text, { left: `${x}px`, top: "3px" }, true));
         }
