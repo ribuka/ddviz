@@ -56,6 +56,14 @@
   --edge-light: rgb(0 0 0 / 15%);
   --ring: #000;
 
+  /* the piles of points that share their coordinates (static/js/piles.js):
+     neutral, apart from the series' colors and a gradient's scale */
+  --pile-fill: #fff;
+  --pile-line: #333;
+  --pile-text: #222;
+  --pile-halo: rgb(255 255 255 / 85%);
+  --pile-label: #444;
+
   /* errors and warnings */
   --error: #dc2626;
   --error-text: #b91c1c;

@@ -2,6 +2,7 @@
 // pixel under the cursor, and this module draws a plotly-like label.
 import { boxAt } from "./boxes.js";
 import { seriesColors, valueColor } from "./colorscale.js";
+import { pileAt, pileCenter } from "./piles.js";
 import { formatTemporal, linearRange } from "./temporal.js";
 
 const HOVER_DISTANCE = 20;
@@ -102,6 +103,15 @@ export function attachHover(gd, getMeta, legend, onTiming) {
   async function show(event) {
     const meta = getMeta();
     if (!meta) return;
+    // A pile under the cursor (its marker or its label) answers before the
+    // points near it.
+    const rect = gd.getBoundingClientRect();
+    const alpha = (s) => legend.opacity(s);
+    const pile = pileAt(gd._fullLayout, meta, event.clientX - rect.left, event.clientY - rect.top, alpha);
+    if (pile >= 0) {
+      await showPile(meta, pile);
+      return;
+    }
     const at = locate(gd, meta, event);
     if (!at) {
       hide();
@@ -160,8 +170,43 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     placeLabel(label, gd, cx, cy);
   }
 
+  // Shows a pile: the rows that share its coordinates, in all and by series.
+  // It stands for many rows, so no row's other values show.
+  async function showPile(meta, i) {
+    const query = new URLSearchParams({ task: meta.task, i });
+    const body = await (await fetch(`/api/pile?${query}`)).json();
+    const pile = body.pile;
+    const at = pileCenter(gd._fullLayout, meta, i);
+    if (!pile || !at || meta !== getMeta()) {
+      hide();
+      return;
+    }
+    const lines = [`重なる点の集まり（${pile.n.toLocaleString()} 行）`];
+    for (const [k, v] of Object.entries(pile.values)) {
+      lines.push(`${k}: ${formatValue(v, meta.temporal[k])}`);
+    }
+    const named = pile.series.filter(([s]) => seriesName(meta, s) !== "");
+    if (named.length) {
+      lines.push("系列ごとの行数:");
+      for (const [s, n] of named) lines.push(`  ${seriesName(meta, s)}: ${n.toLocaleString()}`);
+    }
+    if (pile.color_range) {
+      const kind = meta.temporal[meta.color.column];
+      const [lo, hi] = pile.color_range.map((v) => formatValue(v, kind));
+      lines.push(`${meta.color.column}: ${lo} 〜 ${hi}`);
+    }
+    label.textContent = lines.join("\n");
+    label.style.background = "var(--pile-label)";
+    label.hidden = false;
+    ring.hidden = false;
+    ring.style.left = `${at.cx}px`;
+    ring.style.top = `${at.cy}px`;
+    placeLabel(label, gd, at.cx, at.cy);
+  }
+
   // Shows the numbers of a box plot beside the cursor: no lookup, the meta
   // holds them.
+
   function showBox(meta, p, box, event) {
     const [level, series, n, low, q1, median, q3, high] = box;
     const x = meta.x_columns[meta.panels[p].x];

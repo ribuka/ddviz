@@ -8,10 +8,11 @@ import numpy as np
 import polars as pl
 
 from ddviz.compute.aggregate import COUNT, INDEX, KEY, aggregate
-from ddviz.compute.hoverfit import fit_hover
+from ddviz.compute.hoverfit import NPY_HEADER, fit_hover
 from ddviz.compute.progress import Emit
 from ddviz.compute.raster import occupancy
 from ddviz.compute.tasks.images import write_gradient, write_images
+from ddviz.compute.tasks.piles import selected_pixels, write_piles
 from ddviz.shared.manifest import HoverColumn, PlotManifest, SelectionManifest
 from ddviz.shared.palette import series_color
 from ddviz.shared.scatter import ScatterSpec
@@ -52,7 +53,9 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
 
     The hover files keep within ``spec.hover_bytes`` (`ddviz.compute.hoverfit`):
     columns off the axes are left out, or all the files when even the axis
-    columns do not fit.
+    columns do not fit. The files of the piles (`ddviz.compute.tasks.piles`)
+    come first: the plot cannot be drawn without them, so the task fails
+    when they alone pass the limit.
 
     Parameters
     ----------
@@ -66,6 +69,16 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     agg = aggregate(spec, lambda stage: emit({"type": "progress", "stage": stage}))
     bins = agg.bins
     keys = bins[KEY].to_numpy()
+    n_piles, pile_columns, pile_files = write_piles(out, agg, spec.gradient)
+    pile_bytes = sum(f.stat().st_size for f in pile_files)
+    if spec.hover_bytes is not None and pile_bytes > spec.hover_bytes:
+        for f in pile_files:
+            f.unlink()
+        raise ValueError(
+            f"重なる点の集まりのファイル（{pile_bytes / 2**20:,.1f}MB）が、一時ファイルの"
+            f"残り（{spec.hover_bytes / 2**20:,.1f}MB。[hover] max_temp_gb）を超えるため"
+            "描けない。フィルタで行を絞るか、設定の上限を上げる"
+        )
     emit({"type": "progress", "stage": "raster"})
     bitmask = occupancy(keys, agg.grid)
     colors = _colors(spec, agg.grid.n_series, agg.levels)
@@ -91,9 +104,11 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     emit({"type": "progress", "stage": "write"})
     hover = list(dict.fromkeys(spec.hover))
     sizes = {name: _column_bytes(bins[name].dtype) for name in hover}
-    kept = fit_hover(
-        sizes, [*spec.x, *spec.y], len(bins), bitmask.nbytes, spec.hover_bytes
-    )
+    pile_bins = agg.pile_bins
+    # The rows of the piles in their bins, for the plot's data (`ddviz.server.plotdata`).
+    fixed = bitmask.nbytes + len(pile_bins) * (8 + 4) + 2 * NPY_HEADER
+    limit = None if spec.hover_bytes is None else spec.hover_bytes - pile_bytes
+    kept = fit_hover(sizes, [*spec.x, *spec.y], len(bins), fixed, limit)
     columns = []
     files = []
     if kept is not None:
@@ -102,6 +117,8 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
             "count.npy": bins[COUNT].cast(pl.UInt32).to_numpy(),
             "index.npy": bins[INDEX].cast(pl.Int64).to_numpy(),
             "occupancy.npy": bitmask,
+            "pile_keys.npy": pile_bins[KEY].to_numpy(),
+            "pile_count.npy": pile_bins[COUNT].cast(pl.UInt32).to_numpy(),
         }
         for i, name in enumerate(kept):
             arrays[f"col{i}.npy"], labels = _column_array(bins[name])
@@ -124,12 +141,14 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         colors=colors,
         columns=columns,
         images=images,
-        rows=int(bins[COUNT].sum()),
+        rows=int(bins[COUNT].sum()) + int(pile_bins[COUNT].sum()),
         hover_files=kept is not None,
         hover_dropped=[c for c in hover if kept is None or c not in kept],
-        hover_bytes=sum(f.stat().st_size for f in files),
+        hover_bytes=sum(f.stat().st_size for f in files) + pile_bytes,
         axis_levels=agg.axis_levels,
-        spreads=agg.spreads,
+        piles=n_piles,
+        pile_columns=pile_columns,
+        pile_bytes=pile_bytes,
         boxes=agg.boxes,
         smooths=agg.smooths,
     ).write(out)
@@ -179,4 +198,5 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         grid=agg.grid,
         images=images,
         rows=agg.selected_rows,
+        piles=selected_pixels(agg.selected_piles, KEY, agg.grid),
     ).write(out)

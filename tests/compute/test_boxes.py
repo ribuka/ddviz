@@ -88,7 +88,7 @@ def test_box_plots_hold_each_level_and_series(
     agg = aggregate(box_spec)
     (pair,) = agg.boxes
     assert (pair.x, pair.y) == ("facet", "y")
-    assert agg.spreads == []
+    assert agg.piles == []
     rows = _drawn(scatter_frame)
     outliers = 0
     assert len(pair.stats) == 2 * 3
@@ -110,10 +110,10 @@ def test_box_plots_hold_each_level_and_series(
 def test_box_plots_over_points_draw_every_row(
     box_spec: ScatterSpec, scatter_frame: pl.DataFrame
 ) -> None:
-    """With the points, every row is drawn, spread in the bands, under the boxes."""
+    """With the points, every row is drawn in the bands, under the boxes."""
     agg = aggregate(replace(box_spec, points=True))
     assert len(agg.boxes) == 1
-    assert len(agg.spreads) == 1
+    assert len(agg.piles) == 1
     assert agg.bins[COUNT].sum() == _drawn(scatter_frame).height
 
 

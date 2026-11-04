@@ -80,6 +80,7 @@ def selection_router(source: Source, results: Results, broker: TaskBroker) -> AP
             "base": request.task,
             "images": layer.images,
             "rows": layer.rows,
+            "piles": layer.piles,
             "selection": asdict(selection),
             "task_seconds": time.perf_counter() - started,
         }

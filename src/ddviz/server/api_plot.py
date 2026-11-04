@@ -113,6 +113,7 @@ def plot_router(
         """Return the figure of a result; the page fetches its images on their own."""
         result = build_figure(index.manifest)
         result["meta"]["task"] = int(index.out.name)
+        result["meta"]["piles"] = index.piles()
         result["meta"]["filters"] = [asdict(f) for f in index.manifest.spec.filters]
         result["meta"]["hover"] = {
             "files": index.manifest.hover_files,
@@ -277,6 +278,14 @@ def plot_router(
         series = [int(s) for s in order.split(",") if s]
         skip = frozenset(int(s) for s in hidden.split(",") if s)
         return {"hit": index.lookup(panel, fx, fy, sx, sy, series, skip)}
+
+    @router.get("/api/pile")
+    async def pile(task: int, i: int) -> dict:
+        """Return what the hover shows of a pile of a result (`HoverIndex.pile`), or that the result is gone."""
+        index = results.opened(task)
+        if index is None:
+            return {"stale": True}
+        return {"pile": index.pile(i)}
 
     @router.get("/api/plot-data/{task}")
     async def plot_data(task: int, format: str) -> FileResponse:

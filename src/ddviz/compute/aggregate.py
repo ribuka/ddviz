@@ -7,14 +7,7 @@ from dataclasses import dataclass, field
 
 import polars as pl
 
-from ddviz.compute.bands import (
-    JITTER_X,
-    band_range,
-    count_spread,
-    jitter,
-    level_index,
-    pair_positions,
-)
+from ddviz.compute.bands import JITTER_X, band_range, jitter, level_index
 from ddviz.compute.boxes import (
     GROUP,
     VALUE,
@@ -33,6 +26,8 @@ from ddviz.compute.selection import (
     selection_filter,
 )
 from ddviz.compute.smooth import bin_query, fit_lines
+from ddviz.compute.stacked import ROWS, TOP, marker_boxes, stack_frame, stacked_bins
+from ddviz.compute.stacks import Axis
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import (
     GAP,
@@ -43,7 +38,7 @@ from ddviz.shared.layout import (
     grid_layout,
 )
 from ddviz.shared.natural import natural_key
-from ddviz.shared.scatter import ONE_BAND, Boxes, ScatterSpec, Smooths, Spread
+from ddviz.shared.scatter import ONE_BAND, Boxes, ScatterSpec, Smooths
 
 KEY = "__key"
 COUNT = "__n"
@@ -54,6 +49,29 @@ _OUTLIER = "__outlier"
 
 # Margin added on each side of the data range, as a fraction of the range.
 RANGE_PADDING = 0.02
+# Most piles a plot draws (`ddviz.compute.stacks`): the page draws each with
+# its number of rows.
+MAX_PILES = 100_000
+
+
+@dataclass(frozen=True)
+class Piles:
+    """The piles drawn in the panels of a pair of axis columns (`ddviz.compute.stacked.StackedBins`).
+
+    Parameters
+    ----------
+    x, y : str
+        The pair's columns.
+    piles : polars.DataFrame
+        One pile per pixel (`ddviz.compute.stacks.tops`).
+    series : polars.DataFrame or None
+        The rows of each pile by series; None without piles.
+    """
+
+    x: str
+    y: str
+    piles: pl.DataFrame
+    series: pl.DataFrame | None
 
 
 @dataclass(frozen=True)
@@ -91,9 +109,14 @@ class Aggregation:
     axis_levels : dict
         Levels of each categorical axis column over every row, as text: the
         bands of its axis (`ddviz.compute.bands`).
-    spreads : list of Spread
-        How the points spread in the bands of each pair of axis columns
-        with a categorical axis whose panels draw points.
+    piles : list of Piles
+        The piles drawn in the panels of each pair with a categorical axis
+        whose panels draw points (`ddviz.compute.stacks`); none when only
+        the selection was aggregated.
+    pile_bins : polars.DataFrame or None
+        The rows of the piles in the bins of their centers (`KEY` and
+        `COUNT`), sorted by key: not drawn as points, but rows of their
+        series all the same. None when only the selection was aggregated.
     boxes : list of Boxes
         Box plots of each pair of `ddviz.shared.scatter.ScatterSpec.box_pairs`.
     smooths : list of Smooths
@@ -110,6 +133,9 @@ class Aggregation:
     selected_rows : int or None
         For a spec with a selection, the number of selected rows; a row in
         several panels counts once.
+    selected_piles : polars.DataFrame or None
+        For a spec with a selection, the bins of the selected rows of the
+        piles at their centers (`KEY` and `COUNT`).
     """
 
     grid: BinGrid
@@ -125,7 +151,9 @@ class Aggregation:
     cuts: dict[str, dict] = field(default_factory=dict)
     color_range: tuple[float, float] | None = None
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
-    spreads: list[Spread] = field(default_factory=list)
+    piles: list[Piles] = field(default_factory=list)
+    pile_bins: pl.DataFrame | None = None
+    selected_piles: pl.DataFrame | None = None
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
 
@@ -141,7 +169,7 @@ def _padded(lo: float | None, hi: float | None) -> tuple[float, float]:
 
 
 def _bin_expr(value: pl.Expr, bounds: tuple[float, float], n: int) -> pl.Expr:
-    """Return the bin index of a position (`ddviz.compute.bands.pair_positions`) over `bounds` split into `n` bins."""
+    """Return the bin index of a position over `bounds` split into `n` bins."""
     lo, hi = bounds
     scaled = (value - lo) * (n / (hi - lo))
     return scaled.floor().clip(0, n - 1).cast(pl.Int64)
@@ -303,55 +331,6 @@ def _facet_levels(
     return kept
 
 
-def _spreads(
-    spec: ScatterSpec,
-    axis_levels: dict[str, list[str]],
-    known: list[Spread],
-    ranges: dict[str, tuple[float, float]],
-) -> list[Spread]:
-    """Return the spread of each pair of axis columns with a categorical axis whose panels draw points.
-
-    A spread with widths in `known` is kept; the others are counted over the
-    drawn rows that pass the local filter (`ddviz.compute.bands.count_spread`),
-    the numeric axis cut over the bounds a known spread has, else over its
-    range in `ranges` (the overview's). On 100M rows and 20 levels, counting
-    took about 0.6s.
-    """
-    categorical = set(spec.categorical)
-    known_by_pair = {(k.x, k.y): k for k in known}
-    pairs = dict.fromkeys(
-        (x, y)
-        for y in spec.y
-        for x in spec.x
-        if {x, y} & categorical and spec.draws_points(x, y)
-    )
-    spreads = []
-    for x, y in pairs:
-        old = known_by_pair.get((x, y))
-        if old is not None and old.widths is not None:
-            spreads.append(old)
-            continue
-        both = x in categorical and y in categorical
-        other = None if both else (y if x in categorical else x)
-        if old is not None:
-            bounds = old.bounds
-        else:
-            bounds = None if other is None else list(ranges[other])
-        drawn = [
-            pl.col(c).is_not_null()
-            if c in categorical
-            else pl.col(c).cast(pl.Float64).is_finite()
-            for c in (x, y)
-        ]
-        frame = _scan(
-            spec,
-            [x, y, *(c for c in (spec.color, spec.overlay, spec.row, spec.col) if c)]
-            + filter_columns(spec.filters),
-        ).filter(*drawn, *drawn_conditions(spec), *filter_conditions(spec.filters))
-        spreads.append(count_spread(frame, x, y, categorical, axis_levels, bounds))
-    return spreads
-
-
 def aggregate(
     spec: ScatterSpec,
     progress: Callable[[str], None] = lambda _: None,
@@ -414,7 +393,6 @@ def aggregate(
         if color_range is not None:
             color_range = (color_range[0], color_range[1])
         axis_levels = spec.view.axis_levels
-        known = spec.view.spreads
         known_boxes = spec.view.boxes
         known_smooths = spec.view.smooths
     else:
@@ -423,7 +401,6 @@ def aggregate(
         x_ranges, y_ranges = found.x_ranges, found.y_ranges
         all_levels, cuts, color_range = found.levels, found.cuts, found.color_range
         axis_levels = found.axis_levels
-        known = []
         known_boxes = []
         known_smooths = []
     if spec.view is not None and spec.view.facets is not None:
@@ -431,14 +408,6 @@ def aggregate(
     else:
         progress("facets")
         levels = _facet_levels(spec, all_levels, cuts)
-
-    if spec.categorical:
-        progress("spread")
-    ranges = dict(zip(spec.x, x_ranges, strict=True)) | dict(
-        zip(spec.y, y_ranges, strict=True)
-    )
-    spreads = _spreads(spec, axis_levels, known, ranges) if spec.categorical else []
-    spread_of = {(k.x, k.y): k for k in spreads}
 
     axes = facet_grid(
         len(levels["row"]),
@@ -558,14 +527,9 @@ def aggregate(
             y = pl.col(y_col).cast(pl.Float64)
             outlier = pl.lit(False)
         elif spec.draws_points(x_col, y_col):
-            x, y = pair_positions(
-                x_col,
-                y_col,
-                set(spec.categorical),
-                axis_levels,
-                spread_of.get((x_col, y_col)),
-                INDEX,
-            )
+            # Two numeric axes: the stacks place the points of a categorical one.
+            x = pl.col(x_col).cast(pl.Float64)
+            y = pl.col(y_col).cast(pl.Float64)
         else:
             # Only the outliers, spread in the slot of their series' box.
             y = pl.col(y_col).cast(pl.Float64)
@@ -604,22 +568,108 @@ def aggregate(
             .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
         )
 
-    def all_pairs(extra: list[pl.Expr], extra_columns: list[str]) -> pl.DataFrame:
+    categorical = set(spec.categorical)
+    marker_box = marker_boxes(
+        spec.marker_shapes(levels["overlay"]), spec.marker_sizes(levels["overlay"])
+    )
+
+    def stacked(
+        xi: int, yj: int, extra: list[pl.Expr], extra_columns: list[str], piles: bool
+    ) -> tuple[pl.DataFrame, pl.DataFrame, Piles | None]:
+        """Return the bins, the bins of the piles and the piles of a pair with a categorical axis drawing points (`ddviz.compute.stacked`)."""
+        x_col, y_col = spec.x[xi], spec.y[yj]
+        x = Axis(x_col in categorical, *x_ranges[xi], grid.width)
+        y = Axis(y_col in categorical, *y_ranges[yj], grid.height)
+        columns = [x_col, y_col, *used, *extra_columns, *filter_columns(spec.filters)]
+        n_col = len(levels["col"])
+        panels = []
+        for cell in range(len(levels["row"]) * n_col):
+            r, c = divmod(cell, n_col)
+            if spec.wrap:
+                # The panel of a wrapped level is its index (`AxisGrid`).
+                r, c = divmod(c, axes.ncol)
+            panels.append(axes.panel(r, c, xi, yj))
+        frame, coordinates = stack_frame(
+            {c: spec.files[c] for c in dict.fromkeys(columns)},
+            INDEX,
+            x_col,
+            y_col,
+            x,
+            y,
+            axis_levels,
+            [*valid, *filter_conditions(spec.filters)],
+            row_level * n_col + col_level,
+            panels,
+            series,
+            index("overlay"),
+            marker_box,
+            extra,
+        )
+        found = stacked_bins(
+            frame,
+            x,
+            y,
+            grid,
+            INDEX,
+            coordinates,
+            spec.color if spec.gradient else None,
+            piles,
+            tuple(dict.fromkeys([x_col, y_col])),
+        )
+
+        bins = found.bins.select(
+            KEY,
+            pl.col(ROWS).cast(pl.UInt32).alias(COUNT),
+            pl.col(TOP).cast(pl.get_index_type()).alias(INDEX),
+        )
+        in_piles = found.pile_bins.select(
+            KEY, pl.col(ROWS).cast(pl.UInt32).alias(COUNT)
+        )
+        if not piles:
+            return bins, in_piles, None
+        return bins, in_piles, Piles(x_col, y_col, found.piles, found.pile_series)
+
+    def all_pairs(
+        extra: list[pl.Expr], extra_columns: list[str], piles: bool = False
+    ) -> tuple[pl.DataFrame, pl.DataFrame, list[Piles]]:
+        """Return the bins of every pair, the bins of their piles and, when asked, their piles."""
         # One query per pair, one after another: the pairs' panels differ, so
         # their keys do too. One query over all pairs was about 10% faster but
         # its peak grew with the pairs (9 pairs of 100M rows: 9.0GB against 4.0GB).
-        return pl.concat(
-            [
-                pair(xi, yj, extra, extra_columns).collect(engine="streaming")
-                for yj in range(axes.ny)
-                for xi in range(axes.nx)
-            ]
-        ).sort(KEY)
+        found = []
+        pile_bins = [pl.DataFrame(schema={KEY: pl.Int64, COUNT: pl.UInt32})]
+        drawn = []
+        for yj in range(axes.ny):
+            for xi in range(axes.nx):
+                x_col, y_col = spec.x[xi], spec.y[yj]
+                if {x_col, y_col} & categorical and spec.draws_points(x_col, y_col):
+                    bins, in_piles, pair_piles = stacked(
+                        xi, yj, extra, extra_columns, piles
+                    )
+                    found.append(bins)
+                    pile_bins.append(in_piles)
+                    if pair_piles is not None:
+                        drawn.append(pair_piles)
+                else:
+                    found.append(
+                        pair(xi, yj, extra, extra_columns).collect(engine="streaming")
+                    )
+        return pl.concat(found).sort(KEY), pl.concat(pile_bins).sort(KEY), drawn
 
-    bins = None
+    bins = pile_bins = None
+    piles: list[Piles] = []
     if not selection_only:
         progress("bins")
-        bins = all_pairs(filter_conditions(spec.filters), filter_columns(spec.filters))
+        bins, pile_bins, piles = all_pairs(
+            filter_conditions(spec.filters), filter_columns(spec.filters), True
+        )
+        n_piles = sum(p.piles.height for p in piles)
+        if n_piles > MAX_PILES:
+            raise ValueError(
+                f"同じ座標に重なる点の集まりが {n_piles:,} 個あり、上限の "
+                f"{MAX_PILES:,} 個を超えるため描けない。フィルタで行を絞るか、"
+                "別の列を使う"
+            )
         progress("rows")
         hover = list(dict.fromkeys(spec.hover))
         rows = (
@@ -629,12 +679,12 @@ def aggregate(
             .collect(engine="streaming")
         )
         bins = bins.join(rows, on=INDEX, how="left", maintain_order="left")
-    selected = selected_rows = None
+    selected = selected_rows = selected_piles = None
     if spec.selection is not None:
         progress("selection")
         conditions = selection_filter(spec, INDEX)
         columns = selection_columns(spec)
-        selected = all_pairs(conditions, columns)
+        selected, selected_piles, _ = all_pairs(conditions, columns)
         if spec.gradient:
             # The top selected row of each bin colors it, as in the result.
             colors = (
@@ -666,10 +716,12 @@ def aggregate(
         bins=bins,
         selected=selected,
         selected_rows=selected_rows,
+        selected_piles=selected_piles,
         cuts=cuts,
         color_range=color_range,
         axis_levels=axis_levels,
-        spreads=spreads,
+        piles=piles,
+        pile_bins=pile_bins,
         boxes=boxes,
         smooths=smooths,
     )
