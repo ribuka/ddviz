@@ -80,9 +80,9 @@ def test_changing_numbers_have_one_width(selector: str) -> None:
     assert "font-variant-numeric: tabular-nums" in _rule(selector)
 
 
-@pytest.mark.parametrize("selector", [".scale-menu", ".toast"])
+@pytest.mark.parametrize("selector", [".scale-menu", ".toast", ".axis-dialog"])
 def test_floating_elements_share_shadow_and_corners(selector: str) -> None:
-    """The right-click menus and the toasts float with one shadow and one radius."""
+    """The right-click menus, the toasts and the axis dialog float with one shadow and one radius."""
     body = _rule(selector)
     assert "box-shadow: var(--shadow-float)" in body
     assert "border-radius: var(--radius-float)" in body

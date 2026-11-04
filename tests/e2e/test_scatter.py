@@ -1156,3 +1156,122 @@ def test_sort_by_picks_name_or_count_and_picking_it_again_restores_the_file_orde
     expect(menu.get_by_text("Count", exact=True)).to_be_disabled()
     menu.get_by_text("Name", exact=True).click()
     expect(names).to_have_text(["color", "facet", "label", "x", "y"])
+
+
+def test_a_double_click_on_a_numeric_axis_sets_its_range_ticks_and_lines(
+    app_page: Page,
+) -> None:
+    """The axis dialog checks its fields, aggregates the range it sets, and draws ticks and lines on every panel of the column; going back to the overview keeps them."""
+    page = app_page
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    place(page, "facet", "col")
+    views: list[str] = []
+    page.on("request", lambda r: "/api/view" in r.url and views.append(r.url))
+    dialog = page.locator("dialog.axis-dialog")
+    full = "document.getElementById('plot')._fullLayout"
+
+    tick = page.locator("#plot .ytick text").first.bounding_box()
+    page.mouse.dblclick(tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2)
+    expect(dialog).to_be_visible()
+    expect(dialog.locator("h2")).to_have_text("Y 軸: y")
+    shown = page.evaluate(f"{full}.yaxis.range")
+    assert float(dialog.locator("input[name=min]").input_value()) == pytest.approx(
+        shown[0]
+    )
+
+    # Wrong fields tell why beside them and change nothing.
+    dialog.locator("input[name=min]").fill("3")
+    dialog.locator("input[name=max]").fill("2")
+    dialog.locator("input[name=dtick]").fill("-1")
+    dialog.locator("input[name=minor]").fill("5")
+    dialog.get_by_role("button", name="OK").click()
+    expect(dialog).to_be_visible()
+    errors = dialog.locator(".axis-dialog-error")
+    expect(errors).to_have_text(
+        ["", "最小値より大きくしてください", "0 より大きくしてください", "", ""]
+    )
+    dialog.locator("input[name=line]").fill("a")
+    dialog.get_by_role("button", name="追加").click()
+    expect(errors.nth(4)).to_have_text("数値を入れてください")
+    assert views == []
+
+    dialog.locator("input[name=min]").fill("-1")
+    dialog.locator("input[name=max]").fill("1")
+    dialog.locator("input[name=dtick]").fill("0.5")
+    dialog.locator("input[name=line]").fill("0.25")
+    dialog.get_by_role("button", name="追加").click()
+    expect(dialog.locator(".axis-dialog-line")).to_have_count(1)
+    dialog.get_by_role("button", name="適用").click()
+    expect(page.locator("#status")).to_contain_text("表示範囲に")
+    page.wait_for_function(SETTLED)
+    expect(dialog).to_be_visible()
+    assert len(views) == 1
+    # Both panels of y share the range, the ticks and the line.
+    axes = page.evaluate(
+        f"['yaxis', 'yaxis2'].map((k) => [{full}[k].range, {full}[k].dtick, {full}[k].minor.dtick])"
+    )
+    assert axes == [[[-1, 1], 0.5, 0.1], [[-1, 1], 0.5, 0.1]]
+    shapes = page.evaluate(f"{full}.shapes.map((s) => [s.yref, s.xref, s.y0, s.line.dash])")
+    assert shapes == [["y", "x domain", 0.25, "dash"], ["y2", "x2 domain", 0.25, "dash"]]
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+
+    # A double click on the plot area goes back to the overview's range; the
+    # ticks and the line stay.
+    box = page.locator("#plot .nsewdrag").first.bounding_box()
+    page.mouse.dblclick(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    expect(page.locator("#status")).not_to_contain_text("表示範囲に")
+    assert page.evaluate(f"{full}.yaxis.range") == pytest.approx(shown)
+    assert page.evaluate(f"[{full}.yaxis.dtick, {full}.shapes.length]") == [0.5, 2]
+    assert len(views) == 1
+
+    # Emptied ticks and no lines are plotly's own again.
+    page.mouse.dblclick(tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2)
+    dialog.locator("input[name=dtick]").fill("")
+    dialog.locator("input[name=minor]").fill("")
+    dialog.get_by_role("button", name="削除").click()
+    dialog.get_by_role("button", name="OK").click()
+    expect(dialog).to_have_count(0)
+    assert page.evaluate(f"[{full}.yaxis.tickmode, {full}.shapes.length]") == ["auto", 0]
+
+
+def test_a_double_click_on_a_categorical_axis_opens_no_dialog(app_page: Page) -> None:
+    """A categorical axis keeps plotly's double click: no dialog opens."""
+    page = app_page
+    place(page, "color", "x", plots=False)
+    place(page, "y", "y")
+    tick = page.locator("#plot .xtick text").first.bounding_box()
+    page.mouse.dblclick(tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2)
+    page.wait_for_timeout(300)
+    expect(page.locator("dialog.axis-dialog")).to_have_count(0)
+
+
+def test_the_strips_of_a_scrolled_grid_open_the_axis_dialog(app_page: Page) -> None:
+    """Scrolled, the tick labels in the strips open their axis's dialog, not the plot's reset; a range of many digits comes back whole."""
+    page = app_page
+    page.set_viewport_size({"width": 800, "height": 600})
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    place(page, "facet", "col")
+    expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
+    page.locator("#scroller").evaluate(SCROLL_AND_SETTLE, 10_000)
+    assert page.locator("#scroller").evaluate("(s) => s.scrollLeft") > 0
+    dialog = page.locator("dialog.axis-dialog")
+    full = "document.getElementById('plot')._fullLayout"
+
+    for side, title in [("y", "Y 軸: y"), ("x", "X 軸: x")]:
+        tick = page.locator(f".sticky-strip .tick.{side}").evaluate_all(BOXES)[-1]
+        page.mouse.dblclick(
+            tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2
+        )
+        expect(dialog.locator("h2")).to_have_text(title)
+        shown = page.evaluate(f"{full}.{side}axis.range")
+        values = [
+            float(dialog.locator(f"input[name={name}]").input_value())
+            for name in ["min", "max"]
+        ]
+        # The fields hold the very numbers of the range.
+        assert values == shown
+        dialog.get_by_role("button", name="キャンセル").click()
+        expect(dialog).to_have_count(0)

@@ -362,6 +362,44 @@ def test_a_datetime_or_time_axis_is_a_date_axis(tmp_path: Path) -> None:
     assert lo < first < hi
     assert result["meta"]["temporal"] == temporal
     assert result["meta"]["color"]["temporal"] == "datetime"
+    # A duration is a plain axis of seconds, but still a temporal column:
+    # the page sets ranges and ticks on numeric axes only.
+    assert result["meta"]["x_numeric"] == [False, False, False]
+    assert result["meta"]["y_numeric"] == [True]
+
+
+@pytest.mark.parametrize(
+    ("changes", "x_numeric", "y_numeric"),
+    [
+        pytest.param({}, [True], [True], id="numeric"),
+        pytest.param(
+            {"x": ["color", "x"], "color": None, "categorical": ["color"]},
+            [False, True],
+            [True],
+            id="categorical",
+        ),
+    ],
+)
+def test_the_meta_tells_which_axis_columns_are_numeric(
+    tmp_path: Path,
+    scatter_spec: ScatterSpec,
+    changes: dict,
+    x_numeric: list[bool],
+    y_numeric: list[bool],
+) -> None:
+    """Each x and y column says whether its axis is numeric, which the page's axis dialog needs."""
+    meta = _figure(replace(scatter_spec, **changes), tmp_path / "task")["meta"]
+    assert meta["x_numeric"] == x_numeric
+    assert meta["y_numeric"] == y_numeric
+
+
+def test_the_one_band_is_not_a_numeric_axis(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """The one band's x has no numeric values; its numeric y does."""
+    meta = _figure(_one_band(scatter_spec), tmp_path / "task")["meta"]
+    assert meta["x_numeric"] == [False]
+    assert meta["y_numeric"] == [True]
 
 
 def _worst_spec(tmp_path: Path, **roles: object) -> ScatterSpec:

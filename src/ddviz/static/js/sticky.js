@@ -49,6 +49,40 @@ export class StickyLabels {
     this.draw();
   }
 
+  // Returns the axis whose tick labels the left or bottom strip shows at a
+  // point (client coordinates), as `{axis: "x" | "y", panel}` (the panel's
+  // meta), or null. The strips let the pointer through to the plot below,
+  // so the page asks them where an axis's labels are (`axisdialog.js`).
+  axisAt(clientX, clientY) {
+    const { meta } = this;
+    const full = this.gd._fullLayout;
+    if (this.root.hidden || !meta || !full) return null;
+    const inside = (strip) => {
+      const r = strip.getBoundingClientRect();
+      return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+    };
+    const origin = this.gd.getBoundingClientRect();
+    const { ncol } = meta;
+    const count = meta.panels.length;
+    if (inside(this.strips.left)) {
+      const panel = meta.panels.find((p, i) => {
+        const ya = full[axisKey(p.yaxis)];
+        const top = origin.top + ya._offset;
+        return i % ncol === 0 && clientY >= top && clientY <= top + ya._length;
+      });
+      return panel ? { axis: "y", panel } : null;
+    }
+    if (inside(this.strips.bottom)) {
+      const panel = meta.panels.find((p, i) => {
+        const xa = full[axisKey(p.xaxis)];
+        const left = origin.left + xa._offset;
+        return i + ncol >= count && clientX >= left && clientX <= left + xa._length;
+      });
+      return panel ? { axis: "x", panel } : null;
+    }
+    return null;
+  }
+
   draw() {
     const { meta } = this;
     const full = this.gd._fullLayout;
@@ -85,6 +119,8 @@ export class StickyLabels {
       if (p % ncol === 0) {
         const ya = full[axisKey(panel.yaxis)];
         for (const tick of ya?._vals ?? []) {
+          // Minor ticks (the axis dialog's) have no labels.
+          if (tick.minor) continue;
           const y = ya._offset + ya.l2p(tick.x) - sy - t;
           yTicks.push(label("tick y", tick.text, { right: "4px", top: `${y}px` }, true));
         }
@@ -94,6 +130,7 @@ export class StickyLabels {
       if (p + ncol >= count) {
         const xa = full[axisKey(panel.xaxis)];
         for (const tick of xa?._vals ?? []) {
+          if (tick.minor) continue;
           const x = xa._offset + xa.l2p(tick.x) - sx;
           xTicks.push(label("tick x", tick.text, { left: `${x}px`, top: "3px" }, true));
         }

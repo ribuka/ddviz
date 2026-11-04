@@ -1,5 +1,6 @@
 // The page: drop columns on the graph builder's zones, plot, zoom and pan,
 // resize, hover, select rows with a box, and filter rows.
+import { axisAt, decorate, decorationUpdate, emptySettings, openAxisDialog } from "./axisdialog.js";
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
 import { colorsChanged, keepPicked, levelColors, pickColor } from "./colorscale.js";
@@ -205,6 +206,86 @@ gd.addEventListener("contextmenu", (event) => {
 gd.addEventListener("mousedown", () => {
   dragging = true;
 });
+
+// The settings of the numeric axis columns (`axisdialog.js`), by column
+// name: their ticks and reference lines, kept for every graph that draws
+// the column on a numeric axis. The range set in the dialog is a view, as
+// a zoom's: going back to the overview drops it.
+const axisSettings = new Map();
+const settingsOf = (column) => axisSettings.get(column);
+// A double click on the tick labels of a numeric axis opens its dialog
+// instead of plotly's autorange of that axis. plotly counts the presses
+// itself (`doubleClickDelay`, 300ms), so the second press does not reach it.
+// The wait here is longer, so that no press plotly would count as a double
+// click gets through.
+const AXIS_DOUBLE_CLICK_MS = 400;
+let axisPress = null;
+gd.addEventListener(
+  "mousedown",
+  (event) => {
+    if (event.button !== 0) return;
+    const hit = axisUnder(event);
+    const last = axisPress;
+    axisPress = null;
+    if (!hit) return;
+    const near = last && Math.hypot(event.clientX - last.x, event.clientY - last.y) <= 4;
+    if (near && last.axis === hit.axis && last.index === hit.index && event.timeStamp - last.time < AXIS_DOUBLE_CLICK_MS) {
+      event.stopPropagation();
+      event.preventDefault();
+      hideHover();
+      openAxis(hit);
+      return;
+    }
+    axisPress = { ...hit, x: event.clientX, y: event.clientY, time: event.timeStamp };
+  },
+  { capture: true },
+);
+
+// Returns the numeric axis column whose tick labels are under a pointer
+// event, as `{axis, index}`, or null: in the strips of a grid that scrolls
+// (`sticky.js`), which let the pointer through to the panels, or on plotly's
+// own labels.
+function axisUnder(event) {
+  const strip = sticky.axisAt(event.clientX, event.clientY);
+  if (!strip) return axisAt(event, gd, current);
+  const index = strip.axis === "x" ? strip.panel.x : strip.panel.y;
+  return current[`${strip.axis}_numeric`][index] ? { axis: strip.axis, index } : null;
+}
+
+// Opens the dialog of the axis column `index` of `axis` ("x" or "y") of the drawn result.
+function openAxis({ axis, index }) {
+  const column = current[`${axis}_columns`][index];
+  const range = linearRange(gd._fullLayout[axisKey(current[`${axis}_axes`][index])]);
+  openAxisDialog({
+    title: `${axis.toUpperCase()} 軸: ${column}`,
+    range,
+    settings: settingsOf(column) ?? emptySettings(),
+    onApply: (settings, picked) => applyAxis(axis, column, settings, picked),
+  });
+}
+
+// Keeps the settings of an axis column and draws them, with the range
+// `picked` when it differs from the shown one: the view is aggregated
+// again, as after a zoom. The drawn result may have changed since the
+// dialog opened: the range goes to the column's axis, if still numeric.
+async function applyAxis(axis, column, settings, picked) {
+  if (settings.dtick === null && !settings.lines.length) axisSettings.delete(column);
+  else axisSettings.set(column, settings);
+  if (!current || !gd._fullLayout) return;
+  const meta = current;
+  const update = decorationUpdate(meta, settingsOf);
+  ownRelayout = update;
+  try {
+    await Plotly.relayout(gd, update);
+  } finally {
+    ownRelayout = null;
+  }
+  const index = meta[`${axis}_columns`].indexOf(column);
+  if (meta !== current || index < 0 || !meta[`${axis}_numeric`][index]) return;
+  const key = axisKey(meta[`${axis}_axes`][index]);
+  if (sameRange(linearRange(gd._fullLayout[key]), picked)) return;
+  await Plotly.relayout(gd, { [`${key}.range`]: picked });
+}
 window.addEventListener("mouseup", () => {
   dragging = false;
   dragEnded?.();
@@ -239,6 +320,10 @@ const PLOT_CONFIG = {
   displayModeBar: true,
   displaylogo: false,
   scrollZoom: false,
+  // A click on an axis's end would open plotly's box to type that end, and
+  // take the second press of a double click there: the axis dialog
+  // (`axisdialog.js`) sets the range instead.
+  showAxisRangeEntryBoxes: false,
   modeBarButtons: [["zoom2d", "pan2d", "select2d", "resetScale2d", DOWNLOAD_DATA]],
 };
 
@@ -381,8 +466,9 @@ async function plot(encoding) {
   empty.hidden = true;
   showImages(meta, null);
   Plotly.purge(gd);
-  drawnKey = figureKey(figure.data, figure.layout);
-  await Plotly.newPlot(gd, figure.data, forPlotly(figure.layout), PLOT_CONFIG);
+  const layout = decorate(figure.layout, meta, settingsOf);
+  drawnKey = figureKey(figure.data, layout);
+  await Plotly.newPlot(gd, figure.data, forPlotly(layout), PLOT_CONFIG);
   timings.plot = Math.round(performance.now() - drawStarted);
   layers.attach();
   sticky.attach();
@@ -504,9 +590,11 @@ function withSelectionBox(layout, meta) {
   return { ...layout, selections: [{ ...box, line: { width: 1, dash: "dot" } }] };
 }
 
-// Draws `data` with `layout`, and the images of `meta` over it.
-async function draw(data, layout, meta, bitmaps) {
+// Draws `data` with `layout`, and the images of `meta` over it, with the
+// ticks and reference lines of the axis settings.
+async function draw(data, plain, meta, bitmaps) {
   const started = performance.now();
+  const layout = decorate(plain, meta, settingsOf);
   const key = figureKey(data, layout);
   if (key === drawnKey) {
     const update = rangeUpdate(layout);
