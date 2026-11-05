@@ -197,6 +197,45 @@ def test_a_wrapped_grid_labels_each_panel_with_its_level(
     assert meta["facet_labels"] == []
 
 
+@pytest.mark.parametrize(
+    ("wrap_cols", "width", "height", "ncol", "auto"),
+    [
+        (None, 800, 600, 2, 2),
+        (1, 800, 600, 1, 2),
+        (5, 800, 600, 3, 2),
+        (2, 300, 900, 2, 1),
+    ],
+)
+def test_a_wrapped_grid_tells_its_automatic_number_to_a_row(
+    tmp_path: Path,
+    scatter_spec: ScatterSpec,
+    wrap_cols: int | None,
+    width: int,
+    height: int,
+    ncol: int,
+    auto: int,
+) -> None:
+    """The number to a row with none set follows the size, whatever number is set."""
+    wrapped = replace(
+        scatter_spec,
+        col="color",
+        wrap=True,
+        wrap_cols=wrap_cols,
+        width=width,
+        height=height,
+    )
+    meta = _figure(wrapped, tmp_path / "task")["meta"]
+    assert (meta["ncol"], meta["wrap_auto_cols"]) == (ncol, auto)
+
+
+def test_a_grid_not_wrapped_has_no_automatic_number_to_a_row(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """Without wrapping, there is no number to a row to set."""
+    gridded = replace(scatter_spec, col="color", width=800, height=600)
+    assert _figure(gridded, tmp_path / "task")["meta"]["wrap_auto_cols"] is None
+
+
 def test_a_scrolled_wrapped_grid_keeps_its_labels_in_the_figure(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:

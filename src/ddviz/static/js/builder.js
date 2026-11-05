@@ -70,12 +70,10 @@ export function locate(count, start, end, at) {
 
 export class Builder {
   // `root` holds the zones (`[data-role]`); `columnList` takes chips dropped
-  // to remove them; `onChange` gets the graph after each edit. `extras` maps
-  // a role to an element shown after its chips while it has a column.
-  constructor(root, columnList, onChange, extras = {}) {
+  // to remove them; `onChange` gets the graph after each edit.
+  constructor(root, columnList, onChange) {
     this.zones = [...root.querySelectorAll(".zone[data-role]")];
     this.onChange = onChange;
-    this.extras = extras;
     this.encoding = { x: [], y: [], color: null, overlay: null, row: null, col: null, wrap: null, elements: ["points"] };
     // Whether each placed column is numeric, for the filter pane a chip is dragged to.
     this.numeric = new Map();
@@ -311,8 +309,7 @@ export class Builder {
       const label = document.createElement("span");
       label.className = "zone-label";
       label.textContent = LABELS[role];
-      const extra = placed.length && this.extras[role] ? [this.extras[role]] : [];
-      zone.replaceChildren(label, ...chips, ...extra);
+      zone.replaceChildren(label, ...chips);
       zone.classList.toggle("filled", placed.length > 0);
     }
   }

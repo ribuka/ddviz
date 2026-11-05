@@ -19,6 +19,7 @@ from ddviz.shared.layout import (
     MARGIN_TOP,
     AxisGrid,
     GridLayout,
+    wrap_columns,
 )
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.missing import shown_level
@@ -340,6 +341,9 @@ def build_figure(manifest: PlotManifest) -> dict:
         ``[role, column]`` each), the bin grid, the data range of each column, where each
         series' PNG lies in the images file (`ddviz.shared.manifest.IMAGES`; its
         panels are tiles, ``ncol`` to a row, as `ddviz.compute.raster.atlas`),
+        the panels a wrapped grid would put to a row with no number set
+        (``wrap_auto_cols``, `ddviz.shared.layout.wrap_columns`; None
+        without wrapping),
         whether the grid scrolls, its facet labels (plotly annotations in
         paper coordinates; the figure has them only when the grid fits, and
         a wrapped grid has them in the figure only), and
@@ -488,6 +492,12 @@ def build_figure(manifest: PlotManifest) -> dict:
         "colors": manifest.colors,
         "images": manifest.images,
         "ncol": layout.ncol,
+        # Wrapped panels to a row with no number set (`wrap_columns` for the
+        # levels and the size requested), whatever number the user set; None
+        # without a wrap column.
+        "wrap_auto_cols": (
+            wrap_columns(axes.wrap, spec.width, spec.height) if axes.wrap else None
+        ),
         "rows": manifest.rows,
         "scroll": layout.scroll,
         "facet_labels": labels,

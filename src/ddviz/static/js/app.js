@@ -25,6 +25,7 @@ import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.j
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
 import { forPlotly, linearRange, plotlyRange } from "./temporal.js";
+import { closeWrapMenu, openWrapMenu, setWrapAuto } from "./wrapmenu.js";
 
 const statusLine = new StatusLine(document.getElementById("status"), new Toasts(document.getElementById("toasts")));
 const hoverWarning = document.getElementById("hover-warning");
@@ -170,23 +171,11 @@ const levelShapes = { column: undefined, shapes: Object.create(null) };
 const showNullRows = { color: true, overlay: true };
 // Wrapped panels to a row, or null to make them closest to square
 // (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
-// The user sets it in the Wrap zone, beside its chip.
+// The user sets it in the Wrap zone's form (wrapmenu.js).
 let wrapCols = null;
-const wrapColsInput = document.createElement("input");
-Object.assign(wrapColsInput, {
-  type: "number",
-  min: 1,
-  step: 1,
-  className: "wrap-cols",
-  placeholder: "自動",
-  title: "1 行のパネルの数。空なら描画領域の縦横比から、パネルが正方形に近くなる数",
-});
-wrapColsInput.addEventListener("change", () => {
-  const n = Number(wrapColsInput.value);
-  wrapCols = wrapColsInput.value !== "" && Number.isInteger(n) && n >= 1 ? n : null;
-  if (wrapCols === null) wrapColsInput.value = "";
-  if (plottedEncoding?.wrap) plot(plottedEncoding);
-});
+// The number to a row with none set, of the latest result for the wrap
+// column (`wrap_auto_cols` of its meta), or null without one.
+let wrapAuto = null;
 // Generation of the plot request in flight, or 0. A new size waits for it:
 // a request for the old plot would kill its aggregation (or its conversion).
 let plotting = 0;
@@ -451,8 +440,8 @@ function setCurrent(meta) {
   legend.setEmpty(meta);
   elementBar.setPointsText(markerSizeText(meta));
   stage.classList.toggle("scrolls", meta.scroll);
-  // The number to a row the size made, while the user sets none.
-  wrapColsInput.placeholder = `自動（${meta.ncol}）`;
+  wrapAuto = meta.wrap_auto_cols;
+  setWrapAuto(wrapAuto);
   sticky.set(meta);
   showHoverWarning(meta.hover);
   showLogWarning(meta.nonpositive);
@@ -1156,6 +1145,8 @@ function clearPlot() {
   if (overview?.bitmaps) closeImages(overview.bitmaps);
   overview = null;
   current = null;
+  wrapAuto = null;
+  setWrapAuto(null);
   elementBar.setPointsText(null);
   stage.classList.remove("scrolls");
   sticky.set(null);
@@ -1339,15 +1330,26 @@ const builder = new Builder(
     if ((encoding.color ?? encoding.overlay) !== drawn[2]) colorBins = null;
     if (encoding.wrap !== drawn[5]) {
       wrapCols = null;
-      wrapColsInput.value = "";
-      wrapColsInput.placeholder = "自動";
+      wrapAuto = null;
+      closeWrapMenu();
     }
     drawnRolesKey = key;
     if (drawable(encoding)) plot(encoding);
     else clearPlot();
   },
-  { wrap: wrapColsInput },
 );
+// A right click on the Wrap zone while it holds a column opens the form of
+// the number to a row; a new number plots the graph again.
+document.querySelector('#builder .zone[data-role="wrap"]').addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  closeWrapMenu();
+  if (!builder.placed("wrap").length) return;
+  openWrapMenu(event, wrapCols, wrapAuto, (cols) => {
+    if (cols === wrapCols) return;
+    wrapCols = cols;
+    if (plottedEncoding?.wrap) plot(plottedEncoding);
+  });
+});
 // A changed "Show null rows" plots the graph again: its levels change.
 attachNullMenu(
   document.getElementById("builder"),
