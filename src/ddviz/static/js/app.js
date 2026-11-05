@@ -2,7 +2,7 @@
 // resize, hover, select rows with a box, and filter rows.
 import { axisAt, decorate, decorationUpdate, emptySettings, openAxisDialog } from "./axisdialog.js";
 import { openAxisMenu } from "./axismenu.js";
-import { AxisScales, toValues } from "./axisscale.js";
+import { AxisScales, isLogAxis, toPosition, toValues } from "./axisscale.js";
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
 import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } from "./colorscale.js";
@@ -671,7 +671,10 @@ function withSelectionBox(layout, meta) {
   const { at, x_range: x, y_range: y } = selection.box;
   const panel = meta.panels.find((p) => panelKey(p) === at);
   if (!panel) return layout;
-  const box = { type: "rect", xref: panel.xaxis, yref: panel.yaxis, x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
+  // plotly's box on a log axis is of values, as its `event.range` (`boxRange`).
+  const [x0, x1] = toValues(isLogAxis(layout[axisKey(panel.xaxis)]), x);
+  const [y0, y1] = toValues(isLogAxis(layout[axisKey(panel.yaxis)]), y);
+  const box = { type: "rect", xref: panel.xaxis, yref: panel.yaxis, x0, x1, y0, y1 };
   return { ...layout, selections: [{ ...box, line: { width: 1, dash: "dot" } }] };
 }
 
@@ -749,9 +752,16 @@ function boxOf(meta, range) {
   return {
     panel,
     at: panelKey(meta.panels[panel]),
-    x_range: linearRange(full[axisKey(xaxis)], range[xaxis]),
-    y_range: linearRange(full[axisKey(yaxis)], range[yaxis]),
+    x_range: boxRange(full[axisKey(xaxis)], range[xaxis]),
+    y_range: boxRange(full[axisKey(yaxis)], range[yaxis]),
   };
+}
+
+// Returns the bounds of plotly's box along an axis in linear units. On a
+// log axis, plotly's `event.range` holds values (checked in Chrome), not the
+// exponents of the axis's range: they become exponents here.
+function boxRange(axis, range) {
+  return isLogAxis(axis) ? range.map((v) => toPosition(true, v)) : linearRange(axis, range);
 }
 
 // Names a panel by its facet levels and axis columns, the same in every result of a plot.

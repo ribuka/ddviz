@@ -103,3 +103,50 @@ def test_the_log_item_of_a_categorical_axis_is_grayed_out(app_page: Page) -> Non
     )
     expect(page.locator(".plot-menu")).to_have_count(1)
     expect(page.locator(".axis-menu")).to_have_count(0)
+
+
+def test_a_box_dragged_on_a_log_axis_selects_by_its_values(app_page: Page) -> None:
+    """A Box Select drag on a log x sends the values under the box's edges, and the layer and table follow."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    _right_click_tick(page, "x")
+    page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
+    page.wait_for_function(f"() => {FULL}.xaxis.type === 'log'")
+    _settled(page)
+    page.evaluate("Plotly.relayout('plot', {dragmode: 'select'})")
+    box = page.locator("#plot .nsewdrag").first.bounding_box()
+    x0, x1 = box["x"] + box["width"] * 0.3, box["x"] + box["width"] * 0.7
+    y0, y1 = box["y"] + box["height"] * 0.2, box["y"] + box["height"] * 0.8
+    # The values plotly's x axis has at the box's left and right edges.
+    expected = page.evaluate(
+        f"""([a, b]) => {{
+          const xa = {FULL}.xaxis;
+          const left = document.querySelector('#plot .nsewdrag').getBoundingClientRect().left;
+          return [a, b].map((p) => 10 ** xa.p2l(p - left));
+        }}""",
+        [x0, x1],
+    )
+    with page.expect_request("**/api/selection") as request:
+        page.mouse.move(x0, y0)
+        page.mouse.down()
+        page.mouse.move(x1, y1, steps=5)
+        page.mouse.up()
+    x_range = request.value.post_data_json["x_range"]
+    assert x_range == [pytest.approx(v, rel=1e-2) for v in expected]
+    expect(page.locator("#table")).to_be_visible()
+    # plotly's box stays where it was dragged.
+    shown = page.evaluate(
+        f"() => {{ const s = {FULL}.selections[0]; return [s.x0, s.x1].sort((a, b) => a - b); }}"
+    )
+    assert shown == [pytest.approx(v, rel=1e-2) for v in expected]
+    # A view drawn again keeps the box at its values.
+    page.evaluate("Plotly.relayout('plot', {'yaxis.range': [-2, 2]})")
+    _settled(page)
+    page.wait_for_function("() => !document.querySelector('#plot').classList.contains('pending')")
+    again = page.evaluate(
+        f"() => {{ const s = {FULL}.selections[0]; return [s.x0, s.x1].sort((a, b) => a - b); }}"
+    )
+    assert again == [pytest.approx(v, rel=1e-2) for v in expected]
+    assert errors == []

@@ -4,11 +4,6 @@
 // values themselves, ascending (`toValues`); box plots and smoothing lines
 // come as values and are drawn at their positions (`toPosition`).
 
-// Exponents whose powers of 10 are positive finite doubles
-// (`ddviz.shared.axisscale.MIN_EXPONENT`, `MAX_EXPONENT`).
-const MIN_EXPONENT = -323;
-const MAX_EXPONENT = 308;
-
 // Returns the position of a value on an axis: its log10 on a log axis, NaN
 // there unless positive and finite.
 export function toPosition(log, value) {
@@ -16,13 +11,18 @@ export function toPosition(log, value) {
   return value > 0 && Number.isFinite(value) ? Math.log10(value) : NaN;
 }
 
+// Returns the value at an exponent of a log axis: its power of 10, or the
+// nearest positive finite double when that underflows to 0 or overflows.
+function power(exponent) {
+  const value = 10 ** exponent;
+  if (value === 0) return Number.MIN_VALUE;
+  return Number.isFinite(value) ? value : Number.MAX_VALUE;
+}
+
 // Returns the values of a range of positions, ascending: the powers of 10 of
-// a log axis's exponents, kept to the positive finite doubles.
+// a log axis's exponents (`power`).
 export function toValues(log, range) {
-  const values = log
-    ? range.map((v) => 10 ** Math.min(MAX_EXPONENT, Math.max(MIN_EXPONENT, v)))
-    : [...range];
-  return values.sort((a, b) => a - b);
+  return (log ? range.map(power) : [...range]).sort((a, b) => a - b);
 }
 
 // Returns whether an axis of a plotly layout is a log axis.
