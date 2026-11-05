@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ddviz.shared.shapes import SHAPES, default_shape, kernel
+from ddviz.shared.shapes import AUTO_SHAPES, SHAPES, default_shape, kernel
 
 
 @pytest.mark.parametrize("size", [3, 7, 15])
@@ -22,9 +22,10 @@ def test_every_shape_is_centered_and_distinct(size: int) -> None:
 
 
 def test_shapes_cycle_and_point_the_right_way() -> None:
-    """The levels cycle over the shapes; a triangle up is wide at the bottom."""
-    assert [default_shape(i) for i in range(len(SHAPES))] == list(SHAPES)
-    assert default_shape(len(SHAPES) + 1) == SHAPES[1]
+    """The levels cycle over the shapes but the x (the missing level's); a triangle up is wide at the bottom."""
+    assert [default_shape(i) for i in range(len(AUTO_SHAPES))] == list(AUTO_SHAPES)
+    assert "x" not in AUTO_SHAPES and set(AUTO_SHAPES) | {"x"} == set(SHAPES)
+    assert default_shape(len(AUTO_SHAPES) + 1) == AUTO_SHAPES[1]
     up = kernel("triangle-up-filled", 7)
     assert up[0].sum() == 1 and up[-1].sum() == 7
     down = kernel("triangle-down-filled", 7)

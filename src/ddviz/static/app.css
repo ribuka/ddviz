@@ -1320,6 +1320,11 @@ button {
   cursor: context-menu;
 }
 
+/* The gradient's own level made inactive from its missing level's item. */
+.colorbar.inactive {
+  opacity: 0.35;
+}
+
 .colorbar-strip {
   flex: none;
   width: 14px;

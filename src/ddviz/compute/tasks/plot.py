@@ -14,6 +14,7 @@ from ddviz.compute.raster import occupancy
 from ddviz.compute.tasks.images import write_gradient, write_images
 from ddviz.compute.tasks.piles import selected_pixels, write_piles
 from ddviz.shared.manifest import HoverColumn, PlotManifest, SelectionManifest
+from ddviz.shared.missing import MISSING, MISSING_COLOR
 from ddviz.shared.palette import series_color
 from ddviz.shared.scatter import ScatterSpec
 
@@ -43,9 +44,27 @@ def _shapes(spec: ScatterSpec, levels: dict[str, list]) -> int:
 
 
 def _colors(spec: ScatterSpec, n_series: int, levels: dict[str, list]) -> list[str]:
-    """Return the color of each series: that of its color level (`ScatterSpec.overlay`)."""
+    """Return the color of each series: that of its color level (`ScatterSpec.overlay`).
+
+    The missing color level (`ddviz.shared.missing.MISSING`) is gray; the
+    other levels keep the colors of their places.
+    """
     shapes = max(_shapes(spec, levels), 1)
-    return [series_color(spec.colors, s // shapes) for s in range(n_series)]
+    color = levels["color"]
+    return [
+        MISSING_COLOR
+        if color[s // shapes] == MISSING
+        else series_color(spec.colors, s // shapes)
+        for s in range(n_series)
+    ]
+
+
+def _solid(spec: ScatterSpec, colors: list[str], levels: dict[str, list]) -> dict:
+    """Return the series of a gradient's missing level, drawn in one color (`write_gradient`)."""
+    shapes = max(_shapes(spec, levels), 1)
+    return {
+        s: c for s, c in enumerate(colors) if levels["color"][s // shapes] == MISSING
+    }
 
 
 def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
@@ -95,6 +114,7 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
             agg.color_range,
             shapes,
             sizes,
+            _solid(spec, colors, agg.levels),
         )
     else:
         images = write_images(
@@ -176,6 +196,7 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     keys = agg.selected[KEY].to_numpy()
     shapes = spec.marker_shapes(agg.levels["overlay"])
     sizes = spec.marker_sizes(agg.levels["overlay"])
+    colors = _colors(spec, agg.grid.n_series, agg.levels)
     if spec.gradient:
         images = write_gradient(
             out,
@@ -187,9 +208,9 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
             agg.color_range,
             shapes,
             sizes,
+            _solid(spec, colors, agg.levels),
         )
     else:
-        colors = _colors(spec, agg.grid.n_series, agg.levels)
         images = write_images(
             out, keys, agg.grid, agg.layout.ncol, colors, shapes, sizes
         )

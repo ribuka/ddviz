@@ -26,7 +26,8 @@ export function drawSmooths(ctx, full, meta, colors, alpha, order) {
     const lines = [...panel.smooths].sort((a, b) => rank.get(a[0]) - rank.get(b[0]));
     for (const [series, xs, ys] of lines) {
       ctx.globalAlpha = alpha(series);
-      ctx.strokeStyle = meta.color.kind === "gradient" ? GRADIENT_LINE : colors[series];
+      // A gradient's missing level has a color; its own series have none.
+      ctx.strokeStyle = colors[series] ?? GRADIENT_LINE;
       ctx.beginPath();
       xs.forEach((x, i) => {
         const px = xa._offset + xa.l2p(x);

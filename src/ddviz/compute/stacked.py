@@ -353,8 +353,9 @@ def stacked_bins(
         []
         if color is None
         else [
-            pl.col(color).min().alias(COLOR_MIN),
-            pl.col(color).max().alias(COLOR_MAX),
+            # The missing values (`ddviz.shared.missing`) have no color.
+            pl.col(color).cast(pl.Float64).fill_nan(None).min().alias(COLOR_MIN),
+            pl.col(color).cast(pl.Float64).fill_nan(None).max().alias(COLOR_MAX),
         ]
     )
     by_series = (

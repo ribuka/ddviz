@@ -21,6 +21,7 @@ from ddviz.server.settings import (
     PlotSettings,
     Settings,
 )
+from ddviz.shared.missing import MISSING, MISSING_COLOR
 from ddviz.shared.scatter import POINT_SIZE
 from ddviz.shared.shapes import SHAPES, kernel
 
@@ -83,9 +84,17 @@ def test_the_token_moves_into_a_strict_httponly_cookie(server: TestClient) -> No
     assert server.get("/api/schema").status_code == 200
 
 
+# The fixture's row of a null color stays out of the plots of `_plot`
+# unless a test asks for it: Show null rows is off there.
+HIDE_NULLS = {"show_null_rows": {"color": False, "overlay": False}}
+
+
 def _plot(client: TestClient, **extra: object) -> dict:
-    """Draw `ENCODING` and return the response body."""
-    response = client.post("/api/plot", json={"encoding": ENCODING, **SIZE, **extra})
+    """Draw `ENCODING` (Show null rows off unless asked) and return the response body."""
+    response = client.post(
+        "/api/plot",
+        json={"encoding": ENCODING, **SIZE, **HIDE_NULLS, **HIDE_NULLS, **extra},
+    )
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -205,7 +214,9 @@ def test_plot_refuses_bad_encodings(
     client: TestClient, encoding: dict, detail: str
 ) -> None:
     """A plot with an unknown or missing axis column, no element, or wrap beside a facet or an n-th axis, is refused."""
-    response = client.post("/api/plot", json={"encoding": encoding, **SIZE})
+    response = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS}
+    )
     assert response.status_code == 400
     assert detail in response.json()["detail"]
 
@@ -214,14 +225,16 @@ def test_plot_wraps_a_column_and_refuses_a_bad_wrap_cols(client: TestClient) -> 
     """A wrapped column makes a panel per level; wrap_cols must be a positive int."""
     encoding = {"x": ["x"], "y": ["y"], "wrap": "facet"}
     response = client.post(
-        "/api/plot", json={"encoding": encoding, **SIZE, "wrap_cols": 1}
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS, "wrap_cols": 1}
     )
     assert response.status_code == 200
     meta = response.json()["meta"]
     assert [p["facet"] for p in meta["panels"]] == [[None, "p"], [None, "q"]]
     assert meta["ncol"] == 1
     assert meta["encoding"]["wrap"] == "facet"
-    bad = client.post("/api/plot", json={"encoding": encoding, **SIZE, "wrap_cols": 0})
+    bad = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS, "wrap_cols": 0}
+    )
     assert bad.status_code == 400
 
 
@@ -301,7 +314,9 @@ def test_selection_and_table(client: TestClient) -> None:
 def test_a_graph_without_x_draws_one_band(client: TestClient) -> None:
     """Without an x column, numeric y columns have their boxes in one band; a box selects rows of it."""
     encoding = {"y": ["y"], "color": "color", "elements": ["box"]}
-    response = client.post("/api/plot", json={"encoding": encoding, **SIZE})
+    response = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS}
+    )
     assert response.status_code == 200, response.text
     body = response.json()
     meta = body["meta"]
@@ -462,7 +477,9 @@ def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
 def test_a_categorical_axis_plots_zooms_filters_and_selects(client: TestClient) -> None:
     """A text column on x is drawn in bands; a view, another filter, a box and the table follow them."""
     encoding = {"x": ["color"], "y": ["y"], "col": "facet"}
-    plotted = client.post("/api/plot", json={"encoding": encoding, **SIZE}).json()
+    plotted = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS}
+    ).json()
     meta = plotted["meta"]
     assert meta["x_ranges"] == [[-0.5, 2.5]]
     assert plotted["figure"]["layout"]["xaxis"]["ticktext"] == ["a", "b", "c"]
@@ -494,7 +511,9 @@ def test_a_categorical_axis_plots_zooms_filters_and_selects(client: TestClient) 
 def test_box_plots_plot_zoom_filter_and_select(client: TestClient) -> None:
     """Box plots of y by a text column: the figure holds them, a zoom keeps them, a filter finds them again, and a box selects by level."""
     encoding = {"x": ["color"], "y": ["y"], "elements": ["box"]}
-    plotted = client.post("/api/plot", json={"encoding": encoding, **SIZE}).json()
+    plotted = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS}
+    ).json()
     meta = plotted["meta"]
     assert meta["undrawn"] == []
     (panel,) = meta["panels"]
@@ -517,7 +536,9 @@ def test_box_plots_plot_zoom_filter_and_select(client: TestClient) -> None:
     assert 0 < sum(b[2] for b in boxes) < 2002
 
     numeric_x = {"x": ["x"], "y": ["y"], "elements": ["box"]}
-    plotted = client.post("/api/plot", json={"encoding": numeric_x, **SIZE}).json()
+    plotted = client.post(
+        "/api/plot", json={"encoding": numeric_x, **SIZE, **HIDE_NULLS}
+    ).json()
     assert plotted["meta"]["undrawn"] == ["box"]
     assert plotted["meta"]["panels"][0]["points"] is True
 
@@ -525,7 +546,9 @@ def test_box_plots_plot_zoom_filter_and_select(client: TestClient) -> None:
 def test_smoothing_lines_plot_zoom_filter_and_select(client: TestClient) -> None:
     """Smoothing lines of y on x: one per facet cell and series, kept by a zoom, fitted again for a filter, and of the method asked for."""
     encoding = {**ENCODING, "elements": ["smooth"]}
-    plotted = client.post("/api/plot", json={"encoding": encoding, **SIZE}).json()
+    plotted = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS}
+    ).json()
     meta = plotted["meta"]
     assert meta["undrawn"] == []
     assert [p["points"] for p in meta["panels"]] == [False, False]
@@ -554,6 +577,7 @@ def test_smoothing_lines_plot_zoom_filter_and_select(client: TestClient) -> None
         json={
             "encoding": {**encoding, "elements": ["points", "smooth"]},
             **SIZE,
+            **HIDE_NULLS,
             "smooth": {"method": "lowess", "frac": 0.3},
         },
     ).json()["meta"]
@@ -565,16 +589,74 @@ def test_smoothing_lines_plot_zoom_filter_and_select(client: TestClient) -> None
     )
     assert bad.status_code == 400
     banded = {"x": ["color"], "y": ["y"], "elements": ["smooth"]}
-    plotted = client.post("/api/plot", json={"encoding": banded, **SIZE}).json()
+    plotted = client.post(
+        "/api/plot", json={"encoding": banded, **SIZE, **HIDE_NULLS}
+    ).json()
     assert plotted["meta"]["undrawn"] == ["smooth"]
     assert plotted["meta"]["panels"][0]["points"] is True
+
+
+def test_show_null_rows_is_on_unless_asked_off_and_checked(client: TestClient) -> None:
+    """The null color draws by default and when asked, apart when off; a setting that is no boolean is refused."""
+    for extra in ({}, {"show_null_rows": {}}, {"show_null_rows": {"color": True}}):
+        response = client.post(
+            "/api/plot", json={"encoding": ENCODING, **SIZE, **extra}
+        )
+        meta = response.json()["meta"]
+        assert meta["series"] == ["a", "b", "c", MISSING]
+        assert meta["colors"][-1] == MISSING_COLOR
+        assert meta["rows"] == 2001
+    assert _plot(client)["meta"]["series"] == ["a", "b", "c"]
+    for bad in ("yes", 1, None, ["color"]):
+        response = client.post(
+            "/api/plot",
+            json={"encoding": ENCODING, **SIZE, "show_null_rows": {"color": bad}},
+        )
+        assert response.status_code == 422, bad
+    unknown = {"color": True, "facet": True}
+    response = client.post(
+        "/api/plot", json={"encoding": ENCODING, **SIZE, "show_null_rows": unknown}
+    )
+    assert response.status_code == 422
+    # Overlay alone colors the series by its own setting, not Color's.
+    alone = {"x": ["x"], "y": ["y"], "overlay": "color"}
+    for show, series in (
+        ({"color": False, "overlay": True}, ["a", "b", "c", MISSING]),
+        ({"color": True, "overlay": False}, ["a", "b", "c"]),
+    ):
+        response = client.post(
+            "/api/plot", json={"encoding": alone, **SIZE, "show_null_rows": show}
+        )
+        assert response.json()["meta"]["series"] == series
+
+
+def test_the_missing_overlay_level_is_an_x_until_given_a_shape(
+    client: TestClient,
+) -> None:
+    """The overlay's missing level takes the x, the other levels never do; its shape and size are picked by its own name."""
+    encoding = {"x": ["x"], "y": ["y"], "color": "facet", "overlay": "color"}
+    meta = client.post("/api/plot", json={"encoding": encoding, **SIZE}).json()["meta"]
+    assert meta["overlay"]["levels"] == ["a", "b", "c", MISSING]
+    assert meta["overlay"]["shapes"] == ["circle", "square", "triangle-up", "x"]
+    picked = client.post(
+        "/api/plot",
+        json={
+            "encoding": encoding,
+            **SIZE,
+            "level_shapes": {MISSING: "square", "a": "x"},
+            "shape_sizes": {MISSING: 11},
+        },
+    ).json()["meta"]
+    assert picked["overlay"]["shapes"] == ["x", "square", "triangle-up", "square"]
+    assert picked["overlay"]["sizes"][-1] == 11
+    assert picked["overlay"]["sizes"][0] != 11
 
 
 def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
     """Overlay beside color draws a series per pair of levels in the size asked; alone, it colors the series."""
     encoding = {"x": ["x"], "y": ["y"], "color": "color", "overlay": "facet"}
     plotted = client.post(
-        "/api/plot", json={"encoding": encoding, **SIZE, "shape_size": 9}
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS, "shape_size": 9}
     ).json()
     meta = plotted["meta"]
     assert meta["undrawn"] == []
@@ -606,7 +688,9 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
     assert len(selected["images"]) == 6
 
     alone = {"x": ["x"], "y": ["y"], "overlay": "facet"}
-    meta = client.post("/api/plot", json={"encoding": alone, **SIZE}).json()["meta"]
+    meta = client.post(
+        "/api/plot", json={"encoding": alone, **SIZE, **HIDE_NULLS}
+    ).json()["meta"]
     assert meta["series"] == ["p", "q"]
     assert meta["color"]["column"] == "facet"
     assert meta["overlay"] is None
@@ -693,7 +777,9 @@ def test_plot_data_saves_the_overview_bins(client: TestClient) -> None:
 def test_plot_data_of_a_categorical_axis_has_its_levels(client: TestClient) -> None:
     """A categorical x gives each bin's level; a wrapped grid names its levels wrap."""
     encoding = {"x": ["color"], "y": ["y"], "color": "color", "wrap": "facet"}
-    meta = client.post("/api/plot", json={"encoding": encoding, **SIZE}).json()["meta"]
+    meta = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS}
+    ).json()["meta"]
     response = client.get(
         f"/api/plot-data/{meta['task']}", params={"format": "parquet"}
     )

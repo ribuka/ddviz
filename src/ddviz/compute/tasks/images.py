@@ -89,10 +89,11 @@ def gradient_grays(values: pl.Series, color_range: tuple[float, float]) -> np.nd
     Returns
     -------
     numpy.ndarray
-        uint8 grays.
+        uint8 grays; a missing value (null or NaN) takes the middle gray,
+        but its series is drawn in a color of its own (`write_gradient`).
     """
     lo, hi = color_range
-    scaled = values.cast(pl.Float64).to_numpy()
+    scaled = np.nan_to_num(values.cast(pl.Float64).to_numpy(), nan=(lo + hi) / 2)
     scaled = (scaled - lo) / (hi - lo) if hi > lo else np.full_like(scaled, 0.5)
     return 1 + np.rint(np.clip(scaled, 0, 1) * 254).astype(np.uint8)
 
@@ -107,13 +108,17 @@ def write_gradient(
     color_range: tuple[float, float],
     shapes: list[str | None],
     sizes: list[int],
+    solid: dict[int, str] | None = None,
 ) -> list[list[int] | None]:
     """Write the PNGs of a gradient into the images file, one per series; return where each lies.
 
     Each pixel's gray is its representative row's color value over
     `color_range`, from 1 to 255 (0 is an empty pixel); the page maps the
     grays to the colors of its color scale. A gradient has a single color,
-    so its series are the overlay levels, or one without an overlay.
+    so its series are the overlay levels, or one without an overlay; then
+    again for the missing level of the color column
+    (`ddviz.shared.missing.MISSING`), whose series are masks in one color
+    (`solid`), as `write_images` draws them, never grays.
 
     Parameters
     ----------
@@ -137,6 +142,9 @@ def write_gradient(
         Size of the markers, as in
         `write_images`; where the markers of a series overlap, the point of
         the largest row is on top (`ddviz.compute.shapes.spread_top`).
+    solid : dict of int to str, optional
+        Series drawn as masks in a color, by their index: those of the
+        missing color level.
 
     Returns
     -------
@@ -150,14 +158,19 @@ def write_gradient(
     offset = 0
     with open(out / IMAGES, "wb") as file:
         for s, at in by_series(keys, grid):
-            layer = spread_top(
-                pixel[at],
-                grays[at],
-                rows[at],
-                (grid.n_panels, grid.height, grid.width),
-                marker(shapes[s % len(shapes)], sizes[s % len(sizes)]),
-            )
-            png = encode_levels(atlas(layer, ncol))
+            shape = marker(shapes[s % len(shapes)], sizes[s % len(sizes)])
+            if solid and s in solid:
+                layer = spread(series_layer(pixel[at], grid), shape)
+                png = encode_mask(atlas(layer, ncol), solid[s])
+            else:
+                layer = spread_top(
+                    pixel[at],
+                    grays[at],
+                    rows[at],
+                    (grid.n_panels, grid.height, grid.width),
+                    shape,
+                )
+                png = encode_levels(atlas(layer, ncol))
             file.write(png)
             images[s] = [offset, len(png)]
             offset += len(png)

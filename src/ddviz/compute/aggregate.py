@@ -17,14 +17,16 @@ from ddviz.compute.boxes import (
     outlier_position,
 )
 from ddviz.compute.cuts import cut_index, cut_labels, find_cuts
+from ddviz.compute.missing import (
+    drawn_conditions,
+    is_missing,
+    numeric_columns,
+    numeric_roles,
+    role_index,
+)
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.scan import scan_columns
-from ddviz.compute.selection import (
-    drawn_conditions,
-    numeric_roles,
-    selection_columns,
-    selection_filter,
-)
+from ddviz.compute.selection import selection_columns, selection_filter
 from ddviz.compute.smooth import bin_query, fit_lines
 from ddviz.compute.stacked import ROWS, TOP, marker_boxes, stack_frame, stacked_bins
 from ddviz.compute.stacks import Axis
@@ -37,6 +39,7 @@ from ddviz.shared.layout import (
     facet_grid,
     grid_layout,
 )
+from ddviz.shared.missing import MISSING
 from ddviz.shared.natural import natural_key
 from ddviz.shared.scatter import ONE_BAND, Boxes, ScatterSpec, Smooths
 
@@ -175,13 +178,6 @@ def _bin_expr(value: pl.Expr, bounds: tuple[float, float], n: int) -> pl.Expr:
     return scaled.floor().clip(0, n - 1).cast(pl.Int64)
 
 
-def _index_expr(column: str | None, levels: list) -> pl.Expr:
-    """Return the level index of a categorical column by its text, or 0 without a column."""
-    if column is None:
-        return pl.lit(0, pl.Int64)
-    return level_index(column, levels)
-
-
 def _scan(
     spec: ScatterSpec, columns: list[str], row_index: str | None = None
 ) -> pl.LazyFrame:
@@ -221,7 +217,11 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
     The ranges and the levels of the categorical roles and axis columns
     come in one pass, the cuts of each binned role in passes of their own
     (`ddviz.compute.cuts.find_cuts`). A categorical axis column spans its
-    bands (`ddviz.compute.bands.band_range`).
+    bands (`ddviz.compute.bands.band_range`). A role that draws its missing
+    rows (`ddviz.shared.scatter.ScatterSpec.null_roles`) ends in the missing
+    level (`ddviz.shared.missing.MISSING`) when its column has a null or NaN
+    value; a categorical column counts it as one of its levels against
+    `ddviz.shared.scatter.ScatterSpec.max_levels`.
     """
     numeric = [
         c for c in dict.fromkeys([*spec.x, *spec.y]) if c not in spec.categorical
@@ -237,6 +237,14 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
     # The one band has its level without reading the data.
     used = [c for c in used if c != ONE_BAND]
     gradient = [spec.color] if spec.gradient else []
+    # Whether each numeric column of a role that draws its missing rows has
+    # any; a categorical one has a null level among its levels.
+    read_as_numbers = numeric_columns(spec)
+    asked = [
+        c
+        for c in dict.fromkeys(roles[r] for r in spec.null_roles if roles.get(r))
+        if c in read_as_numbers
+    ]
     # Levels and ranges come from the unfiltered scan: a row filter on the
     # same pass made the streaming engine peak at about 6.5GB on 100M rows,
     # against about 1.1GB without it. The range of an axis column covers all
@@ -246,25 +254,45 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
             *[_range_query(spec, c) for c in numeric],
             *[_scan(spec, [c]).group_by(pl.col(c).cast(pl.String)).len() for c in used],
             *[_range_query(spec, c) for c in gradient],
+            *[
+                _scan(spec, [c]).select(is_missing(c, numeric=True).any())
+                for c in asked
+            ],
         ],
         engine="streaming",
     )
+    has_null = {c: bool(found.pop().item()) for c in reversed(asked)}
     color_range = None
+    no_values = False
     if gradient:
         lo, hi = found.pop().row(0)
+        no_values = lo is None
         color_range = (0.0, 1.0) if lo is None else (lo, hi)
     ranges = {c: _padded(*f.row(0)) for c, f in zip(numeric, found, strict=False)}
-    column_levels = {
-        c: sorted(f[c].drop_nulls().to_list(), key=natural_key)
-        for c, f in zip(used, found[len(numeric) :], strict=True)
-    }
+    column_levels = {}
+    for c, f in zip(used, found[len(numeric) :], strict=True):
+        column_levels[c] = sorted(f[c].drop_nulls().to_list(), key=natural_key)
+        has_null[c] = f[c].null_count() > 0
+    missing = {r for r in spec.null_roles if roles.get(r) and has_null[roles[r]]}
+    # The missing level's name is no text of the data.
+    taken = [c for c in column_levels if MISSING in column_levels[c]]
+    if taken:
+        raise ValueError(
+            f"列 {'、'.join(taken)} の値に欠損の水準の内部名（{MISSING!r}）と同じ"
+            "文字列があるため描けない"
+        )
     if ONE_BAND in spec.categorical:
         column_levels[ONE_BAND] = [""]
     axis_levels = {c: column_levels[c] for c in spec.categorical}
     ranges.update({c: band_range(v) for c, v in axis_levels.items()})
     x_ranges = [ranges[c] for c in spec.x]
     y_ranges = [ranges[c] for c in spec.y]
-    many = {c: len(v) for c, v in column_levels.items() if len(v) > spec.max_levels}
+    # The missing level drawn counts as one level of its column.
+    counted = {
+        c: len(v) + any(roles[r] == c for r in missing)
+        for c, v in column_levels.items()
+    }
+    many = {c: n for c, n in counted.items() if n > spec.max_levels}
     if many:
         raise ValueError(
             f"水準が上限の {spec.max_levels} 個を超えるため描けない（"
@@ -283,6 +311,10 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
             levels[role] = cut_labels(cuts[role], spec.temporal.get(c))
         else:
             levels[role] = column_levels[c]
+        if role in missing:
+            # A gradient without a finite value has only the missing level.
+            empty = role == "color" and spec.gradient and no_values
+            levels[role] = [MISSING] if empty else [*levels[role], MISSING]
     return _Overview(x_ranges, y_ranges, levels, cuts, color_range, axis_levels)
 
 
@@ -431,12 +463,7 @@ def aggregate(
 
     def index(role: str) -> pl.Expr:
         """Return the index of each row's level of a role among the drawn levels."""
-        if role in spec.binned:
-            kept = [all_levels[role].index(v) for v in levels[role]]
-            return cut_index(roles[role], cuts[role], kept)
-        if role == "color" and spec.gradient:
-            return pl.lit(0, pl.Int64)
-        return _index_expr(roles[role], levels[role])
+        return role_index(spec, role, levels[role], all_levels[role], cuts.get(role))
 
     row, col = index("row"), index("col")
     # A series is a pair of a color level and an overlay level.

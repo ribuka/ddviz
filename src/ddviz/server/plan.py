@@ -252,6 +252,7 @@ def scatter_spec(
     temporal: dict[str, str] | None = None,
     shape_sizes: dict[str, int] | None = None,
     level_shapes: dict[str, str] | None = None,
+    show_null_rows: dict[str, bool] | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -313,6 +314,11 @@ def scatter_spec(
         Shape of single overlay levels, by the level's name
         (`parse_level_shapes`), in place of the shape of the level's place;
         dropped without shapes, as `shape_sizes`.
+    show_null_rows : dict of str to bool, optional
+        Whether the ``"color"`` and the ``"overlay"`` of the graph draw
+        their rows with a null or NaN value (`ScatterSpec.null_roles`); a
+        role left out does. Overlay alone colors the series by its own
+        setting. None for both.
 
     Returns
     -------
@@ -337,9 +343,15 @@ def scatter_spec(
         raise ValueError("wrap cannot be placed with the n-th axes")
     col = encoding.wrap if wrap else encoding.col
     color, overlay = encoding.color, encoding.overlay
+    show = {"color": True, "overlay": True, **(show_null_rows or {})}
+    null_roles = [
+        role for role, column in (("color", color), ("overlay", overlay)) if column
+    ]
+    null_roles = [role for role in null_roles if show[role]]
     if color is None:
-        # Overlay alone colors the series, without shapes.
+        # Overlay alone colors the series, without shapes, by its own setting.
         color, overlay = overlay, None
+        null_roles = ["color"] if null_roles else []
     hover = drawn_columns(encoding)
     filters = list(filters or [])
     binned = {
@@ -385,6 +397,7 @@ def scatter_spec(
         shape_sizes=dict(shape_sizes or {}) if overlay is not None else {},
         level_shapes=dict(level_shapes or {}) if overlay is not None else {},
         temporal={c: k for c, k in (temporal or {}).items() if c in read},
+        null_roles=null_roles,
     )
 
 

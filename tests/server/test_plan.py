@@ -64,6 +64,31 @@ def test_overlay_alone_colors_the_series() -> None:
     assert (spec.color, spec.overlay, spec.gradient) == ("o", None, True)
 
 
+def test_show_null_rows_draws_the_missing_rows_of_each_role_by_default() -> None:
+    """Color and overlay each draw their null rows unless the page turns it off; overlay alone colors by its own setting."""
+    both = Encoding(x=("a",), y=("b",), color="g", overlay="o")
+    files = {c: [f"{c}.parquet"] for c in both.columns()}
+    spec = scatter_spec(both, files, 400, 300, [])
+    assert spec.null_roles == ["color", "overlay"]
+    for color in (True, False):
+        for overlay in (True, False):
+            show = {"color": color, "overlay": overlay}
+            spec = scatter_spec(both, files, 400, 300, [], show_null_rows=show)
+            assert spec.null_roles == [r for r, on in show.items() if on]
+    assert scatter_spec(
+        both, files, 400, 300, [], show_null_rows={"overlay": False}
+    ).null_roles == ["color"]
+    alone = Encoding(x=("a",), y=("b",), overlay="o")
+    off = {"color": True, "overlay": False}
+    assert scatter_spec(alone, files, 400, 300, [], show_null_rows=off).null_roles == []
+    on = {"color": False, "overlay": True}
+    assert scatter_spec(alone, files, 400, 300, [], show_null_rows=on).null_roles == [
+        "color"
+    ]
+    bare = Encoding(x=("a",), y=("b",))
+    assert scatter_spec(bare, files, 400, 300, []).null_roles == []
+
+
 def test_a_numeric_overlay_beside_color_is_cut_into_intervals() -> None:
     """A numeric overlay column takes shapes by intervals of about the same rows, as a facet."""
     encoding = Encoding(x=("a",), y=("b",), color="g", overlay="o")

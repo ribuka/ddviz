@@ -24,6 +24,10 @@ SHAPES = (
     "diamond-filled",
     "triangle-down-filled",
 )
+# The shapes the overlay levels take by their place: all but the x, which is
+# the missing level's (`ddviz.shared.missing.MISSING_SHAPE`). A level may
+# still be given the x by hand (`ddviz.shared.scatter.ScatterSpec.level_shapes`).
+AUTO_SHAPES = tuple(s for s in SHAPES if s != "x")
 
 
 def _filled(name: str, size: int) -> np.ndarray:
@@ -63,14 +67,14 @@ def default_shape(level: int) -> str:
     Parameters
     ----------
     level : int
-        Index of the overlay level; the shapes cycle over `SHAPES`.
+        Index of the overlay level; the shapes cycle over `AUTO_SHAPES`.
 
     Returns
     -------
     str
-        One of `SHAPES`.
+        One of `AUTO_SHAPES`.
     """
-    return SHAPES[level % len(SHAPES)]
+    return AUTO_SHAPES[level % len(AUTO_SHAPES)]
 
 
 def kernel(name: str, size: int) -> np.ndarray:

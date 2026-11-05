@@ -221,13 +221,14 @@ def test_box_plots_without_x_lie_in_one_band(
     expect(box).to_be_enabled()
     expect(icons.nth(2)).to_be_disabled()
     box.click()
-    expect(page.locator("#plot .xtick text")).to_have_text(["a", "b", "c"])
+    # The row of a null color is a series of its own (Show null rows).
+    expect(page.locator("#plot .xtick text")).to_have_text(["a", "b", "c", "(null)"])
     points.click()
     expect(points).to_have_attribute("aria-pressed", "false")
 
     values = scatter_frame.filter(pl.col("color") == "b", pl.col("y").is_finite())["y"]
     median = float(values.median())
-    # The box of b, the middle one of three, lies in the middle of the band.
+    # The box of b lies under its tick, the second of the band's.
     at = page.wait_for_function(
         """(median) => {
           const gd = document.getElementById("plot");
@@ -236,7 +237,7 @@ def test_box_plots_without_x_lie_in_one_band(
           if (!full?.xaxis || !status.includes("外れ値")) return null;
           const rect = gd.getBoundingClientRect();
           return {
-            x: rect.left + full.xaxis._offset + full.xaxis.l2p(0),
+            x: rect.left + full.xaxis._offset + full.xaxis.l2p(full.xaxis.tickvals[1]),
             y: rect.top + full.yaxis._offset + full.yaxis.l2p(median),
           };
         }""",
@@ -343,11 +344,12 @@ def test_inactive_series_at_opacity_0_vanish_and_do_not_hover(app_page: Page) ->
     expect(page.locator("#hover-label")).to_be_visible()
     page.mouse.move(0, 0)
 
+    # The row of a null color is the fourth item (Show null rows).
     items = page.locator("#legend .legend-item")
-    expect(items).to_have_count(3)
-    for i in range(3):
+    expect(items).to_have_count(4)
+    for i in range(4):
         items.nth(i).click()
-    expect(page.locator("#legend .legend-item.inactive")).to_have_count(3)
+    expect(page.locator("#legend .legend-item.inactive")).to_have_count(4)
     # The legend's own items stay at app.css's opacity.
     expect(items.first).to_have_css("opacity", "0.35")
     page.wait_for_function(f"() => ({PAINTED_PIXEL})() === null")

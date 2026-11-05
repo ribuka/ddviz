@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+from ddviz.shared.missing import MISSING, MISSING_SHAPE
 from ddviz.shared.shapes import default_shape
 
 # Default of the most levels a color, overlay, row or col column may have
@@ -306,6 +307,12 @@ class ScatterSpec:
         Such a column is numeric: it is read as numbers
         (`ddviz.compute.temporal`), and its intervals are named and its axis
         drawn as dates, times or seconds.
+    null_roles : list of str
+        Roles (``"color"``, ``"overlay"``) whose rows with a null or NaN
+        value are drawn as the role's missing level
+        (`ddviz.shared.missing.MISSING`), the last of its levels, when the
+        column has such rows; the other roles' rows, and those of a role not
+        listed, are left out. An infinite value is always left out.
     """
 
     files: dict[str, list[str]]
@@ -336,6 +343,7 @@ class ScatterSpec:
     shape_sizes: dict[str, int] = field(default_factory=dict)
     level_shapes: dict[str, str] = field(default_factory=dict)
     temporal: dict[str, str] = field(default_factory=dict)
+    null_roles: list[str] = field(default_factory=list)
 
     def box_pairs(self) -> set[tuple[str, str]]:
         """Return the pairs of axis columns whose panels have box plots.
@@ -424,14 +432,17 @@ class ScatterSpec:
         list of str or None
             The shape of each level (`ddviz.shared.shapes.SHAPES`), from
             `level_shapes` by the level's name or else the one of its place
-            (`ddviz.shared.shapes.default_shape`); series ``s`` takes item
-            ``s % len``. Without an overlay (or levels), ``[None]``: the
+            (`ddviz.shared.shapes.default_shape`), or the x for the missing
+            level (`ddviz.shared.missing.MISSING_SHAPE`); series ``s`` takes
+            item ``s % len``. Without an overlay (or levels), ``[None]``: the
             filled circles.
         """
         if self.overlay is None or not overlay_levels:
             return [None]
         return [
-            self.level_shapes.get(str(v), default_shape(i))
+            self.level_shapes.get(
+                str(v), MISSING_SHAPE if v == MISSING else default_shape(i)
+            )
             for i, v in enumerate(overlay_levels)
         ]
 
