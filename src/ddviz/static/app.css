@@ -617,11 +617,6 @@ button {
 }
 #top > [data-role="wrap"] { flex: 0 0 30px; }
 #top > [data-role="wrap"].filled { flex: 0 1 auto; max-width: 60%; flex-wrap: nowrap; }
-
-.wrap-cols {
-  width: 64px;
-  font-size: 11px;
-}
 #builder > [data-role="y"] { grid-area: 2 / 1; }
 #stage { grid-area: 2 / 2; }
 #builder > [data-role="row"] { grid-area: 2 / 3; }
@@ -1400,6 +1395,42 @@ button {
 .scale-menu-separator {
   margin: 4px 0;
   border-top: 1px solid var(--border-separator);
+}
+
+/* The form of the wrapped panels to a row (wrapmenu.js). */
+.wrap-menu {
+  gap: 4px;
+  width: 260px;
+  padding: 4px 12px 10px;
+  font-size: 12px;
+}
+.wrap-menu .scale-menu-heading {
+  padding: 2px 0;
+}
+.wrap-menu-choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.wrap-menu-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 22px;
+}
+.wrap-menu-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+}
+.wrap-menu-error {
+  color: var(--error-text);
+  font-size: 11px;
+}
+.wrap-menu-apply {
+  align-self: flex-end;
+  font: inherit;
 }
 
 /* An item that opens a submenu beside the menu (shapemenu.js). */

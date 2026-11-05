@@ -90,8 +90,22 @@ def test_a_scatter_plot_draws_and_hovers(
     assert re.fullmatch(r"\d+ 行", lines["このピクセル"])
 
 
+# Panels in the top row of the plotted figure, or null before one.
+TOP_ROW_PANELS = """() => {
+  const layout = document.getElementById("plot").layout;
+  if (!layout?.yaxis) return null;
+  const top = layout.yaxis.domain[1];
+  return ["", "2", "3"].filter((s) => layout[`yaxis${s}`]?.domain[1] === top).length;
+}"""
+
+
+def wait_top_row(page: Page, n: int) -> None:
+    """Wait until the figure puts `n` panels in its top row."""
+    page.wait_for_function(f"() => ({TOP_ROW_PANELS})() === {n}")
+
+
 def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:
-    """A column on Wrap removes Group X's and draws a panel per level, labeled by the level; the number to a row can be set."""
+    """A column on Wrap removes Group X's and draws a panel per level, labeled by the level; the zone shows no number to a row."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
@@ -101,29 +115,177 @@ def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:
     wrap = page.locator('.zone[data-role="wrap"]')
     expect(page.locator('.zone[data-role="col"] .chip')).to_have_count(0)
     page.wait_for_function(PAINTED_PIXEL)
-    labels = page.locator("#plot .annotation-text")
-    expect(labels).to_have_text(["a", "b", "c"])
+    expect(page.locator("#plot .annotation-text")).to_have_text(["a", "b", "c"])
+    expect(wrap.locator("input")).to_have_count(0)
+    expect(wrap).not_to_contain_text("自動")
 
-    wrap.locator(".wrap-cols").fill("1")
-    wrap.locator(".wrap-cols").press("Enter")
-    # One panel to a row: the panels stack, the first on top.
-    page.wait_for_function(
-        """() => {
-          const layout = document.getElementById("plot").layout;
-          return layout?.yaxis3 && layout.yaxis3.domain[1] < layout.yaxis2.domain[0]
-            && layout.xaxis3.domain[0] === layout.xaxis.domain[0];
-        }"""
+
+def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
+    """A right click on Wrap opens the form of the panels to a row: a draft until applied, checked, and replotted only for a new number."""
+    page = app_page
+    plots: list[str] = []
+    page.on(
+        "request",
+        lambda r: plots.append(r.url) if r.url.endswith("/api/plot") else None,
     )
-    expect(labels).to_have_text(["a", "b", "c"])
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    wrap = page.locator('.zone[data-role="wrap"]')
+    form = page.locator(".wrap-menu")
+    automatic = form.get_by_role("radio", name=re.compile("^自動"))
+    manual = form.get_by_role("radio", name="指定")
+    field = form.get_by_label("パネル数")
+    error = form.locator(".wrap-menu-error")
 
-    # Without Y, a new number to a row draws nothing.
+    # An empty Wrap opens nothing.
+    wrap.click(button="right")
+    expect(form).to_have_count(0)
+
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    place(page, "color", "wrap")
+    page.wait_for_function(PAINTED_PIXEL)
+    wrap.locator(".chip-name").click(button="right")
+    expect(form).to_be_visible()
+    expect(form.locator(".scale-menu-heading")).to_have_text("1 行のパネル数")
+    label = form.locator(".wrap-menu-choice").first
+    expect(label).to_have_text(re.compile(r"^自動（\d+）$"))
+    auto = int(re.search(r"\d+", label.inner_text()).group())
+    wait_top_row(page, auto)
+    expect(automatic).to_be_checked()
+    expect(field).to_be_disabled()
+    expect(field).to_have_value("")
+    # The form stays in the window, though Wrap lies at its right edge.
+    box = form.bounding_box()
+    width = page.viewport_size["width"]
+    assert box is not None and box["x"] >= 0 and box["x"] + box["width"] <= width
+
+    # Bad numbers show the error and keep the plot; blank is not automatic.
+    manual.check()
+    expect(field).to_be_enabled()
+    count = len(plots)
+    for bad in ["", "0", "-1", "+2", "1.5", "1e2", "２", "9007199254740992"]:
+        field.fill(bad)
+        field.press("Enter")
+        expect(error).to_have_text(
+            "1 以上 9007199254740991 以下の整数を入力してください"
+        )
+        expect(form).to_be_visible()
+    page.wait_for_timeout(300)
+    assert len(plots) == count
+    wait_top_row(page, auto)
+
+    # A good number with blanks and leading zeros, by the apply button: one to a row.
+    field.fill(" 01 ")
+    expect(error).to_be_hidden()
+    form.get_by_role("button", name="適用").click()
+    expect(form).to_have_count(0)
+    wait_top_row(page, 1)
+    page.wait_for_function(SETTLED)
+    assert len(plots) == count + 1
+
+    # Reopened on the room beside the chip: the number set, as an integer.
+    zone = wrap.bounding_box()
+    assert zone is not None
+    wrap.click(
+        button="right", position={"x": zone["width"] - 4, "y": zone["height"] / 2}
+    )
+    expect(manual).to_be_checked()
+    expect(field).to_have_value("1")
+    # Still the automatic number of the size, not the one set.
+    expect(label).to_have_text(f"自動（{auto}）")
+
+    # Escape, a click outside and another right click drop the draft.
+    automatic.check()
+    page.keyboard.press("Escape")
+    expect(form).to_have_count(0)
+    wrap.locator(".chip-name").click(button="right")
+    expect(field).to_have_value("1")
+    field.fill("2")
+    page.locator('.zone[data-role="col"]').click()
+    expect(form).to_have_count(0)
+    wrap.locator(".chip-name").click(button="right")
+    field.fill("3")
+    # Above the form, which opened at the middle of the chip.
+    wrap.click(button="right", position={"x": 2, "y": 1})
+    expect(form).to_have_count(1)
+    expect(field).to_have_value("1")
+    # The same number again plots nothing.
+    field.press("Enter")
+    expect(form).to_have_count(0)
+    page.wait_for_timeout(300)
+    assert len(plots) == count + 1
+
+    # More than the levels: three to a row, the number set kept.
+    wrap.locator(".chip-name").click(button="right")
+    field.fill("10")
+    field.press("Enter")
+    wait_top_row(page, 3)
+    page.wait_for_function(SETTLED)
+    wrap.locator(".chip-name").click(button="right")
+    expect(field).to_have_value("10")
+
+    # Back to automatic, applied by Enter on the choice.
+    automatic.check()
+    expect(field).to_be_disabled()
+    expect(field).to_have_value("")
+    automatic.press("Enter")
+    expect(form).to_have_count(0)
+    wait_top_row(page, auto)
+    page.wait_for_function(SETTLED)
+
+    # A new size gives a new automatic number, shown while one is set.
+    wrap.locator(".chip-name").click(button="right")
+    manual.check()
+    field.fill("1")
+    field.press("Enter")
+    wait_top_row(page, 1)
+    page.wait_for_function(SETTLED)
+    size = page.viewport_size
+    width = "document.getElementById('plot').layout.width"
+    before = page.evaluate(width)
+    page.set_viewport_size({"width": 1280, "height": 400})
+    page.wait_for_function(f"{width} !== {before}")
+    page.wait_for_function(SETTLED)
+    wait_top_row(page, 1)
+    wrap.locator(".chip-name").click(button="right")
+    resized = int(re.search(r"\d+", label.inner_text()).group())
+    assert resized != auto
+    automatic.check()
+    automatic.press("Enter")
+    wait_top_row(page, resized)
+    page.wait_for_function(SETTLED)
+    page.set_viewport_size(size)
+    wait_top_row(page, auto)
+    page.wait_for_function(SETTLED)
+
+    # Without Y there is no figure: no number shown, the setting kept and
+    # used by the next plot.
     page.locator('.zone[data-role="y"] .chip-remove').click()
     expect(page.locator("#empty")).to_be_visible()
-    wrap.locator(".wrap-cols").fill("2")
-    wrap.locator(".wrap-cols").press("Enter")
-    page.wait_for_timeout(1000)
+    count = len(plots)
+    wrap.locator(".chip-name").click(button="right")
+    expect(label).to_have_text("自動")
+    manual.check()
+    field.fill("2")
+    field.press("Enter")
+    page.wait_for_timeout(300)
+    assert len(plots) == count
     expect(page.locator("#empty")).to_be_visible()
-    expect(labels).to_have_count(0)
+    place(page, "y", "y")
+    wait_top_row(page, 2)
+    # Another column elsewhere keeps the number.
+    place(page, "facet", "overlay")
+    wait_top_row(page, 2)
+
+    # Another wrap column closes the form and goes back to automatic.
+    wrap.locator(".chip-name").click(button="right")
+    expect(form).to_be_visible()
+    place(page, "label", "wrap", plots=False)
+    expect(form).to_have_count(0)
+    place(page, "color", "wrap")
+    wait_top_row(page, auto)
+    wrap.locator(".chip-name").click(button="right")
+    expect(automatic).to_be_checked()
 
 
 def test_a_categorical_x_draws_bands_named_by_its_levels(app_page: Page) -> None:
