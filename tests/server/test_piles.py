@@ -173,11 +173,14 @@ def test_the_selection_layer_marks_the_piles_with_selected_rows(
     assert layer.rows == 10_000
 
 
-@pytest.mark.parametrize("name", ["min", "max"])
+@pytest.mark.parametrize(
+    "name",
+    ["min", "max", "__color_min", "__color_max", "__rows", "__values", "__value0"],
+)
 def test_an_axis_column_named_like_the_color_extremes_keeps_its_value(
     tmp_path: Path, name: str
 ) -> None:
-    """A y column named min or max draws a pile of a gradient and shows its value in the hover."""
+    """A y column named like an internal column draws a pile of a gradient and shows its value."""
     frame = pl.DataFrame({"g": ["a"] * 100, name: [1.0] * 100, "c": [2.0] * 100})
     path = tmp_path / "named.parquet"
     frame.write_parquet(path)

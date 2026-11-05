@@ -13,7 +13,7 @@ import numpy as np
 import polars as pl
 
 from ddviz.compute.aggregate import Aggregation
-from ddviz.compute.stacked import COLOR_MAX, COLOR_MIN, ROWS
+from ddviz.compute.stacked import COLOR_MAX, COLOR_MIN, ROWS, VALUES
 from ddviz.compute.stacks import KEYS, PANEL, SERIES, N
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.manifest import HoverColumn
@@ -77,6 +77,11 @@ def _array(values: pl.Series) -> tuple[np.ndarray, list | None]:
     return codes.to_numpy(), labels.to_list()
 
 
+def _value(i: int) -> str:
+    """Return the internal column of the `i`-th axis column's values at the piles."""
+    return f"__value{i}"
+
+
 def write_piles(
     out: Path, agg: Aggregation, gradient: bool
 ) -> tuple[int, list[HoverColumn], list[Path]]:
@@ -111,14 +116,19 @@ def write_piles(
             pile_pixel(pl.col(PANEL), pl.col("by"), pl.col("bx"), grid).alias(_PIXEL),
         )
         joined = found.series.join(pixels, on=KEYS)
-        values = list(dict.fromkeys([found.x, found.y]))
-        named.update(dict.fromkeys(values))
+        named.update(dict.fromkeys([found.x, found.y]))
+        order = list(named)
         extremes = (
             [pl.col(COLOR_MIN).min(), pl.col(COLOR_MAX).max()] if gradient else []
         )
         levels.append(
             joined.group_by(_PIXEL).agg(
-                pl.col(N).first(), *extremes, *(pl.col(c).first() for c in values)
+                pl.col(N).first(),
+                *extremes,
+                *(
+                    pl.col(VALUES).struct.field(c).first().alias(_value(order.index(c)))
+                    for c in dict.fromkeys([found.x, found.y])
+                ),
             )
         )
         by_series.append(joined.select(_PIXEL, SERIES, ROWS))
@@ -138,9 +148,10 @@ def write_piles(
         arrays["pile_min.npy"] = piles[COLOR_MIN].cast(pl.Float64).to_numpy()
         arrays["pile_max.npy"] = piles[COLOR_MAX].cast(pl.Float64).to_numpy()
     columns = []
-    # The axis columns by their names, whatever they are (even "min" or "max").
+    # The axis columns by their names, whatever they are (even "min", "max" or
+    # an internal name such as "__color_min").
     for i, name in enumerate(named):
-        arrays[f"pile_col{i}.npy"], labels = _array(piles[name])
+        arrays[f"pile_col{i}.npy"], labels = _array(piles[_value(i)])
         columns.append(HoverColumn(name, f"pile_col{i}.npy", labels))
     files = []
     for file, array in arrays.items():

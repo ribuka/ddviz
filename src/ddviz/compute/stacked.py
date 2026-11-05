@@ -55,6 +55,9 @@ _PILE = "__pile"
 # The least and largest color of a drawn pile's rows of a series, for a gradient.
 COLOR_MIN = "__color_min"
 COLOR_MAX = "__color_max"
+# A struct of a drawn pile's values of the `values` columns, by their names:
+# kept apart so that no input column can collide with the columns above.
+VALUES = "__values"
 # The coordinates of x and y as compared, before they are packed into `KEYS`.
 _KX = "__kx"
 _KY = "__ky"
@@ -78,7 +81,8 @@ class StackedBins:
     pile_series : polars.DataFrame or None
         The rows of each drawn pile by series: its `KEYS`, `SERIES` and
         `ROWS`, with the least and largest color value (`COLOR_MIN`,
-        `COLOR_MAX`) for a gradient, and the values of the `values` columns.
+        `COLOR_MAX`) for a gradient, and the values of the `values` columns
+        as a struct (`VALUES`, when there are any).
     """
 
     bins: pl.DataFrame
@@ -359,7 +363,7 @@ def stacked_bins(
         .agg(
             pl.len().cast(pl.Int64).alias(ROWS),
             *extremes,
-            *(pl.col(c).first() for c in values),
+            *([pl.struct(list(values)).first().alias(VALUES)] if values else []),
         )
         .collect(engine="streaming")
         .sort([*KEYS, SERIES])
