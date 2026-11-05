@@ -13,7 +13,7 @@ import numpy as np
 import polars as pl
 
 from ddviz.compute.aggregate import Aggregation
-from ddviz.compute.stacked import ROWS
+from ddviz.compute.stacked import COLOR_MAX, COLOR_MIN, ROWS
 from ddviz.compute.stacks import KEYS, PANEL, SERIES, N
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.manifest import HoverColumn
@@ -101,7 +101,7 @@ def write_piles(
         the pixels.
     """
     grid = agg.grid
-    levels, by_series = [], []
+    levels, by_series, named = [], [], {}
     for found in agg.piles:
         if found.series is None or found.piles.height == 0:
             continue
@@ -112,7 +112,10 @@ def write_piles(
         )
         joined = found.series.join(pixels, on=KEYS)
         values = list(dict.fromkeys([found.x, found.y]))
-        extremes = [pl.col("min").min(), pl.col("max").max()] if gradient else []
+        named.update(dict.fromkeys(values))
+        extremes = (
+            [pl.col(COLOR_MIN).min(), pl.col(COLOR_MAX).max()] if gradient else []
+        )
         levels.append(
             joined.group_by(_PIXEL).agg(
                 pl.col(N).first(), *extremes, *(pl.col(c).first() for c in values)
@@ -132,10 +135,10 @@ def write_piles(
         "pile_series_n.npy": series[ROWS].cast(pl.Int64).to_numpy(),
     }
     if gradient:
-        arrays["pile_min.npy"] = piles["min"].cast(pl.Float64).to_numpy()
-        arrays["pile_max.npy"] = piles["max"].cast(pl.Float64).to_numpy()
+        arrays["pile_min.npy"] = piles[COLOR_MIN].cast(pl.Float64).to_numpy()
+        arrays["pile_max.npy"] = piles[COLOR_MAX].cast(pl.Float64).to_numpy()
     columns = []
-    named = [c for c in piles.columns if c not in (_PIXEL, N, "min", "max")]
+    # The axis columns by their names, whatever they are (even "min" or "max").
     for i, name in enumerate(named):
         arrays[f"pile_col{i}.npy"], labels = _array(piles[name])
         columns.append(HoverColumn(name, f"pile_col{i}.npy", labels))

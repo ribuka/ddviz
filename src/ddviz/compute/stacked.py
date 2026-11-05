@@ -52,6 +52,9 @@ KEY = "__key"
 ROWS = "__rows"
 TOP = "__top"
 _PILE = "__pile"
+# The least and largest color of a drawn pile's rows of a series, for a gradient.
+COLOR_MIN = "__color_min"
+COLOR_MAX = "__color_max"
 # The coordinates of x and y as compared, before they are packed into `KEYS`.
 _KX = "__kx"
 _KY = "__ky"
@@ -74,8 +77,8 @@ class StackedBins:
         when not asked for.
     pile_series : polars.DataFrame or None
         The rows of each drawn pile by series: its `KEYS`, `SERIES` and
-        `ROWS`, with the least and largest color value (``"min"``,
-        ``"max"``) for a gradient, and the values of the `values` columns.
+        `ROWS`, with the least and largest color value (`COLOR_MIN`,
+        `COLOR_MAX`) for a gradient, and the values of the `values` columns.
     """
 
     bins: pl.DataFrame
@@ -345,7 +348,10 @@ def stacked_bins(
     extremes = (
         []
         if color is None
-        else [pl.col(color).min().alias("min"), pl.col(color).max().alias("max")]
+        else [
+            pl.col(color).min().alias(COLOR_MIN),
+            pl.col(color).max().alias(COLOR_MAX),
+        ]
     )
     by_series = (
         frame.join(shown.select(KEYS).lazy(), on=KEYS, how="semi")
