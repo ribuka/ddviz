@@ -812,3 +812,60 @@ def test_plot_data_needs_the_hover_files(tmp_path: Path, scatter_path: Path) -> 
         )
         assert response.status_code == 409
         assert "ホバー" in response.json()["detail"]
+
+
+def test_log_axes_plot_zoom_select_and_refuse(client: TestClient) -> None:
+    """A log x draws its positive rows over exponents, warns of the others, and takes values at its boundary."""
+    meta = _plot(client, axis_scales={"x": {"x": "log"}, "y": {"y": "linear"}})["meta"]
+    assert meta["x_log"] == [True]
+    assert meta["y_log"] == [False]
+    assert meta["x_loggable"] == [True]
+    # The dialog of the axis settings is of linear axes.
+    assert meta["x_numeric"] == [False]
+    assert meta["nonpositive"] == [["x", "x"]]
+    (lo, hi), = meta["x_ranges"]
+    assert -5 < lo < hi < 1
+    # The view and the box are of values: 0.1 to 1 is -1 to 0.
+    body = {**SIZE, "x_ranges": [[0.1, 1]], "y_ranges": [[-3, 3]]}
+    zoomed = client.post("/api/view", json=body).json()["meta"]
+    assert zoomed["x_ranges"] == [[pytest.approx(-1), pytest.approx(0)]]
+    bad = {**SIZE, "x_ranges": [[0, 1]], "y_ranges": [[-3, 3]]}
+    assert client.post("/api/view", json=bad).status_code == 400
+    box = {"task": meta["task"], "panel": 0, "x_range": [1, 0.1], "y_range": [-5, 5]}
+    selected = client.post("/api/selection", json=box).json()
+    assert selected["selection"]["x_range"] == [pytest.approx(-1), pytest.approx(0)]
+    assert selected["rows"] > 0
+    # No positive value under the filter: refused with the reason.
+    filters = [{"column": "x", "range": [-10, -1]}]
+    response = client.post(
+        "/api/plot",
+        json={
+            "encoding": ENCODING,
+            **SIZE,
+            **HIDE_NULLS,
+            "filters": filters,
+            "axis_scales": {"x": {"x": "log"}},
+        },
+    )
+    assert response.status_code == 400
+    assert "X の x に正の値がないため" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "scales",
+    [
+        "log",
+        {"z": {}},
+        {"x": ["x"]},
+        {"x": {"x": "ln"}},
+        {"x": {"y": "log"}},
+        {"y": {"color": "log"}},
+    ],
+)
+def test_plot_refuses_bad_axis_scales(client: TestClient, scales: object) -> None:
+    """A wrong shape, scale or column of ``axis_scales`` is a 400."""
+    response = client.post(
+        "/api/plot",
+        json={"encoding": ENCODING, **SIZE, **HIDE_NULLS, "axis_scales": scales},
+    )
+    assert response.status_code == 400, response.text

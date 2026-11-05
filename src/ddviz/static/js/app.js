@@ -1,6 +1,8 @@
 // The page: drop columns on the graph builder's zones, plot, zoom and pan,
 // resize, hover, select rows with a box, and filter rows.
 import { axisAt, decorate, decorationUpdate, emptySettings, openAxisDialog } from "./axisdialog.js";
+import { openAxisMenu } from "./axismenu.js";
+import { AxisScales, toValues } from "./axisscale.js";
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
 import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } from "./colorscale.js";
@@ -25,6 +27,7 @@ import { forPlotly, linearRange, plotlyRange } from "./temporal.js";
 
 const statusLine = new StatusLine(document.getElementById("status"), new Toasts(document.getElementById("toasts")));
 const hoverWarning = document.getElementById("hover-warning");
+const logWarning = document.getElementById("log-warning");
 const info = document.getElementById("info");
 const gd = document.getElementById("plot");
 const stage = document.getElementById("stage");
@@ -209,6 +212,21 @@ gd.addEventListener("contextmenu", (event) => {
   event.preventDefault();
   if (!gd._fullLayout || event.target.closest(".modebar")) return;
   hideHover();
+  // On the tick labels of an axis, the menu of its column (`axismenu.js`).
+  const hit = current && axisHit(event);
+  if (hit) {
+    const { axis, index } = hit;
+    const meta = current;
+    const column = meta[`${axis}_columns`][index];
+    openAxisMenu(event, {
+      axis,
+      column,
+      log: meta[`${axis}_log`][index],
+      loggable: meta[`${axis}_loggable`][index],
+      onLog: (log) => setAxisLog(meta, axis, column, log),
+    });
+    return;
+  }
   openPlotMenu(event, gd);
 });
 gd.addEventListener("mousedown", () => {
@@ -254,10 +272,51 @@ gd.addEventListener(
 // (`sticky.js`), which let the pointer through to the panels, or on plotly's
 // own labels.
 function axisUnder(event) {
+  const hit = axisHit(event);
+  return hit && current[`${hit.axis}_numeric`][hit.index] ? hit : null;
+}
+
+// Returns the axis column whose tick labels are under a pointer event, of
+// any kind, as `{axis, index}`, or null (`axisUnder`).
+function axisHit(event) {
   const strip = sticky.axisAt(event.clientX, event.clientY);
   if (!strip) return axisAt(event, gd, current);
-  const index = strip.axis === "x" ? strip.panel.x : strip.panel.y;
-  return current[`${strip.axis}_numeric`][index] ? { axis: strip.axis, index } : null;
+  return { axis: strip.axis, index: strip.axis === "x" ? strip.panel.x : strip.panel.y };
+}
+
+// The scale of each x and y column while the input is open (`axisscale.js`).
+const axisScales = new AxisScales();
+
+// Puts an axis column of the drawn result `meta` on a log or a linear axis:
+// the graph is aggregated again, with the column's axis over its whole
+// range and the other columns' axes at their shown ranges. A refusal (no
+// positive value) keeps the drawn plot, its selection and the scale.
+async function setAxisLog(meta, axis, column, log) {
+  if (meta !== current || !plottedEncoding) return;
+  const shown = shownRanges(meta);
+  const kept = {};
+  for (const role of ["x", "y"]) {
+    meta[`${role}_columns`].forEach((c, i) => {
+      if (!(role === axis && c === column)) kept[`${role}:${c}`] = shown[role][i];
+    });
+  }
+  axisScales.set(axis, column, log);
+  const drawn = await plot(plottedEncoding, { keepSelection: true });
+  if (drawn === "refused") axisScales.set(axis, column, !log);
+  if (!drawn || drawn === "refused") return;
+  // The other axes back at their ranges: a view, as after a zoom.
+  const next = current;
+  const update = {};
+  for (const role of ["x", "y"]) {
+    next[`${role}_columns`].forEach((c, i) => {
+      const range = kept[`${role}:${c}`];
+      const key = axisKey(next[`${role}_axes`][i]);
+      if (range && !sameRange(linearRange(gd._fullLayout[key]), range)) {
+        update[`${key}.range`] = plotlyRange(gd._fullLayout[key], range);
+      }
+    });
+  }
+  if (next === drawn && Object.keys(update).length) await Plotly.relayout(gd, update);
 }
 
 // Opens the dialog of the axis column `index` of `axis` ("x" or "y") of the drawn result.
@@ -347,6 +406,17 @@ function setCurrent(meta) {
   wrapColsInput.placeholder = `自動（${meta.ncol}）`;
   sticky.set(meta);
   showHoverWarning(meta.hover);
+  showLogWarning(meta.nonpositive);
+}
+
+// Tells, in the status bar, which log axis columns have rows left out for a
+// value that is not positive (`ddviz.compute.aggregate.Aggregation.nonpositive`).
+// It stays with the result drawn, beside the progress and the rows.
+function showLogWarning(nonpositive) {
+  logWarning.hidden = !nonpositive?.length;
+  if (logWarning.hidden) return;
+  const names = nonpositive.map(([axis, column]) => `${axis.toUpperCase()} の ${column}`).join("、");
+  logWarning.textContent = `対数表示のため、${names} の0以下の値を持つ行を描画対象から除外しています`;
 }
 
 // Tells, in the status bar, which hover columns a result left out to keep its
@@ -410,8 +480,11 @@ function sameSize(a, b) {
 const CONVERT_RETRY_MS = 300;
 
 // Aggregates the overview of a graph (`ddviz.server.encoding.Encoding`) and draws it.
-async function plot(encoding) {
-  clearSelection(false);
+// Returns the meta drawn, "refused" when the server refused the graph (the
+// drawn plot stays), or null when a newer request superseded it.
+async function plot(encoding, { keepSelection = false } = {}) {
+  // A change of scale keeps the selection until its result comes.
+  if (!keepSelection) clearSelection(false);
   const size = stageSize();
   plottedEncoding = encoding;
   // Another overlay column drops the shapes picked, with or without a color
@@ -428,6 +501,7 @@ async function plot(encoding) {
     shape_sizes: (encoding.color !== null && levelSizes.get(encoding.overlay)) || null,
     level_shapes: encoding.color !== null ? shapes : null,
     show_null_rows: { ...showNullRows },
+    axis_scales: axisScales.request(encoding),
   };
   requestedSize = size;
   statusLine.show("集約中…");
@@ -448,14 +522,15 @@ async function plot(encoding) {
     await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
   }
   if (plotting === mine) plotting = 0;
-  if (response.status === 409 || mine !== generation) return; // superseded by a newer request
+  if (response.status === 409 || mine !== generation) return null; // superseded by a newer request
   const text = await response.text();
   if (!response.ok) {
     converting.hidden = true;
     statusLine.error(errorText(text));
-    return;
+    return "refused";
   }
   converting.hidden = true;
+  if (keepSelection) clearSelection(false);
   timings.fetch = Math.round(performance.now() - started);
   timings.size = Math.round(text.length / 1024);
   const { figure, meta } = JSON.parse(text);
@@ -492,7 +567,7 @@ async function plot(encoding) {
   const bitmaps = await images;
   if (overview?.meta !== meta) {
     closeImages(bitmaps);
-    return;
+    return null;
   }
   overview.bitmaps = bitmaps;
   if (current === meta) showImages(meta, bitmaps);
@@ -501,6 +576,7 @@ async function plot(encoding) {
   // The area may have changed size, or the filter, while the plot was aggregated.
   if (filtersKey(meta.filters) !== filtersKey(filters)) applyFilters();
   else if (!sameSize(stageSize(), size)) onResize();
+  return meta;
 }
 
 // Returns the status of a result: its rows, and whether the filter left rows out.
@@ -727,7 +803,17 @@ async function followSelection() {
   // Once the server holds the selection, it is asked again by its facet
   // levels, which the server keeps, not by the panel's index.
   const { panel, x_range, y_range } = box;
-  const body = selection.held ? { task: meta.task } : { task: meta.task, panel, x_range, y_range };
+  // The server takes the box in values, ascending: those of a log axis are
+  // the powers of 10 of its exponents (`axisscale.js`).
+  const { x: xi, y: yj } = meta.panels[panel] ?? {};
+  const body = selection.held
+    ? { task: meta.task }
+    : {
+        task: meta.task,
+        panel,
+        x_range: toValues(meta.x_log[xi], x_range),
+        y_range: toValues(meta.y_log[yj], y_range),
+      };
   const response = await fetch("/api/selection", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -865,11 +951,18 @@ async function requestView({ x: xRanges, y: yRanges }) {
   requested = { x: xRanges, y: yRanges };
   statusLine.show("表示範囲を集約中…");
   setPending(true);
+  // The server takes values, ascending: the powers of 10 of the exponents of
+  // a log axis (`axisscale.js`).
+  const logs = overview.meta;
+  const values = {
+    x: xRanges.map((range, i) => toValues(logs.x_log[i], range)),
+    y: yRanges.map((range, i) => toValues(logs.y_log[i], range)),
+  };
   const started = performance.now();
   const response = await fetch("/api/view", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ x_ranges: xRanges, y_ranges: yRanges, ...size, filters }),
+    body: JSON.stringify({ x_ranges: values.x, y_ranges: values.y, ...size, filters }),
   });
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
@@ -1011,6 +1104,7 @@ function clearPlot() {
   noRows.hidden = true;
   statusLine.show("");
   hoverWarning.hidden = true;
+  logWarning.hidden = true;
 }
 
 // The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`) and

@@ -1,7 +1,9 @@
 // Box plots drawn on the image layers' canvas from a result's meta
 // (`ddviz.compute.boxes`): each panel's `boxes` are
 // `[level, series, n, low, q1, median, q3, high]` along a categorical x
-// axis. In a level's band, the series' boxes lie side by side.
+// axis. In a level's band, the series' boxes lie side by side. They are of
+// values: on a log y axis, at their exponents (`axisscale.js`).
+import { isLogAxis, toPosition } from "./axisscale.js";
 
 // Half the width of a band (`ddviz.compute.bands.BAND`), and the width of a
 // box as a part of its series' slot (`ddviz.compute.boxes.BOX`).
@@ -25,10 +27,12 @@ function span(box, nSeries) {
 // (drawn invisible) are not found.
 export function boxAt(meta, p, x, y, hidden = new Set()) {
   const nSeries = meta.grid.n_series;
+  // On a log axis, the boxes (of values) lie at their exponents, as y does.
+  const log = meta.y_log[meta.panels[p]?.y];
   for (const box of meta.panels[p]?.boxes ?? []) {
     if (hidden.has(box[1])) continue;
     const { middle, half } = span(box, nSeries);
-    if (Math.abs(x - middle) <= half && y >= box[3] && y <= box[7]) return box;
+    if (Math.abs(x - middle) <= half && y >= toPosition(log, box[3]) && y <= toPosition(log, box[7])) return box;
   }
   return null;
 }
@@ -45,7 +49,8 @@ export function drawBoxes(ctx, full, meta, colors, alpha, order) {
     const ya = full[panel.yaxis.replace(/^y/, "yaxis")];
     if (!xa || !ya) continue;
     const px = (v) => xa._offset + xa.l2p(v);
-    const py = (v) => ya._offset + ya.l2p(v);
+    // The boxes are of values: on a log axis, at their exponents.
+    const py = (v) => ya._offset + ya.l2p(toPosition(isLogAxis(ya), v));
     ctx.save();
     ctx.beginPath();
     ctx.rect(xa._offset, ya._offset, xa._length, ya._length);

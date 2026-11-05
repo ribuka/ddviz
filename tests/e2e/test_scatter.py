@@ -1101,13 +1101,14 @@ def test_a_right_click_on_the_plot_picks_the_drag_mode_and_resets_the_axes(
     assert page.evaluate(selections) == 1
     assert dragmode() == "select"
 
-    # An axis's tick labels open the menu too (the x ticks lie under the table);
-    # the mode bar does not.
+    # An axis's tick labels open the axis's own menu (Issue #90; the x ticks
+    # lie under the table); the mode bar opens none.
     tick = page.locator("#plot .ytick text").first.bounding_box()
     page.mouse.click(
         tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2, button="right"
     )
-    expect(menu).to_be_visible()
+    expect(page.locator(".axis-menu")).to_be_visible()
+    expect(menu).to_have_count(0)
     page.keyboard.press("Escape")
     page.locator('#plot .modebar-btn[data-val="pan"]').click(button="right")
     expect(menu).to_have_count(0)

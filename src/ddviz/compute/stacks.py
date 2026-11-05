@@ -32,6 +32,7 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from ddviz.compute.axisposition import position
 from ddviz.compute.bands import BAND
 from ddviz.compute.temporal import as_number, temporal_kind
 
@@ -79,12 +80,16 @@ class Axis:
         The axis' range in the panel (the view's, or the overview's).
     bins : int
         Pixels of a panel along the axis.
+    log : bool
+        Whether the axis is a log10 axis: `lo`, `hi` and the positions are
+        the log10 of the values (`ddviz.compute.axisposition`).
     """
 
     banded: bool
     lo: float
     hi: float
     bins: int
+    log: bool = False
 
     @property
     def scale(self) -> float:
@@ -356,8 +361,13 @@ def describe(
             pl.lit(coordinates.heights[0], pl.Int64).alias(WY),
         ]
     stacks = stacks.with_columns(
-        x.pixel(value if kx is None else kx).alias(PX),
-        y.pixel(value if ky is None else ky).alias(PY),
+        # A value on a log axis lies at its log10.
+        x.pixel(position(value.cast(pl.Float64), x.log) if kx is None else kx).alias(
+            PX
+        ),
+        y.pixel(position(value.cast(pl.Float64), y.log) if ky is None else ky).alias(
+            PY
+        ),
         pl.lit(pl.Series(coordinates.panels, dtype=pl.Int64)).gather(cell).alias(PANEL),
         *markers,
     ).drop(_TEMPORAL, strict=False)

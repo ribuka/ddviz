@@ -150,7 +150,7 @@ function withoutNulls(attributes) {
 // their ends), each in the group of its subplot (`x2y2`).
 const AXIS_DRAGS = { ewdrag: "x", wdrag: "x", edrag: "x", nsdrag: "y", sdrag: "y", ndrag: "y" };
 
-// Returns the numeric axis column under a pointer event on `gd`, the plot
+// Returns the axis column (of any kind) under a pointer event on `gd`, the plot
 // of the result `meta`, as `{axis: "x" | "y", index}` (of `x_columns` or
 // `y_columns`), or null. Only the drag areas of the tick labels count,
 // outside every panel: an axis's area reaches over the edge of a
@@ -177,7 +177,7 @@ export function axisAt(event, gd, meta) {
   const panel = meta.panels.find((p) => (axis === "x" ? p.xaxis : p.yaxis) === id);
   if (!panel) return null;
   const index = axis === "x" ? panel.x : panel.y;
-  return (axis === "x" ? meta.x_numeric : meta.y_numeric)[index] ? { axis, index } : null;
+  return { axis, index };
 }
 
 // Writes a number into a field, as the shortest text that reads back the

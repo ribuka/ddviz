@@ -88,7 +88,8 @@ class PlotManifest:
     axes : AxisGrid
         Facet cell and pair of axis columns of each panel.
     x_ranges, y_ranges : list of list of float
-        Data range of each x and each y column the bins cover.
+        Data range of each x and each y column the bins cover (positions of
+        a column on a log axis: the log10 of its values).
     levels : dict
         Levels of the color, overlay, row and col roles as drawn
         (`ddviz.compute.aggregate.Aggregation.levels`).
@@ -141,6 +142,10 @@ class PlotManifest:
     smooths : list of Smooths
         Smoothing lines of the pairs of a numeric x and a numeric y
         (`ddviz.compute.aggregate.Aggregation.smooths`).
+    nonpositive : list of list of str
+        The role and the name of each column on a log axis with a value
+        not positive among the rows of the local filter
+        (`ddviz.compute.aggregate.Aggregation.nonpositive`).
     """
 
     spec: ScatterSpec
@@ -166,6 +171,7 @@ class PlotManifest:
     pile_bytes: int = 0
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
+    nonpositive: list[list[str]] = field(default_factory=list)
 
     def write(self, out: Path) -> None:
         """Write the manifest into a task's directory (`write_manifest`)."""
@@ -211,6 +217,7 @@ class PlotManifest:
             pile_bytes=data["pile_bytes"],
             boxes=[Boxes(**b) for b in data["boxes"]],
             smooths=[Smooths(**k) for k in data["smooths"]],
+            nonpositive=[list(p) for p in data["nonpositive"]],
         )
 
 

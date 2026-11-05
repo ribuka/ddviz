@@ -28,6 +28,7 @@ class PlotRequest(BaseModel):
     shape_sizes: dict[str, object] | None = None
     level_shapes: dict[str, object] | None = None
     show_null_rows: ShowNullRows = ShowNullRows()
+    axis_scales: object = None
 
 
 class SizeRequest(BaseModel):

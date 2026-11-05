@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 
+from ddviz.compute.axisposition import position
 from ddviz.compute.bands import level_index
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.stacks import (
@@ -198,7 +199,9 @@ def stack_frame(
             _key(y_col, levels_of[y_col], schema.get(y_col, pl.String)).alias(_KY),
         )
     )
-    cx, cy = _center(x_col, levels_of[x_col]), _center(y_col, levels_of[y_col])
+    # The center of a row on a log axis is the log10 of its value.
+    cx = position(_center(x_col, levels_of[x_col]), x.log)
+    cy = position(_center(y_col, levels_of[y_col]), y.log)
     widths, heights = boxes
     packed = cell.cast(pl.Int64)
     value, dtype = pl.lit(0, pl.Int64), None
