@@ -6,7 +6,7 @@ import re
 
 import polars as pl
 import pytest
-from playwright.sync_api import Page, Route, expect
+from playwright.sync_api import ConsoleMessage, Page, Route, expect
 
 from ddviz.server.settings import LegendSettings, PlotSettings, Settings
 
@@ -1279,3 +1279,153 @@ def test_the_strips_of_a_scrolled_grid_open_the_axis_dialog(app_page: Page) -> N
         assert values == shown
         dialog.get_by_role("button", name="キャンセル").click()
         expect(dialog).to_have_count(0)
+
+
+def placed_names(page: Page) -> dict[str, list[str]]:
+    """Return the column names on each role's zone, in their order."""
+    return {
+        role: page.locator(f'.zone[data-role="{role}"] .chip-name').all_inner_texts()
+        for role in ["x", "y", "col", "row", "wrap", "color", "overlay"]
+    }
+
+
+def watch_errors(page: Page) -> list[str]:
+    """Collect the page's errors and console errors from now on.
+
+    A failed load is left out: Chromium asks for the favicon without the
+    cookie (`docs/spec.md`, "認証").
+    """
+    errors: list[str] = []
+
+    def console(message: ConsoleMessage) -> None:
+        if message.type == "error" and not message.text.startswith(
+            "Failed to load resource"
+        ):
+            errors.append(message.text)
+
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("console", console)
+    return errors
+
+
+@pytest.mark.parametrize(
+    ("role", "column", "index"),
+    [
+        ("x", "x", 0),
+        ("y", "y", 0),
+        ("x", "y", 1),
+        ("y", "x", 1),
+        ("col", "facet", 0),
+        ("row", "facet", 0),
+        ("wrap", "facet", 0),
+        ("color", "color", 0),
+        ("overlay", "color", 0),
+    ],
+)
+def test_a_chip_dragged_to_the_filters_adds_a_card_and_stays_placed(
+    app_page: Page, role: str, column: str, index: int
+) -> None:
+    """A chip of any role, a second axis's too, dragged with the mouse to the filter pane adds a card and keeps every role as it was."""
+    page = app_page
+    errors = watch_errors(page)
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    if index:
+        # The end of the zone adds a second axis after the first.
+        zone = page.locator(f'.zone[data-role="{role}"]').bounding_box()
+        if role == "x":
+            drop_at(page, column, role, zone["width"] * 0.9, zone["height"] / 2)
+        else:
+            drop_at(page, column, role, zone["width"] / 2, zone["height"] * 0.9)
+    elif role not in ("x", "y"):
+        place(page, column, role)
+    before = placed_names(page)
+    chip = page.locator(f'.zone[data-role="{role}"] .chip').nth(index)
+    expect(chip.locator(".chip-name")).to_have_text(column)
+
+    chip.drag_to(page.locator("#filters"))
+    expect(page.locator(".filter-card-name")).to_have_text([column])
+    assert placed_names(page) == before
+    # The card alone sets no condition.
+    expect(page.locator(".filter-summary")).to_have_text("")
+    expect(page.locator("#drop-tip")).to_be_hidden()
+    expect(page.locator("#filters")).not_to_have_class(re.compile(r"\bover\b"))
+    page.wait_for_function(SETTLED)
+    assert errors == []
+
+
+def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(
+    app_page: Page,
+) -> None:
+    """A numeric chip gets a range card and a categorical one a card of levels whose conditions filter the plot; a column already carded is refused and keeps its condition; a folded pane takes a drop on its head and opens; the builder still moves and removes chips afterwards."""
+    page = app_page
+    errors = watch_errors(page)
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    place(page, "color", "color")
+    filters = page.locator("#filters")
+    status = page.locator("#status")
+    x_chip = page.locator('.zone[data-role="x"] .chip')
+
+    x_chip.drag_to(filters)
+    card = page.locator(".filter-card")
+    expect(card.locator(".filter-range input")).to_have_count(2)
+    lo, hi = card.locator(".filter-range input").all()
+    task = status.inner_text()
+    lo.fill("0")
+    hi.fill("10")
+    hi.press("Enter")
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    expect(status).to_contain_text("（フィルタ後）")
+    summary = page.locator(".filter-summary")
+    expect(summary).to_contain_text("x:")
+    condition = summary.inner_text()
+    task = status.inner_text()
+
+    # The same column again: refused, with the tip saying so while it hovers.
+    x_chip.hover()
+    page.mouse.down()
+    box = filters.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=5)
+    # The drag starts on the first moves; this one is a dragover on the pane.
+    page.mouse.move(box["x"] + box["width"] / 2 + 1, box["y"] + box["height"] / 2)
+    expect(page.locator("#drop-tip")).to_have_text("x はフィルタにある")
+    expect(filters).not_to_have_class(re.compile(r"\bover\b"))
+    page.mouse.up()
+    expect(page.locator("#drop-tip")).to_be_hidden()
+    expect(card).to_have_count(1)
+    expect(summary).to_have_text(condition)
+    expect(lo).to_have_value("0")
+    expect(status).to_have_text(task)
+    expect(page.locator('.zone[data-role="x"] .chip-name')).to_have_text(["x"])
+
+    # A folded pane takes the drop on its head and opens.
+    page.locator(".filter-toggle").click()
+    expect(filters).to_have_class(re.compile(r"\bcollapsed\b"))
+    page.locator('.zone[data-role="color"] .chip').drag_to(page.locator(".filter-head"))
+    expect(filters).not_to_have_class(re.compile(r"\bcollapsed\b"))
+    levels = page.locator(".filter-card").nth(1).locator(".filter-level")
+    expect(levels).not_to_have_count(0)
+    expect(page.locator('.zone[data-role="color"] .chip-name')).to_have_text(["color"])
+    levels.filter(has=page.get_by_text("a", exact=True)).locator("input").check()
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    expect(summary).to_contain_text("color:")
+
+    # The builder still moves a chip between roles and removes one dropped outside.
+    page.locator('.zone[data-role="color"] .chip').drag_to(
+        page.locator('.zone[data-role="overlay"]')
+    )
+    expect(page.locator('.zone[data-role="overlay"] .chip-name')).to_have_text(
+        ["color"]
+    )
+    expect(page.locator('.zone[data-role="color"] .chip')).to_have_count(0)
+    page.wait_for_function(SETTLED)
+    page.locator('.zone[data-role="overlay"] .chip').drag_to(page.locator("#columns"))
+    expect(page.locator('.zone[data-role="overlay"] .chip')).to_have_count(0)
+    expect(page.locator(".filter-card")).to_have_count(2)
+    page.wait_for_function(SETTLED)
+    assert errors == []

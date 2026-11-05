@@ -321,7 +321,7 @@ export class Builder {
     const chip = document.createElement("span");
     chip.className = "chip";
     chip.draggable = true;
-    chip.title = `${name}。ドラッグで別の役割へ移す。× か、枠の外に落とすと外す`;
+    chip.title = `${name}。ドラッグで別の役割へ移す。フィルタ欄に落とすとフィルタに加える（チップは残る）。× か、枠の外に落とすと外す`;
     const text = document.createElement("span");
     text.className = "chip-name";
     // A duration is drawn as seconds.
@@ -337,7 +337,8 @@ export class Builder {
       event.stopPropagation();
       beginDrag({ name, numeric: this.numeric.get(name), temporal: this.temporal.get(name), from: role, index });
       event.dataTransfer.setData("text/plain", name);
-      event.dataTransfer.effectAllowed = "move";
+      // A move to a role or out of the builder; a copy to the filter pane, which keeps the chip.
+      event.dataTransfer.effectAllowed = "copyMove";
     });
     return chip;
   }
