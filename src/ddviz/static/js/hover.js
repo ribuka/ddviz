@@ -182,7 +182,8 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     label.style.background =
       meta.color.kind === "gradient" && typeof hit.values[column] === "number"
         ? valueColor(meta, hit.values[column])
-        : seriesColors(meta)[hit.series];
+        : // A gradient's own series has no color (its column may be left out of the hover).
+          (seriesColors(meta)[hit.series] ?? "#444");
     label.hidden = false;
     ring.hidden = false;
     ring.style.left = `${cx}px`;
