@@ -332,13 +332,15 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
     [Settings(plot=PlotSettings(legend=LegendSettings(inactive_opacity=0.0)))],
 )
 def test_inactive_series_at_opacity_0_vanish_and_do_not_hover(app_page: Page) -> None:
-    """With ``plot.legend.inactive_opacity = 0``, inactive series draw nothing and the hover does not find them; their legend items stay clickable."""
+    """With ``plot.legend.inactive_opacity = 0``, inactive series draw nothing (smoothing lines and their white edges neither) and the hover does not find them; their legend items stay clickable."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
     place(page, "x", "x", plots=False)
     for column, role in [("y", "y"), ("color", "color")]:
         place(page, column, role)
+    page.locator("#elements .element").nth(2).click()
+    page.wait_for_function(SETTLED)
     pixel = page.wait_for_function(PAINTED_PIXEL).json_value()
     page.mouse.move(pixel["x"], pixel["y"])
     expect(page.locator("#hover-label")).to_be_visible()
