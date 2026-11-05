@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from ddviz.server.encoding import Encoding
+from ddviz.shared.axisscale import parse_axis_scales
 from ddviz.shared.scatter import (
     MAX_LEVELS,
     ONE_BAND,
@@ -253,6 +254,7 @@ def scatter_spec(
     shape_sizes: dict[str, int] | None = None,
     level_shapes: dict[str, str] | None = None,
     show_null_rows: dict[str, bool] | None = None,
+    axis_scales: object = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -319,6 +321,9 @@ def scatter_spec(
         their rows with a null or NaN value (`ScatterSpec.null_roles`); a
         role left out does. Overlay alone colors the series by its own
         setting. None for both.
+    axis_scales : object, optional
+        The scale of each placed x and y column, as the request has it
+        (`ddviz.shared.axisscale.parse_axis_scales`); None for all linear.
 
     Returns
     -------
@@ -329,13 +334,16 @@ def scatter_spec(
     ------
     ValueError
         When the graph is not `drawable`, or wrap has a column beside row,
-        col or the n-th axes.
+        col or the n-th axes, or `axis_scales` is wrong.
     """
     numeric = numeric or {}
     if not drawable(encoding, numeric):
         raise ValueError("x and y need a column, or y numeric columns alone")
     # Without an x column, every row lies in one band.
     x = list(encoding.x) or [ONE_BAND]
+    log_x, log_y = parse_axis_scales(
+        axis_scales, list(encoding.x), list(encoding.y), numeric, temporal or {}
+    )
     wrap = encoding.wrap is not None
     if wrap and (encoding.row is not None or encoding.col is not None):
         raise ValueError("wrap cannot be placed with row or col")
@@ -398,6 +406,8 @@ def scatter_spec(
         level_shapes=dict(level_shapes or {}) if overlay is not None else {},
         temporal={c: k for c, k in (temporal or {}).items() if c in read},
         null_roles=null_roles,
+        log_x=log_x,
+        log_y=log_y,
     )
 
 

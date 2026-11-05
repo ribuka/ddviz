@@ -30,6 +30,11 @@ _ROLES = (
 )
 
 
+def _values(at: np.ndarray, log: np.ndarray) -> np.ndarray:
+    """Return the values at positions: the powers of 10 of those on a log axis (`log`)."""
+    return np.where(log, np.power(10.0, at), at)
+
+
 def _levels(levels: list, index: np.ndarray) -> pl.Series:
     """Return the text of each bin's level; null for the missing level (`ddviz.shared.missing.MISSING`)."""
     texts = [None if v == MISSING else str(v) for v in levels]
@@ -44,16 +49,22 @@ def _axis(
     which: np.ndarray,
     bins: np.ndarray,
     n: int,
+    logs: list[str],
 ) -> dict[str, pl.Series]:
-    """Return the columns of one axis: its data column, the bin's range and, with a categorical column, its level."""
+    """Return the columns of one axis: its data column, the bin's range and, with a categorical column, its level.
+
+    The range of a bin of a column on a log axis (`logs`) is of the
+    values: the powers of 10 of its positions.
+    """
+    log = np.array([c in logs for c in columns])[which]
     lo = np.array([r[0] for r in ranges])[which]
     step = (np.array([r[1] for r in ranges])[which] - lo) / n
     out = {
         f"{name}_column": pl.Series(
             [None if c == ONE_BAND else c for c in columns], dtype=pl.String
         ).gather(which),
-        f"{name}_lo": pl.Series(lo + bins * step),
-        f"{name}_hi": pl.Series(lo + (bins + 1) * step),
+        f"{name}_lo": pl.Series(_values(lo + bins * step, log)),
+        f"{name}_hi": pl.Series(_values(lo + (bins + 1) * step, log)),
     }
     if any(c in axis_levels for c in columns):
         # The band of a level is centered at its index; null for a numeric column.
@@ -117,10 +128,24 @@ def bins_table(out: Path) -> pl.DataFrame:
         row, col = np.zeros_like(row), row * axes.ncol + col
     columns = {
         **_axis(
-            "x", spec.x, manifest.x_ranges, manifest.axis_levels, xi, bx, grid.width
+            "x",
+            spec.x,
+            manifest.x_ranges,
+            manifest.axis_levels,
+            xi,
+            bx,
+            grid.width,
+            spec.log_x,
         ),
         **_axis(
-            "y", spec.y, manifest.y_ranges, manifest.axis_levels, yj, by, grid.height
+            "y",
+            spec.y,
+            manifest.y_ranges,
+            manifest.axis_levels,
+            yj,
+            by,
+            grid.height,
+            spec.log_y,
         ),
     }
     shapes = len(levels["overlay"])

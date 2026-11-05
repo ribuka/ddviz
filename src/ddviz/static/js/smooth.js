@@ -1,6 +1,8 @@
 // Smoothing lines drawn on the image layers' canvas from a result's meta
 // (`ddviz.compute.smooth`): each panel's `smooths` are `[series, xs, ys]`,
-// a line through the points (xs, ys) in data coordinates.
+// a line through the points (xs, ys) in data coordinates: on a log axis,
+// at their exponents (`axisscale.js`), broken where a point has none.
+import { isLogAxis, toPosition } from "./axisscale.js";
 
 // Width of a line's colored stroke, in CSS pixels.
 export const LINE_WIDTH = 2;
@@ -23,6 +25,8 @@ export function drawSmooths(ctx, full, meta, colors, alpha, order) {
     const xa = full[panel.xaxis.replace(/^x/, "xaxis")];
     const ya = full[panel.yaxis.replace(/^y/, "yaxis")];
     if (!xa || !ya) continue;
+    const xLog = isLogAxis(xa);
+    const yLog = isLogAxis(ya);
     ctx.save();
     ctx.beginPath();
     ctx.rect(xa._offset, ya._offset, xa._length, ya._length);
@@ -35,11 +39,21 @@ export function drawSmooths(ctx, full, meta, colors, alpha, order) {
       if (!(opacity > 0)) continue;
       ctx.globalAlpha = opacity;
       ctx.beginPath();
+      // A point without a position (an estimate not positive on a log
+      // axis, or not finite) breaks the line: its ends stay apart.
+      let joined = false;
       xs.forEach((x, i) => {
-        const px = xa._offset + xa.l2p(x);
-        const py = ya._offset + ya.l2p(ys[i]);
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+        const lx = toPosition(xLog, x);
+        const ly = toPosition(yLog, ys[i]);
+        if (!Number.isFinite(lx) || !Number.isFinite(ly)) {
+          joined = false;
+          return;
+        }
+        const px = xa._offset + xa.l2p(lx);
+        const py = ya._offset + ya.l2p(ly);
+        if (joined) ctx.lineTo(px, py);
+        else ctx.moveTo(px, py);
+        joined = true;
       });
       ctx.lineWidth = HALO_WIDTH;
       ctx.strokeStyle = HALO_COLOR;

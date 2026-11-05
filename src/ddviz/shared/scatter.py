@@ -117,7 +117,8 @@ class View:
     x_ranges, y_ranges : list of list of float
         Data range of each x and each y column to aggregate: the bins of a
         panel cover exactly the ranges of its columns and rows outside them
-        are left out of it.
+        are left out of it. A column on a log axis has the positions of
+        its range: the log10 of the values (`ddviz.shared.axisscale`).
     levels : dict
         Levels of the overview over every row
         (`ddviz.compute.aggregate.Aggregation.all_levels`), so that the series stay
@@ -166,7 +167,8 @@ class Selection:
     x, y : str
         The panel's x and y columns.
     x_range, y_range : list of float
-        The box along them.
+        The box along them, as positions (on a log axis, the log10 of the
+        values: `ddviz.shared.axisscale`).
     row, col : str or None
         The panel's facet levels (as text), or None without a row or col
         column.
@@ -313,6 +315,12 @@ class ScatterSpec:
         (`ddviz.shared.missing.MISSING`), the last of its levels, when the
         column has such rows; the other roles' rows, and those of a role not
         listed, are left out. An infinite value is always left out.
+    log_x, log_y : list of str
+        The x and the y columns on log10 axes (`ddviz.shared.axisscale`):
+        the ranges of their columns in the view, and the bins along them,
+        are of the log10 of their values, and a panel of such a column
+        draws only its rows with a positive finite value there. Box plots
+        and smoothing lines are found from those rows' values themselves.
     """
 
     files: dict[str, list[str]]
@@ -344,6 +352,8 @@ class ScatterSpec:
     level_shapes: dict[str, str] = field(default_factory=dict)
     temporal: dict[str, str] = field(default_factory=dict)
     null_roles: list[str] = field(default_factory=list)
+    log_x: list[str] = field(default_factory=list)
+    log_y: list[str] = field(default_factory=list)
 
     def box_pairs(self) -> set[tuple[str, str]]:
         """Return the pairs of axis columns whose panels have box plots.

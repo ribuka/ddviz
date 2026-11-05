@@ -188,6 +188,21 @@ def _numeric_axis(manifest: PlotManifest, column: str) -> bool:
     )
 
 
+def _loggable_axis(manifest: PlotManifest, column: str) -> bool:
+    """Return whether an axis column may lie on a log axis: a number or a duration (`ddviz.shared.axisscale.loggable`)."""
+    spec = manifest.spec
+    return (
+        column != ONE_BAND
+        and column not in manifest.axis_levels
+        and spec.temporal.get(column) not in DATE_KINDS
+    )
+
+
+def _log_axis(log: bool) -> dict:
+    """Return the type of a log axis: plotly's log axis, whose range is of exponents, as the result's ranges are."""
+    return {"type": "log"} if log else {}
+
+
 def _series_ticks(manifest: PlotManifest) -> dict[float, str]:
     """Return the ticks of the one band (`ddviz.shared.scatter.ONE_BAND`): each series' name under its box.
 
@@ -317,8 +332,12 @@ def build_figure(manifest: PlotManifest) -> dict:
         plotly's date axis over milliseconds),
         the axes that hold the range of each x and y column (``x_axes``,
         ``y_axes``), whether each x and y column is on a numeric axis
-        (``x_numeric``, ``y_numeric``: not categorical, temporal or the
-        one band), the bin grid, the data range of each column, where each
+        (``x_numeric``, ``y_numeric``: linear, and not categorical, temporal
+        or the one band), whether each may lie on a log axis and does
+        (``x_loggable``, ``x_log`` and those of y: a number or a duration;
+        the ranges of a log axis are exponents), the log axis columns
+        with rows left out for a value not positive (``nonpositive``,
+        ``[role, column]`` each), the bin grid, the data range of each column, where each
         series' PNG lies in the images file (`ddviz.shared.manifest.IMAGES`; its
         panels are tiles, ``ncol`` to a row, as `ddviz.compute.raster.atlas`),
         whether the grid scrolls, its facet labels (plotly annotations in
@@ -377,6 +396,7 @@ def build_figure(manifest: PlotManifest) -> dict:
             **EXPONENT,
             **_band_ticks(manifest, spec.x[xi], layout.panel_width),
             **_date_axis(spec, spec.x[xi]),
+            **_log_axis(spec.x[xi] in spec.log_x),
             **_FRAME,
             **({"matches": x_axes[xi]} if x_axis != x_axes[xi] else {}),
         }
@@ -389,6 +409,7 @@ def build_figure(manifest: PlotManifest) -> dict:
             **EXPONENT,
             **_band_ticks(manifest, spec.y[yj], None),
             **_date_axis(spec, spec.y[yj]),
+            **_log_axis(spec.y[yj] in spec.log_y),
             **_FRAME,
             **({"matches": y_axes[yj]} if y_axis != y_axes[yj] else {}),
         }
@@ -440,8 +461,20 @@ def build_figure(manifest: PlotManifest) -> dict:
         "y_columns": spec.y,
         "x_axes": x_axes,
         "y_axes": y_axes,
-        "x_numeric": [_numeric_axis(manifest, c) for c in spec.x],
-        "y_numeric": [_numeric_axis(manifest, c) for c in spec.y],
+        # The axis dialog (`static/js/axisdialog.js`) is of linear axes.
+        "x_numeric": [
+            _numeric_axis(manifest, c) and c not in spec.log_x for c in spec.x
+        ],
+        "y_numeric": [
+            _numeric_axis(manifest, c) and c not in spec.log_y for c in spec.y
+        ],
+        # Whether each axis column may lie on a log axis, and whether it does.
+        "x_loggable": [_loggable_axis(manifest, c) for c in spec.x],
+        "y_loggable": [_loggable_axis(manifest, c) for c in spec.y],
+        "x_log": [c in spec.log_x for c in spec.x],
+        "y_log": [c in spec.log_y for c in spec.y],
+        # The log axis columns with rows left out for a value not positive.
+        "nonpositive": manifest.nonpositive,
         "grid": asdict(manifest.grid),
         "x_ranges": [list(r) for r in x_ranges],
         "y_ranges": [list(r) for r in y_ranges],

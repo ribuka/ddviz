@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 import polars as pl
 
+from ddviz.compute.axisposition import on_axis, position
 from ddviz.compute.bands import JITTER_X, band_range, jitter, level_index
 from ddviz.compute.boxes import (
     GROUP,
@@ -30,6 +31,12 @@ from ddviz.compute.selection import selection_columns, selection_filter
 from ddviz.compute.smooth import bin_query, fit_lines
 from ddviz.compute.stacked import ROWS, TOP, marker_boxes, stack_frame, stacked_bins
 from ddviz.compute.stacks import Axis
+from ddviz.shared.axisscale import (
+    NoPositiveValuesError,
+    no_positive_message,
+    padded_log_range,
+    values,
+)
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import (
     GAP,
@@ -93,7 +100,8 @@ class Aggregation:
         Data range of each x and each y column that the bins cover; along x
         in a panel of the x column ``xi``, bin ``i`` spans
         ``lo + i * (hi - lo) / grid.width`` onward, where ``lo, hi`` is
-        ``x_ranges[xi]``.
+        ``x_ranges[xi]``. Those of a column on a log axis are positions:
+        the log10 of its values (`ddviz.shared.axisscale`).
     levels : dict
         Levels of the ``"color"``, ``"overlay"``, ``"row"`` and ``"col"``
         roles as text, in index order, as drawn: the series of every row
@@ -139,6 +147,10 @@ class Aggregation:
     selected_piles : polars.DataFrame or None
         For a spec with a selection, the bins of the selected rows of the
         piles at their centers (`KEY` and `COUNT`).
+    nonpositive : list of tuple of str
+        The role (``"x"`` or ``"y"``) and the name of each column on a log
+        axis with a finite value that is not positive among the rows of
+        the local filter: rows not drawn in its panels.
     """
 
     grid: BinGrid
@@ -159,6 +171,7 @@ class Aggregation:
     selected_piles: pl.DataFrame | None = None
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
+    nonpositive: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _padded(lo: float | None, hi: float | None) -> tuple[float, float]:
@@ -200,6 +213,56 @@ def _range_query(spec: ScatterSpec, column: str) -> pl.LazyFrame:
 
 
 @dataclass(frozen=True)
+class _LogAxes:
+    """What the rows of the local filter hold for the log axes (`_log_axes`)."""
+
+    ranges: dict[str, tuple[float, float] | None]
+    nonpositive: list[tuple[str, str]]
+
+    def exponents(self, column: str) -> tuple[float, float]:
+        """Return the padded exponents of a column's positive values (it has some)."""
+        lo, hi = self.ranges[column]
+        return padded_log_range(lo, hi)
+
+
+def _log_axes(spec: ScatterSpec) -> _LogAxes:
+    """Return the positive finite range of each column on a log axis, and those with a value not positive.
+
+    Over the rows of the local filter, in one pass per column.
+    """
+    columns = list(dict.fromkeys([*spec.log_x, *spec.log_y]))
+    if not columns:
+        return _LogAxes({}, [])
+    queries = []
+    for c in columns:
+        value = pl.col(c).cast(pl.Float64)
+        positive = value.filter(on_axis(value, True))
+        queries.append(
+            _scan(spec, [c, *filter_columns(spec.filters)])
+            .filter(*filter_conditions(spec.filters))
+            .select(
+                positive.min().alias("min"),
+                positive.max().alias("max"),
+                (value.is_finite() & (value <= 0)).any().alias("nonpositive"),
+            )
+        )
+    found = pl.collect_all(queries, engine="streaming")
+    ranges, flagged = {}, set()
+    for c, f in zip(columns, found, strict=True):
+        lo, hi, nonpositive = f.row(0)
+        ranges[c] = None if lo is None else (lo, hi)
+        if nonpositive:
+            flagged.add(c)
+    nonpositive = [
+        (role, c)
+        for role, logs in (("x", spec.log_x), ("y", spec.log_y))
+        for c in logs
+        if c in flagged
+    ]
+    return _LogAxes(ranges, nonpositive)
+
+
+@dataclass(frozen=True)
 class _Overview:
     """What the overview finds over every row (`_overview`)."""
 
@@ -211,7 +274,9 @@ class _Overview:
     axis_levels: dict[str, list[str]]
 
 
-def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
+def _overview(
+    spec: ScatterSpec, roles: dict[str, str | None], logs: _LogAxes
+) -> _Overview:
     """Return the padded data range of each axis column and the levels of each role.
 
     The ranges and the levels of the categorical roles and axis columns
@@ -285,8 +350,9 @@ def _overview(spec: ScatterSpec, roles: dict[str, str | None]) -> _Overview:
         column_levels[ONE_BAND] = [""]
     axis_levels = {c: column_levels[c] for c in spec.categorical}
     ranges.update({c: band_range(v) for c, v in axis_levels.items()})
-    x_ranges = [ranges[c] for c in spec.x]
-    y_ranges = [ranges[c] for c in spec.y]
+    # A log axis spans the exponents of its positive values (`_log_axes`).
+    x_ranges = [logs.exponents(c) if c in spec.log_x else ranges[c] for c in spec.x]
+    y_ranges = [logs.exponents(c) if c in spec.log_y else ranges[c] for c in spec.y]
     # The missing level drawn counts as one level of its column.
     counted = {
         c: len(v) + any(roles[r] == c for r in missing)
@@ -416,6 +482,18 @@ def aggregate(
     }
     used = list(dict.fromkeys(c for c in roles.values() if c is not None))
 
+    # A view keeps the overview's ranges, even of a log axis left without a
+    # positive value by its filter: it draws no row there.
+    logs = _LogAxes({}, []) if selection_only else _log_axes(spec)
+    if spec.view is None:
+        empty = [
+            (role, c)
+            for role, columns in (("x", spec.log_x), ("y", spec.log_y))
+            for c in columns
+            if logs.ranges[c] is None
+        ]
+        if empty:
+            raise NoPositiveValuesError(no_positive_message(empty))
     if spec.view is not None:
         x_ranges = [(lo, hi) for lo, hi in spec.view.x_ranges]
         y_ranges = [(lo, hi) for lo, hi in spec.view.y_ranges]
@@ -429,7 +507,7 @@ def aggregate(
         known_smooths = spec.view.smooths
     else:
         progress("levels")
-        found = _overview(spec, roles)
+        found = _overview(spec, roles, logs)
         x_ranges, y_ranges = found.x_ranges, found.y_ranges
         all_levels, cuts, color_range = found.levels, found.cuts, found.color_range
         axis_levels = found.axis_levels
@@ -498,7 +576,8 @@ def aggregate(
                 _scan(spec, [x_col, y_col, *used, *filter_columns(spec.filters)])
                 .filter(
                     pl.col(x_col).is_not_null(),
-                    value.is_finite(),
+                    # On a log axis, the box of the positive values.
+                    on_axis(value, y_col in spec.log_y),
                     *valid,
                     *filter_conditions(spec.filters),
                 )
@@ -523,7 +602,14 @@ def aggregate(
                 continue
             # The overview's range, whose bins a view's lines keep: a view
             # with another filter fits them again over the whole range.
-            if spec.view is None:
+            # On a log axis, the lines are fitted over the values themselves
+            # of the positive rows (the page draws them at their log10).
+            if x_col in spec.log_x:
+                at = x_ranges[xi]
+                if spec.view is not None and logs.ranges[x_col] is not None:
+                    at = logs.exponents(x_col)
+                bounds = values(at, True)
+            elif spec.view is None:
                 bounds = x_ranges[xi]
             else:
                 bounds = _overview_range(spec, x_col)
@@ -571,6 +657,10 @@ def aggregate(
             n_groups *= len(axis_levels[x_col]) * grid.n_series
             stats = _group_stats(boxes_of[x_col, y_col], levels, axis_levels, grid)
             outlier = is_outlier(y, group(x_col), fences(stats, n_groups))
+        # Positions on the axes: the log10 of a value on a log axis; the
+        # outliers above are of the values themselves.
+        x = position(x, x_col in spec.log_x)
+        y = position(y, y_col in spec.log_y)
         key = grid.pack(
             axes.panel(row, col, xi, yj),
             series,
@@ -605,8 +695,8 @@ def aggregate(
     ) -> tuple[pl.DataFrame, pl.DataFrame, Piles | None]:
         """Return the bins, the bins of the piles and the piles of a pair with a categorical axis drawing points (`ddviz.compute.stacked`)."""
         x_col, y_col = spec.x[xi], spec.y[yj]
-        x = Axis(x_col in categorical, *x_ranges[xi], grid.width)
-        y = Axis(y_col in categorical, *y_ranges[yj], grid.height)
+        x = Axis(x_col in categorical, *x_ranges[xi], grid.width, x_col in spec.log_x)
+        y = Axis(y_col in categorical, *y_ranges[yj], grid.height, y_col in spec.log_y)
         columns = [x_col, y_col, *used, *extra_columns, *filter_columns(spec.filters)]
         n_col = len(levels["col"])
         panels = []
@@ -751,6 +841,7 @@ def aggregate(
         pile_bins=pile_bins,
         boxes=boxes,
         smooths=smooths,
+        nonpositive=logs.nonpositive,
     )
 
 
@@ -774,8 +865,12 @@ def _smooths(
     """Return the smoothing lines of a pair over the drawn rows that pass the local filter, one per facet cell and series (`ddviz.compute.smooth`)."""
     x = pl.col(x_col).cast(pl.Float64)
     y = pl.col(y_col).cast(pl.Float64)
+    # On a log axis, only the positive values have a place to be drawn.
     frame = _scan(spec, [x_col, y_col, *used, *filter_columns(spec.filters)]).filter(
-        x.is_finite(), y.is_finite(), *valid, *filter_conditions(spec.filters)
+        on_axis(x, x_col in spec.log_x),
+        on_axis(y, y_col in spec.log_y),
+        *valid,
+        *filter_conditions(spec.filters),
     )
     n_col = len(levels["col"])
     bins = bin_query(frame, x, y, row * n_col + col, series, bounds).collect(

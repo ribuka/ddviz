@@ -11,6 +11,7 @@ import math
 
 import polars as pl
 
+from ddviz.compute.axisposition import position
 from ddviz.compute.bands import BAND, level_index
 from ddviz.compute.cuts import in_level
 from ddviz.compute.missing import drawn_conditions, role_index
@@ -58,8 +59,9 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
     axis_levels = spec.view.axis_levels if spec.categorical else {}
     cell = _cell_conditions(spec)
     if spec.points or (selection.x, selection.y) not in spec.box_pairs():
-        x = _center(selection.x, axis_levels)
-        y = _center(selection.y, axis_levels)
+        # Positions on the axes: the log10 of a value on a log axis.
+        x = position(_center(selection.x, axis_levels), selection.x in spec.log_x)
+        y = position(_center(selection.y, axis_levels), selection.y in spec.log_y)
         if {selection.x, selection.y} & set(spec.categorical):
             return [
                 x.is_finite(),
@@ -76,7 +78,7 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
     else:
         lo, hi = selection.x_range
         level = level_index(selection.x, axis_levels[selection.x])
-        y = pl.col(selection.y).cast(pl.Float64)
+        y = position(pl.col(selection.y).cast(pl.Float64), selection.y in spec.log_y)
         conditions = [
             level.is_between(math.ceil(lo - BAND), math.floor(hi + BAND)),
             y.is_finite(),
@@ -154,8 +156,15 @@ def _stacked(
     xi, yj = spec.x.index(selection.x), spec.y.index(selection.y)
     width, height = _panel_bins(spec)
     categorical = set(spec.categorical)
-    axis_x = Axis(selection.x in categorical, *view.x_ranges[xi], width)
-    axis_y = Axis(selection.y in categorical, *view.y_ranges[yj], height)
+    axis_x = Axis(
+        selection.x in categorical, *view.x_ranges[xi], width, selection.x in spec.log_x
+    )
+    axis_y = Axis(
+        selection.y in categorical,
+        *view.y_ranges[yj],
+        height,
+        selection.y in spec.log_y,
+    )
     x0, x1 = selection.x_range
     y0, y1 = selection.y_range
     in_box = x.is_between(x0, x1) & y.is_between(y0, y1)
@@ -201,8 +210,8 @@ def _stacked(
                 (axis_y, PY, DY, _IN_Y, (y0, y1)),
             ):
                 if axis.banded:
-                    position = axis.position(pl.col(pixel) + pl.col(offset))
-                    at.append(position.is_between(lo, hi))
+                    where = axis.position(pl.col(pixel) + pl.col(offset))
+                    at.append(where.is_between(lo, hi))
                 else:
                     at.append(pl.col(inside))
             moved = placed.select(

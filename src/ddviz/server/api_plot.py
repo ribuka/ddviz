@@ -47,6 +47,7 @@ from ddviz.server.plan import (
 from ddviz.server.plotdata import FORMATS, file_name
 from ddviz.server.results import Results, drop
 from ddviz.server.source import Source
+from ddviz.shared.axisscale import NoPositiveValuesError, axis_positions
 from ddviz.shared.manifest import IMAGES, read_manifest
 from ddviz.shared.palette import DEFAULT_COLORS
 from ddviz.shared.scatter import ScatterSpec
@@ -94,6 +95,10 @@ def plot_router(
         end = await broker.run(PlotTask(spec))
         if end.type == "cancelled":
             return None, {}
+        refused = f"{NoPositiveValuesError.__name__}: "
+        if end.type == "error" and (end.error or "").startswith(refused):
+            # A log axis without a positive value: the page keeps its plot.
+            raise HTTPException(400, end.error.removeprefix(refused))
         ensure_done(end)
         timing = {"task_seconds": time.perf_counter() - started}
         await asyncio.to_thread(source.touch, spec.hover)
@@ -199,6 +204,7 @@ def plot_router(
                 shape_sizes,
                 level_shapes,
                 request.show_null_rows.model_dump(),
+                request.axis_scales,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -219,8 +225,20 @@ def plot_router(
 
     @router.post("/api/view")
     async def view(request: ViewRequest) -> JSONResponse:
-        """Aggregate the zoomed view of the overview."""
-        spec = await respec(request, request.x_ranges, request.y_ranges)
+        """Aggregate the zoomed view of the overview.
+
+        The ranges are of the values themselves: those of a log axis become
+        its positions here (`ddviz.shared.axisscale.axis_positions`).
+        """
+        if results.overview is None:
+            raise HTTPException(409, "no plot")
+        drawn = results.overview.manifest.spec
+        try:
+            x_ranges = axis_positions(request.x_ranges, drawn.x, drawn.log_x)
+            y_ranges = axis_positions(request.y_ranges, drawn.y, drawn.log_y)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        spec = await respec(request, x_ranges, y_ranges)
         if unchanged(results.view.manifest if results.view else None, spec):
             # A task for another size must not replace the result drawn now.
             await broker.cancel()

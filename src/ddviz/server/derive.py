@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from ddviz.shared.axisscale import positions
 from ddviz.shared.layout import GAP, WRAP_GAP, facet_grid, grid_layout
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
@@ -162,7 +163,8 @@ def box_selection(
     panel : int
         Index of the panel.
     x_range, y_range : tuple of float or None
-        Data ranges of the box, in either order.
+        Data ranges of the box, in either order: of the values themselves,
+        also on a log axis (`ddviz.shared.axisscale`).
 
     Returns
     -------
@@ -172,7 +174,8 @@ def box_selection(
     Raises
     ------
     ValueError
-        For a panel the result does not have, or a box without both ranges.
+        For a panel the result does not have, a box without both ranges,
+        or a box of a log axis over values that are not positive.
     """
     spec, levels, axes = manifest.spec, manifest.levels, manifest.axes
     if not 0 <= panel < axes.panels:
@@ -184,8 +187,9 @@ def box_selection(
     return Selection(
         x=spec.x[xi],
         y=spec.y[yj],
-        x_range=sorted(x_range),
-        y_range=sorted(y_range),
+        # The box is of the values; a log axis holds their positions.
+        x_range=list(positions(tuple(sorted(x_range)), spec.x[xi] in spec.log_x)),
+        y_range=list(positions(tuple(sorted(y_range)), spec.y[yj] in spec.log_y)),
         row=levels["row"][row] if spec.row else None,
         col=levels["col"][col] if spec.col else None,
     )
