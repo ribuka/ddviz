@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import AxisGrid, GridLayout
-from ddviz.shared.scatter import Boxes, ScatterSpec, Selection, Smooths, Spread
+from ddviz.shared.scatter import Boxes, ScatterSpec, Selection, Smooths
 
 MANIFEST = "manifest.json"
 # File of a plot task holding the PNG of every panel and series one after
@@ -118,9 +118,23 @@ class PlotManifest:
     axis_levels : dict
         Levels of each categorical axis column
         (`ddviz.compute.aggregate.Aggregation.axis_levels`).
-    spreads : list of Spread
-        How the points spread in the bands of the categorical axes
-        (`ddviz.compute.aggregate.Aggregation.spreads`).
+    piles : int
+        The piles drawn (`ddviz.compute.stacks`): one marker each, with its
+        rows, at the center of rows that share their coordinates and do
+        not fit their band. Their files (`ddviz.compute.tasks.plot`) hold
+        the pixel of each (``pile_pixel.npy``), its rows
+        (``pile_n.npy``), its rows by series (``pile_start.npy``,
+        ``pile_series.npy``, ``pile_series_n.npy``), for a gradient its
+        least and largest color (``pile_min.npy``, ``pile_max.npy``), and
+        the values of the axis columns (`pile_columns`). They are written
+        whatever ``spec.hover_bytes`` leaves for the hover files.
+    pile_columns : list of HoverColumn
+        The value of each axis column of the panels with piles at each pile,
+        NaN (or code -1) for the piles of panels of other columns.
+    pile_bytes : int
+        Bytes of the pile files; with the hover files, also
+        ``pile_keys.npy`` and ``pile_count.npy``, the rows of the piles in
+        the bins of their centers by series.
     boxes : list of Boxes
         Box plots of the pairs of a categorical x and a numeric y
         (`ddviz.compute.aggregate.Aggregation.boxes`).
@@ -147,7 +161,9 @@ class PlotManifest:
     hover_dropped: list[str] = field(default_factory=list)
     hover_bytes: int = 0
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
-    spreads: list[Spread] = field(default_factory=list)
+    piles: int = 0
+    pile_columns: list[HoverColumn] = field(default_factory=list)
+    pile_bytes: int = 0
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
 
@@ -190,7 +206,9 @@ class PlotManifest:
             hover_dropped=data["hover_dropped"],
             hover_bytes=data["hover_bytes"],
             axis_levels=data["axis_levels"],
-            spreads=[Spread(**k) for k in data["spreads"]],
+            piles=data["piles"],
+            pile_columns=[HoverColumn(**c) for c in data["pile_columns"]],
+            pile_bytes=data["pile_bytes"],
             boxes=[Boxes(**b) for b in data["boxes"]],
             smooths=[Smooths(**k) for k in data["smooths"]],
         )
@@ -210,12 +228,16 @@ class SelectionManifest:
         ``[offset, length]`` of each series' PNG in the images file, or None.
     rows : int
         Number of selected rows; a row in several panels counts once.
+    piles : list of int
+        The pixels (``(panel * height + by) * width + bx``) of the piles with
+        selected rows, sorted.
     """
 
     selection: Selection
     grid: BinGrid
     images: list[list[int] | None]
     rows: int
+    piles: list[int] = field(default_factory=list)
 
     def write(self, out: Path) -> None:
         """Write the manifest into a task's directory (`write_manifest`)."""
@@ -241,4 +263,5 @@ class SelectionManifest:
             grid=BinGrid(**data["grid"]),
             images=data["images"],
             rows=data["rows"],
+            piles=data["piles"],
         )

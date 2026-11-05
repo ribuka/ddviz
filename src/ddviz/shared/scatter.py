@@ -42,30 +42,6 @@ class Binning:
 
 
 @dataclass(frozen=True)
-class Spread:
-    """How wide the points of a pair of axis columns spread in the bands of its categorical axes (`ddviz.compute.bands`).
-
-    Parameters
-    ----------
-    x, y : str
-        The pair's x and y columns; one of them at least is categorical.
-    bounds : list of float or None
-        With one categorical axis, the range of the numeric axis cut into
-        `ddviz.compute.bands.SPREAD_CELLS` cells: the overview's, so that a
-        zoom keeps the widths. None with two categorical axes.
-    widths : list of float or None
-        Width of each cell, from 0 to 1, flat with the levels of the
-        categorical axis outermost (with two, the x levels outermost and the
-        y levels inside); None to count them again over `bounds`.
-    """
-
-    x: str
-    y: str
-    bounds: list[float] | None
-    widths: list[float] | None
-
-
-@dataclass(frozen=True)
 class Boxes:
     """Box plots of a pair of axis columns: a categorical x and a numeric y (`ddviz.compute.boxes`).
 
@@ -157,9 +133,6 @@ class View:
         overview.
     axis_levels : dict of str to list of str
         Levels of each categorical axis column, from the overview.
-    spreads : list of Spread
-        Spread of each pair with a categorical axis, from a result; one
-        without widths is counted again (another local filter).
     boxes : list of Boxes
         Box plots of each pair, from a result with the same local filter; a
         pair without them has them found again.
@@ -175,7 +148,6 @@ class View:
     cuts: dict[str, dict] = field(default_factory=dict)
     color_range: list[float] | None = None
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
-    spreads: list[Spread] = field(default_factory=list)
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
 
@@ -509,7 +481,6 @@ def _view(data: dict) -> View:
     return View(
         **{
             **data,
-            "spreads": [Spread(**s) for s in data.get("spreads", [])],
             "boxes": [Boxes(**b) for b in data.get("boxes", [])],
             "smooths": [Smooths(**s) for s in data.get("smooths", [])],
         }

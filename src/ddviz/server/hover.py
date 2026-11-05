@@ -1,13 +1,15 @@
-"""Looks up the row under the cursor in the hover files a plot task wrote."""
+"""Looks up the row under the cursor in the hover files a plot task wrote, and the piles it drew."""
 
 from __future__ import annotations
 
+import itertools
 import math
 from pathlib import Path
 
 import numpy as np
 
 from ddviz.shared.manifest import PlotManifest
+from ddviz.shared.scatter import ONE_BAND
 from ddviz.shared.shapes import marker
 
 # Hover distance in screen pixels, as plotly's default `hoverdistance`.
@@ -25,6 +27,8 @@ class HoverIndex:
     """Memory-mapped hover files of one plot task.
 
     A result without hover files (`PlotManifest.hover_files`) finds no row.
+    The files of its piles (`PlotManifest.piles`) are open whatever the
+    hover files.
 
     Parameters
     ----------
@@ -37,6 +41,19 @@ class HoverIndex:
         self.manifest = PlotManifest.read(out)
         self.grid = self.manifest.grid
         self._columns = []
+        self._piles: dict[str, np.ndarray] = {}
+        self._pile_columns = []
+        if self.manifest.piles:
+            names = ["pixel", "n", "start", "series", "series_n"]
+            if self.manifest.spec.gradient:
+                names += ["min", "max"]
+            self._piles = {
+                name: np.load(out / f"pile_{name}.npy", mmap_mode="r") for name in names
+            }
+            self._pile_columns = [
+                (c.name, np.load(out / c.file, mmap_mode="r"), c.labels)
+                for c in self.manifest.pile_columns
+            ]
         if not self.manifest.hover_files:
             self._keys = self._count = self._index = self._occupancy = None
             return
@@ -64,6 +81,76 @@ class HoverIndex:
         """Drop the memory maps, so that the files can be deleted."""
         self._keys = self._count = self._index = self._occupancy = None
         self._columns = []
+        self._piles = {}
+        self._pile_columns = []
+
+    def piles(self) -> dict:
+        """Return the piles the page draws: where each lies, its rows and its series.
+
+        Returns
+        -------
+        dict
+            Lists of the same length, one item per pile: its ``panel``, its
+            bins ``bx`` and ``by``, its rows ``n``, and the ``series`` of
+            its rows (the pile is drawn faded when all are inactive).
+        """
+        if not self._piles:
+            return {"panel": [], "bx": [], "by": [], "n": [], "series": []}
+        rest, bx = np.divmod(np.asarray(self._piles["pixel"]), self.grid.width)
+        panel, by = np.divmod(rest, self.grid.height)
+        start = np.asarray(self._piles["start"])
+        series = np.asarray(self._piles["series"])
+        return {
+            "panel": panel.tolist(),
+            "bx": bx.tolist(),
+            "by": by.tolist(),
+            "n": np.asarray(self._piles["n"]).tolist(),
+            "series": [
+                series[a:b].tolist() for a, b in itertools.pairwise(start.tolist())
+            ],
+        }
+
+    def pile(self, i: int) -> dict | None:
+        """Return what the hover shows of a pile: its values, its rows, and its rows by series.
+
+        Parameters
+        ----------
+        i : int
+            The pile, in the order of `piles`.
+
+        Returns
+        -------
+        dict or None
+            The values of the panel's x and y columns (``values``), the
+            rows (``n``), the rows by series (``series``: ``[series, rows]``
+            each) and, for a gradient, the least and largest color
+            (``color_range``); None for no such pile.
+        """
+        if not self._piles or not 0 <= i < len(self._piles["n"]):
+            return None
+        panel = int(self._piles["pixel"][i]) // (self.grid.width * self.grid.height)
+        xi, yj = self.manifest.axes.axes(panel)
+        spec = self.manifest.spec
+        own = {spec.x[xi], spec.y[yj]} - {ONE_BAND}
+        a, b = int(self._piles["start"][i]), int(self._piles["start"][i + 1])
+        series = self._piles["series"][a:b].tolist()
+        rows = self._piles["series_n"][a:b].tolist()
+        color_range = None
+        if "min" in self._piles:
+            color_range = [
+                self._value(self._piles["min"], None, i),
+                self._value(self._piles["max"], None, i),
+            ]
+        return {
+            "values": {
+                name: self._value(array, labels, i)
+                for name, array, labels in self._pile_columns
+                if name in own
+            },
+            "n": int(self._piles["n"][i]),
+            "series": [[s, n] for s, n in zip(series, rows, strict=True)],
+            "color_range": color_range,
+        }
 
     def _series_at(self, panel: int, by: int, bx: int) -> dict[int, int]:
         """Return the position of the key of each series with rows at an occupied pixel."""

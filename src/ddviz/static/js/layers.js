@@ -3,6 +3,7 @@
 // legend click redraws the canvas instead of the figure.
 import { POINTS_UNDER_BOXES, drawBoxes } from "./boxes.js";
 import { colorsNow, decode, seriesColors } from "./colorscale.js";
+import { drawPiles } from "./piles.js";
 import { drawSmooths } from "./smooth.js";
 
 // Opacity of every row while rows are selected; the selected rows are drawn
@@ -51,8 +52,8 @@ export class ImageLayers {
     this.meta = null;
     this.bitmaps = null;
     // The selection: `{box}` (the box drawn on a panel of `meta`) until its
-    // layer comes, then `{meta, bitmaps}` (the layer and the result it was
-    // aggregated for), or null.
+    // layer comes, then `{meta, bitmaps, piles}` (the layer, the result it was
+    // aggregated for, and the pixels of the piles with selected rows), or null.
     this.selection = null;
     // A new device pixel ratio (a window moved to another screen, or another
     // zoom) changes no axis, so plotly sends no event.
@@ -129,7 +130,16 @@ export class ImageLayers {
       // Until the selected rows' layer comes, the box shows them in its panel.
       this.drawLayer(ctx, full, dpr, meta, bitmaps, alpha, selection.box);
     }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // The piles lie over the points; with a selection, those without
+    // selected rows fade as the points do.
+    const { width: w, height: h } = meta.grid;
+    const piles = meta.piles;
+    const faded = (i) =>
+      !selection?.piles?.has((piles.panel[i] * h + piles.by[i]) * w + piles.bx[i]);
+    drawPiles(ctx, full, meta, alpha, selection ? faded : undefined, dim);
   }
+
 
   // Draws one layer: an image per series whose tiles are the panels that
   // `meta` places. With `box` ({panel, x_range, y_range}), only that panel,

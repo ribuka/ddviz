@@ -33,11 +33,12 @@ def facets_of(manifest: PlotManifest) -> dict:
 def _view(
     manifest: PlotManifest, x_ranges: list, y_ranges: list, same_filter: bool
 ) -> View:
-    """Return the view of the given ranges with the result's levels, cuts, color range, spreads, boxes and smoothing lines.
+    """Return the view of the given ranges with the result's levels, cuts, color range, boxes and smoothing lines.
 
-    For another filter, the facet levels, the spreads' widths, the boxes and
-    the smoothing lines are left for the worker to find again over the rows
-    it keeps.
+    For another filter, the facet levels, the boxes and the smoothing lines
+    are left for the worker to find again over the rows it keeps. The
+    stacks of the points on a categorical axis (`ddviz.compute.stacks`)
+    depend on the ranges and the size: the worker places them again.
     """
     return View(
         x_ranges=[list(r) for r in x_ranges],
@@ -47,9 +48,6 @@ def _view(
         cuts=manifest.cuts,
         color_range=manifest.color_range,
         axis_levels=manifest.axis_levels,
-        spreads=[
-            k if same_filter else replace(k, widths=None) for k in manifest.spreads
-        ],
         boxes=manifest.boxes if same_filter else [],
         smooths=manifest.smooths if same_filter else [],
     )
@@ -66,9 +64,9 @@ def resized_spec(
 ) -> ScatterSpec:
     """Return the spec of the overview for other ranges, size or filter, reusing its levels.
 
-    The overview's facet panels and spreads (`ddviz.compute.bands`) are kept
-    for the same filter; another filter finds its own
-    (`ddviz.compute.aggregate.aggregate`).
+    The overview's facet panels are kept for the same filter; another
+    filter finds its own (`ddviz.compute.aggregate.aggregate`).
+
 
     Parameters
     ----------

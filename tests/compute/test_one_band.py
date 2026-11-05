@@ -71,9 +71,9 @@ def test_one_band_holds_a_box_per_series(
 def test_one_band_with_points_draws_every_row(
     band_spec: ScatterSpec, scatter_frame: pl.DataFrame
 ) -> None:
-    """With the points, every row is spread in the band, under the boxes."""
+    """With the points, every row is drawn in the band, under the boxes."""
     agg = aggregate(replace(band_spec, points=True))
-    assert len(agg.spreads) == 1
+    assert len(agg.piles) == 1
     assert agg.bins[COUNT].sum() == _drawn(scatter_frame).height
 
 

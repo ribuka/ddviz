@@ -72,7 +72,9 @@ def bins_table(out: Path) -> pl.DataFrame:
     """Return the bins of a plot task's result as a table.
 
     The result must have its hover files (`PlotManifest.hover_files`), which
-    hold the bins.
+    hold the bins: those of the points, and those of the rows of the piles
+    at their centers, counted in their series' bins as any row.
+
 
     Parameters
     ----------
@@ -96,7 +98,14 @@ def bins_table(out: Path) -> pl.DataFrame:
         manifest.levels,
     )
     keys = np.load(out / "keys.npy")
-    count = np.load(out / "count.npy")
+    count = np.load(out / "count.npy").astype(np.int64)
+    # The rows of the piles are rows of their series' bins at their centers,
+    # drawn as piles instead of points (`ddviz.compute.stacks`).
+    pile_keys = np.load(out / "pile_keys.npy")
+    if len(pile_keys):
+        keys, at = np.unique(np.concatenate([keys, pile_keys]), return_inverse=True)
+        pile_count = np.load(out / "pile_count.npy").astype(np.int64)
+        count = np.bincount(at, np.concatenate([count, pile_count])).astype(np.int64)
     panel, series, by, bx = grid.unpack(keys)
     # Panels count row by row (`ddviz.shared.layout.AxisGrid`).
     prow, pcol = np.divmod(panel, axes.cols)

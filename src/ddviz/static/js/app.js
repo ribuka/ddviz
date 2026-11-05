@@ -747,7 +747,7 @@ async function followSelection() {
   selection.bitmaps = bitmaps;
   selection.layer = layer;
   selection.held = true;
-  layers.setSelection({ meta, bitmaps });
+  layers.setSelection({ meta, bitmaps, piles: new Set(layer.piles) });
   statusLine.show(`選んだ行：${layer.rows.toLocaleString()} 行（${layer.task_seconds.toFixed(1)} 秒）`);
   // A new filter changes the selected rows: the table starts again.
   const key = filtersKey(meta.filters);
@@ -1157,7 +1157,7 @@ async function recolor() {
   if (layerImages && selection === layerOf) {
     closeImages(selection.bitmaps);
     selection.bitmaps = layerImages;
-    layers.setSelection({ meta: layers.selection.meta, bitmaps: layerImages });
+    layers.setSelection({ ...layers.selection, bitmaps: layerImages });
   } else {
     closeImages(layerImages);
   }
