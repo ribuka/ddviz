@@ -58,7 +58,8 @@ export function drawBoxes(ctx, full, meta, colors, alpha, order) {
       const right = px(middle + half);
       const center = px(middle);
       const cap = (right - left) / 4;
-      const color = meta.color.kind === "gradient" ? GRADIENT_BOX : colors[series];
+      // A gradient's missing level has a color; its own series have none.
+      const color = colors[series] ?? GRADIENT_BOX;
       ctx.globalAlpha = alpha(series);
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;

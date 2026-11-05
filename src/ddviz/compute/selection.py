@@ -1,7 +1,7 @@
 """Which rows a plot draws, and which of them a box drawn on a panel selects.
 
 Both are polars conditions: the aggregation filters the drawn rows with
-`drawn_conditions`, and the selection layer and the selection table filter
+`ddviz.compute.missing.drawn_conditions`, and the selection layer and the selection table filter
 the selected rows with `selection_filter`.
 """
 
@@ -12,7 +12,8 @@ import math
 import polars as pl
 
 from ddviz.compute.bands import BAND, level_index
-from ddviz.compute.cuts import cut_index, in_level
+from ddviz.compute.cuts import in_level
+from ddviz.compute.missing import drawn_conditions, role_index
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.stacked import marker_boxes, stack_frame
 from ddviz.compute.stacks import DX, DY, PX, PY, Axis, ranked, stack_groups
@@ -24,35 +25,12 @@ _IN_X = "__in_x"
 _IN_Y = "__in_y"
 
 
-def numeric_roles(spec: ScatterSpec) -> set[str]:
-    """Return the roles whose column is read as numbers: the binned ones and a gradient's color."""
-    return set(spec.binned) | ({"color"} if spec.gradient else set())
-
-
-def drawn_conditions(spec: ScatterSpec) -> list[pl.Expr]:
-    """Return the conditions a drawn row meets on its color, overlay, row and col columns.
-
-    A categorical column must not be null; a numeric one (`numeric_roles`)
-    must be finite.
-    """
-    numeric = {getattr(spec, role) for role in numeric_roles(spec)}
-    columns = dict.fromkeys(
-        c for c in (spec.color, spec.overlay, spec.row, spec.col) if c
-    )
-    return [
-        pl.col(c).cast(pl.Float64).is_finite()
-        if c in numeric
-        else pl.col(c).is_not_null()
-        for c in columns
-    ]
-
-
 def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
     """Return the conditions that pick the selected rows of a spec with a selection.
 
     A row is selected when it is drawn in the panel the box was drawn on:
     its facet levels are the panel's, its x and y are in the box, its
-    color, overlay, row and col are valid (`drawn_conditions`), and it passes the local filter.
+    color, overlay, row and col are drawn (`ddviz.compute.missing.drawn_conditions`), and it passes the local filter.
     On a categorical axis, the point drawn for it is in the box: a row
     alone or of a pile at the center of its band, a row of a stack that
     fits where its stack puts it (`ddviz.compute.stacks`), as the drawn
@@ -151,11 +129,9 @@ def _panel_bins(spec: ScatterSpec) -> tuple[int, int]:
 
 def _overlay_index(spec: ScatterSpec) -> pl.Expr:
     """Return each row's overlay level, whose marker its point is drawn in; 0 without an overlay."""
-    if spec.overlay is None:
-        return pl.lit(0, pl.Int64)
-    if "overlay" in spec.binned:
-        return cut_index(spec.overlay, spec.view.cuts["overlay"])
-    return level_index(spec.overlay, [str(v) for v in spec.view.levels["overlay"]])
+    return role_index(
+        spec, "overlay", spec.view.levels["overlay"], cuts=spec.view.cuts.get("overlay")
+    )
 
 
 def _stacked(

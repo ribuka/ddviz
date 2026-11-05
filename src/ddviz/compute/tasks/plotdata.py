@@ -17,6 +17,7 @@ import polars as pl
 
 from ddviz.compute.progress import Emit
 from ddviz.shared.manifest import PlotManifest, write_manifest
+from ddviz.shared.missing import MISSING
 from ddviz.shared.scatter import ONE_BAND
 
 # The facet and series roles of a figure, as the table's columns name them
@@ -30,8 +31,9 @@ _ROLES = (
 
 
 def _levels(levels: list, index: np.ndarray) -> pl.Series:
-    """Return the text of each bin's level."""
-    return pl.Series([str(v) for v in levels], dtype=pl.String).gather(index)
+    """Return the text of each bin's level; null for the missing level (`ddviz.shared.missing.MISSING`)."""
+    texts = [None if v == MISSING else str(v) for v in levels]
+    return pl.Series(texts, dtype=pl.String).gather(index)
 
 
 def _axis(

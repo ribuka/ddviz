@@ -7,6 +7,12 @@
 // The levels of a categorical color column (`meta.color.kind` "levels") come
 // in the palette's colors (`ddviz.shared.palette`); the user may pick another
 // color for a level (`picked`), tinted onto its masks the same way.
+//
+// The missing level (`MISSING`, names.js), last of the color levels of any
+// kind, is gray (`MISSING_COLOR`) or the color picked for it; its images are
+// masks even for a gradient, and neither the scale nor its direction colors
+// them.
+import { MISSING, MISSING_COLOR, hasMissing } from "./names.js";
 
 // Color sets as evenly spaced stops, from the low end to the high end.
 export const COLOR_SETS = {
@@ -81,19 +87,35 @@ export function pickColor(level, color) {
 }
 
 // Returns the color picked for color level `i` of a result, or undefined.
+// Only the levels of a categorical column and the missing level take one.
 function pickedColor(meta, i) {
-  if (meta.color.kind !== "levels" || meta.color.column !== picked.column) return undefined;
+  if (meta.color.column !== picked.column) return undefined;
+  if (meta.color.kind !== "levels" && meta.series[i] !== MISSING) return undefined;
   return picked.colors.get(meta.series[i]);
 }
 
-// Returns the colors of the color levels of a result (`meta.series`).
+// Returns whether color level `i` of a result is the missing level.
+export function isMissingLevel(meta, i) {
+  return meta.series[i] === MISSING;
+}
+
+// Returns the colors of the color levels of a result (`meta.series`): the
+// intervals spread over the scale, the missing level gray or picked. A
+// gradient's own level has no color (null).
 export function levelColors(meta) {
-  if (meta.color.kind === "bins") return intervalColors(meta.series.length);
+  const missing = hasMissing(meta.series);
+  const missingColor = () => pickedColor(meta, meta.series.length - 1) ?? MISSING_COLOR;
+  if (meta.color.kind === "bins") {
+    const colors = intervalColors(meta.series.length - (missing ? 1 : 0));
+    return missing ? [...colors, missingColor()] : colors;
+  }
+  if (meta.color.kind === "gradient") return meta.series.map((name) => (name === MISSING ? missingColor() : null));
   return meta.series.map((_, i) => pickedColor(meta, i) ?? meta.colors[i * meta.color.shapes]);
 }
 
 // Returns the colors the series of a result are drawn in: series `s` is
-// color level `s // shapes` with overlay level `s % shapes`.
+// color level `s // shapes` with overlay level `s % shapes`. A gradient's
+// series of its own level have none (null).
 export function seriesColors(meta) {
   if (meta.color.kind === "levels" && !tinted(meta)) return meta.colors;
   const levels = levelColors(meta);
@@ -105,7 +127,7 @@ export function seriesColors(meta) {
 // colors.
 function tinted(meta) {
   if (meta.color.kind === "bins") return true;
-  return meta.color.kind === "levels" && meta.series.some((_, i) => pickedColor(meta, i) !== undefined);
+  return meta.series.some((_, i) => pickedColor(meta, i) !== undefined);
 }
 
 // Returns the color of a value of a gradient's column.
@@ -149,9 +171,17 @@ function tint(bitmap, color) {
 // result `meta` (colored the same way).
 export async function decode(blobs, meta) {
   if (meta.color.kind === "gradient") {
+    const colors = seriesColors(meta);
     return Promise.all(
-      blobs.map(async (blob) => {
+      blobs.map(async (blob, i) => {
         if (!blob) return null;
+        if (colors[i] !== null) {
+          // The missing level's mask, in its own color.
+          const mask = await createImageBitmap(blob);
+          const painted = tint(mask, colors[i]);
+          mask.close();
+          return painted;
+        }
         // The grays must reach the canvas as they are.
         const raw = await createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
         const painted = await paintGradient(raw);

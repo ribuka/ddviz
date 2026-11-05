@@ -2,6 +2,7 @@
 // pixel under the cursor, and this module draws a plotly-like label.
 import { boxAt } from "./boxes.js";
 import { seriesColors, valueColor } from "./colorscale.js";
+import { MISSING, MISSING_TEXT, levelText } from "./names.js";
 import { pileAt, pileCenter } from "./piles.js";
 import { formatTemporal, linearRange } from "./temporal.js";
 
@@ -12,8 +13,10 @@ function axisKey(id) {
 }
 
 // Returns a hover value as text: a datetime, date or time column's
-// (`kind`) as such (`temporal.js`), a number to 6 digits.
+// (`kind`) as such (`temporal.js`), a number to 6 digits, a null (or NaN,
+// which the server sends as null) as the missing level's text.
 function formatValue(value, kind = null) {
+  if (value === null) return MISSING_TEXT;
   const temporal = formatTemporal(kind, value);
   if (temporal !== null) return temporal;
   if (typeof value === "number" && !Number.isInteger(value)) {
@@ -28,11 +31,28 @@ function seriesName(meta, s) {
   const shapes = meta.color.shapes;
   const names = [];
   // Without a color column the one series has no name (the server sends "None").
-  if (meta.color.column !== null && meta.color.kind !== "gradient") {
-    names.push(meta.series[Math.floor(s / shapes)]);
+  const color = meta.series[Math.floor(s / shapes)];
+  // A gradient's missing level has a name; its own level has none.
+  if (meta.color.column !== null && (meta.color.kind !== "gradient" || color === MISSING)) {
+    names.push(levelText(color, meta.series));
   }
-  if (meta.overlay) names.push(meta.overlay.levels[s % shapes]);
+  if (meta.overlay) names.push(levelText(meta.overlay.levels[s % shapes], meta.overlay.levels));
   return names.join(", ");
+}
+
+// Returns the levels of the color or overlay column `column` that the hover
+// tells a real "(null)" text apart from the missing level by, or [].
+function roleLevels(meta, column) {
+  if (meta.overlay?.column === column) return meta.overlay.levels;
+  if (meta.color.column === column) return meta.series;
+  return [];
+}
+
+// Returns a hover line of a column's value: a real "(null)" text of a color
+// or overlay column with the missing level marked as text, as the legend.
+function valueLine(meta, column, value) {
+  if (value === MISSING_TEXT) return `${column}: ${levelText(value, roleLevels(meta, column))}`;
+  return `${column}: ${formatValue(value, meta.temporal[column])}`;
 }
 
 // Puts the label right of the cursor, or left of it where the right has no
@@ -152,7 +172,7 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     const others = new Set([...meta.x_columns, ...meta.y_columns].filter((c) => !own.has(c)));
     const lines = Object.entries(hit.values)
       .filter(([k]) => !others.has(k))
-      .map(([k, v]) => `${k}: ${formatValue(v, meta.temporal[k])}`);
+      .map(([k, v]) => valueLine(meta, k, v));
     lines.push(`行番号: ${hit.row}`);
     const series = seriesName(meta, hit.series);
     const ofSeries = series === "" ? "" : `（${series}: ${hit.count} 行）`;
@@ -162,7 +182,8 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     label.style.background =
       meta.color.kind === "gradient" && typeof hit.values[column] === "number"
         ? valueColor(meta, hit.values[column])
-        : seriesColors(meta)[hit.series];
+        : // A gradient's own series has no color (its column may be left out of the hover).
+          (seriesColors(meta)[hit.series] ?? "#444");
     label.hidden = false;
     ring.hidden = false;
     ring.style.left = `${cx}px`;
@@ -190,7 +211,8 @@ export function attachHover(gd, getMeta, legend, onTiming) {
       lines.push("系列ごとの行数:");
       for (const [s, n] of named) lines.push(`  ${seriesName(meta, s)}: ${n.toLocaleString()}`);
     }
-    if (pile.color_range) {
+    // A pile of missing color values only has no range of colors.
+    if (pile.color_range && pile.color_range[0] !== null) {
       const kind = meta.temporal[meta.color.column];
       const [lo, hi] = pile.color_range.map((v) => formatValue(v, kind));
       lines.push(`${meta.color.column}: ${lo} 〜 ${hi}`);
@@ -214,10 +236,13 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     // The one band is no column of the data.
     const lines = meta.one_band ? [] : [`${x}: ${meta.axis_levels[x][level]}`];
     const shapes = meta.color.shapes;
-    if (meta.color.column !== null && meta.color.kind !== "gradient") {
-      lines.push(`${meta.color.column}: ${meta.series[Math.floor(series / shapes)]}`);
+    const color = meta.series[Math.floor(series / shapes)];
+    if (meta.color.column !== null && (meta.color.kind !== "gradient" || color === MISSING)) {
+      lines.push(`${meta.color.column}: ${levelText(color, meta.series)}`);
     }
-    if (meta.overlay) lines.push(`${meta.overlay.column}: ${meta.overlay.levels[series % shapes]}`);
+    if (meta.overlay) {
+      lines.push(`${meta.overlay.column}: ${levelText(meta.overlay.levels[series % shapes], meta.overlay.levels)}`);
+    }
     lines.push(
       `ひげの上端: ${formatValue(high, kind)}`,
       `75%: ${formatValue(q3, kind)}`,
@@ -227,7 +252,7 @@ export function attachHover(gd, getMeta, legend, onTiming) {
       `行数: ${n.toLocaleString()}`,
     );
     label.textContent = lines.join("\n");
-    label.style.background = meta.color.kind === "gradient" ? "#444" : seriesColors(meta)[series];
+    label.style.background = seriesColors(meta)[series] ?? "#444";
     label.hidden = false;
     ring.hidden = true;
     const rect = gd.getBoundingClientRect();

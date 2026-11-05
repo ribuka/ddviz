@@ -198,6 +198,7 @@ def plot_router(
                 await source.temporal(),
                 shape_sizes,
                 level_shapes,
+                request.show_null_rows.model_dump(),
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error

@@ -20,12 +20,19 @@
 // right click on the bar, on the title or on an interval's marker opens the
 // scale's menu, which also has the size of the markers.
 //
+// The missing level (`MISSING`, names.js: the rows of a null or NaN value,
+// drawn with "Show null rows") is the last item of either legend, shown as
+// "(null)". Under a gradient's bar it is an item of its own, toggled and
+// colored as the levels; a gradient without a finite value shows it alone,
+// without a bar. Its marker's menu changes its color (or shape and size),
+// whatever the kind of the color column.
+//
 // An inactive series is drawn at `inactiveOpacity` (`plot.legend.
 // inactive_opacity` of the settings, `GET /api/settings`); at 0 it is hidden,
 // and the hover does not find it (`hidden`). The legend's own inactive items
 // stay at app.css's opacity, so that they can be clicked back at 0.
-import { cssColor, levelColors } from "./colorscale.js";
-import { levelText } from "./names.js";
+import { cssColor, isMissingLevel, levelColors } from "./colorscale.js";
+import { hasMissing, levelText } from "./names.js";
 import { shapeCanvas } from "./shapepanel.js";
 import { formatTemporal } from "./temporal.js";
 
@@ -128,7 +135,7 @@ export class Legend {
     if (this.title === null) return [];
     const colors = levelColors(this.meta);
     const items = this.series.map((name, i) =>
-      this.item("color", i, levelText(name), (swatch) => {
+      this.item("color", i, levelText(name, this.series), (swatch) => {
         swatch.style.background = colors[i];
       }),
     );
@@ -142,7 +149,7 @@ export class Legend {
     title.textContent = column;
     title.title = column;
     const items = this.shapes.map((name, i) =>
-      this.item("shape", i, levelText(name), (swatch) => {
+      this.item("shape", i, levelText(name, this.shapes), (swatch) => {
         swatch.classList.add("shape");
         swatch.append(shapeCanvas(kernels[i]));
       }),
@@ -175,7 +182,7 @@ export class Legend {
       this.isolate(kind, i);
     });
     marker.classList.add("menu");
-    marker.title = this.markerTip(kind);
+    marker.title = this.markerTip(kind, i);
     marker.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -185,9 +192,9 @@ export class Legend {
   }
 
   // The tooltip of a marker of a legend (`kind` "color" or "shape").
-  markerTip(kind) {
+  markerTip(kind, i) {
     if (kind === "shape") return "右クリックでこの水準の形と大きさを変える";
-    if (this.color.kind === "bins") return "右クリックで色の付け方を変える";
+    if (this.color.kind === "bins" && !isMissingLevel(this.meta, i)) return "右クリックで色の付け方を変える";
     return "右クリックで色と点の大きさを変える";
   }
 
@@ -208,8 +215,21 @@ export class Legend {
     return title;
   }
 
-  // A gradient's color bar: high values at the top.
+  // A gradient's color bar, high values at the top, and under it the missing
+  // level's item; only the item without a finite value.
   barNodes() {
+    const missing = hasMissing(this.series);
+    const last = this.series.length - 1;
+    const missingNodes = () => {
+      if (!missing) return [];
+      const colors = levelColors(this.meta);
+      return [
+        this.item("color", last, levelText(this.series[last]), (swatch) => {
+          swatch.style.background = colors[last];
+        }),
+      ];
+    };
+    if (missing && last === 0) return [this.titleElement(), ...missingNodes()];
     const [lo, hi] = this.color.range;
     const bar = document.createElement("div");
     bar.className = "colorbar";
@@ -226,6 +246,7 @@ export class Legend {
     }
     bar.append(strip, ticks);
     bar.title = "右クリックで色の付け方を変える";
+    bar.classList.toggle("inactive", this.off.color.has(0));
     bar.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       this.onMenu(event);
@@ -237,18 +258,24 @@ export class Legend {
       note.textContent = "（行なし）";
       nodes.push(note);
     }
-    return nodes;
+    return [...nodes, ...missingNodes()];
+  }
+
+  // Whether the color legend has no items to toggle: a gradient without its
+  // missing level.
+  barOnly(kind) {
+    return kind === "color" && this.color?.kind === "gradient" && !hasMissing(this.series);
   }
 
   toggle(kind, i) {
-    if (kind === "color" && this.color?.kind === "gradient") return;
+    if (this.barOnly(kind)) return;
     const off = this.off[kind];
     if (!off.delete(i)) off.add(i);
     this.changed();
   }
 
   isolate(kind, i) {
-    if (kind === "color" && this.color?.kind === "gradient") return;
+    if (this.barOnly(kind)) return;
     const levels = kind === "color" ? this.series : this.shapes;
     const off = this.off[kind];
     const isolated = levels.every((_, j) => off.has(j) !== (j === i));

@@ -21,6 +21,7 @@ from ddviz.shared.layout import (
     GridLayout,
 )
 from ddviz.shared.manifest import PlotManifest
+from ddviz.shared.missing import shown_level
 from ddviz.shared.scatter import ONE_BAND, ScatterSpec
 from ddviz.shared.shapes import SHAPES, kernel
 from ddviz.shared.temporal import DATE_KINDS
@@ -192,13 +193,19 @@ def _series_ticks(manifest: PlotManifest) -> dict[float, str]:
 
     Without box plots or series (no color column, a gradient, or a color
     column without values) it has none. A series of a color level and an overlay level is named by both.
+    A gradient beside its missing level (`ddviz.shared.missing`) names its
+    own level by its column.
     """
     spec, levels = manifest.spec, manifest.levels
     colors, overlays = levels["color"], levels["overlay"]
     if not spec.box or colors == [None]:
         return {}
+
+    def name(c: object) -> str:
+        return spec.color if c is None else shown_level(c, colors)
+
     names = [
-        str(c) if spec.overlay is None else f"{c} / {o}"
+        name(c) if spec.overlay is None else f"{name(c)} / {shown_level(o, overlays)}"
         for c in colors
         for o in overlays
     ]

@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, StrictBool
+
+
+class ShowNullRows(BaseModel):
+    """Whether the Color and the Overlay draw their rows with a null or NaN value (`ddviz.shared.missing`); each is true when left out."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    color: StrictBool = True
+    overlay: StrictBool = True
 
 
 class PlotRequest(BaseModel):
@@ -18,6 +27,7 @@ class PlotRequest(BaseModel):
     shape_size: int | None = None
     shape_sizes: dict[str, object] | None = None
     level_shapes: dict[str, object] | None = None
+    show_null_rows: ShowNullRows = ShowNullRows()
 
 
 class SizeRequest(BaseModel):

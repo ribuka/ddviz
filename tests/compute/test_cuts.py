@@ -217,7 +217,7 @@ def test_filter_drops_numeric_facet_intervals(path: Path, frame: pl.DataFrame) -
 
 def test_gradient_writes_one_image_of_grays(tmp_path: Path, path: Path) -> None:
     """A gradient has one series; its image holds the grays of the representative rows' values."""
-    spec = _spec(path, color="v")
+    spec = replace(_spec(path, color="v"), null_roles=[])
     out = tmp_path / "plot"
     out.mkdir()
     run_plot(spec, out, lambda _: None)

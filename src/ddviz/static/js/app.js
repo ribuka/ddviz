@@ -3,7 +3,7 @@
 import { axisAt, decorate, decorationUpdate, emptySettings, openAxisDialog } from "./axisdialog.js";
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
-import { colorsChanged, keepPicked, levelColors, pickColor } from "./colorscale.js";
+import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } from "./colorscale.js";
 import { attachColumnList } from "./columns.js";
 import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
@@ -12,7 +12,9 @@ import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
+import { levelText } from "./names.js";
 import { StatusLine, Toasts, errorText } from "./notice.js";
+import { attachNullMenu } from "./nullmenu.js";
 import { openPlotMenu } from "./plotmenu.js";
 import { openScaleMenu } from "./scalemenu.js";
 import { levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
@@ -91,11 +93,13 @@ const legend = new Legend(
     if (kind === "shape") {
       const { column, levels, sizes, shapes, choices } = current.overlay;
       const level = levels[i];
-      openShapeMenu(event, levelHeading(level), sizes[i], (size) => setLevelSize(column, level, size), {
+      const heading = levelHeading(levelText(level, levels));
+      openShapeMenu(event, heading, sizes[i], (size) => setLevelSize(column, level, size), {
         shape: { current: shapes[i], choices, onPick: (shape) => setLevelShape(column, level, shape) },
       });
-    } else if (current.color.kind === "bins") {
-      // The intervals take their colors from the scale.
+    } else if (current.color.kind === "bins" && !isMissingLevel(current, i)) {
+      // The intervals take their colors from the scale; the missing level
+      // takes its own, as a categorical level.
       openScaleMenu(event, colorBins, setColorBins, recolor, sharedSize(), setShapeSize);
     } else {
       const level = current.series[i];
@@ -156,6 +160,10 @@ const levelSizes = new Map();
 // column does, as the colors picked for the color levels: a graph of
 // another overlay column drops them.
 const levelShapes = { column: undefined, shapes: Object.create(null) };
+// Whether the Color and the Overlay zone draw the rows of a null or NaN
+// value (`ddviz.server.models.ShowNullRows`), set in the zones' menu
+// (nullmenu.js); kept whatever column the zone holds, true after a reload.
+const showNullRows = { color: true, overlay: true };
 // Wrapped panels to a row, or null to make them closest to square
 // (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
 // The user sets it in the Wrap zone, beside its chip.
@@ -419,6 +427,7 @@ async function plot(encoding) {
     shape_size: shapeSize,
     shape_sizes: (encoding.color !== null && levelSizes.get(encoding.overlay)) || null,
     level_shapes: encoding.color !== null ? shapes : null,
+    show_null_rows: { ...showNullRows },
   };
   requestedSize = size;
   statusLine.show("集約中…");
@@ -1185,6 +1194,15 @@ const builder = new Builder(
     else clearPlot();
   },
   { wrap: wrapColsInput },
+);
+// A changed "Show null rows" plots the graph again: its levels change.
+attachNullMenu(
+  document.getElementById("builder"),
+  (role) => builder.placed(role).length > 0,
+  showNullRows,
+  () => {
+    if (plottedEncoding) plot(plottedEncoding);
+  },
 );
 elementBar = new ElementBar(
   document.getElementById("elements"),
