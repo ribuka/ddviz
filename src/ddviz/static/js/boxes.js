@@ -59,8 +59,10 @@ export function drawBoxes(ctx, full, meta, colors, alpha, order) {
     for (const box of boxes) {
       const [, series, , low, q1, median, q3, high] = box;
       const { middle, half } = span(box, nSeries);
-      const left = px(middle - half);
-      const right = px(middle + half);
+      // The box's edges on screen, left to right and top to bottom on a
+      // reversed axis too (`axisdirection.js`).
+      const left = Math.min(px(middle - half), px(middle + half));
+      const right = Math.max(px(middle - half), px(middle + half));
       const center = px(middle);
       const cap = (right - left) / 4;
       // A gradient's missing level has a color; its own series have none.
@@ -81,8 +83,8 @@ export function drawBoxes(ctx, full, meta, colors, alpha, order) {
         ctx.lineTo(center + cap, py(end));
       }
       ctx.stroke();
-      const top = py(q3);
-      const height = py(q1) - top;
+      const top = Math.min(py(q1), py(q3));
+      const height = Math.abs(py(q1) - py(q3));
       ctx.globalAlpha = alpha(series) * FILL_OPACITY;
       ctx.fillStyle = color;
       ctx.fillRect(left, top, right - left, height);

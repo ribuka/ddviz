@@ -169,3 +169,44 @@ def test_a_duration_chip_names_its_seconds(app_page: Page) -> None:
         has=page.get_by_text("took", exact=True)
     ).drag_to(page.locator('.zone[data-role="x"]'))
     expect(page.locator('.zone[data-role="x"] .chip-name')).to_have_text("took (s)")
+
+
+@pytest.mark.parametrize("step", [dt.timedelta(microseconds=500)])
+def test_a_reversed_datetime_axis_under_a_second_keeps_its_range(
+    app_page: Page,
+) -> None:
+    """Reversed, a datetime X within a second keeps its very range and sends a zoom as ascending milliseconds."""
+    page = app_page
+    errors: list[object] = []
+    page.on("pageerror", lambda error: errors.append(error))
+    place(page, "at", "x", plots=False)
+    place(page, "y", "y")
+    low, high = page.evaluate(SHOWN_X_RANGE)
+    ticks = page.locator("#plot .xtick text")
+    box = ticks.nth(ticks.count() // 2).bounding_box()
+    page.mouse.click(
+        box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, button="right"
+    )
+    page.locator(".axis-menu").get_by_role("button", name="向きを反転").click()
+    page.wait_for_function(f"() => ({SHOWN_X_RANGE})()[0] > ({SHOWN_X_RANGE})()[1]")
+    # The same milliseconds through plotly's date text (UTC), the other way round.
+    assert page.evaluate(SHOWN_X_RANGE) == [high, low]
+
+    third = (high - low) / 3
+    with page.expect_request("**/api/view") as request:
+        page.evaluate(
+            """([a, b]) => {
+              return import("/static/js/temporal.js").then((m) =>
+                Plotly.relayout("plot", {"xaxis.range": [m.dateText(a), m.dateText(b)]}));
+            }""",
+            [high - third, low + third],
+        )
+    (x_range,) = request.value.post_data_json["x_ranges"]
+    assert x_range == [
+        pytest.approx(low + third, abs=1e-6),
+        pytest.approx(high - third, abs=1e-6),
+    ]
+    page.wait_for_function(SETTLED)
+    shown = page.evaluate(SHOWN_X_RANGE)
+    assert shown[0] > shown[1]
+    assert errors == []
