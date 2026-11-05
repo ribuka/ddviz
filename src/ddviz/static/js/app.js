@@ -1,6 +1,7 @@
 // The page: drop columns on the graph builder's zones, plot, zoom and pan,
 // resize, hover, select rows with a box, and filter rows.
 import { axisAt, decorate, decorationUpdate, emptySettings, openAxisDialog } from "./axisdialog.js";
+import { AxisDirections, ascending, oriented } from "./axisdirection.js";
 import { openAxisMenu } from "./axismenu.js";
 import { AxisScales, isLogAxis, toPosition, toValues } from "./axisscale.js";
 import { Builder } from "./builder.js";
@@ -224,6 +225,8 @@ gd.addEventListener("contextmenu", (event) => {
       log: meta[`${axis}_log`][index],
       loggable: meta[`${axis}_loggable`][index],
       onLog: (log) => setAxisLog(meta, axis, column, log),
+      reversed: axisDirections.isReversed(axis, column),
+      onReverse: (reversed) => setAxisReversed(axis, column, reversed),
     });
     return;
   }
@@ -287,6 +290,51 @@ function axisHit(event) {
 // The scale of each x and y column while the input is open (`axisscale.js`).
 const axisScales = new AxisScales();
 
+// The direction of each x and y column while the input is open (`axisdirection.js`).
+const axisDirections = new AxisDirections();
+
+// Reverses the axes of a column, or puts them back, on the result drawn: only
+// their direction changes, at the shown range. Nothing is aggregated or
+// asked of the server, and the selection stays.
+async function setAxisReversed(axis, column, reversed) {
+  axisDirections.set(axis, column, reversed);
+  if (!current || !gd._fullLayout) return;
+  const meta = current;
+  const update = {};
+  meta.panels.forEach((panel) => {
+    if (meta[`${axis}_columns`][panel[axis]] !== column) return;
+    const key = axisKey(panel[`${axis}axis`]);
+    const full = gd._fullLayout[key];
+    if (!full) return;
+    const range = oriented(linearRange(full), reversed);
+    if (!sameOrder(linearRange(full), range)) update[`${key}.range`] = plotlyRange(full, range);
+  });
+  if (!Object.keys(update).length) return;
+  hideHover();
+  ownRelayout = update;
+  try {
+    await Plotly.relayout(gd, update);
+  } finally {
+    ownRelayout = null;
+  }
+}
+
+// Whether two ranges run the same way.
+function sameOrder(a, b) {
+  return a[1] < a[0] === b[1] < b[0];
+}
+
+// Returns `layout` with the axis ranges (ascending) given the direction of
+// their columns (`axisdirection.js`).
+function orientedLayout(layout, meta) {
+  const out = { ...layout };
+  for (const [id, reversed] of Object.entries(axisDirections.byAxis(meta))) {
+    const key = axisKey(id);
+    if (out[key]?.range) out[key] = { ...out[key], range: oriented(out[key].range, reversed) };
+  }
+  return out;
+}
+
 // Puts an axis column of the drawn result `meta` on a log or a linear axis:
 // the graph is aggregated again, with the column's axis over its whole
 // range and the other columns' axes at their shown ranges. A refusal (no
@@ -311,8 +359,9 @@ async function setAxisLog(meta, axis, column, log) {
     next[`${role}_columns`].forEach((c, i) => {
       const range = kept[`${role}:${c}`];
       const key = axisKey(next[`${role}_axes`][i]);
-      if (range && !sameRange(linearRange(gd._fullLayout[key]), range)) {
-        update[`${key}.range`] = plotlyRange(gd._fullLayout[key], range);
+      const full = gd._fullLayout[key];
+      if (range && !sameRange(ascending(linearRange(full)), range)) {
+        update[`${key}.range`] = plotlyRange(full, oriented(range, axisDirections.isReversed(role, c)));
       }
     });
   }
@@ -322,7 +371,7 @@ async function setAxisLog(meta, axis, column, log) {
 // Opens the dialog of the axis column `index` of `axis` ("x" or "y") of the drawn result.
 function openAxis({ axis, index }) {
   const column = current[`${axis}_columns`][index];
-  const range = linearRange(gd._fullLayout[axisKey(current[`${axis}_axes`][index])]);
+  const range = ascending(linearRange(gd._fullLayout[axisKey(current[`${axis}_axes`][index])]));
   openAxisDialog({
     title: `${axis.toUpperCase()} 軸: ${column}`,
     range,
@@ -350,8 +399,8 @@ async function applyAxis(axis, column, settings, picked) {
   const index = meta[`${axis}_columns`].indexOf(column);
   if (meta !== current || index < 0 || !meta[`${axis}_numeric`][index]) return;
   const key = axisKey(meta[`${axis}_axes`][index]);
-  if (sameRange(linearRange(gd._fullLayout[key]), picked)) return;
-  await Plotly.relayout(gd, { [`${key}.range`]: picked });
+  if (sameRange(ascending(linearRange(gd._fullLayout[key])), picked)) return;
+  await Plotly.relayout(gd, { [`${key}.range`]: oriented(picked, axisDirections.isReversed(axis, column)) });
 }
 window.addEventListener("mouseup", () => {
   dragging = false;
@@ -550,7 +599,7 @@ async function plot(encoding, { keepSelection = false } = {}) {
   empty.hidden = true;
   showImages(meta, null);
   Plotly.purge(gd);
-  const layout = decorate(figure.layout, meta, settingsOf);
+  const layout = orientedLayout(decorate(figure.layout, meta, settingsOf), meta);
   drawnKey = figureKey(figure.data, layout);
   await Plotly.newPlot(gd, figure.data, forPlotly(layout), PLOT_CONFIG);
   timings.plot = Math.round(performance.now() - drawStarted);
@@ -609,13 +658,13 @@ function axisKey(id) {
 }
 
 // Returns the ranges on screen of each x and y column of a result, as
-// numbers (a date axis holds dates): the panels of one column share them
+// numbers (a date axis holds dates), ascending on a reversed axis too: the panels of one column share them
 // (`matches`).
 function shownRanges(meta) {
   const full = gd._fullLayout;
   return {
-    x: meta.x_axes.map((id) => linearRange(full[axisKey(id)])),
-    y: meta.y_axes.map((id) => linearRange(full[axisKey(id)])),
+    x: meta.x_axes.map((id) => ascending(linearRange(full[axisKey(id)]))),
+    y: meta.y_axes.map((id) => ascending(linearRange(full[axisKey(id)]))),
   };
 }
 
@@ -682,7 +731,7 @@ function withSelectionBox(layout, meta) {
 // ticks and reference lines of the axis settings.
 async function draw(data, plain, meta, bitmaps) {
   const started = performance.now();
-  const layout = decorate(plain, meta, settingsOf);
+  const layout = orientedLayout(decorate(plain, meta, settingsOf), meta);
   const key = figureKey(data, layout);
   if (key === drawnKey) {
     const update = rangeUpdate(layout);
@@ -761,7 +810,7 @@ function boxOf(meta, range) {
 // log axis, plotly's `event.range` holds values (checked in Chrome), not the
 // exponents of the axis's range: they become exponents here.
 function boxRange(axis, range) {
-  return isLogAxis(axis) ? range.map((v) => toPosition(true, v)) : linearRange(axis, range);
+  return ascending(isLogAxis(axis) ? range.map((v) => toPosition(true, v)) : linearRange(axis, range));
 }
 
 // Names a panel by its facet levels and axis columns, the same in every result of a plot.

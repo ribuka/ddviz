@@ -97,8 +97,9 @@ function locate(gd, meta, event) {
       y0,
       fx: (x - x0) / dxBin,
       fy: (y - y0) / dyBin,
-      sx: xa._length / ((xr1 - xr0) / dxBin),
-      sy: ya._length / ((yr1 - yr0) / dyBin),
+      // Pixels per bin, positive on a reversed axis too (`axisdirection.js`).
+      sx: xa._length / (Math.abs(xr1 - xr0) / dxBin),
+      sy: ya._length / (Math.abs(yr1 - yr0) / dyBin),
       dxBin,
       dyBin,
     };
