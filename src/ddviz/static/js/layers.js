@@ -122,8 +122,6 @@ export class ImageLayers {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const order = this.legend.order(meta.grid.n_series).reverse();
     drawBoxes(ctx, full, meta, seriesColors(meta), alpha, order);
-    // The smoothing lines, like the boxes, stay at full opacity over a selection.
-    drawSmooths(ctx, full, meta, seriesColors(meta), alpha, order);
     if (selection?.bitmaps) {
       this.drawLayer(ctx, full, dpr, selection.meta, selection.bitmaps, alpha);
     } else if (selection?.box) {
@@ -138,6 +136,12 @@ export class ImageLayers {
     const faded = (i) =>
       !selection?.piles?.has((piles.panel[i] * h + piles.by[i]) * w + piles.bx[i]);
     drawPiles(ctx, full, meta, alpha, selection ? faded : undefined, dim);
+    // The smoothing lines lie over every marker, the selected rows' too, and
+    // like the boxes stay at full opacity over a selection. Drawing the
+    // layers leaves transforms and opacities behind; start from CSS pixels.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.globalAlpha = 1;
+    drawSmooths(ctx, full, meta, seriesColors(meta), alpha, order);
   }
 
 
