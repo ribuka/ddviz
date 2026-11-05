@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.e2e.test_axis_menu import FULL, _right_click_tick, _settled
+from tests.e2e.test_axis_menu import FULL, _settled
 from tests.e2e.test_scatter import (
     BOXES,
     PAINTED_PIXEL,
@@ -47,9 +47,26 @@ def _record(page: Page) -> list[str]:
     return urls
 
 
+def _right_click_shown_tick(page: Page, side: str) -> None:
+    """Right-click the middle one of the tick labels plotly shows on `side` ("x" or "y").
+
+    A log axis also has labels it does not show (no box), and a redraw may
+    replace them: the boxes are read in one go.
+    """
+    boxes = [
+        box
+        for box in page.locator(f"#plot .{side}tick text").evaluate_all(BOXES)
+        if box["width"] > 0 and box["height"] > 0
+    ]
+    box = boxes[len(boxes) // 2]
+    page.mouse.click(
+        box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, button="right"
+    )
+
+
 def _reverse(page: Page, side: str, heading: str, checked: bool = False) -> None:
     """Pick 向きを反転 in the menu of the middle tick of `side`'s first axis."""
-    _right_click_tick(page, side)
+    _right_click_shown_tick(page, side)
     menu = page.locator(".axis-menu")
     expect(menu.locator(".scale-menu-heading")).to_have_text(heading)
     item = menu.get_by_role("button", name="向きを反転")
@@ -309,7 +326,7 @@ def test_a_reversed_log_axis_stays_log(app_page: Page) -> None:
     errors = watch_errors(page)
     place(page, "x", "x", plots=False)
     place(page, "y", "y")
-    _right_click_tick(page, "x")
+    _right_click_shown_tick(page, "x")
     page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
     page.wait_for_function(f"() => {FULL}.xaxis.type === 'log'")
     _settled(page)
@@ -332,7 +349,7 @@ def test_a_reversed_log_axis_stays_log(app_page: Page) -> None:
     )
     assert page.evaluate(f"{FULL}.xaxis.range") == [pytest.approx(0), pytest.approx(-1)]
     # Back to linear: still reversed.
-    _right_click_tick(page, "x")
+    _right_click_shown_tick(page, "x")
     page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
     page.wait_for_function(f"() => {FULL}.xaxis.type === 'linear'")
     _settled(page)
