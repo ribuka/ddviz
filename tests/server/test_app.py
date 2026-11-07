@@ -25,7 +25,7 @@ from ddviz.server.settings import (
     Settings,
 )
 from ddviz.shared.missing import MISSING, MISSING_COLOR
-from ddviz.shared.scatter import POINT_SIZE
+from ddviz.shared.scatter import POINT_SIZE, SHAPE_SIZE
 from ddviz.shared.shapes import SHAPES, kernel
 from ddviz.shared.tasks import PlotTask
 
@@ -670,16 +670,21 @@ def test_show_null_rows_is_on_unless_asked_off_and_checked(client: TestClient) -
         "/api/plot", json={"encoding": ENCODING, **SIZE, "show_null_rows": unknown}
     )
     assert response.status_code == 422
-    # Overlay alone colors the series by its own setting, not Color's.
+    # Overlay alone draws its null rows by its own setting, not Color's.
     alone = {"x": ["x"], "y": ["y"], "overlay": "color"}
-    for show, series in (
+    for show, levels in (
         ({"color": False, "overlay": True}, ["a", "b", "c", MISSING]),
         ({"color": True, "overlay": False}, ["a", "b", "c"]),
     ):
         response = client.post(
             "/api/plot", json={"encoding": alone, **SIZE, "show_null_rows": show}
         )
-        assert response.json()["meta"]["series"] == series
+        meta = response.json()["meta"]
+        assert meta["series"] == ["None"]
+        assert meta["overlay"]["levels"] == levels
+    assert meta["overlay"]["shapes"][-1] != "x"
+    response = client.post("/api/plot", json={"encoding": alone, **SIZE})
+    assert response.json()["meta"]["overlay"]["shapes"][-1] == "x"
 
 
 def test_the_missing_overlay_level_is_an_x_until_given_a_shape(
@@ -705,7 +710,7 @@ def test_the_missing_overlay_level_is_an_x_until_given_a_shape(
 
 
 def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
-    """Overlay beside color draws a series per pair of levels in the size asked; alone, it colors the series."""
+    """Overlay beside color draws a series per pair of levels in the size asked; alone, its shapes in the one color."""
     encoding = {"x": ["x"], "y": ["y"], "color": "color", "overlay": "facet"}
     plotted = client.post(
         "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS, "shape_size": 9}
@@ -741,12 +746,26 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
 
     alone = {"x": ["x"], "y": ["y"], "overlay": "facet"}
     meta = client.post(
-        "/api/plot", json={"encoding": alone, **SIZE, **HIDE_NULLS}
+        "/api/plot",
+        json={
+            "encoding": alone,
+            **SIZE,
+            **HIDE_NULLS,
+            "shape_sizes": {"q": 3},
+            "level_shapes": {"p": "square"},
+        },
     ).json()["meta"]
-    assert meta["series"] == ["p", "q"]
-    assert meta["color"]["column"] == "facet"
-    assert meta["overlay"] is None
+    assert meta["series"] == ["None"]
+    assert meta["color"]["column"] is None
+    assert meta["color"]["shapes"] == 2
+    assert meta["overlay"]["levels"] == ["p", "q"]
+    assert meta["overlay"]["shapes"] == ["square", "square"]
+    assert meta["overlay"]["sizes"] == [SHAPE_SIZE, 3]
+    assert meta["marker_size"] == SHAPE_SIZE
+    assert len(meta["images"]) == 2
     # The circles of the points without an overlay take the smaller default.
+    bare = {"x": ["x"], "y": ["y"]}
+    meta = client.post("/api/plot", json={"encoding": bare, **SIZE}).json()["meta"]
     assert meta["marker_size"] == POINT_SIZE
 
     bad = {"encoding": encoding, **SIZE, "shape_size": 8}

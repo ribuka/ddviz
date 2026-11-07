@@ -649,8 +649,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   const size = stageSize();
   plottedEncoding = encoding;
   const candidate = builder.snapshot();
-  // Another overlay column drops the shapes picked once its result is drawn,
-  // with or without a color column: overlay alone colors the series and sends none.
+  // Another overlay column drops the shapes picked once its result is drawn.
   const shapes = encoding.overlay === levelShapes.column ? pickedShapes(encoding.overlay) : null;
   const body = {
     encoding,
@@ -660,8 +659,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     wrap_cols: wrapCols,
     smooth: smoothing,
     shape_size: shapeSize,
-    shape_sizes: (encoding.color !== null && levelSizes.get(encoding.overlay)) || null,
-    level_shapes: encoding.color !== null ? shapes : null,
+    shape_sizes: levelSizes.get(encoding.overlay) || null,
+    level_shapes: shapes,
     show_null_rows: { ...showNullRows },
     axis_scales: axisScales.request(encoding),
   };
@@ -1499,10 +1498,10 @@ function clearPlot() {
 }
 
 // The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`) and
-// its elements. Overlay alone takes the place of color.
+// its elements.
 function drawnRoles(encoding) {
   const { x, y, color, row, col, wrap, elements, overlay } = encoding;
-  return JSON.stringify([x, y, color ?? overlay, row, col, wrap, elements, overlay]);
+  return JSON.stringify([x, y, color, row, col, wrap, elements, overlay]);
 }
 
 // Whether the graph draws every row in one band along x: no x column and
@@ -1668,7 +1667,7 @@ const builder = new Builder(
     const key = drawnRoles(encoding);
     if (key === drawnRolesKey) return;
     const drawn = JSON.parse(drawnRolesKey);
-    if ((encoding.color ?? encoding.overlay) !== drawn[2]) colorBins = null;
+    if (encoding.color !== drawn[2]) colorBins = null;
     if (encoding.wrap !== drawn[5]) {
       wrapCols = null;
       wrapAuto = null;

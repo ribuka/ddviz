@@ -72,7 +72,7 @@ def test_show_null_rows_toggles_per_zone_and_the_missing_level_is_colored(
     page.keyboard.press("Escape")
     expect(page.locator(".null-menu")).to_have_count(0)
 
-    # Moved to Overlay alone, k colors the series by the Overlay's setting.
+    # Moved to Overlay alone, k draws its shapes by the Overlay's setting.
     page.locator('.zone[data-role="color"] .chip').drag_to(
         page.locator('.zone[data-role="overlay"]')
     )

@@ -53,19 +53,33 @@ def test_scatter_draws_every_axis_and_overlay_as_shapes() -> None:
     assert undrawn(encoding, {}) == []
 
 
-def test_overlay_alone_colors_the_series() -> None:
-    """Without a color column, overlay takes its place, without shapes; a numeric one is a gradient."""
+def test_overlay_alone_draws_shapes_of_one_color() -> None:
+    """Without a color column, overlay draws its shapes in the one color; a numeric one is cut into intervals."""
     encoding = Encoding(x=("a",), y=("b",), overlay="o")
     files = {c: [f"{c}.parquet"] for c in encoding.columns()}
-    spec = scatter_spec(encoding, files, 400, 300, ["#000000"])
-    assert (spec.color, spec.overlay, spec.gradient) == ("o", None, False)
+    spec = scatter_spec(
+        encoding,
+        files,
+        400,
+        300,
+        ["#000000"],
+        shape_sizes={"p": 11},
+        level_shapes={"p": "square"},
+    )
+    assert (spec.color, spec.overlay, spec.gradient) == (None, "o", False)
+    assert spec.shape_size == SHAPE_SIZE
+    assert (spec.shape_sizes, spec.level_shapes) == ({"p": 11}, {"p": "square"})
+    assert spec.binned == {}
     numeric = {"a": True, "b": True, "o": True}
     spec = scatter_spec(encoding, files, 400, 300, ["#000000"], numeric=numeric)
-    assert (spec.color, spec.overlay, spec.gradient) == ("o", None, True)
+    assert (spec.color, spec.overlay, spec.gradient) == (None, "o", False)
+    assert spec.binned == {
+        "overlay": Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
+    }
 
 
 def test_show_null_rows_draws_the_missing_rows_of_each_role_by_default() -> None:
-    """Color and overlay each draw their null rows unless the page turns it off; overlay alone colors by its own setting."""
+    """Color and overlay each draw their null rows unless the page turns it off, overlay alone too."""
     both = Encoding(x=("a",), y=("b",), color="g", overlay="o")
     files = {c: [f"{c}.parquet"] for c in both.columns()}
     spec = scatter_spec(both, files, 400, 300, [])
@@ -83,7 +97,7 @@ def test_show_null_rows_draws_the_missing_rows_of_each_role_by_default() -> None
     assert scatter_spec(alone, files, 400, 300, [], show_null_rows=off).null_roles == []
     on = {"color": False, "overlay": True}
     assert scatter_spec(alone, files, 400, 300, [], show_null_rows=on).null_roles == [
-        "color"
+        "overlay"
     ]
     bare = Encoding(x=("a",), y=("b",))
     assert scatter_spec(bare, files, 400, 300, []).null_roles == []
@@ -114,7 +128,7 @@ def test_the_default_marker_size_is_larger_for_the_overlay_shapes() -> None:
     """Without a size, the overlay's shapes take `SHAPE_SIZE` and the circles `POINT_SIZE`."""
     files = {c: [f"{c}.parquet"] for c in ("a", "b", "g", "o")}
     shapes = Encoding(x=("a",), y=("b",), color="g", overlay="o")
-    circles = Encoding(x=("a",), y=("b",), overlay="o")
+    circles = Encoding(x=("a",), y=("b",), color="g")
     assert scatter_spec(shapes, files, 400, 300, ["#000000"]).shape_size == SHAPE_SIZE
     assert scatter_spec(circles, files, 400, 300, ["#000000"]).shape_size == POINT_SIZE
     assert (
@@ -386,7 +400,7 @@ def test_overlay_levels_take_their_own_sizes() -> None:
     )
     assert spec.marker_sizes(["p", "q", "r"]) == [9, 3, 9]
     assert spec.marker_sizes([]) == [9]
-    circles = Encoding(x=("a",), y=("b",), overlay="o")
+    circles = Encoding(x=("a",), y=("b",), color="g")
     spec = scatter_spec(circles, files, 400, 300, ["#000000"], shape_sizes={"q": 3})
     assert spec.shape_sizes == {}
     assert spec.marker_sizes(["q"]) == [POINT_SIZE]
@@ -415,7 +429,7 @@ def test_overlay_levels_take_their_own_shapes() -> None:
         SHAPES[2],
     ]
     assert spec.marker_shapes([]) == [None]
-    circles = Encoding(x=("a",), y=("b",), overlay="o")
+    circles = Encoding(x=("a",), y=("b",), color="g")
     spec = scatter_spec(circles, files, 400, 300, ["#000000"], level_shapes={"q": "x"})
     assert spec.level_shapes == {}
     assert spec.marker_shapes(["q"]) == [None]

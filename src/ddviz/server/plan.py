@@ -264,9 +264,8 @@ def scatter_spec(
 
     Every pair of an x and a y column is drawn in a panel of each facet
     cell, colored by color and faceted by row and col. Overlay draws the
-    points in a marker shape per level (`ScatterSpec.overlay`) beside a
-    color column; alone, it colors the series as color would, without
-    shapes (as JMP does). The panels of a categorical x and a numeric y have box
+    points in a marker shape per level (`ScatterSpec.overlay`), with or
+    without a color column; without one, the points have the one color. The panels of a categorical x and a numeric y have box
     plots when the elements have them (`ScatterSpec.box`), and those of a
     numeric x and a numeric y smoothing lines (`ScatterSpec.smooth`); the
     other panels draw the points even without the points element. A categorical x or y column is drawn in bands, one per
@@ -290,7 +289,7 @@ def scatter_spec(
         Conditions of the local filter.
     numeric : dict of str to bool, optional
         Whether each column is numeric. A numeric row, col, wrap or
-        overlay (beside color) column is cut into `FACET_BINS` intervals
+        overlay column is cut into `FACET_BINS` intervals
         (`ddviz.compute.cuts`); a numeric color column is a gradient, or cut
         by `color_bins`. An x or y column
         missing is numeric; the others, categorical.
@@ -317,7 +316,7 @@ def scatter_spec(
     shape_sizes : dict of str to int, optional
         Size of the shapes of single overlay levels, by the level's name
         (`parse_shape_sizes`), in place of `shape_size`; dropped without
-        shapes (overlay alone colors the series).
+        an overlay.
     level_shapes : dict of str to str, optional
         Shape of single overlay levels, by the level's name
         (`parse_level_shapes`), in place of the shape of the level's place;
@@ -325,8 +324,7 @@ def scatter_spec(
     show_null_rows : dict of str to bool, optional
         Whether the ``"color"`` and the ``"overlay"`` of the graph draw
         their rows with a null or NaN value (`ScatterSpec.null_roles`); a
-        role left out does. Overlay alone colors the series by its own
-        setting. None for both.
+        role left out does. None for both.
     axis_scales : object, optional
         The scale of each placed x and y column, as the request has it
         (`ddviz.shared.axisscale.parse_axis_scales`); None for all linear.
@@ -365,10 +363,6 @@ def scatter_spec(
         role for role, column in (("color", color), ("overlay", overlay)) if column
     ]
     null_roles = [role for role in null_roles if show[role]]
-    if color is None:
-        # Overlay alone colors the series, without shapes, by its own setting.
-        color, overlay = overlay, None
-        null_roles = ["color"] if null_roles else []
     hover = drawn_columns(encoding)
     filters = list(filters or [])
     binned = {

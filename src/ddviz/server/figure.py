@@ -216,24 +216,32 @@ def _log_axis(log: bool) -> dict:
 def _series_ticks(manifest: PlotManifest) -> dict[float, str]:
     """Return the ticks of the one band (`ddviz.shared.scatter.ONE_BAND`): each series' name under its box.
 
-    Without box plots or series (no color column, a gradient, or a color
-    column without values) it has none. A series of a color level and an overlay level is named by both.
+    Without box plots or series (no color or overlay column, a gradient,
+    or a color column without values) it has none. A series of a color
+    level and an overlay level is named by both; without a color column,
+    by its overlay level.
     A gradient beside its missing level (`ddviz.shared.missing`) names its
     own level by its column.
     """
     spec, levels = manifest.spec, manifest.levels
     colors, overlays = levels["color"], levels["overlay"]
-    if not spec.box or colors == [None]:
+    if not spec.box:
         return {}
 
     def name(c: object) -> str:
         return spec.color if c is None else shown_level(c, colors)
 
-    names = [
-        name(c) if spec.overlay is None else f"{name(c)} / {shown_level(o, overlays)}"
-        for c in colors
-        for o in overlays
-    ]
+    if spec.color is None and spec.overlay is not None:
+        # Overlay alone: each series is an overlay level, of the one color.
+        names = [shown_level(o, overlays) for o in overlays]
+    elif colors == [None]:
+        return {}
+    else:
+        names = [
+            name(c) if spec.overlay is None else f"{name(c)} / {shown_level(o, overlays)}"
+            for c in colors
+            for o in overlays
+        ]
     if not names:
         return {}
     # The boxes split the band into a slot per series (``static/js/boxes.js``).

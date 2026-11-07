@@ -29,8 +29,8 @@ class Encoding:
     color : str or None
         Column whose levels color the series.
     overlay : str or None
-        Column whose levels draw the points in marker shapes beside a color
-        column; alone, its levels color the series.
+        Column whose levels draw the points in marker shapes, with or without
+        a color column.
     row, col : str or None
         Columns whose levels make the facet rows and columns (Group Y and
         Group X).

@@ -655,8 +655,7 @@ def test_an_overlay_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> 
     page.wait_for_function(SETTLED)
     assert sample.evaluate("(canvas) => canvas.toDataURL()") == before
 
-    # The shape stays while the overlay column does, and goes with another,
-    # even one drawn without a color column (overlay alone sends no shapes).
+    # The shape stays while the overlay column does, and goes with another.
     marker.click(button="right")
     menu.get_by_text("形", exact=True).hover()
     panel.locator('.shape-cell[data-shape="x"]').click()
@@ -669,6 +668,72 @@ def test_an_overlay_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> 
     place(page, "color", "color")
     page.wait_for_function(PAINTED_PIXEL)
     assert sample.evaluate("(canvas) => canvas.toDataURL()") == before
+
+
+# The colors of the opaque pixels of the image layers, as "r,g,b".
+OPAQUE_COLORS = """() => {
+  const canvas = document.querySelector("canvas.image-layers");
+  const { data } = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+  const colors = new Set();
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 255) colors.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
+  }
+  return [...colors];
+}"""
+
+
+def test_overlay_alone_draws_shapes_of_one_color(app_page: Page) -> None:
+    """Overlay without a color column draws its levels in shapes of 7 px and one color, with the shape legend alone, whose markers change a level's size and shape."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    page.wait_for_function(PAINTED_PIXEL)
+    one_color = page.evaluate(OPAQUE_COLORS)
+    assert len(one_color) == 1
+    place(page, "facet", "overlay")
+    page.wait_for_function(PAINTED_PIXEL)
+    legend = page.locator("#legend")
+    items = legend.locator(".legend-item")
+    shapes = items.filter(has=page.locator("canvas"))
+    # The shape legend alone: every item is a shape, under the one title.
+    expect(shapes).to_have_count(2)
+    expect(items).to_have_count(2)
+    expect(legend.locator(".legend-title")).to_have_count(1)
+    expect(legend.locator(".legend-title")).to_have_text("facet")
+    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
+    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "7")
+    assert page.evaluate(OPAQUE_COLORS) == one_color
+
+    status = page.locator("#status")
+    task = status.inner_text()
+    marker = shapes.nth(1).locator(".legend-marker")
+    marker.click(button="right")
+    menu = page.locator(".shape-menu")
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
+    menu.get_by_text("11 px", exact=True).click()
+    expect(menu).to_have_count(0)
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "11")
+    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
+
+    task = status.inner_text()
+    marker.click(button="right")
+    menu.get_by_text("形", exact=True).hover()
+    panel = page.locator(".shape-panel")
+    expect(panel.locator(".shape-cell.current")).to_have_attribute(
+        "data-shape", "square"
+    )
+    panel.locator('.shape-cell[data-shape="x"]').click()
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    marker.click(button="right")
+    menu.get_by_text("形", exact=True).hover()
+    expect(panel.locator(".shape-cell.current")).to_have_attribute("data-shape", "x")
+    page.keyboard.press("Escape")
+    assert page.evaluate(OPAQUE_COLORS) == one_color
 
 
 # Whether the image layers have a pixel of the color [r, g, b].
