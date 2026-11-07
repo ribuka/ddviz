@@ -9,6 +9,9 @@
 // mode bar, at the figure's top right, follows the scroll the same way and
 // stays at the top right of the area, above the top strip.
 
+// Gap in pixels between a y tick label and the plot area's edge.
+const TICK_GAP = 4;
+
 function axisKey(id) {
   return id.replace(/^([xy])/, "$1axis");
 }
@@ -83,6 +86,18 @@ export class StickyLabels {
     return null;
   }
 
+  // Returns the room in pixels the y tick labels of the left strip take
+  // from the plot area's edge, of every panel row, whole and not cut by the
+  // strip: their widest, with the gap that sets them off the edge. The
+  // labels of a categorical axis leave it out (`leftmargin.js`).
+  labelsWidth() {
+    let widest = 0;
+    for (const span of this.strips.left.querySelectorAll(".tick.y[data-measured]")) {
+      widest = Math.max(widest, span.getBoundingClientRect().width);
+    }
+    return widest ? widest + TICK_GAP : 0;
+  }
+
   draw() {
     const { meta } = this;
     const full = this.gd._fullLayout;
@@ -118,11 +133,14 @@ export class StickyLabels {
     meta.panels.forEach((panel, p) => {
       if (p % ncol === 0) {
         const ya = full[axisKey(panel.yaxis)];
+        const measured = !meta.y_categorical[panel.y];
         for (const tick of ya?._vals ?? []) {
           // Minor ticks (the axis dialog's) have no labels.
           if (tick.minor) continue;
           const y = ya._offset + ya.l2p(tick.x) - sy - t;
-          yTicks.push(label("tick y", tick.text, { right: "4px", top: `${y}px` }, true));
+          const span = label("tick y", tick.text, { right: `${TICK_GAP}px`, top: `${y}px` }, true);
+          if (measured) span.dataset.measured = "";
+          yTicks.push(span);
         }
       }
       // The bottom panel of each panel column: a wrapped grid may leave

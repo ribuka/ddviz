@@ -10,7 +10,14 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ddviz.shared.axisscale import positions
-from ddviz.shared.layout import GAP, WRAP_GAP, facet_grid, grid_layout
+from ddviz.shared.layout import (
+    GAP,
+    MARGIN_LEFT,
+    WRAP_GAP,
+    facet_grid,
+    grid_layout,
+    left_margin,
+)
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
 
@@ -62,6 +69,7 @@ def resized_spec(
     filter_files: dict[str, list[str]],
     x_ranges: list,
     y_ranges: list,
+    margin_left: int = MARGIN_LEFT,
 ) -> ScatterSpec:
     """Return the spec of the overview for other ranges, size or filter, reusing its levels.
 
@@ -81,6 +89,9 @@ def resized_spec(
         Parts of each filter column in the column cache.
     x_ranges, y_ranges : list
         Data range of each x and y column.
+    margin_left : int, optional
+        Left margin the page asks for, in pixels; kept within the width
+        (`ddviz.shared.layout.left_margin`).
 
     Returns
     -------
@@ -102,6 +113,7 @@ def resized_spec(
         filters=list(filters),
         width=width,
         height=height,
+        margin_left=left_margin(margin_left, width),
         view=_view(manifest, x_ranges, y_ranges, same),
     )
 
@@ -137,9 +149,12 @@ def unchanged(manifest: PlotManifest | None, spec: ScatterSpec) -> bool:
         spec.wrap_cols,
         spec.width,
         spec.height,
+        spec.margin_left,
     )
     row_gap = WRAP_GAP if spec.wrap else GAP
-    layout = grid_layout(spec.width, spec.height, axes.rows, axes.cols, row_gap)
+    layout = grid_layout(
+        spec.width, spec.height, axes.rows, axes.cols, row_gap, spec.margin_left
+    )
     return (
         layout == manifest.layout
         and manifest.x_ranges == spec.view.x_ranges

@@ -34,6 +34,31 @@ MIN_PANEL_HEIGHT = 120
 SCROLLBAR = 17
 
 
+def left_margin(wanted: int, width: int) -> int:
+    """Return the left margin of a figure: the room its y tick labels need, within the area.
+
+    The page measures the room the y tick labels of the figure drawn need
+    (``static/js/leftmargin.js``) and asks for it. The margin is never
+    below `MARGIN_LEFT`, and grows at most to leave one pixel of the area
+    between it and the right margin and the scroll bar: a narrower area
+    does not show the labels whole.
+
+    Parameters
+    ----------
+    wanted : int
+        Left margin the page asks for, in pixels.
+    width : int
+        Width of the area that shows the figure, in pixels.
+
+    Returns
+    -------
+    int
+        The left margin in pixels.
+    """
+    most = width - MARGIN_RIGHT - SCROLLBAR - 1
+    return max(MARGIN_LEFT, min(wanted, most))
+
+
 @dataclass(frozen=True)
 class GridLayout:
     """Where each panel's plot area lies in a figure.
@@ -52,6 +77,9 @@ class GridLayout:
     row_gap : int
         Gap between panel rows in pixels: `GAP`, or `WRAP_GAP` for a
         wrapped grid.
+    margin_left : int
+        Left margin in pixels (`left_margin`): every panel row's y tick
+        labels share it.
     """
 
     width: int
@@ -62,6 +90,7 @@ class GridLayout:
     panel_height: int
     scroll: bool = False
     row_gap: int = GAP
+    margin_left: int = MARGIN_LEFT
 
     def x_domain(self, col: int) -> tuple[float, float]:
         """Return the plotly x domain of a facet column.
@@ -76,7 +105,7 @@ class GridLayout:
         tuple of float
             Start and end as fractions of the plot area width.
         """
-        area = self.width - MARGIN_LEFT - MARGIN_RIGHT
+        area = self.width - self.margin_left - MARGIN_RIGHT
         left = col * (self.panel_width + GAP)
         return (left / area, (left + self.panel_width) / area)
 
@@ -197,7 +226,9 @@ class AxisGrid:
         return row, col
 
 
-def wrap_columns(n: int, width: int, height: int) -> int:
+def wrap_columns(
+    n: int, width: int, height: int, margin_left: int = MARGIN_LEFT
+) -> int:
     """Return how many of `n` wrapped panels go to a row so that they are closest to square.
 
     Parameters
@@ -206,6 +237,8 @@ def wrap_columns(n: int, width: int, height: int) -> int:
         Number of panels, at least 1.
     width, height : int
         Size of the area that shows the figure, in pixels.
+    margin_left : int, optional
+        Left margin in pixels (`left_margin`).
 
     Returns
     -------
@@ -215,7 +248,7 @@ def wrap_columns(n: int, width: int, height: int) -> int:
 
     def skew(ncol: int) -> float:
         nrow = math.ceil(n / ncol)
-        w = _split(width, MARGIN_LEFT + MARGIN_RIGHT, ncol, GAP)
+        w = _split(width, margin_left + MARGIN_RIGHT, ncol, GAP)
         h = _split(height, MARGIN_TOP + MARGIN_BOTTOM, nrow, WRAP_GAP)
         return abs(math.log(w / h))
 
@@ -231,6 +264,7 @@ def facet_grid(
     wrap_cols: int | None,
     width: int,
     height: int,
+    margin_left: int = MARGIN_LEFT,
 ) -> AxisGrid:
     """Return the panels of a figure for its facet levels and axis columns.
 
@@ -248,6 +282,8 @@ def facet_grid(
         `wrap_columns`.
     width, height : int
         Size of the area that shows the figure, in pixels.
+    margin_left : int, optional
+        Left margin in pixels (`left_margin`).
 
     Returns
     -------
@@ -256,7 +292,7 @@ def facet_grid(
     """
     if not wrap:
         return AxisGrid(nrow=nrow, ncol=ncol, nx=nx, ny=ny)
-    per_row = min(wrap_cols or wrap_columns(ncol, width, height), ncol)
+    per_row = min(wrap_cols or wrap_columns(ncol, width, height, margin_left), ncol)
     return AxisGrid(nrow=math.ceil(ncol / per_row), ncol=per_row, wrap=ncol)
 
 
@@ -271,6 +307,7 @@ def grid_layout(
     nrow: int,
     ncol: int,
     row_gap: int = GAP,
+    margin_left: int = MARGIN_LEFT,
 ) -> GridLayout:
     """Split a figure into a facet grid of equal panels.
 
@@ -287,19 +324,29 @@ def grid_layout(
         Panel rows and columns.
     row_gap : int, optional
         Gap between panel rows: `WRAP_GAP` for a wrapped grid.
+    margin_left : int, optional
+        Left margin in pixels (`left_margin`); a larger one leaves the
+        panels less room, and may make the grid scroll.
 
     Returns
     -------
     GridLayout
         The layout.
     """
-    margins_x = MARGIN_LEFT + MARGIN_RIGHT
+    margins_x = margin_left + MARGIN_RIGHT
     margins_y = MARGIN_TOP + MARGIN_BOTTOM
     panel_width = _split(width, margins_x, ncol, GAP)
     panel_height = _split(height, margins_y, nrow, row_gap)
     if panel_width >= MIN_PANEL_WIDTH and panel_height >= MIN_PANEL_HEIGHT:
         return GridLayout(
-            width, height, nrow, ncol, panel_width, panel_height, row_gap=row_gap
+            width,
+            height,
+            nrow,
+            ncol,
+            panel_width,
+            panel_height,
+            row_gap=row_gap,
+            margin_left=margin_left,
         )
     panel_width = max(_split(width - SCROLLBAR, margins_x, ncol, GAP), MIN_PANEL_WIDTH)
     panel_height = max(
@@ -314,4 +361,5 @@ def grid_layout(
         panel_height=panel_height,
         scroll=True,
         row_gap=row_gap,
+        margin_left=margin_left,
     )

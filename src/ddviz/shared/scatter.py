@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+from ddviz.shared.layout import MARGIN_LEFT
 from ddviz.shared.missing import MISSING, MISSING_SHAPE
 from ddviz.shared.shapes import default_shape
 
@@ -330,6 +331,10 @@ class ScatterSpec:
         are of the log10 of their values, and a panel of such a column
         draws only its rows with a positive finite value there. Box plots
         and smoothing lines are found from those rows' values themselves.
+    margin_left : int
+        Left margin of the figure in pixels, for the y tick labels the page
+        measured (`ddviz.shared.layout.left_margin`): the panels have the
+        width left of `width`.
     """
 
     files: dict[str, list[str]]
@@ -364,6 +369,7 @@ class ScatterSpec:
     null_roles: list[str] = field(default_factory=list)
     log_x: list[str] = field(default_factory=list)
     log_y: list[str] = field(default_factory=list)
+    margin_left: int = MARGIN_LEFT
 
     def box_pairs(self) -> set[tuple[str, str]]:
         """Return the pairs of axis columns whose panels have box plots.
