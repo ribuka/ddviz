@@ -442,6 +442,49 @@ button {
   font: inherit;
 }
 
+/* The search history under the search box (searchhistory.js). */
+.search-history-row {
+  display: flex;
+  align-items: center;
+}
+
+.search-history-row:hover,
+.search-history-row.active {
+  background: var(--bg-menu-hover);
+}
+
+.search-history-word {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 4px 3px 12px;
+  border: none;
+  background: none;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-history-remove {
+  flex: none;
+  padding: 0 8px;
+  border: none;
+  background: none;
+  color: var(--text-hint);
+  font: inherit;
+  cursor: pointer;
+}
+
+.search-history-remove:hover {
+  color: var(--text);
+}
+
+.search-history-clear {
+  padding-left: 12px;
+}
+
 .column-kinds {
   display: flex;
   gap: 4px;

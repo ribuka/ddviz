@@ -18,11 +18,13 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from ddviz.server.api_history import history_router
 from ddviz.server.api_plot import plot_router
 from ddviz.server.api_selection import selection_router
 from ddviz.server.api_source import source_router
 from ddviz.server.auth import TokenAuth
 from ddviz.server.broker import TaskBroker
+from ddviz.server.history import SearchHistory, history_file
 from ddviz.server.results import Results
 from ddviz.server.settings import Settings
 from ddviz.server.source import Source
@@ -36,6 +38,7 @@ def create_app(
     recursive: bool,
     root: Path,
     cache_root: Path,
+    history_root: Path,
     settings: Settings,
     token: str,
 ) -> FastAPI:
@@ -52,6 +55,9 @@ def create_app(
         Empty directory for task outputs and the worker log; removed on shutdown.
     cache_root : pathlib.Path
         Directory of the column cache; kept across runs.
+    history_root : pathlib.Path
+        Directory of the column list's search histories, one file per input
+        (`ddviz.server.history`); kept across runs.
     settings : Settings
         The settings (`ddviz.server.settings`).
     token : str
@@ -65,6 +71,11 @@ def create_app(
     broker = TaskBroker(root)
     source = Source(data_paths, recursive, cache_root, settings, broker)
     results = Results()
+    history = SearchHistory(
+        history_file(history_root, source.paths),
+        source.paths,
+        settings.columns.max_history,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -95,6 +106,7 @@ def create_app(
         return {"inactive_opacity": settings.plot.legend.inactive_opacity}
 
     app.include_router(source_router(source, settings.columns.max_listed))
+    app.include_router(history_router(history))
     app.include_router(
         plot_router(
             source,

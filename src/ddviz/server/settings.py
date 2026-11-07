@@ -13,6 +13,8 @@ from ddviz.shared.scatter import MAX_LEVELS
 # Most columns the column list shows by default. 1,000 lists as fast as 200
 # did; thousands make each search slow to draw (`docs/spec.md`, "列リストの件数").
 MAX_LISTED = 1000
+# Most keywords the search history of the column list keeps (`docs/spec.md`, "列リスト").
+MAX_HISTORY = 20
 # Opacity of the series made inactive in the legend (`docs/spec.md`, "凡例クリック").
 INACTIVE_OPACITY = 0.1
 
@@ -71,9 +73,12 @@ class ColumnsSettings:
     ----------
     max_listed : int
         Most matching columns the column list shows.
+    max_history : int
+        Most keywords the search history of the column list keeps per input.
     """
 
     max_listed: int = MAX_LISTED
+    max_history: int = MAX_HISTORY
 
 
 @dataclass(frozen=True)
@@ -143,8 +148,8 @@ def load_settings(path: Path | None = None) -> Settings:
     Raises
     ------
     ValueError
-        When ``plot.max_levels`` or ``columns.max_listed`` is not a positive
-        integer, ``hover.max_temp_gb`` is not a positive number, or
+        When ``plot.max_levels``, ``columns.max_listed`` or
+        ``columns.max_history`` is not a positive integer, ``hover.max_temp_gb`` is not a positive number, or
         ``plot.legend.inactive_opacity`` is not a number from 0 to 1.
     """
     path = path or settings_path()
@@ -153,6 +158,7 @@ def load_settings(path: Path | None = None) -> Settings:
     default = CacheSettings()
     max_levels = _positive_int(data, "plot", "max_levels", MAX_LEVELS)
     max_listed = _positive_int(data, "columns", "max_listed", MAX_LISTED)
+    max_history = _positive_int(data, "columns", "max_history", MAX_HISTORY)
     inactive_opacity = (
         data.get("plot", {}).get("legend", {}).get("inactive_opacity", INACTIVE_OPACITY)
     )
@@ -189,7 +195,7 @@ def load_settings(path: Path | None = None) -> Settings:
         hover=HoverSettings()
         if max_temp_gb is None
         else HoverSettings(max_temp_bytes=int(max_temp_gb * 2**30)),
-        columns=ColumnsSettings(max_listed=max_listed),
+        columns=ColumnsSettings(max_listed=max_listed, max_history=max_history),
     )
 
 

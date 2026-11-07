@@ -11,7 +11,10 @@
 // An answer that lists the same columns as shown updates their shares in
 // place: a replaced item under the pointer between its mouse down and its
 // `dragstart` makes Chrome drop the drag.
+// The search box keeps a history of keywords (`searchhistory.js`); placing a
+// listed column on a role or the filter pane puts the keyword in it.
 import { beginDrag } from "./builder.js";
+import { attachSearchHistory } from "./searchhistory.js";
 
 const SEARCH_DELAY_MS = 150;
 const PENDING_RETRY_MS = 1000;
@@ -55,7 +58,7 @@ export function attachColumnList(root) {
     for (const control of [hideEmpty, minShare]) control.disabled = !sharesDone;
     const countItem = sortMenu?.querySelector('[data-order="count"]');
     if (countItem) countItem.disabled = !sharesDone;
-    showColumns(list, found);
+    showColumns(list, found, remember);
     if (found.shares === "pending") timer = setTimeout(search, PENDING_RETRY_MS);
   }
 
@@ -65,6 +68,7 @@ export function attachColumnList(root) {
   }
 
   input.addEventListener("input", searchSoon);
+  const remember = attachSearchHistory(input, search);
   minShare.addEventListener("input", searchSoon);
   hideEmpty.addEventListener("change", search);
   orderButton.addEventListener("click", () => {
@@ -152,18 +156,19 @@ function compactCount(count, rows) {
 
 // Show the answer's columns, keeping the items when they are the same columns
 // in the same order (the answers while the shares are counted).
-function showColumns(list, found) {
+// `placed` is called when one of them is placed (`beginDrag`).
+function showColumns(list, found, placed) {
   const items = [...list.children];
   const same =
     items.length === found.columns.length &&
     items.every((item, i) => item.dataset.name === found.columns[i].name);
   if (!same) {
-    list.replaceChildren(...found.columns.map(columnItem));
+    list.replaceChildren(...found.columns.map((column) => columnItem(column, placed)));
   }
   found.columns.forEach((column, i) => showShare(list.children[i], column, found.shares, found.rows));
 }
 
-function columnItem(column) {
+function columnItem(column, placed) {
   const item = document.createElement("div");
   item.className = "column";
   item.draggable = true;
@@ -179,7 +184,7 @@ function columnItem(column) {
   share.className = "column-share";
   item.append(type, name, share);
   item.addEventListener("dragstart", (event) => {
-    beginDrag({ name: column.name, numeric: column.numeric, temporal: column.temporal });
+    beginDrag({ name: column.name, numeric: column.numeric, temporal: column.temporal, placed });
     event.dataTransfer.setData("text/plain", column.name);
     event.dataTransfer.effectAllowed = "copyMove";
   });

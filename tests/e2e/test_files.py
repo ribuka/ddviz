@@ -28,7 +28,13 @@ def app_url(tmp_path: Path, folder_path: Path) -> Iterator[str]:
         folder_path / n for n in ("part-10.parquet", "part-2.parquet", "part-1.parquet")
     ]
     app = create_app(
-        [str(f) for f in files], False, root, tmp_path / "cache", Settings(), TOKEN
+        [str(f) for f in files],
+        False,
+        root,
+        tmp_path / "cache",
+        tmp_path / "history",
+        Settings(),
+        TOKEN,
     )
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")

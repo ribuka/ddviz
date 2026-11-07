@@ -38,6 +38,7 @@ def server(tmp_path: Path, scatter_path: Path) -> Iterator[TestClient]:
         False,
         tmp_path / "run",
         tmp_path / "cache",
+        tmp_path / "history",
         Settings(),
         TOKEN,
     )
@@ -136,6 +137,7 @@ def test_the_page_reads_the_inactive_opacity(
         False,
         tmp_path / "run",
         tmp_path / "cache",
+        tmp_path / "history",
         settings,
         TOKEN,
     )
@@ -156,6 +158,7 @@ def test_columns_list_as_many_as_the_settings_allow(
         False,
         tmp_path / "run",
         tmp_path / "cache",
+        tmp_path / "history",
         settings,
         TOKEN,
     )
@@ -165,6 +168,47 @@ def test_columns_list_as_many_as_the_settings_allow(
         found = started.get("/api/columns", params={"limit": 200}).json()
     assert found["matched"] == 5
     assert [c["name"] for c in found["columns"]] == ["x", "y"]
+
+
+def test_search_history_is_kept_per_input_across_runs(
+    tmp_path: Path, scatter_path: Path, folder_path: Path
+) -> None:
+    """The keywords outlive the server, and another input has its own."""
+    runs = iter(range(10))
+
+    def serve(path: Path) -> TestClient:
+        # Each server removes its own task directory when it stops.
+        root = tmp_path / f"run{next(runs)}"
+        root.mkdir()
+        app = create_app(
+            [str(path)],
+            False,
+            root,
+            tmp_path / "cache",
+            tmp_path / "history",
+            Settings(),
+            TOKEN,
+        )
+        client = TestClient(app)
+        client.get("/", params={"token": TOKEN})
+        return client
+
+    with serve(scatter_path) as first:
+        assert first.get("/api/search-history").json() == {"words": []}
+        first.post("/api/search-history", json={"word": "x"})
+        added = first.post("/api/search-history", json={"word": " Color  g "})
+        assert added.json() == {"words": ["Color g", "x"]}
+    with serve(scatter_path) as again:
+        assert again.get("/api/search-history").json() == {"words": ["Color g", "x"]}
+        removed = again.delete("/api/search-history", params={"word": "x"})
+        assert removed.json() == {"words": ["Color g"]}
+    with serve(folder_path) as other:
+        assert other.get("/api/search-history").json() == {"words": []}
+        other.post("/api/search-history", json={"word": "y"})
+        assert other.delete("/api/search-history").json() == {"words": []}
+        assert other.get("/api/search-history").json() == {"words": []}
+    with serve(scatter_path) as last:
+        assert last.get("/api/search-history").json() == {"words": ["Color g"]}
 
 
 def test_plot_draws_and_serves_images(client: TestClient) -> None:
@@ -348,6 +392,7 @@ def folder_client(tmp_path: Path, folder_path: Path) -> Iterator[TestClient]:
         False,
         tmp_path / "run",
         tmp_path / "cache",
+        tmp_path / "history",
         Settings(),
         TOKEN,
     )
@@ -366,6 +411,7 @@ def files_client(tmp_path: Path, folder_path: Path) -> Iterator[TestClient]:
         False,
         tmp_path / "run",
         tmp_path / "cache",
+        tmp_path / "history",
         Settings(),
         TOKEN,
     )
@@ -423,6 +469,7 @@ def test_several_paths_with_a_folder_are_refused(
         False,
         tmp_path / "run",
         tmp_path / "cache",
+        tmp_path / "history",
         Settings(),
         TOKEN,
     )
@@ -450,6 +497,7 @@ def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
         False,
         tmp_path / "limited",
         tmp_path / "cache",
+        tmp_path / "history",
         settings,
         TOKEN,
     )
@@ -799,6 +847,7 @@ def test_plot_data_needs_the_hover_files(tmp_path: Path, scatter_path: Path) -> 
         False,
         tmp_path / "run",
         tmp_path / "cache",
+        tmp_path / "history",
         settings,
         TOKEN,
     )
