@@ -274,6 +274,10 @@ builderRoot.addEventListener(
     const last = axisPress;
     axisPress = null;
     if (!hit) return;
+    // The strips let the pointer through to the plot area below: plotly
+    // would take the first press as one on the plot, which clears a Box
+    // Select's selection. A press on a strip's numeric axis is the axis's.
+    if (hit.strip) event.stopPropagation();
     const near = last && Math.hypot(event.clientX - last.x, event.clientY - last.y) <= 4;
     if (near && last.axis === hit.axis && last.index === hit.index && event.timeStamp - last.time < AXIS_DOUBLE_CLICK_MS) {
       event.stopPropagation();
@@ -297,7 +301,8 @@ function axisUnder(event) {
 }
 
 // Returns the axis column whose tick labels are under a pointer event, of
-// any kind, as `{axis, index}`, or null (`axisUnder`). A y axis also takes
+// any kind, as `{axis, index}` (with `strip: true` in a strip of a grid that
+// scrolls), or null (`axisUnder`). A y axis also takes
 // its whole left margin, from the y zone's right edge (the zone keeps its
 // chips and drops) to the plot area of the leftmost panel at that height:
 // in a grid that scrolls, the left strip and the gap left of it
@@ -311,7 +316,7 @@ function axisHit(event) {
   if (!open) return null;
   const from = yZone.getBoundingClientRect().right;
   const strip = sticky.axisAt(clientX, clientY, from);
-  if (strip) return { axis: strip.axis, index: strip.axis === "x" ? strip.panel.x : strip.panel.y };
+  if (strip) return { axis: strip.axis, index: strip.axis === "x" ? strip.panel.x : strip.panel.y, strip: true };
   return axisAt(event, gd, current) ?? (sticky.shown ? null : yMarginAt(clientX, clientY, gd, current, from));
 }
 

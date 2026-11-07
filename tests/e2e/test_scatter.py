@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 
 import polars as pl
@@ -1671,7 +1672,21 @@ def test_a_double_click_on_the_left_margin_of_y_opens_its_dialog(
 
     # The left edge of the plot area goes back to the overview.
     assert dialog_at(page, row["left"] + 2, middle) is None
-    expect(page.locator("#status")).not_to_contain_text("表示範囲に")
+    page.wait_for_function(f"() => {full}.yaxis.range[0] < -0.5")
+    page.wait_for_timeout(300)
+    page.wait_for_function(SETTLED)
+
+    # A selection stays, as the range does.
+    shown = page.evaluate(f"{full}.yaxis.range")
+    selections = box_select(page)
+    below = table_top(page)
+    points = [(x, y) for x, y in margin_points(margins, row) if y < below - 2]
+    assert len(points) >= 8
+    for x, y in points:
+        assert dialog_at(page, x, y) == "Y 軸: y", (x, y)
+    assert selections == []
+    expect(page.locator("#table")).to_be_visible()
+    assert page.evaluate(f"{full}.yaxis.range") == shown
     assert errors == []
 
 
@@ -1708,6 +1723,38 @@ def test_the_margin_of_an_axis_without_a_dialog_opens_none(app_page: Page) -> No
     page.keyboard.press("Escape")
 
 
+def box_select(page: Page) -> list[str]:
+    """Select rows with a Box Select drag in the middle of the stage, fold the table, and return the list of the requests on the selection from then on.
+
+    The table lies over the bottom of the stage, which is its own: folded,
+    only its bar does (`table_top`).
+    """
+    page.evaluate("Plotly.relayout('plot', {dragmode: 'select'})")
+    stage = page.locator("#stage").bounding_box()
+    x, y = stage["x"] + stage["width"] / 2, stage["y"] + stage["height"] / 2
+    with page.expect_request("**/api/selection"):
+        page.mouse.move(x - 30, y - 30)
+        page.mouse.down()
+        page.mouse.move(x + 30, y + 30, steps=5)
+        page.mouse.up()
+    expect(page.locator("#table")).to_be_visible()
+    page.locator("#table .table-down").click()
+    expect(page.locator("#table")).to_have_class(re.compile(r"\bcollapsed\b"))
+    page.wait_for_timeout(300)
+    asked: list[str] = []
+    page.on(
+        "request",
+        lambda r: "/api/selection" in r.url and asked.append(f"{r.method} {r.url}"),
+    )
+    return asked
+
+
+def table_top(page: Page) -> float:
+    """Return the top of the table (client pixels), or infinity while it is hidden."""
+    box = page.locator("#table").bounding_box()
+    return box["y"] if box else math.inf
+
+
 # Scrolls a grid to a point and waits for the strips to follow.
 SCROLL_TO = """async (s, [left, top]) => {
   s.scrollLeft = left;
@@ -1720,7 +1767,7 @@ SCROLL_TO = """async (s, [left, top]) => {
 def test_the_left_strip_and_the_gap_left_of_it_open_their_rows_axis(
     app_page: Page,
 ) -> None:
-    """Scrolled both ways and resized, the left strip, its left side and the gap left of it open the axis of the panel row at that height in sight; above and below the strip, none."""
+    """Scrolled both ways and resized, the left strip, its left side and the gap left of it open the axis of the panel row at that height in sight, keeping the selection; above and below the strip, none."""
     from tests.e2e.test_axis_menu import add_second_y, menu_at, y_margins
 
     page = app_page
@@ -1733,6 +1780,7 @@ def test_the_left_strip_and_the_gap_left_of_it_open_their_rows_axis(
     place(page, "color", "row")
     expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
     strip = page.locator(".sticky-strip.left")
+    selections = box_select(page)
 
     for size in [None, {"width": 760, "height": 380}]:
         if size:
@@ -1745,7 +1793,7 @@ def test_the_left_strip_and_the_gap_left_of_it_open_their_rows_axis(
         assert scroller.evaluate("(s) => s.scrollTop") > 0
         margins = y_margins(page)
         box = strip.bounding_box()
-        top, bottom = box["y"], box["y"] + box["height"]
+        top, bottom = box["y"], min(box["y"] + box["height"], table_top(page) - 2)
         xs = [
             margins["zone"] + 1,
             (margins["zone"] + margins["stage"]) / 2,
@@ -1768,6 +1816,8 @@ def test_the_left_strip_and_the_gap_left_of_it_open_their_rows_axis(
                     assert dialog_at(page, x, y) == f"Y 軸: {column}", (x, y, size)
                     checked += 1
         assert checked >= 8
-        # The x strip at the bottom left is not y's.
-        assert menu_at(page, margins["zone"] + 1, bottom + 3) is None
+        # The x strip at the bottom left and the table's bar are not y's.
+        assert menu_at(page, margins["zone"] + 1, bottom + 5) is None
+    assert selections == []
+    expect(page.locator("#table")).to_be_visible()
     assert errors == []
