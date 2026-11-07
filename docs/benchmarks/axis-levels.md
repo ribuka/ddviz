@@ -1004,9 +1004,9 @@ sys.exit(code)
 
 ### 2. 変更後
 
-`tmp/<task>/` に下の 3 つを置き（`bench_wv2_after.py` は `bench_page_after.py` を `bench_page` として読むので、同じフォルダに `bench_page.py` の名前で置く）、次の順に実行した。
+`tmp/<task>/` に下の 3 つを、`_after` を除いた名前（`gen.py`、`bench_page.py`、`bench_wv2.py`）で置き、次の順に実行した。`bench_wv2.py` は同じフォルダの `bench_page.py` を読む。
 
-1. `uv run tmp/<task>/gen_after.py`
+1. `uv run tmp/<task>/gen.py`
 2. `uv run --with psutil tmp/<task>/bench_page.py`（Chrome。ケース名を並べると、そのケースだけ）
 3. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` を付けて `uv run -m ddviz tmp/<task>/data/d1m.parquet` を起動し、`uv run --with psutil tmp/<task>/bench_wv2.py 9333 xcat-100 box-100 xcat-420 box-420 xcat-10000 box-10000 month-period month-box`。終わったら、起動したアプリをその PID のプロセスツリーごと止める。
 
