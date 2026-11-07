@@ -496,6 +496,36 @@ function setCurrent(meta) {
   sticky.set(meta);
   showHoverWarning(meta.hover);
   showLogWarning(meta.nonpositive);
+  builder.layout();
+}
+
+// Returns the span along the axis (`[start, end]`, client coordinates) of
+// the drawn axis of each X or Y column, the first panel's of each (the
+// leftmost facet column's x axes, the top facet row's y axes), for the
+// chips and drops of the role (`Builder.setAxes`). Null without a figure,
+// when the drawn columns are not the role's in its order (a plot of the
+// new ones is pending), or when the figure scrolls in that direction: the
+// axes then move away from the zone.
+function drawnAxes(role) {
+  const meta = current;
+  const full = gd._fullLayout;
+  if (!meta || !full) return null;
+  const drawn = meta[`${role}_columns`];
+  const placed = builder.placed(role);
+  if (drawn.length !== placed.length || drawn.some((column, i) => column !== placed[i])) return null;
+  const scroller = document.getElementById("scroller");
+  const scrolls =
+    role === "x" ? scroller.scrollWidth > scroller.clientWidth : scroller.scrollHeight > scroller.clientHeight;
+  if (meta.scroll && scrolls) return null;
+  const origin = gd.getBoundingClientRect();
+  const spans = [];
+  for (const id of meta[`${role}_axes`]) {
+    const axis = full[axisKey(id)];
+    if (!axis?._length) return null;
+    const start = (role === "x" ? origin.left : origin.top) + axis._offset;
+    spans.push([start, start + axis._length]);
+  }
+  return spans;
 }
 
 // Tells, in the status bar, which log axis columns have rows left out for a
@@ -740,6 +770,9 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     pickedShapes(encoding.overlay);
     layers.attach();
     sticky.attach();
+    // The chips of X and Y follow the axes drawn now and on every later draw.
+    for (const event of ["plotly_afterplot", "plotly_relayout"]) gd.on(event, () => builder.layout());
+    builder.layout();
     gd.on("plotly_relayout", onRelayout);
     gd.on("plotly_selected", (event) => {
       if (!ownReact) onSelected(event);
@@ -1457,6 +1490,7 @@ function clearPlot() {
   elementBar.setPointsText(null);
   stage.classList.remove("scrolls");
   sticky.set(null);
+  builder.layout();
   empty.hidden = false;
   noRows.hidden = true;
   statusLine.show("");
@@ -1696,5 +1730,10 @@ elementBar = new ElementBar(
 elementBar.setSmoothText(smoothingText(smoothing));
 // The empty graph with its element icons is the first committed state.
 builder.commit();
+// The chips of X and Y follow the drawn axes, and their zones' sizes.
+builder.setAxes(drawnAxes);
+const axisZones = builderRoot.querySelectorAll(':scope > .zone[data-role="x"], :scope > .zone[data-role="y"]');
+const zoneObserver = new ResizeObserver(() => builder.layout());
+for (const zone of axisZones) zoneObserver.observe(zone);
 await attachColumnList(document.getElementById("columns"));
 showCasts(document.getElementById("casts"));

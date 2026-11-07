@@ -747,6 +747,26 @@ button {
   padding: 8px 1px 2px;
 }
 
+/* Two columns or more on X or Y: each chip stands at the middle of its
+   region, along the axis where `Builder.layout` puts it, across it at the
+   zone's middle. */
+.zone.spread {
+  position: relative;
+}
+.zone.spread .chip {
+  position: absolute;
+  /* The room `Builder.layout` gives holds the padding too. */
+  box-sizing: border-box;
+}
+.zone.spread[data-role="x"] .chip {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.zone.spread[data-role="y"] .chip {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 .chip.target {
   outline: 2px solid var(--accent);
 }
