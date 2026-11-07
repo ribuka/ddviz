@@ -1376,11 +1376,11 @@ def test_a_double_click_on_a_numeric_axis_sets_its_range_ticks_and_lines(
     expect(dialog).to_be_visible()
     errors = dialog.locator(".axis-dialog-error")
     expect(errors).to_have_text(
-        ["", "最小値より大きくしてください", "0 より大きくしてください", "", ""]
+        ["", "最小値より大きくしてください", "0 より大きくしてください", "", "", ""]
     )
     dialog.locator("input[name=line]").fill("a")
     dialog.get_by_role("button", name="追加").click()
-    expect(errors.nth(4)).to_have_text("数値を入れてください")
+    expect(errors.nth(5)).to_have_text("数値を入れてください")
     assert views == []
 
     dialog.locator("input[name=min]").fill("-1")

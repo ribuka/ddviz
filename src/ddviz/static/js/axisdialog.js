@@ -3,7 +3,9 @@
 // each interval, and reference lines across its panels. The panels of one
 // axis column share its axis (`matches`), so the settings are kept by
 // column and drawn on every panel of the column (`decorate`); the range is
-// the view of the column, which is aggregated again as a zoom is.
+// the view of the column, which is aggregated again as a zoom is. The
+// format of the tick labels (decimal, exponent, percent) is kept with the
+// ticks: it changes only plotly's labels, not the values of the axis.
 
 // The look of a new reference line, and the dashes offered.
 export const LINE_COLOR = "#000000";
@@ -16,10 +18,34 @@ const DASHES = [
 const LINE_WIDTH = 1.5;
 // Most minor ticks a tick interval is split into.
 const MAX_MINOR = 100;
+// The formats of the tick labels, and the fields each one uses: the digits
+// after the decimal point (of the mantissa, of the value times 100) and the
+// thousands separators.
+const FORMATS = [
+  ["auto", "自動"],
+  ["fixed", "小数"],
+  ["exponent", "指数"],
+  ["percent", "パーセント"],
+];
+const USES_DIGITS = new Set(["fixed", "exponent", "percent"]);
+const USES_SEPARATORS = new Set(["auto", "fixed", "percent"]);
+// The digits shown for a format that has none set, and the most allowed.
+const DEFAULT_DIGITS = 2;
+const MAX_DIGITS = 15;
+// d3-format's type of each explicit format (plotly's `tickformat`).
+const FORMAT_TYPES = { fixed: "f", exponent: "e", percent: "%" };
 
-// Returns the empty settings of a column: automatic ticks, no reference lines.
+// Returns the empty settings of a column: automatic ticks and labels, no
+// reference lines.
 export function emptySettings() {
-  return { dtick: null, minor: null, lines: [] };
+  return { dtick: null, minor: null, lines: [], format: "auto", digits: null, separators: false };
+}
+
+// Whether `settings` change nothing of plotly's own axis: no settings to keep.
+export function isEmpty(settings) {
+  return (
+    settings.dtick === null && !settings.lines.length && settings.format === "auto" && !settings.separators
+  );
 }
 
 // Reads a number typed in a field: `{value}`, `{value: null}` for an empty
@@ -31,10 +57,12 @@ function readNumber(text, optional = false) {
   return Number.isFinite(value) ? { value } : { error: "数値を入れてください" };
 }
 
-// Checks the fields of the dialog (texts as typed) and returns the settings
-// and range they make, `{range, dtick, minor}`, or the reason of each field
-// that is wrong (`{errors: {field: text}}`).
-export function readFields({ min, max, dtick, minor }) {
+// Checks the fields of the dialog (texts as typed, the format picked and
+// whether the separators are checked) and returns the settings and range
+// they make, `{range, dtick, minor, format, digits, separators}`, or the
+// reason of each field that is wrong (`{errors: {field: text}}`). A field
+// the format does not use is neither checked nor kept.
+export function readFields({ min, max, dtick, minor, format = "auto", digits = "", separators = false }) {
   const errors = {};
   const lo = readNumber(min);
   const hi = readNumber(max);
@@ -53,8 +81,33 @@ export function readFields({ min, max, dtick, minor }) {
       errors.minor = "間隔を入れたときだけ使えます";
     }
   }
+  let places = null;
+  if (USES_DIGITS.has(format)) {
+    const trimmed = digits.trim();
+    places = /^[0-9]+$/.test(trimmed) ? Number(trimmed) : NaN;
+    if (!(places <= MAX_DIGITS)) errors.digits = `0〜${MAX_DIGITS} の整数にしてください`;
+  }
   if (Object.keys(errors).length) return { errors };
-  return { range: [lo.value, hi.value], dtick: step.value, minor: parts.value };
+  return {
+    range: [lo.value, hi.value],
+    dtick: step.value,
+    minor: parts.value,
+    format,
+    digits: places,
+    separators: USES_SEPARATORS.has(format) && separators,
+  };
+}
+
+// Returns the plotly attributes of the tick labels of an axis with
+// `settings`: plotly's own labels (which turn to exponents by the range
+// shown, as "1e+5"), with thousands separators when asked, or a d3-format
+// (`tickformat`) of the format, its digits and separators. null removes
+// what an earlier setting set.
+export function formatAttributes(settings) {
+  const { format, digits, separators } = { ...emptySettings(), ...settings };
+  if (format === "auto") return { tickformat: null, separatethousands: separators || null };
+  const comma = separators ? "," : "";
+  return { tickformat: `${comma}.${digits}${FORMAT_TYPES[format]}`, separatethousands: null };
 }
 
 // Returns the plotly attributes of an axis with `settings`: linear ticks
@@ -113,9 +166,9 @@ export function decorate(layout, meta, settingsOf) {
       [panel.yaxis, panel.y, meta.y_columns, meta.y_numeric],
     ]) {
       const settings = numeric[index] ? settingsOf(columns[index]) : undefined;
-      if (!settings || settings.dtick === null) continue;
+      if (!settings) continue;
       const key = axis.replace(/^([xy])/, "$1axis");
-      out[key] = { ...out[key], ...withoutNulls(tickAttributes(settings)) };
+      out[key] = { ...out[key], ...withoutNulls(axisAttributes(settings)) };
     }
   }
   const shapes = lineShapes(meta, settingsOf);
@@ -123,8 +176,15 @@ export function decorate(layout, meta, settingsOf) {
   return out;
 }
 
+// Returns the plotly attributes of the ticks and their labels of an axis
+// with `settings` (or undefined for none).
+function axisAttributes(settings) {
+  return { ...tickAttributes(settings), ...formatAttributes(settings) };
+}
+
 // Returns the relayout that draws `settingsOf` on the drawn figure of `meta`:
-// the tick attributes of every axis of its numeric columns, and the shapes.
+// the tick and label attributes of every axis of its numeric columns, and
+// the shapes.
 export function decorationUpdate(meta, settingsOf) {
   const update = { shapes: lineShapes(meta, settingsOf) };
   for (const panel of meta.panels) {
@@ -134,7 +194,7 @@ export function decorationUpdate(meta, settingsOf) {
     ]) {
       if (!numeric[index]) continue;
       const key = axis.replace(/^([xy])/, "$1axis");
-      for (const [name, value] of Object.entries(tickAttributes(settingsOf(columns[index])))) {
+      for (const [name, value] of Object.entries(axisAttributes(settingsOf(columns[index])))) {
         update[`${key}.${name}`] = value;
       }
     }
@@ -267,6 +327,33 @@ export function openAxisDialog({ title, range, settings, onApply }) {
   const minor = field(ticksBox, "補助目盛りの数", numberText(settings.minor), "minor", "なし");
   minor.inputMode = "numeric";
   minor.title = "主目盛りの 1 間隔を何分割するか。間隔を入れたときだけ使える";
+  // The format of the labels. A field the format does not use is disabled
+  // but keeps what was typed, shown again when a format using it is picked.
+  const format = document.createElement("select");
+  format.name = "format";
+  for (const [key, text] of FORMATS) format.append(new Option(text, key, false, key === settings.format));
+  const formatRow = document.createElement("label");
+  formatRow.className = "axis-dialog-field";
+  const formatLabel = document.createElement("span");
+  formatLabel.className = "axis-dialog-label";
+  formatLabel.textContent = "表示形式";
+  formatRow.append(formatLabel, format);
+  ticksBox.append(formatRow);
+  const digits = field(ticksBox, "小数桁数", numberText(settings.digits ?? DEFAULT_DIGITS), "digits");
+  digits.inputMode = "numeric";
+  const separators = document.createElement("input");
+  Object.assign(separators, { type: "checkbox", name: "separators", checked: settings.separators });
+  const separatorsRow = document.createElement("label");
+  separatorsRow.className = "axis-dialog-field axis-dialog-check";
+  separatorsRow.append(separators, "3 桁区切り (,)");
+  ticksBox.append(separatorsRow);
+  const usable = () => {
+    digits.disabled = !USES_DIGITS.has(format.value);
+    separators.disabled = !USES_SEPARATORS.has(format.value);
+    if (digits.disabled) errors.get("digits").textContent = "";
+  };
+  format.addEventListener("change", usable);
+  usable();
 
   const linesBox = section("参照線");
   const value = field(linesBox, "値", "", "line");
@@ -330,12 +417,30 @@ export function openAxisDialog({ title, range, settings, onApply }) {
 
   // Applies the fields, or shows why not; returns whether they were applied.
   const apply = () => {
-    const read = readFields({ min: min.value, max: max.value, dtick: dtick.value, minor: minor.value });
-    for (const name of ["min", "max", "dtick", "minor"]) {
+    const read = readFields({
+      min: min.value,
+      max: max.value,
+      dtick: dtick.value,
+      minor: minor.value,
+      format: format.value,
+      digits: digits.value,
+      separators: separators.checked,
+    });
+    for (const name of ["min", "max", "dtick", "minor", "digits"]) {
       errors.get(name).textContent = read.errors?.[name] ?? "";
     }
     if (read.errors) return false;
-    onApply({ dtick: read.dtick, minor: read.minor, lines: lines.map((line) => ({ ...line })) }, read.range);
+    onApply(
+      {
+        dtick: read.dtick,
+        minor: read.minor,
+        lines: lines.map((line) => ({ ...line })),
+        format: read.format,
+        digits: read.digits,
+        separators: read.separators,
+      },
+      read.range,
+    );
     return true;
   };
 
@@ -357,7 +462,7 @@ export function openAxisDialog({ title, range, settings, onApply }) {
   dialog.append(buttons);
 
   // Enter in a field of the range or ticks is OK; Esc is Cancel (the dialog's own).
-  for (const input of [min, max, dtick, minor]) {
+  for (const input of [min, max, dtick, minor, digits]) {
     input.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();

@@ -1731,10 +1731,21 @@ button {
   width: 96px;
 }
 
-.axis-dialog-field input {
+.axis-dialog-field input,
+.axis-dialog-field select {
   width: 110px;
   font: inherit;
   font-variant-numeric: tabular-nums;
+}
+
+/* The check box of the thousands separators, under the fields' inputs. */
+.axis-dialog-check {
+  padding-left: 102px;
+}
+
+.axis-dialog-check input {
+  width: auto;
+  margin: 0;
 }
 
 .axis-dialog-error {
