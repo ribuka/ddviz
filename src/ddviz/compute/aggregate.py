@@ -320,6 +320,43 @@ class _Overview:
     axis_levels: dict[str, list[str]]
 
 
+def _check_levels(
+    spec: ScatterSpec, roles: dict[str, str | None], counted: dict[str, int]
+) -> None:
+    """Refuse the columns with more levels than a role they are on allows.
+
+    A column on the color, overlay, row or col role may have at most
+    `ScatterSpec.max_levels` levels, a categorical x or y column at most
+    `ScatterSpec.max_axis_levels`; a column on both kinds of role has to
+    meet both. The levels are counted over every row, the local filter
+    aside, so a filter does not lower them.
+
+    Raises
+    ------
+    ValueError
+        Naming each column refused, its levels and the limit it passes.
+    """
+    series = {c for r, c in roles.items() if c and r not in numeric_roles(spec)}
+    over = []
+    for c, n in counted.items():
+        limits = []
+        if c in series:
+            limits.append((spec.max_levels, "Color・Overlay・Group・Wrap の上限"))
+        if c in spec.categorical:
+            limits.append((spec.max_axis_levels, "X・Y のカテゴリの軸の上限"))
+        over += [
+            f"{c} は {n:,} 個で、{name}は {limit:,} 個"
+            for limit, name in limits
+            if n > limit
+        ]
+    if over:
+        raise ValueError(
+            "水準が上限を超えるため描けない（"
+            + "。".join(over)
+            + "）。水準はフィルタの前の行から数えるため、別の列を使う"
+        )
+
+
 def _overview(
     spec: ScatterSpec, roles: dict[str, str | None], logs: _LogAxes
 ) -> _Overview:
@@ -331,8 +368,8 @@ def _overview(
     bands (`ddviz.compute.bands.band_range`). A role that draws its missing
     rows (`ddviz.shared.scatter.ScatterSpec.null_roles`) ends in the missing
     level (`ddviz.shared.missing.MISSING`) when its column has a null or NaN
-    value; a categorical column counts it as one of its levels against
-    `ddviz.shared.scatter.ScatterSpec.max_levels`.
+    value; a categorical column counts it as one of its levels against the
+    limits of its roles (`_check_levels`).
     """
     numeric = [
         c for c in dict.fromkeys([*spec.x, *spec.y]) if c not in spec.categorical
@@ -404,13 +441,7 @@ def _overview(
         c: len(v) + any(roles[r] == c for r in missing)
         for c, v in column_levels.items()
     }
-    many = {c: n for c, n in counted.items() if n > spec.max_levels}
-    if many:
-        raise ValueError(
-            f"水準が上限の {spec.max_levels} 個を超えるため描けない（"
-            + "、".join(f"{c} は {n:,} 個" for c, n in many.items())
-            + "）。フィルタで水準を絞るか、別の列を使う"
-        )
+    _check_levels(spec, roles, counted)
     cuts = {
         role: find_cuts(_scan(spec, [roles[role]]), roles[role], binning)
         for role, binning in spec.binned.items()
@@ -518,7 +549,8 @@ def aggregate(
     Raises
     ------
     ValueError
-        When the color, overlay, row or col column has more than `ScatterSpec.max_levels` levels.
+        When a column has more levels than a role it is on allows
+        (`_check_levels`).
     """
     roles = {
         "color": spec.color,

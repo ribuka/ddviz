@@ -8,7 +8,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from ddviz.shared.scatter import MAX_LEVELS
+from ddviz.shared.scatter import MAX_AXIS_LEVELS, MAX_LEVELS
 
 # Most columns the column list shows by default. 1,000 lists as fast as 200
 # did; thousands make each search slow to draw (`docs/spec.md`, "列リストの件数").
@@ -56,12 +56,16 @@ class PlotSettings:
     Parameters
     ----------
     max_levels : int
-        Most levels a categorical column on color, Group X or Group Y may have.
+        Most levels a categorical column on Color, Overlay, Group X, Group Y
+        or Wrap may have.
+    max_axis_levels : int
+        Most levels a categorical column on X or Y may have.
     legend : LegendSettings
         Looks of the legend's series.
     """
 
     max_levels: int = MAX_LEVELS
+    max_axis_levels: int = MAX_AXIS_LEVELS
     legend: LegendSettings = LegendSettings()
 
 
@@ -148,7 +152,7 @@ def load_settings(path: Path | None = None) -> Settings:
     Raises
     ------
     ValueError
-        When ``plot.max_levels``, ``columns.max_listed`` or
+        When ``plot.max_levels``, ``plot.max_axis_levels``, ``columns.max_listed`` or
         ``columns.max_history`` is not a positive integer, ``hover.max_temp_gb`` is not a positive number, or
         ``plot.legend.inactive_opacity`` is not a number from 0 to 1.
     """
@@ -157,6 +161,7 @@ def load_settings(path: Path | None = None) -> Settings:
     cache = data.get("cache", {})
     default = CacheSettings()
     max_levels = _positive_int(data, "plot", "max_levels", MAX_LEVELS)
+    max_axis_levels = _positive_int(data, "plot", "max_axis_levels", MAX_AXIS_LEVELS)
     max_listed = _positive_int(data, "columns", "max_listed", MAX_LISTED)
     max_history = _positive_int(data, "columns", "max_history", MAX_HISTORY)
     inactive_opacity = (
@@ -190,6 +195,7 @@ def load_settings(path: Path | None = None) -> Settings:
         ),
         plot=PlotSettings(
             max_levels=max_levels,
+            max_axis_levels=max_axis_levels,
             legend=LegendSettings(inactive_opacity=float(inactive_opacity)),
         ),
         hover=HoverSettings()

@@ -197,3 +197,43 @@ def test_box_plots_without_series_draw_nothing(
     assert agg.grid.n_series == 0
     assert agg.boxes[0].stats == []
     assert agg.bins.height == 0
+
+
+def _months(tmp_path: Path) -> ScatterSpec:
+    """Return a spec of box plots of y by ``month``, 420 levels ("1990-01" to "2024-12"), without points."""
+    months = [f"{y}-{m:02d}" for y in range(1990, 2025) for m in range(1, 13)]
+    rng = np.random.default_rng(0)
+    path = tmp_path / "months.parquet"
+    pl.DataFrame(
+        {"month": [months[i % 420] for i in range(4200)][::-1], "y": rng.normal(size=4200)}
+    ).write_parquet(path)
+    return ScatterSpec(
+        files={c: [str(path)] for c in ("month", "y")},
+        x=["month"],
+        y=["y"],
+        color=None,
+        row=None,
+        col=None,
+        width=400,
+        height=300,
+        hover=["month", "y"],
+        categorical=["month"],
+        points=False,
+        box=True,
+    )
+
+
+def test_box_plots_of_420_levels_draw_past_the_series_limit(tmp_path: Path) -> None:
+    """A categorical x of 420 levels has a box per level, in natural order, under the default limits."""
+    agg = aggregate(_months(tmp_path))
+    (pair,) = agg.boxes
+    assert sorted(s[2] for s in pair.stats) == list(range(420))
+    assert agg.axis_levels["month"][:2] == ["1990-01", "1990-02"]
+    assert agg.axis_levels["month"][-1] == "2024-12"
+
+
+def test_the_box_column_on_color_too_meets_the_series_limit(tmp_path: Path) -> None:
+    """The same 420 levels on x and color are refused by color's limit of 100."""
+    spec = replace(_months(tmp_path), color="month")
+    with pytest.raises(ValueError, match="month は 420 個で、Color・Overlay・Group・Wrap の上限は 100 個"):
+        aggregate(spec)

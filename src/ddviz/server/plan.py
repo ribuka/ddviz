@@ -7,6 +7,7 @@ import math
 from ddviz.server.encoding import Encoding
 from ddviz.shared.axisscale import parse_axis_scales
 from ddviz.shared.scatter import (
+    MAX_AXIS_LEVELS,
     MAX_LEVELS,
     ONE_BAND,
     POINT_SIZE,
@@ -247,6 +248,7 @@ def scatter_spec(
     numeric: dict[str, bool] | None = None,
     color_bins: Binning | None = None,
     max_levels: int = MAX_LEVELS,
+    max_axis_levels: int = MAX_AXIS_LEVELS,
     wrap_cols: int | None = None,
     smoothing: Smoothing | None = None,
     shape_size: int | None = None,
@@ -293,8 +295,10 @@ def scatter_spec(
     color_bins : Binning, optional
         How to cut a numeric color column; None draws it as a gradient.
     max_levels : int, optional
-        Most levels a categorical x, y, color, overlay, row, col or wrap
-        column may have.
+        Most levels a categorical color, overlay, row, col or wrap column
+        may have.
+    max_axis_levels : int, optional
+        Most levels a categorical x or y column may have.
     wrap_cols : int, optional
         Wrapped panels to a row (`parse_wrap_cols`); None to make them
         closest to square.
@@ -388,6 +392,7 @@ def scatter_spec(
         gradient=gradient,
         filters=filters,
         max_levels=max_levels,
+        max_axis_levels=max_axis_levels,
         wrap=wrap,
         wrap_cols=wrap_cols if wrap else None,
         categorical=[

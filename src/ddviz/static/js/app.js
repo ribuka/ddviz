@@ -2,6 +2,7 @@
 // resize, hover, select rows with a box, and filter rows.
 import { axisAt, decorate, decorationUpdate, emptySettings, openAxisDialog } from "./axisdialog.js";
 import { AxisDirections, ascending, oriented } from "./axisdirection.js";
+import { bandTickUpdate, withBandTicks } from "./bandticks.js";
 import { openAxisMenu } from "./axismenu.js";
 import { AxisScales, isLogAxis, toPosition, toValues } from "./axisscale.js";
 import { Builder } from "./builder.js";
@@ -649,7 +650,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     const view = keep && sameAxes(keep, meta) ? keep : null;
     if (view?.box) selection = { box: view.box, base: null, bitmaps: null, fresh: true };
     const ranged = view?.zoomed ? withRanges(figure.layout, meta, view.ranges) : figure.layout;
-    const layout = orientedLayout(decorate(ranged, meta, settingsOf), meta);
+    const layout = withBandTicks(orientedLayout(decorate(ranged, meta, settingsOf), meta), meta);
     drawnKey = figureKey(figure.data, layout);
     Plotly.purge(gd);
     await Plotly.newPlot(gd, figure.data, forPlotly(withSelectionBox(layout, meta)), PLOT_CONFIG);
@@ -843,8 +844,9 @@ function withShownRanges(layout, meta) {
   return out;
 }
 
-// The drawn figure without its axis ranges. A result of the same plot and
-// size has the same figure, and then only its images and ranges change:
+// The drawn figure without its axis ranges and the ticks of its categorical
+// axes, which follow the ranges (`bandticks.js`). A result of the same plot
+// and size has the same figure, and then only its images and ranges change:
 // plotly redraws the axes of 100 panels in about 0.4s, even for `react`.
 let drawnKey = null;
 // The ranges this page is setting with `Plotly.relayout`, whose own
@@ -857,18 +859,25 @@ let ownReact = false;
 function figureKey(data, layout) {
   const axes = {};
   for (const [key, value] of Object.entries(layout)) {
-    axes[key] = /^[xy]axis\d*$/.test(key) ? { ...value, range: null } : value;
+    axes[key] = /^[xy]axis\d*$/.test(key) ? { ...value, range: null, tickvals: null, ticktext: null } : value;
   }
   return JSON.stringify([data, axes]);
 }
 
-// Returns the relayout that gives every axis its range in `layout`, or null
-// when the axes already have them.
+// Returns the relayout that gives every axis its range in `layout`, and a
+// categorical axis its ticks, or null when the axes already have them.
 function rangeUpdate(layout) {
   const update = {};
   for (const [key, value] of Object.entries(layout)) {
-    if (/^[xy]axis\d*$/.test(key) && !sameRange(linearRange(gd._fullLayout[key]), value.range)) {
+    if (!/^[xy]axis\d*$/.test(key)) continue;
+    if (!sameRange(linearRange(gd._fullLayout[key]), value.range)) {
       update[`${key}.range`] = plotlyRange(value, value.range);
+    }
+    const drawn = gd.layout[key] ?? {};
+    for (const name of ["tickvals", "ticktext"]) {
+      if (value[name] && JSON.stringify(value[name]) !== JSON.stringify(drawn[name])) {
+        update[`${key}.${name}`] = value[name];
+      }
     }
   }
   return Object.keys(update).length ? update : null;
@@ -893,7 +902,7 @@ function withSelectionBox(layout, meta) {
 // ticks and reference lines of the axis settings.
 async function draw(data, plain, meta, bitmaps) {
   const started = performance.now();
-  const layout = orientedLayout(decorate(plain, meta, settingsOf), meta);
+  const layout = withBandTicks(orientedLayout(decorate(plain, meta, settingsOf), meta), meta);
   const key = figureKey(data, layout);
   if (key === drawnKey) {
     const update = rangeUpdate(layout);
@@ -1230,6 +1239,8 @@ function onRelayout(event) {
   if (ownRelayout && keys.every((key) => key in ownRelayout)) return;
   const autorange = keys.some((key) => key.endsWith("autorange"));
   if (!autorange && !keys.some((key) => /^[xy]axis\d*\.range/.test(key))) return;
+  // The labels of the new range come at once, before its result.
+  setTimeout(followBandTicks);
   // A view asked for now would kill the plot in flight: a failed plot asks for it.
   if (plotting) {
     movedWhilePlotting = true;
@@ -1247,6 +1258,19 @@ function onRelayout(event) {
   }
   if (sameRanges(shown.x, requested.x) && sameRanges(shown.y, requested.y)) return;
   requestView(shown);
+}
+
+// Gives the categorical axes drawn the ticks of their shown ranges (`bandticks.js`).
+async function followBandTicks() {
+  if (!current || !gd._fullLayout || ownRelayout) return;
+  const update = bandTickUpdate(gd, current);
+  if (!update) return;
+  ownRelayout = update;
+  try {
+    await Plotly.relayout(gd, update);
+  } finally {
+    ownRelayout = null;
+  }
 }
 
 // A new size of the plot area (the window, or a pane beside it) aggregates

@@ -113,6 +113,7 @@ def create_app(
             results,
             broker,
             settings.plot.max_levels,
+            settings.plot.max_axis_levels,
             settings.hover.max_temp_bytes,
         )
     )

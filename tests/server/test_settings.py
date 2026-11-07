@@ -51,6 +51,25 @@ def test_max_levels_is_read(tmp_path: Path) -> None:
     assert PlotSettings().max_levels == 100
 
 
+def test_max_axis_levels_is_read_apart_from_max_levels(tmp_path: Path) -> None:
+    """``plot.max_axis_levels`` sets the most levels of a categorical x or y (a million by default) and leaves ``max_levels`` as it is."""
+    path = tmp_path / "settings.toml"
+    path.write_text("[plot]\nmax_axis_levels = 5000\n", encoding="utf-8")
+    plot = load_settings(path).plot
+    assert (plot.max_axis_levels, plot.max_levels) == (5000, 100)
+    assert PlotSettings().max_axis_levels == 1_000_000
+    assert load_settings().plot.max_axis_levels == 1_000_000
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "2.5", "true", '"50"'])
+def test_max_axis_levels_must_be_a_positive_integer(tmp_path: Path, value: str) -> None:
+    """A max_axis_levels that is not a positive integer is refused."""
+    path = tmp_path / "settings.toml"
+    path.write_text(f"[plot]\nmax_axis_levels = {value}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="plot.max_axis_levels"):
+        load_settings(path)
+
+
 @pytest.mark.parametrize("value", ["0", "2.5", "true", '"50"'])
 def test_max_levels_must_be_a_positive_integer(tmp_path: Path, value: str) -> None:
     """A max_levels that is not a positive integer is refused."""

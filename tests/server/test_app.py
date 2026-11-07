@@ -534,7 +534,7 @@ def test_a_categorical_axis_plots_zooms_filters_and_selects(client: TestClient) 
     ).json()
     meta = plotted["meta"]
     assert meta["x_ranges"] == [[-0.5, 2.5]]
-    assert plotted["figure"]["layout"]["xaxis"]["ticktext"] == ["a", "b", "c"]
+    assert meta["axis_levels"] == {"color": ["a", "b", "c"]}
     assert meta["rows"] == 2002
 
     view = {**SIZE, "x_ranges": [[0.5, 1.5]], "y_ranges": meta["y_ranges"]}
@@ -932,8 +932,8 @@ def test_a_failed_plot_keeps_the_drawn_results_and_selection(client: TestClient)
     box = {"task": view["task"], "panel": 0, "x_range": [-1, 1], "y_range": [-1, 1]}
     selected = client.post("/api/selection", json=box).json()
 
-    # Too many levels: the worker refuses the label column (one per row).
-    many = {**ENCODING, "x": ["label"]}
+    # Too many levels: the worker refuses the label column (one per row) on color.
+    many = {**ENCODING, "color": "label"}
     refused = client.post("/api/plot", json={"encoding": many, **SIZE, **HIDE_NULLS})
     assert refused.status_code >= 400
     assert "上限" in refused.json()["detail"]
