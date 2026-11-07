@@ -45,7 +45,9 @@ LAYOUT = "() => JSON.stringify(document.getElementById('plot').layout)"
 ELEMENTS = """() => [...document.querySelectorAll('#elements .element')].map(
   (b) => [b.dataset.element, b.getAttribute('aria-pressed'), b.disabled])"""
 X_RANGE = "() => document.getElementById('plot')._fullLayout.xaxis.range.slice()"
-SELECTIONS = "() => JSON.stringify(document.getElementById('plot').layout.selections ?? null)"
+# plotly's boxes of the selection: their axes and their bounds, ascending.
+SELECTIONS = """() => (document.getElementById('plot').layout.selections ?? []).map(
+  (s) => [s.xref, s.yref, [s.x0, s.x1].sort((a, b) => a - b), [s.y0, s.y1].sort((a, b) => a - b)])"""
 
 
 def zone(page: Page, role: str):  # noqa: ANN201 - a playwright Locator
@@ -219,14 +221,40 @@ def test_first_network_image_failures_and_a_removal(app_page: Page) -> None:
     draw(page, "y", "y")
     expect(status).not_to_have_class("notice-error")
 
-    # A lost request keeps the figure.
+    # The answer is lost after the server took the plot: the drawn graph is
+    # plotted again, so that the server's results are its; the error stays.
     layout = page.evaluate(LAYOUT)
     before = placed_names(page)
-    page.route("**/api/plot", lambda route: route.abort())
-    drop(page, "color", "color")
+    bodies = plot_bodies(page)
+    lost: list[int] = []
+
+    def lose(route: Route) -> None:
+        if lost:
+            route.continue_()
+            return
+        lost.append(1)
+        route.fetch()
+        route.abort()
+
+    page.route("**/api/plot", lose)
+    with page.expect_response(
+        lambda r: r.url.endswith("/api/plot") and r.request.post_data_json["encoding"]["color"] is None
+    ) as restored:
+        drop(page, "color", "color")
+    assert restored.value.ok
     expect(status).to_contain_text("描画の要求に失敗した")
     assert placed_names(page) == before
+    page.wait_for_function(PAINTED_PIXEL)
     assert page.evaluate(LAYOUT) == layout
+    expect(status).to_contain_text("描画の要求に失敗した")
+    # The server's overview is the drawn graph's again.
+    overview = page.evaluate(
+        """async () => (await (await fetch('/api/overview', {method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({width: 300, height: 200, filters: []})})).json()).meta.color.column"""
+    )
+    assert overview is None
+    assert [b["encoding"]["color"] for b in bodies] == ["color", None]
     page.unroute("**/api/plot")
 
     # The images of the new figure do not come: the server's results are the
@@ -300,6 +328,30 @@ def test_a_failure_keeps_the_zoom_and_the_selection(app_page: Page) -> None:
     expect(table).to_contain_text(f"{rows:,}")
     page.unroute("**/api/plot")
 
+    # The images of the new figure do not come: the server's results are the
+    # new graph's, so the drawn graph is plotted again at the same view, with
+    # the same box selecting the same rows.
+    failed: list[int] = []
+
+    def images(route: Route) -> None:
+        if failed:
+            route.continue_()
+        else:
+            failed.append(1)
+            route.fulfill(status=500, body="gone")
+
+    page.route("**/api/images/*", images)
+    with page.expect_response("**/api/selection") as reselected:
+        drop(page, "color", "color")
+    assert reselected.value.json()["rows"] == rows
+    expect(status).to_contain_text("図の画像を読み込めなかった")
+    assert placed_names(page) == before
+    assert page.evaluate(X_RANGE) == pytest.approx(shown)
+    assert page.evaluate(SELECTIONS) == selections
+    expect(table).to_be_visible()
+    expect(table).to_contain_text(f"{rows:,}")
+    page.unroute("**/api/images/*")
+
     # A zoom aggregates the view of the drawn plot, with its selection.
     with page.expect_response("**/api/view") as view:
         page.evaluate("Plotly.relayout('plot', {'xaxis.range': [150, 250]})")
@@ -324,7 +376,8 @@ def test_a_failure_keeps_the_zoom_and_the_selection(app_page: Page) -> None:
         level.locator("input").check()
     assert filtered.value.ok
     expect(status).to_contain_text("（フィルタ後）")
-    assert errors == []
+    # The page logs only the images this test failed.
+    assert [e.splitlines()[0].split(" of task")[0] for e in errors] == ["Error: images"]
 
 
 def hold_first(page: Page, answer: Callable[[Route, int], None]) -> list[Route]:
@@ -523,3 +576,50 @@ def test_the_builder_commits_and_rolls_back_a_whole_drop(app_page: Page) -> None
     assert result["rolledBack"] == [False, True, "drawn", 0, ["a", "b (s)", "f"]]
     assert result["kinds"] == [None, "duration"]
     assert result["olderCommit"] is True
+
+
+def test_a_plot_waiting_for_its_images_is_not_committed(app_page: Page) -> None:
+    """A newer drop that fails while an older plot's images load goes back to the graph drawn before both; the older images failing then change nothing."""
+    page = app_page
+    status = page.locator("#status")
+    start(page)
+    before = placed_names(page)
+    layout = page.evaluate(LAYOUT)
+    bodies = plot_bodies(page)
+    held: list[Route] = []
+
+    def images(route: Route) -> None:
+        if held:
+            route.continue_()
+        else:
+            held.append(route)
+
+    def plots(route: Route) -> None:
+        if len(bodies) == 2:
+            fail_with(route, "新しい失敗")
+        else:
+            route.continue_()
+
+    page.route("**/api/images/*", images)
+    page.route("**/api/plot", plots)
+    drop(page, "color", "color")
+    for _ in range(100):
+        if held:
+            break
+        page.wait_for_timeout(100)
+    assert held
+    # The older plot's figure is not drawn while its images load.
+    assert page.evaluate(LAYOUT) == layout
+    with page.expect_response(
+        lambda r: r.url.endswith("/api/plot") and r.request.post_data_json["encoding"]["color"] is None
+    ) as restored:
+        drop(page, "facet", "col")
+    assert restored.value.ok
+    expect(status).to_have_text("エラー: 新しい失敗")
+    assert placed_names(page) == before
+    held[0].fulfill(status=500, body="gone")
+    page.wait_for_function(PAINTED_PIXEL)
+    settle(page)
+    assert placed_names(page) == before
+    expect(status).to_have_text("エラー: 新しい失敗")
+    assert [b["encoding"]["color"] for b in bodies] == ["color", "color", None]

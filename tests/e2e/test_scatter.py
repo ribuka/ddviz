@@ -785,15 +785,21 @@ HOLD_IMAGES = """() => {
 
 
 def test_a_color_picked_while_the_images_decode_draws_them(app_page: Page) -> None:
-    """A color picked before the first images are decoded draws them in that color."""
+    """A color picked before the images of a view are decoded draws them in that color.
+
+    A plot's figure and legend change only once its images are decoded
+    (Issue #101), so the images decoding under the legend are a view's.
+    """
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
     place(page, "x", "x", plots=False)
     place(page, "y", "y")
+    place(page, "color", "color")
     page.wait_for_function(PAINTED_PIXEL)
     page.evaluate(HOLD_IMAGES)
-    place(page, "color", "color")
+    with page.expect_response("**/api/view"):
+        page.evaluate("Plotly.relayout('plot', {'xaxis.range': [-0.5, 0.5]})")
     legend = page.locator("#legend")
     legend.locator(".legend-marker").first.click(button="right")
     page.locator(".shape-menu").get_by_text("色", exact=True).hover()
