@@ -9,7 +9,15 @@ import numpy as np
 import polars as pl
 import pytest
 
-from ddviz.compute.aggregate import COUNT, INDEX, KEY, aggregate
+from ddviz.compute import aggregate as aggregate_module
+from ddviz.compute.aggregate import (
+    COUNT,
+    INDEX,
+    KEY,
+    Aggregation,
+    _range_query,
+    aggregate,
+)
 from ddviz.shared.scatter import ScatterSpec, Selection, View
 
 
@@ -115,7 +123,9 @@ def test_the_level_limit_comes_from_the_spec(scatter_spec: ScatterSpec) -> None:
     """``max_levels`` refuses a color column with more levels and lets one with as many through."""
     assert aggregate(replace(scatter_spec, max_levels=3)).grid.n_series == 3
     spec = ScatterSpec.from_dict(replace(scatter_spec, max_levels=2).to_dict())
-    with pytest.raises(ValueError, match="上限の 2 個を超えるため描けない（color は 3 個）"):
+    with pytest.raises(
+        ValueError, match="上限の 2 個を超えるため描けない（color は 3 個）"
+    ):
         aggregate(spec)
 
 
@@ -343,3 +353,105 @@ def test_levels_are_in_natural_order(tmp_path: Path) -> None:
     levels = aggregate(spec).levels
     assert levels["color"] == levels["col"] == ["1_", "2_", "10_"]
     assert levels["overlay"] == levels["row"] == ["a", "B2", "b10"]
+
+
+def _sliced_and_whole(
+    spec: ScatterSpec, monkeypatch: pytest.MonkeyPatch, selection_only: bool = False
+) -> tuple[Aggregation, Aggregation]:
+    """Return the aggregation of `spec` 7 rows at a time and in one pass."""
+    monkeypatch.setattr(aggregate_module, "ROWS_PER_PASS", 7)
+    sliced = aggregate(spec, selection_only=selection_only)
+    monkeypatch.setattr(aggregate_module, "ROWS_PER_PASS", 2**32 - 1)
+    whole = aggregate(spec, selection_only=selection_only)
+    return sliced, whole
+
+
+def test_bins_in_slices_match_one_pass(
+    scatter_spec: ScatterSpec, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Binning a few rows at a time gives the keys, counts and representative rows of one pass."""
+    sliced, whole = _sliced_and_whole(scatter_spec, monkeypatch)
+    assert sliced.bins.equals(whole.bins)
+    # Few values: the rows of a bin fall in many slices.
+    path = tmp_path / "few.parquet"
+    i = pl.int_range(100, eager=True)
+    pl.DataFrame(
+        {"x": (i % 5).cast(pl.Float32), "y": (i % 3).cast(pl.Float32)}
+    ).write_parquet(path)
+    spec = replace(
+        scatter_spec,
+        files={"x": [str(path)], "y": [str(path)]},
+        color=None,
+        col=None,
+        hover=["x", "y"],
+    )
+    sliced, whole = _sliced_and_whole(spec, monkeypatch)
+    assert sliced.bins.equals(whole.bins)
+    assert sliced.bins[COUNT].dtype == pl.UInt32
+    # i mod 15 picks the bin: 10 bins of 7 rows and 5 of 6, each over many slices.
+    assert sorted(sliced.bins[COUNT].to_list()) == [6] * 5 + [7] * 10
+    assert sliced.bins[INDEX].max() == 99
+
+
+def test_outliers_in_slices_match_one_pass(
+    scatter_spec: ScatterSpec, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pair drawing only the outliers of its box plots bins the same rows in slices."""
+    spec = replace(
+        scatter_spec,
+        x=["facet"],
+        col=None,
+        categorical=["facet"],
+        hover=["facet", "y", "label"],
+        points=False,
+        box=True,
+    )
+    sliced, whole = _sliced_and_whole(spec, monkeypatch)
+    assert sliced.bins.height > 0
+    assert sliced.bins.equals(whole.bins)
+
+
+def test_selection_in_slices_matches_one_pass(
+    scatter_spec: ScatterSpec, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bins of a selection are the same in slices and in one pass."""
+    overview = aggregate(scatter_spec)
+    spec = replace(
+        scatter_spec,
+        view=View(
+            x_ranges=[list(r) for r in overview.x_ranges],
+            y_ranges=[list(r) for r in overview.y_ranges],
+            levels=overview.levels,
+        ),
+        selection=Selection(
+            x="x", y="y", x_range=list(overview.x_ranges[0]), y_range=[-1.0, 1.0]
+        ),
+    )
+    sliced, whole = _sliced_and_whole(spec, monkeypatch, selection_only=True)
+    assert sliced.selected.height > 0
+    assert sliced.selected.equals(whole.selected)
+    assert sliced.selected_rows == whole.selected_rows
+
+
+def test_range_skips_nan_inf_and_null(tmp_path: Path) -> None:
+    """The range of a column is that of its finite values; one without any has none."""
+    path = tmp_path / "r.parquet"
+    pl.DataFrame(
+        {
+            "v": [3.0, float("nan"), None, float("inf"), -2.5, float("-inf")],
+            "nan": [float("nan")] * 6,
+        }
+    ).write_parquet(path)
+    spec = ScatterSpec(
+        files={"v": [str(path)], "nan": [str(path)]},
+        x=["v"],
+        y=["nan"],
+        color=None,
+        row=None,
+        col=None,
+        width=100,
+        height=100,
+        hover=[],
+    )
+    assert _range_query(spec, "v").collect().row(0) == (-2.5, 3.0)
+    assert _range_query(spec, "nan").collect().row(0) == (None, None)
