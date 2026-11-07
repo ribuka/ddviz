@@ -1,4 +1,4 @@
-"""Tests of the missing level: the rows of a null or NaN color or overlay drawn with Show null rows."""
+"""Tests of the missing level: the rows of a null or NaN color or symbol drawn with Show null rows."""
 
 from __future__ import annotations
 
@@ -175,32 +175,32 @@ def test_a_gradient_of_missing_values_only_has_only_the_missing_level(
 @pytest.mark.parametrize(
     ("roles", "rows"),
     [
-        (["color", "overlay"], 12),
+        (["color", "symbol"], 12),
         (["color"], 9),
-        (["overlay"], 10),
+        (["symbol"], 10),
         ([], 7),
     ],
 )
-def test_color_and_overlay_each_keep_or_leave_out_their_nulls(
+def test_color_and_symbol_each_keep_or_leave_out_their_nulls(
     path: Path, roles: list[str], rows: int
 ) -> None:
-    """A row is drawn when each of its color and overlay is a level or a missing value its role draws."""
-    agg = aggregate(_spec(path, color="k", overlay="g", null_roles=roles))
+    """A row is drawn when each of its color and symbol is a level or a missing value its role draws."""
+    agg = aggregate(_spec(path, color="k", symbol="g", null_roles=roles))
     assert sum(_series_counts(agg).values()) == rows
     assert (agg.levels["color"][-1] == MISSING) == ("color" in roles)
-    assert (agg.levels["overlay"][-1] == MISSING) == ("overlay" in roles)
+    assert (agg.levels["symbol"][-1] == MISSING) == ("symbol" in roles)
 
 
-def test_one_column_on_color_and_overlay_meets_both_settings(path: Path) -> None:
+def test_one_column_on_color_and_symbol_meets_both_settings(path: Path) -> None:
     """The same column on both roles draws its nulls only when both roles do."""
     both = aggregate(
-        _spec(path, color="g", overlay="g", null_roles=["color", "overlay"])
+        _spec(path, color="g", symbol="g", null_roles=["color", "symbol"])
     )
     assert sum(_series_counts(both).values()) == 12
-    one = aggregate(_spec(path, color="g", overlay="g", null_roles=["color"]))
+    one = aggregate(_spec(path, color="g", symbol="g", null_roles=["color"]))
     assert sum(_series_counts(one).values()) == 9
     assert one.levels["color"][-1] == MISSING
-    assert MISSING not in one.levels["overlay"]
+    assert MISSING not in one.levels["symbol"]
 
 
 def test_a_facet_of_the_same_column_still_leaves_the_nulls_out(path: Path) -> None:
@@ -211,12 +211,12 @@ def test_a_facet_of_the_same_column_still_leaves_the_nulls_out(path: Path) -> No
     assert sum(_series_counts(agg).values()) == 9
 
 
-def test_the_missing_overlay_level_takes_the_x_and_no_other_level_does(
+def test_the_missing_symbol_level_takes_the_x_and_no_other_level_does(
     path: Path,
 ) -> None:
     """The missing level's shape is the x unless picked; the other levels skip it."""
-    spec = _spec(path, color="b", overlay="k", null_roles=["overlay"])
-    levels = aggregate(spec).levels["overlay"]
+    spec = _spec(path, color="b", symbol="k", null_roles=["symbol"])
+    levels = aggregate(spec).levels["symbol"]
     shapes = spec.marker_shapes(levels)
     assert shapes[-1] == MISSING_SHAPE
     assert shapes[:-1] == list(AUTO_SHAPES[: len(levels) - 1])

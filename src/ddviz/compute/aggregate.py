@@ -110,9 +110,9 @@ class Aggregation:
         ``x_ranges[xi]``. Those of a column on a log axis are positions:
         the log10 of its values (`ddviz.shared.axisscale`).
     levels : dict
-        Levels of the ``"color"``, ``"overlay"``, ``"row"`` and ``"col"``
+        Levels of the ``"color"``, ``"symbol"``, ``"row"`` and ``"col"``
         roles as text, in index order, as drawn: the series of every row
-        (pairs of a color and an overlay level), and the facet levels
+        (pairs of a color and a symbol level), and the facet levels
         that have rows passing the local filter; a role without a column has
         the single level None.
     all_levels : dict
@@ -325,7 +325,7 @@ def _check_levels(
 ) -> None:
     """Refuse the columns with more levels than a role they are on allows.
 
-    A column on the color, overlay, row or col role may have at most
+    A column on the color, symbol, row or col role may have at most
     `ScatterSpec.max_levels` levels, a categorical x or y column at most
     `ScatterSpec.max_axis_levels`; a column on both kinds of role has to
     meet both. The levels are counted over every row, the local filter
@@ -341,7 +341,7 @@ def _check_levels(
     for c, n in counted.items():
         limits = []
         if c in series:
-            limits.append((spec.max_levels, "Color・Overlay・Group・Wrap の上限"))
+            limits.append((spec.max_levels, "Color・Symbol・Group・Wrap の上限"))
         if c in spec.categorical:
             limits.append((spec.max_axis_levels, "X・Y のカテゴリの軸の上限"))
         over += [
@@ -520,7 +520,7 @@ def aggregate(
     process. A panel leaves out
     rows with a null or non-finite x or y, and for a view, rows outside the
     ranges of its columns; every panel leaves out rows with a null color,
-    overlay, row or col, and rows the local filter leaves out (`ddviz.compute.rowfilter`).
+    symbol, row or col, and rows the local filter leaves out (`ddviz.compute.rowfilter`).
     The overview finds the levels and the data ranges first, over every
     row, so that the filter changes neither the series nor the axes; a view
     takes them from the spec. With a filter, the facet levels left without
@@ -554,7 +554,7 @@ def aggregate(
     """
     roles = {
         "color": spec.color,
-        "overlay": spec.overlay,
+        "symbol": spec.symbol,
         "row": spec.row,
         "col": spec.col,
     }
@@ -618,7 +618,7 @@ def aggregate(
     )
     grid = BinGrid(
         n_panels=layout.nrow * layout.ncol,
-        n_series=len(levels["color"]) * len(levels["overlay"]),
+        n_series=len(levels["color"]) * len(levels["symbol"]),
         width=layout.panel_width,
         height=layout.panel_height,
     )
@@ -628,8 +628,8 @@ def aggregate(
         return role_index(spec, role, levels[role], all_levels[role], cuts.get(role))
 
     row, col = index("row"), index("col")
-    # A series is a pair of a color level and an overlay level.
-    series = index("color") * len(levels["overlay"]) + index("overlay")
+    # A series is a pair of a color level and a symbol level.
+    series = index("color") * len(levels["symbol"]) + index("symbol")
     # The facet cell of a box: the drawn row and col levels.
     row_level, col_level = row, col
     if spec.wrap:
@@ -790,7 +790,7 @@ def aggregate(
 
     categorical = set(spec.categorical)
     marker_box = marker_boxes(
-        spec.marker_shapes(levels["overlay"]), spec.marker_sizes(levels["overlay"])
+        spec.marker_shapes(levels["symbol"]), spec.marker_sizes(levels["symbol"])
     )
 
     def stacked(
@@ -821,7 +821,7 @@ def aggregate(
             row_level * n_col + col_level,
             panels,
             series,
-            index("overlay"),
+            index("symbol"),
             marker_box,
             extra,
         )

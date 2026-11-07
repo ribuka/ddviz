@@ -26,7 +26,7 @@ function formatValue(value, kind = null) {
 }
 
 // Returns the name of a series in the hover label: its color level and its
-// overlay level, those that have names. A gradient's single color has none.
+// symbol level, those that have names. A gradient's single color has none.
 function seriesName(meta, s) {
   const shapes = meta.color.shapes;
   const names = [];
@@ -36,20 +36,20 @@ function seriesName(meta, s) {
   if (meta.color.column !== null && (meta.color.kind !== "gradient" || color === MISSING)) {
     names.push(levelText(color, meta.series));
   }
-  if (meta.overlay) names.push(levelText(meta.overlay.levels[s % shapes], meta.overlay.levels));
+  if (meta.symbol) names.push(levelText(meta.symbol.levels[s % shapes], meta.symbol.levels));
   return names.join(", ");
 }
 
-// Returns the levels of the color or overlay column `column` that the hover
+// Returns the levels of the color or symbol column `column` that the hover
 // tells a real "(null)" text apart from the missing level by, or [].
 function roleLevels(meta, column) {
-  if (meta.overlay?.column === column) return meta.overlay.levels;
+  if (meta.symbol?.column === column) return meta.symbol.levels;
   if (meta.color.column === column) return meta.series;
   return [];
 }
 
 // Returns a hover line of a column's value: a real "(null)" text of a color
-// or overlay column with the missing level marked as text, as the legend.
+// or symbol column with the missing level marked as text, as the legend.
 function valueLine(meta, column, value) {
   if (value === MISSING_TEXT) return `${column}: ${levelText(value, roleLevels(meta, column))}`;
   return `${column}: ${formatValue(value, meta.temporal[column])}`;
@@ -241,8 +241,8 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     if (meta.color.column !== null && (meta.color.kind !== "gradient" || color === MISSING)) {
       lines.push(`${meta.color.column}: ${levelText(color, meta.series)}`);
     }
-    if (meta.overlay) {
-      lines.push(`${meta.overlay.column}: ${levelText(meta.overlay.levels[series % shapes], meta.overlay.levels)}`);
+    if (meta.symbol) {
+      lines.push(`${meta.symbol.column}: ${levelText(meta.symbol.levels[series % shapes], meta.symbol.levels)}`);
     }
     lines.push(
       `ひげの上端: ${formatValue(high, kind)}`,

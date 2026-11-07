@@ -114,7 +114,7 @@ export function levelColors(meta) {
 }
 
 // Returns the colors the series of a result are drawn in: series `s` is
-// color level `s // shapes` with overlay level `s % shapes`. A gradient's
+// color level `s // shapes` with symbol level `s % shapes`. A gradient's
 // series of its own level have none (null).
 export function seriesColors(meta) {
   if (meta.color.kind === "levels" && !tinted(meta)) return meta.colors;

@@ -6,13 +6,13 @@
 // (left out by the filter, or outside the view) stays, marked as empty, so
 // that the colors of the others do not move.
 //
-// With an overlay beside the color (`meta.overlay`), the color levels and
-// the overlay levels (marker shapes) are two legends, each toggled on its
-// own: a series (a pair of a color and an overlay level) is inactive when
+// With a symbol beside the color (`meta.symbol`), the color levels and
+// the symbol levels (marker shapes) are two legends, each toggled on its
+// own: a series (a pair of a color and a symbol level) is inactive when
 // either of its levels is. A right click on an item's marker opens the menu
 // of the markers (`onMarkerMenu`): on a color item, the level's color and the
 // size of every series' markers, or the scale's menu for the intervals of a
-// numeric column; on an overlay item, the level's shape and the size of its
+// numeric column; on a symbol item, the level's shape and the size of its
 // shapes.
 //
 // A numeric color column shows its scale instead (colorscale.js): a color
@@ -51,7 +51,7 @@ export class Legend {
     this.onMarkerMenu = onMarkerMenu;
     this.series = [];
     this.shapes = [];
-    // Inactive color levels and overlay levels; `inactive` holds the series
+    // Inactive color levels and symbol levels; `inactive` holds the series
     // they make inactive.
     this.off = { color: new Set(), shape: new Set() };
     this.inactive = new Set();
@@ -74,7 +74,7 @@ export class Legend {
   // (none for a single color, which shows no color legend).A result of the same levels keeps their
   // state. Its images (one per series) mark the levels without rows.
   set(meta) {
-    const shapes = meta.overlay?.levels ?? [];
+    const shapes = meta.symbol?.levels ?? [];
     const same = (a, b) => a.length === b.length && a.every((s, i) => s === b[i]);
     if (!same(meta.series, this.series) || !same(shapes, this.shapes)) {
       this.off.color.clear();
@@ -124,7 +124,7 @@ export class Legend {
       return;
     }
     const nodes = this.color.kind === "gradient" ? this.barNodes() : this.colorNodes();
-    if (this.meta.overlay) nodes.push(...this.shapeNodes());
+    if (this.meta.symbol) nodes.push(...this.shapeNodes());
     this.element.replaceChildren(...nodes);
   }
 
@@ -143,7 +143,7 @@ export class Legend {
   }
 
   shapeNodes() {
-    const { column, kernels } = this.meta.overlay;
+    const { column, kernels } = this.meta.symbol;
     const title = document.createElement("div");
     title.className = "legend-title shapes";
     title.textContent = column;

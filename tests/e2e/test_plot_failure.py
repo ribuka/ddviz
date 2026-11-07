@@ -178,7 +178,7 @@ def test_a_failed_drop_on_any_role_comes_back_whole(app_page: Page) -> None:
         lambda: drop(page, "z", "x", at=0.1),  # a second X axis, before the first
         lambda: drop(page, "month", "x"),  # a categorical X turns the smoothing lines off
         lambda: drop(page, "z", "color"),
-        lambda: move(page, "color", "overlay"),
+        lambda: move(page, "color", "symbol"),
         lambda: move(page, "x", "y"),  # X and Y swap
         lambda: drop(page, "month", "wrap"),  # Wrap removes Group X
         lambda: move(page, "col", "row"),
@@ -531,7 +531,7 @@ def test_a_conversion_retries_without_a_failure(app_page: Page) -> None:
 BUILDER = """async () => {
   const { Builder } = await import("/static/js/builder.js");
   const root = document.createElement("div");
-  for (const role of ["x", "y", "color", "overlay", "row", "col", "wrap"]) {
+  for (const role of ["x", "y", "color", "symbol", "row", "col", "wrap"]) {
     const zone = document.createElement("div");
     zone.className = "zone";
     zone.dataset.role = role;

@@ -339,7 +339,7 @@ def test_a_stack_spaces_its_points_by_its_largest_marker(tmp_path: Path) -> None
     frame = pl.DataFrame(
         {"g": ["a"] * 4, "y": [1.0, 1.0, 2.0, 2.0], "s": ["u", "v", "u", "u"]}
     )
-    spec = _spec(tmp_path, frame, overlay="s", shape_sizes={"v": 11}, shape_size=5)
+    spec = _spec(tmp_path, frame, symbol="s", shape_sizes={"v": 11}, shape_size=5)
     agg = aggregate(spec)
     points = _points(agg)
     center = _center(agg, 0)

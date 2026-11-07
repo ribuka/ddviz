@@ -95,12 +95,12 @@ class StackedBins:
 def marker_boxes(
     shapes: list[str | None], sizes: list[int]
 ) -> tuple[list[int], list[int]]:
-    """Return the width and height of the bounding box of each overlay level's marker.
+    """Return the width and height of the bounding box of each symbol level's marker.
 
     Parameters
     ----------
     shapes : list of str or None
-        Shape of each overlay level
+        Shape of each symbol level
         (`ddviz.shared.scatter.ScatterSpec.marker_shapes`).
     sizes : list of int
         Size of each (`ddviz.shared.scatter.ScatterSpec.marker_sizes`).
@@ -149,7 +149,7 @@ def stack_frame(
     cell: pl.Expr,
     panels: list[int],
     series: pl.Expr,
-    overlay: pl.Expr,
+    symbol: pl.Expr,
     boxes: tuple[list[int], list[int]],
     selected: list[pl.Expr],
 ) -> tuple[pl.LazyFrame, Coordinates]:
@@ -159,7 +159,7 @@ def stack_frame(
     ----------
     files : dict of str to list of str
         Files of the columns to read (`ddviz.compute.scan.scan_columns`):
-        the pair's, and those `conditions`, `cell`, `series`, `overlay` and
+        the pair's, and those `conditions`, `cell`, `series`, `symbol` and
         `selected` read.
     index : str
         Name of the row index column.
@@ -175,10 +175,10 @@ def stack_frame(
         Each row's facet cell.
     panels : list of int
         The panel of each facet cell.
-    series, overlay : polars.Expr
-        Each row's series and overlay level.
+    series, symbol : polars.Expr
+        Each row's series and symbol level.
     boxes : tuple of list of int
-        Width and height of the marker of each overlay level (`marker_boxes`).
+        Width and height of the marker of each symbol level (`marker_boxes`).
     selected : list of polars.Expr
         Conditions of the rows the bins count; the stacks hold every drawn row.
 
@@ -236,8 +236,8 @@ def stack_frame(
             y.pixel(cy).alias(PY),
             pl.lit(pl.Series(panels, dtype=pl.Int64)).gather(cell).alias(PANEL),
             series.cast(pl.Int64).alias(SERIES),
-            pl.lit(pl.Series(widths, dtype=pl.Int64)).gather(overlay).alias(WX),
-            pl.lit(pl.Series(heights, dtype=pl.Int64)).gather(overlay).alias(WY),
+            pl.lit(pl.Series(widths, dtype=pl.Int64)).gather(symbol).alias(WX),
+            pl.lit(pl.Series(heights, dtype=pl.Int64)).gather(symbol).alias(WY),
             pl.all_horizontal(pl.lit(True), *selected).alias(SELECTED),
         )
     )

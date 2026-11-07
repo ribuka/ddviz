@@ -56,7 +56,7 @@ class PlotSettings:
     Parameters
     ----------
     max_levels : int
-        Most levels a categorical column on Color, Overlay, Group X, Group Y
+        Most levels a categorical column on Color, Symbol, Group X, Group Y
         or Wrap may have.
     max_axis_levels : int
         Most levels a categorical column on X or Y may have.

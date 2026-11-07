@@ -1,4 +1,4 @@
-// The menu of the Color and Overlay zones: a right click on the zone (its
+// The menu of the Color and Symbol zones: a right click on the zone (its
 // label, its chip or the room around them) while it holds a column opens
 // "Show null rows", checked when the zone draws the rows whose value is null
 // or NaN as a level of their own (`ddviz.shared.missing`). Each zone keeps
@@ -6,7 +6,7 @@
 // both true again (`POST /api/plot`'s `show_null_rows`). The menu closes and
 // stays in the window as the other right-click menus (smoothmenu.js).
 
-export const NULL_ROLES = ["color", "overlay"];
+export const NULL_ROLES = ["color", "symbol"];
 
 let open = null;
 

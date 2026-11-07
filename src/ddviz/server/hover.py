@@ -65,11 +65,11 @@ class HoverIndex:
             (c.name, np.load(out / c.file, mmap_mode="r"), c.labels)
             for c in self.manifest.columns
         ]
-        # The marker of each overlay level, in its size, or the circle
-        # without an overlay, rows from the bottom as the bins: a series'
+        # The marker of each symbol level, in its size, or the circle
+        # without a symbol, rows from the bottom as the bins: a series'
         # points cover the bins of their marker (`ddviz.compute.shapes`).
         spec = self.manifest.spec
-        levels = self.manifest.levels["overlay"]
+        levels = self.manifest.levels["symbol"]
         self._shapes = [
             marker(shape, size)[::-1]
             for shape, size in zip(

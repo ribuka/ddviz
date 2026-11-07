@@ -66,7 +66,7 @@ const convertingText = document.getElementById("converting-text");
 const convertingBar = document.getElementById("converting-bar");
 
 // While a worker converts columns into the cache, only its progress shows;
-// the overlay takes every click, so the plot cannot be edited.
+// the cover takes every click, so the plot cannot be edited.
 function showConverting(message) {
   converting.hidden = false;
   convertingText.textContent = `列を初めて使うため変換しています（${message.done + 1} / ${message.total}）：${message.column}`;
@@ -98,7 +98,7 @@ const legend = new Legend(
     openScaleMenu(event, colorBins, setColorBins, recolor, sharedSize(), setShapeSize),
   (event, kind, i) => {
     if (kind === "shape") {
-      const { column, levels, sizes, shapes, choices } = current.overlay;
+      const { column, levels, sizes, shapes, choices } = current.symbol;
       const level = levels[i];
       const heading = levelHeading(levelText(level, levels));
       openShapeMenu(event, heading, sizes[i], (size) => setLevelSize(column, level, size), {
@@ -163,24 +163,24 @@ let smoothing = DEFAULT_SMOOTHING;
 // Size in pixels of the markers of every series
 // (`ddviz.server.plan.parse_shape_size`), picked in the menu of the points'
 // element icon or of the legend's color markers; kept for every graph. Null
-// for the default: larger for the overlay's shapes than for the circles of
+// for the default: larger for the symbol's shapes than for the circles of
 // the points.
 let shapeSize = null;
-// Sizes of the shapes of single overlay levels, by overlay column and level
+// Sizes of the shapes of single symbol levels, by symbol column and level
 // name (`ddviz.server.plan.parse_shape_sizes`), picked in the menu of the
-// overlay legend's markers; kept for every graph, dropped when the size of
+// symbol legend's markers; kept for every graph, dropped when the size of
 // every series is picked.
 const levelSizes = new Map();
-// Shapes of single overlay levels, by level name, of the overlay column
+// Shapes of single symbol levels, by level name, of the symbol column
 // `column` (`ddviz.server.plan.parse_level_shapes`), picked in the panel of
-// the menu of the overlay legend's markers. They stay while the overlay
+// the menu of the symbol legend's markers. They stay while the symbol
 // column does, as the colors picked for the color levels: a graph of
-// another overlay column drops them.
+// another symbol column drops them.
 const levelShapes = { column: undefined, shapes: Object.create(null) };
-// Whether the Color and the Overlay zone draw the rows of a null or NaN
+// Whether the Color and the Symbol zone draw the rows of a null or NaN
 // value (`ddviz.server.models.ShowNullRows`), set in the zones' menu
 // (nullmenu.js); kept whatever column the zone holds, true after a reload.
-const showNullRows = { color: true, overlay: true };
+const showNullRows = { color: true, symbol: true };
 // Wrapped panels to a row, or null to make them closest to square
 // (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
 // The user sets it in the Wrap zone's form (wrapmenu.js).
@@ -649,9 +649,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   const size = stageSize();
   plottedEncoding = encoding;
   const candidate = builder.snapshot();
-  // Another overlay column drops the shapes picked once its result is drawn,
-  // with or without a color column: overlay alone colors the series and sends none.
-  const shapes = encoding.overlay === levelShapes.column ? pickedShapes(encoding.overlay) : null;
+  // Another symbol column drops the shapes picked once its result is drawn.
+  const shapes = encoding.symbol === levelShapes.column ? pickedShapes(encoding.symbol) : null;
   const body = {
     encoding,
     ...size,
@@ -660,8 +659,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     wrap_cols: wrapCols,
     smooth: smoothing,
     shape_size: shapeSize,
-    shape_sizes: (encoding.color !== null && levelSizes.get(encoding.overlay)) || null,
-    level_shapes: encoding.color !== null ? shapes : null,
+    shape_sizes: levelSizes.get(encoding.symbol) || null,
+    level_shapes: shapes,
     show_null_rows: { ...showNullRows },
     axis_scales: axisScales.request(encoding),
   };
@@ -742,7 +741,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   const kept = keptView();
   const drawStarted = performance.now();
   try {
-    // The selection and the shapes of another overlay column go with the drawn plot.
+    // The selection and the shapes of another symbol column go with the drawn plot.
     clearSelection(false);
     movedWhilePlotting = false;
     setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
@@ -766,8 +765,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     legend.set(meta);
     // The colors picked for the levels stay while the color column does.
     keepPicked(meta.color.column);
-    // The shapes picked stay while the overlay column does.
-    pickedShapes(encoding.overlay);
+    // The shapes picked stay while the symbol column does.
+    pickedShapes(encoding.symbol);
     layers.attach();
     sticky.attach();
     // The chips of X and Y follow the axes drawn now and on every later draw.
@@ -1499,10 +1498,10 @@ function clearPlot() {
 }
 
 // The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`) and
-// its elements. Overlay alone takes the place of color.
+// its elements.
 function drawnRoles(encoding) {
-  const { x, y, color, row, col, wrap, elements, overlay } = encoding;
-  return JSON.stringify([x, y, color ?? overlay, row, col, wrap, elements, overlay]);
+  const { x, y, color, row, col, wrap, elements, symbol } = encoding;
+  return JSON.stringify([x, y, color, row, col, wrap, elements, symbol]);
 }
 
 // Whether the graph draws every row in one band along x: no x column and
@@ -1535,14 +1534,14 @@ function hasSmoothPair(encoding) {
 }
 
 // Draws the markers of every series in another size, dropping the sizes of
-// single overlay levels: the graph is plotted again.
+// single symbol levels: the graph is plotted again.
 function setShapeSize(size) {
   shapeSize = size;
   levelSizes.clear();
   if (plottedEncoding) plot(plottedEncoding);
 }
 
-// Draws the shapes of an overlay level in another size: the graph is plotted again.
+// Draws the shapes of a symbol level in another size: the graph is plotted again.
 function setLevelSize(column, level, size) {
   // Level names come from the data: no prototype, so that "__proto__" is a
   // name like the others.
@@ -1552,7 +1551,7 @@ function setLevelSize(column, level, size) {
   if (plottedEncoding) plot(plottedEncoding);
 }
 
-// Returns the shapes picked for the levels of an overlay column, or null for
+// Returns the shapes picked for the levels of a symbol column, or null for
 // none; the shapes of another column are dropped.
 function pickedShapes(column) {
   if (column !== levelShapes.column) {
@@ -1562,7 +1561,7 @@ function pickedShapes(column) {
   return Object.keys(levelShapes.shapes).length ? levelShapes.shapes : null;
 }
 
-// Draws the points of an overlay level in another shape, or in the shape of
+// Draws the points of a symbol level in another shape, or in the shape of
 // its place again (null): the graph is plotted again.
 function setLevelShape(column, level, shape) {
   pickedShapes(column);
@@ -1572,17 +1571,17 @@ function setLevelShape(column, level, shape) {
 }
 
 // Returns the size of every series' markers drawn, checked in the menus of
-// the size of every series; null while overlay levels have sizes of their
-// own, of any overlay column, so that picking any size, that one too, drops
+// the size of every series; null while symbol levels have sizes of their
+// own, of any symbol column, so that picking any size, that one too, drops
 // them.
 function sharedSize() {
   return current && levelSizes.size === 0 ? current.marker_size : null;
 }
 
 // Returns the text of the size of a result's markers (its meta), for the
-// points' icon: a range when overlay levels have sizes of their own.
+// points' icon: a range when symbol levels have sizes of their own.
 function markerSizeText(meta) {
-  const sizes = meta.overlay?.sizes.length ? meta.overlay.sizes : [meta.marker_size];
+  const sizes = meta.symbol?.sizes.length ? meta.symbol.sizes : [meta.marker_size];
   const lo = Math.min(...sizes);
   const hi = Math.max(...sizes);
   return lo === hi ? `${lo} px` : `${lo}〜${hi} px`;
@@ -1603,7 +1602,7 @@ let drawnRolesKey = drawnRoles({
   col: null,
   wrap: null,
   elements: ["points"],
-  overlay: null,
+  symbol: null,
 });
 // Cuts a numeric color column another way, or draws it as a gradient (null):
 // the series change, so the graph is plotted again.
@@ -1668,7 +1667,7 @@ const builder = new Builder(
     const key = drawnRoles(encoding);
     if (key === drawnRolesKey) return;
     const drawn = JSON.parse(drawnRolesKey);
-    if ((encoding.color ?? encoding.overlay) !== drawn[2]) colorBins = null;
+    if (encoding.color !== drawn[2]) colorBins = null;
     if (encoding.wrap !== drawn[5]) {
       wrapCols = null;
       wrapAuto = null;

@@ -268,7 +268,7 @@ class Coordinates:
     panels : list of int
         The panel of each facet cell.
     widths, heights : list of int
-        Width and height in pixels of the marker of each overlay level
+        Width and height in pixels of the marker of each symbol level
         (`ddviz.compute.stacked.marker_boxes`).
     """
 
@@ -281,7 +281,7 @@ class Coordinates:
 
     @property
     def varied(self) -> bool:
-        """Whether the markers differ by overlay level, so that a stack's largest comes from its rows."""
+        """Whether the markers differ by symbol level, so that a stack's largest comes from its rows."""
         return len(set(self.widths)) > 1 or len(set(self.heights)) > 1
 
 

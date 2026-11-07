@@ -49,7 +49,7 @@ EXPONENT = {"exponentformat": "e"}
 # off), plotly leaves the exponent out of that text ("1.05" for 1.05e+5).
 HIDDEN_LABELS = {"tickfont": {"color": "rgba(0,0,0,0)"}}
 # Size in pixels of the shapes drawn in the panel that picks a level's
-# shape (`_overlay`).
+# shape (`_symbol`).
 CHOICE_SIZE = 9
 
 
@@ -216,24 +216,32 @@ def _log_axis(log: bool) -> dict:
 def _series_ticks(manifest: PlotManifest) -> dict[float, str]:
     """Return the ticks of the one band (`ddviz.shared.scatter.ONE_BAND`): each series' name under its box.
 
-    Without box plots or series (no color column, a gradient, or a color
-    column without values) it has none. A series of a color level and an overlay level is named by both.
+    Without box plots or series (no color or symbol column, a gradient,
+    or a color column without values) it has none. A series of a color
+    level and a symbol level is named by both; without a color column,
+    by its symbol level.
     A gradient beside its missing level (`ddviz.shared.missing`) names its
     own level by its column.
     """
     spec, levels = manifest.spec, manifest.levels
-    colors, overlays = levels["color"], levels["overlay"]
-    if not spec.box or colors == [None]:
+    colors, symbols = levels["color"], levels["symbol"]
+    if not spec.box:
         return {}
 
     def name(c: object) -> str:
         return spec.color if c is None else shown_level(c, colors)
 
-    names = [
-        name(c) if spec.overlay is None else f"{name(c)} / {shown_level(o, overlays)}"
-        for c in colors
-        for o in overlays
-    ]
+    if spec.color is None and spec.symbol is not None:
+        # Symbol alone: each series is a symbol level, of the one color.
+        names = [shown_level(o, symbols) for o in symbols]
+    elif colors == [None]:
+        return {}
+    else:
+        names = [
+            name(c) if spec.symbol is None else f"{name(c)} / {shown_level(o, symbols)}"
+            for c in colors
+            for o in symbols
+        ]
     if not names:
         return {}
     # The boxes split the band into a slot per series (``static/js/boxes.js``).
@@ -258,21 +266,21 @@ def _color_scale(manifest: PlotManifest) -> dict:
         "range": manifest.color_range,
         # The kind of a temporal column, whose gradient's ticks are dates.
         "temporal": spec.temporal.get(spec.color),
-        # Series per color level: one per overlay level.
-        "shapes": len(manifest.levels["overlay"]),
+        # Series per color level: one per symbol level.
+        "shapes": len(manifest.levels["symbol"]),
     }
 
 
-def _overlay(manifest: PlotManifest) -> dict | None:
-    """Return the overlay levels and their marker shapes (`ddviz.shared.shapes.kernel`, rows from the top), or None without an overlay."""
+def _symbol(manifest: PlotManifest) -> dict | None:
+    """Return the symbol levels and their marker shapes (`ddviz.shared.shapes.kernel`, rows from the top), or None without a symbol."""
     spec = manifest.spec
-    if spec.overlay is None:
+    if spec.symbol is None:
         return None
-    levels = manifest.levels["overlay"]
+    levels = manifest.levels["symbol"]
     sizes = spec.marker_sizes(levels)
     shapes = spec.marker_shapes(levels)
     return {
-        "column": spec.overlay,
+        "column": spec.symbol,
         "levels": [str(v) for v in levels],
         # Size in pixels of each level's shapes (`ScatterSpec.marker_sizes`).
         "sizes": sizes if levels else [],
@@ -362,9 +370,9 @@ def build_figure(manifest: PlotManifest) -> dict:
         (``color``: ``kind`` is ``"levels"``, ``"bins"`` for the intervals of
         a numeric column, or ``"gradient"``, whose images hold grays
         from 1 to 255 over ``range``; ``shapes`` series per color level),
-        and the overlay levels with their marker shapes (``overlay``, or
+        and the symbol levels with their marker shapes (``symbol``, or
         None): series ``s`` is color level ``s // shapes`` (of ``series``)
-        and overlay level ``s % shapes``.
+        and symbol level ``s % shapes``.
     """
     spec, layout, axes = manifest.spec, manifest.layout, manifest.axes
     x_ranges, y_ranges = manifest.x_ranges, manifest.y_ranges
@@ -507,10 +515,10 @@ def build_figure(manifest: PlotManifest) -> dict:
         "y_ranges": [list(r) for r in y_ranges],
         "series": [str(v) for v in levels["color"]],
         "color": _color_scale(manifest),
-        "overlay": _overlay(manifest),
+        "symbol": _symbol(manifest),
         # Size in pixels of the markers of every series
-        # (`ddviz.shared.shapes.marker`); an overlay level may have its own
-        # (`overlay.sizes`).
+        # (`ddviz.shared.shapes.marker`); a symbol level may have its own
+        # (`symbol.sizes`).
         "marker_size": spec.shape_size,
         "colors": manifest.colors,
         "images": manifest.images,

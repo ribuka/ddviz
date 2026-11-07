@@ -1,4 +1,4 @@
-"""E2E: Show null rows on the Color and Overlay zones, and the missing level in the legend."""
+"""E2E: Show null rows on the Color and Symbol zones, and the missing level in the legend."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def test_show_null_rows_toggles_per_zone_and_the_missing_level_is_colored(
     page.wait_for_function(HAS_COLOR, arg=[128, 128, 128])
 
     # Without a column the zone has no menu.
-    open_zone_menu(page, "overlay")
+    open_zone_menu(page, "symbol")
     expect(page.locator(".null-menu")).to_have_count(0)
     open_zone_menu(page, "color")
     item = page.locator(".null-menu .scale-menu-item")
@@ -72,18 +72,18 @@ def test_show_null_rows_toggles_per_zone_and_the_missing_level_is_colored(
     page.keyboard.press("Escape")
     expect(page.locator(".null-menu")).to_have_count(0)
 
-    # Moved to Overlay alone, k colors the series by the Overlay's setting.
+    # Moved to Symbol alone, k draws its shapes by the Symbol's setting.
     page.locator('.zone[data-role="color"] .chip').drag_to(
-        page.locator('.zone[data-role="overlay"]')
+        page.locator('.zone[data-role="symbol"]')
     )
     expect(items).to_have_count(4)
     open_zone_menu(page, "color")
     expect(page.locator(".null-menu")).to_have_count(0)
-    open_zone_menu(page, "overlay")
+    open_zone_menu(page, "symbol")
     expect(item).to_have_class("scale-menu-item checked")
     page.keyboard.press("Escape")
     # Back on Color, the Color's setting is still off.
-    page.locator('.zone[data-role="overlay"] .chip').drag_to(
+    page.locator('.zone[data-role="symbol"] .chip').drag_to(
         page.locator('.zone[data-role="color"]')
     )
     expect(page.locator('.zone[data-role="color"] .chip-name')).to_have_text("k")

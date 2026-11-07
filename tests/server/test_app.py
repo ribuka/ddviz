@@ -25,7 +25,7 @@ from ddviz.server.settings import (
     Settings,
 )
 from ddviz.shared.missing import MISSING, MISSING_COLOR
-from ddviz.shared.scatter import POINT_SIZE
+from ddviz.shared.scatter import POINT_SIZE, SHAPE_SIZE
 from ddviz.shared.shapes import SHAPES, kernel
 from ddviz.shared.tasks import PlotTask
 
@@ -91,7 +91,7 @@ def test_the_token_moves_into_a_strict_httponly_cookie(server: TestClient) -> No
 
 # The fixture's row of a null color stays out of the plots of `_plot`
 # unless a test asks for it: Show null rows is off there.
-HIDE_NULLS = {"show_null_rows": {"color": False, "overlay": False}}
+HIDE_NULLS = {"show_null_rows": {"color": False, "symbol": False}}
 
 
 def _plot(client: TestClient, **extra: object) -> dict:
@@ -665,31 +665,40 @@ def test_show_null_rows_is_on_unless_asked_off_and_checked(client: TestClient) -
             json={"encoding": ENCODING, **SIZE, "show_null_rows": {"color": bad}},
         )
         assert response.status_code == 422, bad
-    unknown = {"color": True, "facet": True}
-    response = client.post(
-        "/api/plot", json={"encoding": ENCODING, **SIZE, "show_null_rows": unknown}
-    )
-    assert response.status_code == 422
-    # Overlay alone colors the series by its own setting, not Color's.
-    alone = {"x": ["x"], "y": ["y"], "overlay": "color"}
-    for show, series in (
-        ({"color": False, "overlay": True}, ["a", "b", "c", MISSING]),
-        ({"color": True, "overlay": False}, ["a", "b", "c"]),
+    for unknown in ({"color": True, "facet": True}, {"overlay": False}):
+        response = client.post(
+            "/api/plot", json={"encoding": ENCODING, **SIZE, "show_null_rows": unknown}
+        )
+        assert response.status_code == 422
+    # The old name of the symbol role is no role.
+    old = {"x": ["x"], "y": ["y"], "overlay": "color"}
+    response = client.post("/api/plot", json={"encoding": old, **SIZE})
+    assert response.status_code == 400
+    # Symbol alone draws its null rows by its own setting, not Color's.
+    alone = {"x": ["x"], "y": ["y"], "symbol": "color"}
+    for show, levels in (
+        ({"color": False, "symbol": True}, ["a", "b", "c", MISSING]),
+        ({"color": True, "symbol": False}, ["a", "b", "c"]),
     ):
         response = client.post(
             "/api/plot", json={"encoding": alone, **SIZE, "show_null_rows": show}
         )
-        assert response.json()["meta"]["series"] == series
+        meta = response.json()["meta"]
+        assert meta["series"] == ["None"]
+        assert meta["symbol"]["levels"] == levels
+    assert meta["symbol"]["shapes"][-1] != "x"
+    response = client.post("/api/plot", json={"encoding": alone, **SIZE})
+    assert response.json()["meta"]["symbol"]["shapes"][-1] == "x"
 
 
-def test_the_missing_overlay_level_is_an_x_until_given_a_shape(
+def test_the_missing_symbol_level_is_an_x_until_given_a_shape(
     client: TestClient,
 ) -> None:
-    """The overlay's missing level takes the x, the other levels never do; its shape and size are picked by its own name."""
-    encoding = {"x": ["x"], "y": ["y"], "color": "facet", "overlay": "color"}
+    """The symbol's missing level takes the x, the other levels never do; its shape and size are picked by its own name."""
+    encoding = {"x": ["x"], "y": ["y"], "color": "facet", "symbol": "color"}
     meta = client.post("/api/plot", json={"encoding": encoding, **SIZE}).json()["meta"]
-    assert meta["overlay"]["levels"] == ["a", "b", "c", MISSING]
-    assert meta["overlay"]["shapes"] == ["circle", "square", "triangle-up", "x"]
+    assert meta["symbol"]["levels"] == ["a", "b", "c", MISSING]
+    assert meta["symbol"]["shapes"] == ["circle", "square", "triangle-up", "x"]
     picked = client.post(
         "/api/plot",
         json={
@@ -699,14 +708,14 @@ def test_the_missing_overlay_level_is_an_x_until_given_a_shape(
             "shape_sizes": {MISSING: 11},
         },
     ).json()["meta"]
-    assert picked["overlay"]["shapes"] == ["x", "square", "triangle-up", "square"]
-    assert picked["overlay"]["sizes"][-1] == 11
-    assert picked["overlay"]["sizes"][0] != 11
+    assert picked["symbol"]["shapes"] == ["x", "square", "triangle-up", "square"]
+    assert picked["symbol"]["sizes"][-1] == 11
+    assert picked["symbol"]["sizes"][0] != 11
 
 
-def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
-    """Overlay beside color draws a series per pair of levels in the size asked; alone, it colors the series."""
-    encoding = {"x": ["x"], "y": ["y"], "color": "color", "overlay": "facet"}
+def test_symbol_plots_shapes_selects_and_hovers(client: TestClient) -> None:
+    """Symbol beside color draws a series per pair of levels in the size asked; alone, its shapes in the one color."""
+    encoding = {"x": ["x"], "y": ["y"], "color": "color", "symbol": "facet"}
     plotted = client.post(
         "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS, "shape_size": 9}
     ).json()
@@ -714,10 +723,10 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
     assert meta["undrawn"] == []
     assert meta["series"] == ["a", "b", "c"]
     assert meta["color"]["shapes"] == 2
-    assert meta["overlay"]["column"] == "facet"
-    assert meta["overlay"]["levels"] == ["p", "q"]
+    assert meta["symbol"]["column"] == "facet"
+    assert meta["symbol"]["levels"] == ["p", "q"]
     assert meta["marker_size"] == 9
-    assert [len(k) for k in meta["overlay"]["kernels"]] == [9, 9]
+    assert [len(k) for k in meta["symbol"]["kernels"]] == [9, 9]
     assert len(meta["images"]) == 6 and all(meta["images"])
     assert meta["grid"]["n_series"] == 6
     hover = client.get(
@@ -739,14 +748,28 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
     assert 0 < selected["rows"] <= meta["rows"]
     assert len(selected["images"]) == 6
 
-    alone = {"x": ["x"], "y": ["y"], "overlay": "facet"}
+    alone = {"x": ["x"], "y": ["y"], "symbol": "facet"}
     meta = client.post(
-        "/api/plot", json={"encoding": alone, **SIZE, **HIDE_NULLS}
+        "/api/plot",
+        json={
+            "encoding": alone,
+            **SIZE,
+            **HIDE_NULLS,
+            "shape_sizes": {"q": 3},
+            "level_shapes": {"p": "square"},
+        },
     ).json()["meta"]
-    assert meta["series"] == ["p", "q"]
-    assert meta["color"]["column"] == "facet"
-    assert meta["overlay"] is None
-    # The circles of the points without an overlay take the smaller default.
+    assert meta["series"] == ["None"]
+    assert meta["color"]["column"] is None
+    assert meta["color"]["shapes"] == 2
+    assert meta["symbol"]["levels"] == ["p", "q"]
+    assert meta["symbol"]["shapes"] == ["square", "square"]
+    assert meta["symbol"]["sizes"] == [SHAPE_SIZE, 3]
+    assert meta["marker_size"] == SHAPE_SIZE
+    assert len(meta["images"]) == 2
+    # The circles of the points without a symbol take the smaller default.
+    bare = {"x": ["x"], "y": ["y"]}
+    meta = client.post("/api/plot", json={"encoding": bare, **SIZE}).json()["meta"]
     assert meta["marker_size"] == POINT_SIZE
 
     bad = {"encoding": encoding, **SIZE, "shape_size": 8}
@@ -758,8 +781,8 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
         json={"encoding": encoding, **SIZE, "shape_size": 9, "shape_sizes": {"q": 3}},
     ).json()["meta"]
     assert meta["marker_size"] == 9
-    assert meta["overlay"]["sizes"] == [9, 3]
-    assert [len(k) for k in meta["overlay"]["kernels"]] == [9, 3]
+    assert meta["symbol"]["sizes"] == [9, 3]
+    assert [len(k) for k in meta["symbol"]["kernels"]] == [9, 3]
     bad = {"encoding": encoding, **SIZE, "shape_sizes": {"q": 4}}
     assert client.post("/api/plot", json=bad).status_code == 400
 
@@ -773,9 +796,9 @@ def test_overlay_plots_shapes_selects_and_hovers(client: TestClient) -> None:
             "level_shapes": {"q": "x"},
         },
     ).json()["meta"]
-    assert meta["overlay"]["shapes"] == [SHAPES[0], "x"]
-    assert meta["overlay"]["kernels"][1] == kernel("x", 9).astype(int).tolist()
-    choices = meta["overlay"]["choices"]
+    assert meta["symbol"]["shapes"] == [SHAPES[0], "x"]
+    assert meta["symbol"]["kernels"][1] == kernel("x", 9).astype(int).tolist()
+    choices = meta["symbol"]["choices"]
     assert [c["name"] for c in choices] == list(SHAPES)
     assert choices[3]["kernel"] == kernel(SHAPES[3], 9).astype(int).tolist()
     bad = {"encoding": encoding, **SIZE, "level_shapes": {"q": "star"}}
@@ -824,6 +847,26 @@ def test_plot_data_saves_the_overview_bins(client: TestClient) -> None:
     assert client.get(url, params={"format": "xlsx"}).status_code == 400
     stale = f"/api/plot-data/{meta['task'] + 99}"
     assert client.get(stale, params={"format": "csv"}).status_code == 404
+
+
+def test_plot_data_names_the_symbol_column_symbol(client: TestClient) -> None:
+    """The symbol's levels are saved in a column named after its zone, with or without a color column."""
+    for encoding, columns in (
+        ({"x": ["x"], "y": ["y"], "symbol": "facet"}, ["symbol"]),
+        (
+            {"x": ["x"], "y": ["y"], "color": "color", "symbol": "facet"},
+            ["color", "symbol"],
+        ),
+    ):
+        meta = client.post(
+            "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS}
+        ).json()["meta"]
+        response = client.get(
+            f"/api/plot-data/{meta['task']}", params={"format": "parquet"}
+        )
+        table = pl.read_parquet(io.BytesIO(response.content))
+        assert table.columns[6:-1] == columns
+        assert set(table["symbol"]) == {"p", "q"}
 
 
 def test_plot_data_of_a_categorical_axis_has_its_levels(client: TestClient) -> None:

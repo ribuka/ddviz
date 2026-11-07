@@ -8,7 +8,7 @@ from dataclasses import dataclass
 # others are the n-th axes.
 AXES = ("x", "y")
 # Roles that hold one column or none.
-SINGLES = ("color", "overlay", "row", "col", "wrap")
+SINGLES = ("color", "symbol", "row", "col", "wrap")
 ROLES = AXES + SINGLES
 # Elements of a graph, which the icons above the figure toggle: points,
 # box plots and smoothing lines.
@@ -28,9 +28,9 @@ class Encoding:
         Columns on the x and y axes; those after the first are the n-th axes.
     color : str or None
         Column whose levels color the series.
-    overlay : str or None
-        Column whose levels draw the points in marker shapes beside a color
-        column; alone, its levels color the series.
+    symbol : str or None
+        Column whose levels draw the points in marker shapes, with or without
+        a color column.
     row, col : str or None
         Columns whose levels make the facet rows and columns (Group Y and
         Group X).
@@ -46,7 +46,7 @@ class Encoding:
     x: tuple[str, ...] = ()
     y: tuple[str, ...] = ()
     color: str | None = None
-    overlay: str | None = None
+    symbol: str | None = None
     row: str | None = None
     col: str | None = None
     wrap: str | None = None

@@ -2,7 +2,7 @@
 
 A result holds no points, only the pixel bins they fall in (`ddviz.shared.keys`)
 with how many rows each holds; the table is those bins with what they are in
-the figure's terms: the panel's axis columns, the facet, color and overlay
+the figure's terms: the panel's axis columns, the facet, color and symbol
 levels, the bin's range along each axis and its rows. A categorical axis
 gives the bin's level too; its range is in the axis' positions, where level
 ``i`` is centered at ``i``.
@@ -26,7 +26,7 @@ _ROLES = (
     ("row", "group_y"),
     ("col", "group_x"),
     ("color", "color"),
-    ("overlay", "overlay"),
+    ("symbol", "symbol"),
 )
 
 
@@ -99,7 +99,7 @@ def bins_table(out: Path) -> pl.DataFrame:
     polars.DataFrame
         One row per bin with rows: ``x_column``, ``x_lo``, ``x_hi`` (and
         ``x_level`` with a categorical x), the same for y, then ``group_y``,
-        ``group_x`` (``wrap`` in a wrapped grid), ``color`` and ``overlay``
+        ``group_x`` (``wrap`` in a wrapped grid), ``color`` and ``symbol``
         for the roles in use, and ``count``, the rows in the bin. A gradient's
         color has no levels, so no column.
     """
@@ -148,12 +148,12 @@ def bins_table(out: Path) -> pl.DataFrame:
             spec.log_y,
         ),
     }
-    shapes = len(levels["overlay"])
+    shapes = len(levels["symbol"])
     index = {
         "row": row,
         "col": col,
         "color": series // shapes,
-        "overlay": series % shapes,
+        "symbol": series % shapes,
     }
     for role, name in _ROLES:
         if getattr(spec, role) is None or (role == "color" and spec.gradient):

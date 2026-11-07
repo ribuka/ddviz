@@ -31,7 +31,7 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
 
     A row is selected when it is drawn in the panel the box was drawn on:
     its facet levels are the panel's, its x and y are in the box, its
-    color, overlay, row and col are drawn (`ddviz.compute.missing.drawn_conditions`), and it passes the local filter.
+    color, symbol, row and col are drawn (`ddviz.compute.missing.drawn_conditions`), and it passes the local filter.
     On a categorical axis, the point drawn for it is in the box: a row
     alone or of a pile at the center of its band, a row of a stack that
     fits where its stack puts it (`ddviz.compute.stacks`), as the drawn
@@ -135,10 +135,10 @@ def _panel_bins(spec: ScatterSpec) -> tuple[int, int]:
     return layout.panel_width, layout.panel_height
 
 
-def _overlay_index(spec: ScatterSpec) -> pl.Expr:
-    """Return each row's overlay level, whose marker its point is drawn in; 0 without an overlay."""
+def _symbol_index(spec: ScatterSpec) -> pl.Expr:
+    """Return each row's symbol level, whose marker its point is drawn in; 0 without a symbol."""
     return role_index(
-        spec, "overlay", spec.view.levels["overlay"], cuts=spec.view.cuts.get("overlay")
+        spec, "symbol", spec.view.levels["symbol"], cuts=spec.view.cuts.get("symbol")
     )
 
 
@@ -181,11 +181,11 @@ def _stacked(
             around.append(center.is_between(lo - BAND, hi + BAND))
         else:
             around.append(center.is_between(lo, hi))
-    levels = view.levels["overlay"] if spec.overlay is not None else []
+    levels = view.levels["symbol"] if spec.symbol is not None else []
     columns = [
         selection.x,
         selection.y,
-        *(c for c in (spec.color, spec.overlay, spec.row, spec.col) if c),
+        *(c for c in (spec.color, spec.symbol, spec.row, spec.col) if c),
         *filter_columns(spec.filters),
     ]
     frame, coordinates = stack_frame(
@@ -200,7 +200,7 @@ def _stacked(
         pl.lit(0, pl.Int64),
         [0],
         pl.lit(0, pl.Int64),
-        _overlay_index(spec),
+        _symbol_index(spec),
         marker_boxes(spec.marker_shapes(levels), spec.marker_sizes(levels)),
         [],
     )
@@ -252,7 +252,7 @@ def selection_columns(spec: ScatterSpec) -> list[str]:
         spec.selection.x,
         spec.selection.y,
         spec.color,
-        spec.overlay,
+        spec.symbol,
         spec.row,
         spec.col,
     ]

@@ -39,12 +39,12 @@ def _column_bytes(dtype: pl.DataType) -> int:
 
 
 def _shapes(spec: ScatterSpec, levels: dict[str, list]) -> int:
-    """Return the number of overlay levels, whose shapes the series take; 0 without an overlay."""
-    return len(levels["overlay"]) if spec.overlay is not None else 0
+    """Return the number of symbol levels, whose shapes the series take; 0 without a symbol."""
+    return len(levels["symbol"]) if spec.symbol is not None else 0
 
 
 def _colors(spec: ScatterSpec, n_series: int, levels: dict[str, list]) -> list[str]:
-    """Return the color of each series: that of its color level (`ScatterSpec.overlay`).
+    """Return the color of each series: that of its color level (`ScatterSpec.symbol`).
 
     The missing color level (`ddviz.shared.missing.MISSING`) is gray; the
     other levels keep the colors of their places.
@@ -101,8 +101,8 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     emit({"type": "progress", "stage": "raster"})
     bitmask = occupancy(keys, agg.grid)
     colors = _colors(spec, agg.grid.n_series, agg.levels)
-    shapes = spec.marker_shapes(agg.levels["overlay"])
-    sizes = spec.marker_sizes(agg.levels["overlay"])
+    shapes = spec.marker_shapes(agg.levels["symbol"])
+    sizes = spec.marker_sizes(agg.levels["symbol"])
     if spec.gradient:
         images = write_gradient(
             out,
@@ -195,8 +195,8 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     )
     emit({"type": "progress", "stage": "raster"})
     keys = agg.selected[KEY].to_numpy()
-    shapes = spec.marker_shapes(agg.levels["overlay"])
-    sizes = spec.marker_sizes(agg.levels["overlay"])
+    shapes = spec.marker_shapes(agg.levels["symbol"])
+    sizes = spec.marker_sizes(agg.levels["symbol"])
     colors = _colors(spec, agg.grid.n_series, agg.levels)
     if spec.gradient:
         images = write_gradient(

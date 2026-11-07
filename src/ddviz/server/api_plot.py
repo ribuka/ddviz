@@ -73,7 +73,7 @@ def plot_router(
     broker : TaskBroker
         Runs the plot tasks.
     max_levels : int
-        Most levels a categorical color, Overlay, Group X, Group Y or Wrap
+        Most levels a categorical color, Symbol, Group X, Group Y or Wrap
         column may have.
     max_axis_levels : int
         Most levels a categorical x or y column may have.

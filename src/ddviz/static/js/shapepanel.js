@@ -1,16 +1,16 @@
-// The panel that picks the shape of an overlay level, opened as a submenu of
-// the menu of the overlay legend's markers (shapemenu.js): the shapes a level
-// can take (`meta.overlay.choices`, in the order of
+// The panel that picks the shape of a symbol level, opened as a submenu of
+// the menu of the symbol legend's markers (shapemenu.js): the shapes a level
+// can take (`meta.symbol.choices`, in the order of
 // `ddviz.shared.shapes.SHAPES`) drawn in the figure's pixels, the outlines in
 // the first row and the filled ones in the second, and the shape of the
 // level's place again.
 
-// Color of the shapes in the overlay's legend and in the panel.
+// Color of the shapes in the symbol's legend and in the panel.
 export const SHAPE_COLOR = "#444";
 // Shapes to a row: the 7 outlines, then the 5 filled ones under them.
 const COLUMNS = 7;
 
-// Draws a marker shape (a kernel of `meta.overlay`, rows from the top) a
+// Draws a marker shape (a kernel of `meta.symbol`, rows from the top) a
 // pixel per cell.
 export function shapeCanvas(kernel) {
   const canvas = document.createElement("canvas");

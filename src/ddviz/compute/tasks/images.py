@@ -45,13 +45,13 @@ def write_images(
         Color of each series.
     shapes : list of str or None
         Shape of the markers: each pixel of series ``s`` spreads into item
-        ``s % len(shapes)``, the shape of its overlay level, or into a
-        filled circle for None, without an overlay
+        ``s % len(shapes)``, the shape of its symbol level, or into a
+        filled circle for None, without a symbol
         (`ddviz.shared.shapes.marker`,
         `ddviz.shared.scatter.ScatterSpec.marker_shapes`).
     sizes : list of int
         Size of the markers in pixels: series ``s`` takes item
-        ``s % len(sizes)``, one per overlay level
+        ``s % len(sizes)``, one per symbol level
         (`ddviz.shared.scatter.ScatterSpec.marker_sizes`).
 
     Returns
@@ -115,7 +115,7 @@ def write_gradient(
     Each pixel's gray is its representative row's color value over
     `color_range`, from 1 to 255 (0 is an empty pixel); the page maps the
     grays to the colors of its color scale. A gradient has a single color,
-    so its series are the overlay levels, or one without an overlay; then
+    so its series are the symbol levels, or one without a symbol; then
     again for the missing level of the color column
     (`ddviz.shared.missing.MISSING`), whose series are masks in one color
     (`solid`), as `write_images` draws them, never grays.

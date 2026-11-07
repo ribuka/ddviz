@@ -29,7 +29,7 @@ def test_aggregate_matches_brute_force(
     grid = agg.grid
     assert agg.levels == {
         "color": ["a", "b", "c"],
-        "overlay": [None],
+        "symbol": [None],
         "row": [None],
         "col": ["p", "q"],
     }
@@ -124,7 +124,7 @@ def test_the_level_limit_comes_from_the_spec(scatter_spec: ScatterSpec) -> None:
     assert aggregate(replace(scatter_spec, max_levels=3)).grid.n_series == 3
     spec = ScatterSpec.from_dict(replace(scatter_spec, max_levels=2).to_dict())
     with pytest.raises(
-        ValueError, match="（color は 3 個で、Color・Overlay・Group・Wrap の上限は 2 個）"
+        ValueError, match="（color は 3 個で、Color・Symbol・Group・Wrap の上限は 2 個）"
     ):
         aggregate(spec)
 
@@ -184,7 +184,7 @@ def test_a_column_on_an_axis_and_color_meets_both_limits(
     """The same column on x and color is refused by the lower limit of its roles, either one."""
     both = _axis_spec(scatter_spec, color="color")
     assert aggregate(replace(both, max_levels=3, max_axis_levels=3)).grid.n_series == 3
-    with pytest.raises(ValueError, match="Color・Overlay・Group・Wrap の上限は 2 個"):
+    with pytest.raises(ValueError, match="Color・Symbol・Group・Wrap の上限は 2 個"):
         aggregate(replace(both, max_levels=2, max_axis_levels=1_000_000))
     with pytest.raises(ValueError, match="X・Y のカテゴリの軸の上限は 2 個"):
         aggregate(replace(both, max_levels=100, max_axis_levels=2))
@@ -392,7 +392,7 @@ def test_wrapped_levels_are_panels_in_rows(
 
 
 def test_levels_are_in_natural_order(tmp_path: Path) -> None:
-    """Color, overlay and facet levels compare numbers by value (``2_`` before ``10_``), nulls left out."""
+    """Color, symbol and facet levels compare numbers by value (``2_`` before ``10_``), nulls left out."""
     n = 600
     names = ["10_", "1_", "2_", None]
     frame = pl.DataFrame(
@@ -410,7 +410,7 @@ def test_levels_are_in_natural_order(tmp_path: Path) -> None:
         x=["x"],
         y=["y"],
         color="g",
-        overlay="h",
+        symbol="h",
         row="h",
         col="g",
         width=400,
@@ -419,7 +419,7 @@ def test_levels_are_in_natural_order(tmp_path: Path) -> None:
     )
     levels = aggregate(spec).levels
     assert levels["color"] == levels["col"] == ["1_", "2_", "10_"]
-    assert levels["overlay"] == levels["row"] == ["a", "B2", "b10"]
+    assert levels["symbol"] == levels["row"] == ["a", "B2", "b10"]
 
 
 def _sliced_and_whole(

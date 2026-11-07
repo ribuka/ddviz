@@ -145,8 +145,8 @@ def test_without_room_for_the_axes_no_hover_files_are_written(
     index.close()
 
 
-def _overlay_index(points: list[tuple[int, int, int]]) -> HoverIndex:
-    """Return an index of one panel of 30 x 20 bins, one color and two overlay levels (a circle and a square of 7px).
+def _symbol_index(points: list[tuple[int, int, int]]) -> HoverIndex:
+    """Return an index of one panel of 30 x 20 bins, one color and two symbol levels (a circle and a square of 7px).
 
     Each point ``(series, bx, by)`` is a bin of one row, whose index is the
     point's position in `points`.
@@ -166,7 +166,7 @@ def _overlay_index(points: list[tuple[int, int, int]]) -> HoverIndex:
 
 def test_lookup_finds_the_topmost_marker_shape_over_the_cursor() -> None:
     """A square drawn on top of a point's bin answers there; with the order reversed, the point does."""
-    index = _overlay_index([(0, 10, 10), (1, 13, 10)])
+    index = _symbol_index([(0, 10, 10), (1, 13, 10)])
     # The square of series 1 (the second shape) covers bin (10, 10) with its left side.
     hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])
     assert (hit["series"], hit["bx"], hit["by"]) == (1, 13, 10)
@@ -180,21 +180,21 @@ def test_lookup_finds_the_topmost_marker_shape_over_the_cursor() -> None:
 
 def test_lookup_of_overlapping_shapes_of_one_series_finds_the_largest_row() -> None:
     """Of one series, the point of the largest row is drawn on top, even over another point's own bin."""
-    index = _overlay_index([(1, 10, 10), (1, 13, 10)])
+    index = _symbol_index([(1, 10, 10), (1, 13, 10)])
     hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])
     assert (hit["row"], hit["bx"]) == (1, 13)
-    index = _overlay_index([(1, 13, 10), (1, 10, 10)])
+    index = _symbol_index([(1, 13, 10), (1, 10, 10)])
     hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])
     assert (hit["row"], hit["bx"]) == (1, 10)
     # Two squares cover the empty bin (10, 10): the larger row shows there.
-    index = _overlay_index([(1, 7, 10), (1, 13, 10)])
+    index = _symbol_index([(1, 7, 10), (1, 13, 10)])
     assert index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0])["row"] == 1
 
 
 def test_a_gradient_shows_and_hovers_the_largest_row_where_circles_overlap(
     tmp_path: Path,
 ) -> None:
-    """Without an overlay, points are 5px circles; where two overlap, the later row's gray is drawn and hovered."""
+    """Without a symbol, points are 5px circles; where two overlap, the later row's gray is drawn and hovered."""
     path = tmp_path / "g.parquet"
     pl.DataFrame(
         {
@@ -254,7 +254,7 @@ def _gradient_layer(out: Path, index: HoverIndex) -> np.ndarray:
 
 def test_lookup_reaches_as_far_as_each_level_s_own_size() -> None:
     """A level's larger shapes answer farther than the first level's size."""
-    index = _overlay_index([(0, 5, 10), (1, 14, 10)])
+    index = _symbol_index([(0, 5, 10), (1, 14, 10)])
     # The circle of level 0 is 3px, the square of level 1 15px: its left
     # side is 7 bins from its center.
     index._shapes = [marker(SHAPES[0], 3)[::-1], marker(SHAPES[1], 15)[::-1]]
@@ -264,7 +264,7 @@ def test_lookup_reaches_as_far_as_each_level_s_own_size() -> None:
 
 def test_lookup_skips_the_hidden_series() -> None:
     """Series drawn invisible never answer: not under a shape, not as the nearest point, nor in the pixel's count."""
-    index = _overlay_index([(0, 10, 10), (1, 10, 10), (1, 13, 10), (0, 19, 10)])
+    index = _symbol_index([(0, 10, 10), (1, 10, 10), (1, 13, 10), (0, 19, 10)])
     hit = index.lookup(0, 10.5, 10.5, 1.0, 1.0, [1, 0], frozenset({1}))
     assert (hit["series"], hit["bx"], hit["by"]) == (0, 10, 10)
     assert hit["pixel_count"] == 1
@@ -281,6 +281,6 @@ def test_hidden_series_are_passed_over_a_chunk_at_a_time(
 ) -> None:
     """With one key matched at a time, the nearest bin of a shown series still answers."""
     monkeypatch.setattr("ddviz.server.hover._MAX_KEYS_AT_ONCE", 1)
-    index = _overlay_index([(1, 13, 10), (1, 14, 10), (0, 19, 10), (0, 21, 10)])
+    index = _symbol_index([(1, 13, 10), (1, 14, 10), (0, 19, 10), (0, 21, 10)])
     hit = index.lookup(0, 15.5, 10.5, 1.0, 1.0, [1, 0], frozenset({1}))
     assert (hit["series"], hit["bx"], hit["by"]) == (0, 19, 10)

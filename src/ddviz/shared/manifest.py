@@ -91,7 +91,7 @@ class PlotManifest:
         Data range of each x and each y column the bins cover (positions of
         a column on a log axis: the log10 of its values).
     levels : dict
-        Levels of the color, overlay, row and col roles as drawn
+        Levels of the color, symbol, row and col roles as drawn
         (`ddviz.compute.aggregate.Aggregation.levels`).
     all_levels : dict
         Levels of the roles over every row

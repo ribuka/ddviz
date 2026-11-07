@@ -33,7 +33,7 @@ export function pileLabel(n) {
 // Returns the diameter in pixels of a pile's marker: wider than the largest
 // marker of the plot's points, so that it stands out from them.
 function pileSize(meta) {
-  const sizes = meta.overlay?.sizes?.length ? meta.overlay.sizes : [meta.marker_size];
+  const sizes = meta.symbol?.sizes?.length ? meta.symbol.sizes : [meta.marker_size];
   return Math.max(9, Math.max(...sizes) + 4);
 }
 

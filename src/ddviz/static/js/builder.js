@@ -1,6 +1,6 @@
 // Drop zones of the graph builder, laid out around the figure: Group X
 // above the figure, Y left of it, Group Y right of it, X below it, Wrap in
-// the corner right of Group X and above Group Y, and Overlay above Color
+// the corner right of Group X and above Group Y, and Symbol above Color
 // beside it. They are outside the scrolled figure and name its axes. The
 // zones edit the graph (`ddviz.server.encoding.Encoding`):
 // - A column dropped on a zone takes that role, replacing the column there.
@@ -34,7 +34,7 @@
 
 // Roles that hold a list of columns (the n-th axes after the first).
 const AXES = ["x", "y"];
-const LABELS = { x: "X", y: "Y", col: "Group X", row: "Group Y", wrap: "Wrap", color: "Color", overlay: "Overlay" };
+const LABELS = { x: "X", y: "Y", col: "Group X", row: "Group Y", wrap: "Wrap", color: "Color", symbol: "Symbol" };
 // Roles that wrap replaces.
 const FACETS = ["row", "col"];
 // The part of an axis column's region, at either end along the axis, where
@@ -111,7 +111,7 @@ export class Builder {
     this.zones = [...root.querySelectorAll(".zone[data-role]")];
     this.onChange = onChange;
     this.related = related;
-    this.encoding = { x: [], y: [], color: null, overlay: null, row: null, col: null, wrap: null, elements: ["points"] };
+    this.encoding = { x: [], y: [], color: null, symbol: null, row: null, col: null, wrap: null, elements: ["points"] };
     // Whether each placed column is numeric, for the filter pane a chip is dragged to.
     this.numeric = new Map();
     // The temporal kind of each placed column (`ddviz.shared.temporal.KINDS`), or null.

@@ -275,7 +275,7 @@ def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
     place(page, "y", "y")
     wait_top_row(page, 2)
     # Another column elsewhere keeps the number.
-    place(page, "facet", "overlay")
+    place(page, "facet", "symbol")
     wait_top_row(page, 2)
 
     # A wrap column whose plot fails (too many levels) closes the form and
@@ -541,13 +541,13 @@ def test_inactive_series_at_opacity_0_vanish_and_do_not_hover(app_page: Page) ->
     page.wait_for_function(PAINTED_PIXEL)
 
 
-def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
-    """Overlay beside color shows a legend of shapes, toggled on its own; a marker's menu changes its level's size, the points' icon every level's."""
+def test_symbol_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
+    """Symbol beside color shows a legend of shapes, toggled on its own; a marker's menu changes its level's size, the points' icon every level's."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
     place(page, "x", "x", plots=False)
-    for column, role in [("y", "y"), ("color", "color"), ("facet", "overlay")]:
+    for column, role in [("y", "y"), ("color", "color"), ("facet", "symbol")]:
         place(page, column, role)
     page.wait_for_function(PAINTED_PIXEL)
     legend = page.locator("#legend")
@@ -594,13 +594,13 @@ def test_overlay_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None
 
 
 
-def test_an_overlay_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> None:
-    """An overlay item's marker opens a menu whose shape panel redraws the level in another shape; another overlay column drops it."""
+def test_a_symbol_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> None:
+    """A symbol item's marker opens a menu whose shape panel redraws the level in another shape; another symbol column drops it."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
     place(page, "x", "x", plots=False)
-    for column, role in [("y", "y"), ("color", "color"), ("facet", "overlay")]:
+    for column, role in [("y", "y"), ("color", "color"), ("facet", "symbol")]:
         place(page, column, role)
     page.wait_for_function(PAINTED_PIXEL)
     legend = page.locator("#legend")
@@ -655,8 +655,7 @@ def test_an_overlay_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> 
     page.wait_for_function(SETTLED)
     assert sample.evaluate("(canvas) => canvas.toDataURL()") == before
 
-    # The shape stays while the overlay column does, and goes with another,
-    # even one drawn without a color column (overlay alone sends no shapes).
+    # The shape stays while the symbol column does, and goes with another.
     marker.click(button="right")
     menu.get_by_text("形", exact=True).hover()
     panel.locator('.shape-cell[data-shape="x"]').click()
@@ -664,11 +663,77 @@ def test_an_overlay_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> 
     assert sample.evaluate("(canvas) => canvas.toDataURL()") != before
     page.locator('.zone[data-role="color"] .chip-remove').click()
     page.wait_for_function(SETTLED)
-    place(page, "color", "overlay")
-    place(page, "facet", "overlay")
+    place(page, "color", "symbol")
+    place(page, "facet", "symbol")
     place(page, "color", "color")
     page.wait_for_function(PAINTED_PIXEL)
     assert sample.evaluate("(canvas) => canvas.toDataURL()") == before
+
+
+# The colors of the opaque pixels of the image layers, as "r,g,b".
+OPAQUE_COLORS = """() => {
+  const canvas = document.querySelector("canvas.image-layers");
+  const { data } = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+  const colors = new Set();
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 255) colors.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
+  }
+  return [...colors];
+}"""
+
+
+def test_symbol_alone_draws_shapes_of_one_color(app_page: Page) -> None:
+    """Symbol without a color column draws its levels in shapes of 7 px and one color, with the shape legend alone, whose markers change a level's size and shape."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    page.wait_for_function(PAINTED_PIXEL)
+    one_color = page.evaluate(OPAQUE_COLORS)
+    assert len(one_color) == 1
+    place(page, "facet", "symbol")
+    page.wait_for_function(PAINTED_PIXEL)
+    legend = page.locator("#legend")
+    items = legend.locator(".legend-item")
+    shapes = items.filter(has=page.locator("canvas"))
+    # The shape legend alone: every item is a shape, under the one title.
+    expect(shapes).to_have_count(2)
+    expect(items).to_have_count(2)
+    expect(legend.locator(".legend-title")).to_have_count(1)
+    expect(legend.locator(".legend-title")).to_have_text("facet")
+    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
+    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "7")
+    assert page.evaluate(OPAQUE_COLORS) == one_color
+
+    status = page.locator("#status")
+    task = status.inner_text()
+    marker = shapes.nth(1).locator(".legend-marker")
+    marker.click(button="right")
+    menu = page.locator(".shape-menu")
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
+    menu.get_by_text("11 px", exact=True).click()
+    expect(menu).to_have_count(0)
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "11")
+    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
+
+    task = status.inner_text()
+    marker.click(button="right")
+    menu.get_by_text("形", exact=True).hover()
+    panel = page.locator(".shape-panel")
+    expect(panel.locator(".shape-cell.current")).to_have_attribute(
+        "data-shape", "square"
+    )
+    panel.locator('.shape-cell[data-shape="x"]').click()
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    marker.click(button="right")
+    menu.get_by_text("形", exact=True).hover()
+    expect(panel.locator(".shape-cell.current")).to_have_attribute("data-shape", "x")
+    page.keyboard.press("Escape")
+    assert page.evaluate(OPAQUE_COLORS) == one_color
 
 
 # Whether the image layers have a pixel of the color [r, g, b].
@@ -825,7 +890,7 @@ PAINTED_COUNT = """() => {
 def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     app_page: Page,
 ) -> None:
-    """Without an overlay the points are 5px circles; the points' icon, or a gradient's color bar menu changes their size. Without a color column the legend shows no item."""
+    """Without a symbol the points are 5px circles; the points' icon, or a gradient's color bar menu changes their size. Without a color column the legend shows no item."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
@@ -1116,13 +1181,17 @@ def test_group_y_reads_top_to_bottom_and_the_kind_tabs_show_the_chosen(
     assert name["y"] < remove["y"]
 
 
-def test_the_side_stacks_overlay_color_and_the_legend(app_page: Page) -> None:
-    """The pane right of the figure holds Overlay, then Color, then the legend, top to bottom."""
+def test_the_side_stacks_symbol_color_and_the_legend(app_page: Page) -> None:
+    """The pane right of the figure holds Symbol, then Color, then the legend, top to bottom."""
     page = app_page
+    for role, label in (("symbol", "Symbol"), ("color", "Color")):
+        expect(page.locator(f'#side [data-role="{role}"] .zone-label')).to_have_text(
+            label
+        )
     tops = [
         page.locator(selector).bounding_box()["y"]
         for selector in [
-            '#side [data-role="overlay"]',
+            '#side [data-role="symbol"]',
             '#side [data-role="color"]',
             "#legend",
         ]
@@ -1472,7 +1541,7 @@ def placed_names(page: Page) -> dict[str, list[str]]:
     """Return the column names on each role's zone, in their order."""
     return {
         role: page.locator(f'.zone[data-role="{role}"] .chip-name').all_inner_texts()
-        for role in ["x", "y", "col", "row", "wrap", "color", "overlay"]
+        for role in ["x", "y", "col", "row", "wrap", "color", "symbol"]
     }
 
 
@@ -1506,7 +1575,7 @@ def watch_errors(page: Page) -> list[str]:
         ("row", "facet", 0),
         ("wrap", "facet", 0),
         ("color", "color", 0),
-        ("overlay", "color", 0),
+        ("symbol", "color", 0),
     ],
 )
 def test_a_chip_dragged_to_the_filters_adds_a_card_and_stays_placed(
@@ -1604,15 +1673,15 @@ def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(
 
     # The builder still moves a chip between roles and removes one dropped outside.
     page.locator('.zone[data-role="color"] .chip').drag_to(
-        page.locator('.zone[data-role="overlay"]')
+        page.locator('.zone[data-role="symbol"]')
     )
-    expect(page.locator('.zone[data-role="overlay"] .chip-name')).to_have_text(
+    expect(page.locator('.zone[data-role="symbol"] .chip-name')).to_have_text(
         ["color"]
     )
     expect(page.locator('.zone[data-role="color"] .chip')).to_have_count(0)
     page.wait_for_function(SETTLED)
-    page.locator('.zone[data-role="overlay"] .chip').drag_to(page.locator("#columns"))
-    expect(page.locator('.zone[data-role="overlay"] .chip')).to_have_count(0)
+    page.locator('.zone[data-role="symbol"] .chip').drag_to(page.locator("#columns"))
+    expect(page.locator('.zone[data-role="symbol"] .chip')).to_have_count(0)
     expect(page.locator(".filter-card")).to_have_count(2)
     page.wait_for_function(SETTLED)
     assert errors == []
