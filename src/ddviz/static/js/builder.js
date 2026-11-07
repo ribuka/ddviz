@@ -36,8 +36,10 @@ const INSERT_SHARE = 0.25;
 // Words for before and after a chip on each axis.
 const SIDES = { x: ["左", "右"], y: ["上", "下"] };
 
-// The column being dragged: `{name, numeric, temporal}` from the column list, plus
-// `from` and `index` for a chip. A dragover cannot read the drag's data.
+// The column being dragged: `{name, numeric, temporal, placed}` from the
+// column list, where `placed()` is called when a drop takes it, or
+// `{name, numeric, temporal, from, index}` for a chip. A dragover cannot read
+// the drag's data.
 let dragged = null;
 
 export function beginDrag(column) {
@@ -243,7 +245,9 @@ export class Builder {
       const action = this.action(zone, event);
       const column = dragged;
       this.endDrag();
-      if (!action.refused) this.place(zone.dataset.role, column, action);
+      if (action.refused) return;
+      this.place(zone.dataset.role, column, action);
+      column.placed?.();
     });
   }
 

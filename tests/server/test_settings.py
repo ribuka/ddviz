@@ -77,6 +77,23 @@ def test_max_listed_must_be_a_positive_integer(tmp_path: Path, value: str) -> No
         load_settings(path)
 
 
+def test_max_history_is_read(tmp_path: Path) -> None:
+    """``columns.max_history`` sets the most kept keywords; without it the default is 20."""
+    path = tmp_path / "settings.toml"
+    path.write_text("[columns]\nmax_history = 5\n", encoding="utf-8")
+    assert load_settings(path).columns.max_history == 5
+    assert ColumnsSettings().max_history == 20
+
+
+@pytest.mark.parametrize("value", ["0", "2.5", "true"])
+def test_max_history_must_be_a_positive_integer(tmp_path: Path, value: str) -> None:
+    """A max_history that is not a positive integer is refused."""
+    path = tmp_path / "settings.toml"
+    path.write_text(f"[columns]\nmax_history = {value}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="columns.max_history"):
+        load_settings(path)
+
+
 def test_hover_limit_is_read_in_gigabytes(tmp_path: Path) -> None:
     """``hover.max_temp_gb`` becomes bytes; without it the default is 2GB."""
     path = tmp_path / "settings.toml"

@@ -89,7 +89,9 @@ export class FilterPane {
       this.root.classList.remove("over");
       this.showTip(null);
       document.dispatchEvent(new Event("dragend"));
+      if (this.cards.some((c) => c.name === column.name)) return;
       this.add(column);
+      column.placed?.();
     });
   }
 

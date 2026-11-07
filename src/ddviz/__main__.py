@@ -39,12 +39,19 @@ def make_app(paths: list[str], recursive: bool, token: str) -> FastAPI:
         The application.
     """
     from ddviz.server.app import create_app
+    from ddviz.server.history import default_history_root
     from ddviz.server.settings import load_settings
     from ddviz.shared.cache import default_cache_root
 
     root = Path(tempfile.mkdtemp(prefix="ddviz-"))
     return create_app(
-        paths, recursive, root, default_cache_root(), load_settings(), token
+        paths,
+        recursive,
+        root,
+        default_cache_root(),
+        default_history_root(),
+        load_settings(),
+        token,
     )
 
 
