@@ -28,8 +28,8 @@ FACET_BINS = 5
 COLOR_BINS = (2, 3, 5, 10)
 # Methods of the smoothing lines (`ddviz.compute.smooth`).
 SMOOTH_METHODS = ("gcv", "csaps", "lowess")
-# Sizes in pixels the markers can take: the shapes of the overlay levels, or
-# the circles without an overlay.
+# Sizes in pixels the markers can take: the shapes of the symbol levels, or
+# the circles without a symbol.
 SHAPE_SIZES = (3, 5, 7, 9, 11, 15)
 
 
@@ -151,14 +151,14 @@ def drawn_columns(encoding: Encoding) -> list[str]:
     Returns
     -------
     list of str
-        The x and y columns and the color, overlay, row, col and wrap
+        The x and y columns and the color, symbol, row, col and wrap
         columns, once each.
     """
     columns = [
         *encoding.x,
         *encoding.y,
         encoding.color,
-        encoding.overlay,
+        encoding.symbol,
         encoding.row,
         encoding.col,
         encoding.wrap,
@@ -263,8 +263,8 @@ def scatter_spec(
     """Return the overview scatter plot of a graph.
 
     Every pair of an x and a y column is drawn in a panel of each facet
-    cell, colored by color and faceted by row and col. Overlay draws the
-    points in a marker shape per level (`ScatterSpec.overlay`), with or
+    cell, colored by color and faceted by row and col. Symbol draws the
+    points in a marker shape per level (`ScatterSpec.symbol`), with or
     without a color column; without one, the points have the one color. The panels of a categorical x and a numeric y have box
     plots when the elements have them (`ScatterSpec.box`), and those of a
     numeric x and a numeric y smoothing lines (`ScatterSpec.smooth`); the
@@ -289,14 +289,14 @@ def scatter_spec(
         Conditions of the local filter.
     numeric : dict of str to bool, optional
         Whether each column is numeric. A numeric row, col, wrap or
-        overlay column is cut into `FACET_BINS` intervals
+        symbol column is cut into `FACET_BINS` intervals
         (`ddviz.compute.cuts`); a numeric color column is a gradient, or cut
         by `color_bins`. An x or y column
         missing is numeric; the others, categorical.
     color_bins : Binning, optional
         How to cut a numeric color column; None draws it as a gradient.
     max_levels : int, optional
-        Most levels a categorical color, overlay, row, col or wrap column
+        Most levels a categorical color, symbol, row, col or wrap column
         may have.
     max_axis_levels : int, optional
         Most levels a categorical x or y column may have.
@@ -308,21 +308,21 @@ def scatter_spec(
         default.
     shape_size : int, optional
         Size of the markers in pixels (`parse_shape_size`); None for the
-        default, `SHAPE_SIZE` for the overlay's shapes and `POINT_SIZE` for
-        the circles without an overlay.
+        default, `SHAPE_SIZE` for the symbol's shapes and `POINT_SIZE` for
+        the circles without a symbol.
     temporal : dict of str to str, optional
         The kind of each temporal column (`ddviz.shared.temporal.KINDS`);
         such a column is numeric in `numeric` too.
     shape_sizes : dict of str to int, optional
-        Size of the shapes of single overlay levels, by the level's name
+        Size of the shapes of single symbol levels, by the level's name
         (`parse_shape_sizes`), in place of `shape_size`; dropped without
-        an overlay.
+        a symbol.
     level_shapes : dict of str to str, optional
-        Shape of single overlay levels, by the level's name
+        Shape of single symbol levels, by the level's name
         (`parse_level_shapes`), in place of the shape of the level's place;
         dropped without shapes, as `shape_sizes`.
     show_null_rows : dict of str to bool, optional
-        Whether the ``"color"`` and the ``"overlay"`` of the graph draw
+        Whether the ``"color"`` and the ``"symbol"`` of the graph draw
         their rows with a null or NaN value (`ScatterSpec.null_roles`); a
         role left out does. None for both.
     axis_scales : object, optional
@@ -357,17 +357,17 @@ def scatter_spec(
     if wrap and (len(encoding.x) > 1 or len(encoding.y) > 1):
         raise ValueError("wrap cannot be placed with the n-th axes")
     col = encoding.wrap if wrap else encoding.col
-    color, overlay = encoding.color, encoding.overlay
-    show = {"color": True, "overlay": True, **(show_null_rows or {})}
+    color, symbol = encoding.color, encoding.symbol
+    show = {"color": True, "symbol": True, **(show_null_rows or {})}
     null_roles = [
-        role for role, column in (("color", color), ("overlay", overlay)) if column
+        role for role, column in (("color", color), ("symbol", symbol)) if column
     ]
     null_roles = [role for role in null_roles if show[role]]
     hover = drawn_columns(encoding)
     filters = list(filters or [])
     binned = {
         role: Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
-        for role, column in (("overlay", overlay), ("row", encoding.row), ("col", col))
+        for role, column in (("symbol", symbol), ("row", encoding.row), ("col", col))
         if numeric.get(column)
     }
     gradient = bool(numeric.get(color))
@@ -404,10 +404,10 @@ def scatter_spec(
         smooth=(smoothing or Smoothing())
         if "smooth" in encoding.elements and has_smooth_pair(encoding, numeric)
         else None,
-        overlay=overlay,
-        shape_size=shape_size or (POINT_SIZE if overlay is None else SHAPE_SIZE),
-        shape_sizes=dict(shape_sizes or {}) if overlay is not None else {},
-        level_shapes=dict(level_shapes or {}) if overlay is not None else {},
+        symbol=symbol,
+        shape_size=shape_size or (POINT_SIZE if symbol is None else SHAPE_SIZE),
+        shape_sizes=dict(shape_sizes or {}) if symbol is not None else {},
+        level_shapes=dict(level_shapes or {}) if symbol is not None else {},
         temporal={c: k for c, k in (temporal or {}).items() if c in read},
         null_roles=null_roles,
         log_x=log_x,
@@ -516,7 +516,7 @@ def parse_shape_size(raw: object) -> int | None:
 
 
 def parse_shape_sizes(raw: dict[str, object] | None) -> dict[str, int]:
-    """Return the sizes the page asks for the shapes of single overlay levels, checked.
+    """Return the sizes the page asks for the shapes of single symbol levels, checked.
 
     Parameters
     ----------
@@ -544,7 +544,7 @@ def parse_shape_sizes(raw: dict[str, object] | None) -> dict[str, int]:
 
 
 def parse_level_shapes(raw: dict[str, object] | None) -> dict[str, str]:
-    """Return the shapes the page asks for single overlay levels, checked.
+    """Return the shapes the page asks for single symbol levels, checked.
 
     Parameters
     ----------

@@ -351,18 +351,18 @@ def _one_band(spec: ScatterSpec, **changes: object) -> ScatterSpec:
     [
         ({}, ["a", "b", "c"]),
         (
-            {"overlay": "facet"},
+            {"symbol": "facet"},
             ["a / p", "a / q", "b / p", "b / q", "c / p", "c / q"],
         ),
         ({"color": None}, []),
-        ({"color": None, "overlay": "facet"}, ["p", "q"]),
+        ({"color": None, "symbol": "facet"}, ["p", "q"]),
         ({"box": False}, []),
     ],
 )
 def test_the_one_band_ticks_each_series_under_its_box(
     tmp_path: Path, scatter_spec: ScatterSpec, changes: dict, ticks: list[str]
 ) -> None:
-    """The one band names each box by its series, a color and an overlay level by both, an overlay level alone by it; without boxes or series it has no ticks."""
+    """The one band names each box by its series, a color and a symbol level by both, a symbol level alone by it; without boxes or series it has no ticks."""
     result = _figure(_one_band(scatter_spec, **changes), tmp_path / "task")
     axis = result["figure"]["layout"]["xaxis"]
     assert axis["range"] == [-0.5, 0.5]

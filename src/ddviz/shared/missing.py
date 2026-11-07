@@ -1,7 +1,7 @@
-"""The missing level of the Color and Overlay roles: their rows whose value is null or NaN.
+"""The missing level of the Color and Symbol roles: their rows whose value is null or NaN.
 
 With ``Show null rows`` on (`ddviz.shared.scatter.ScatterSpec.null_roles`),
-the rows of a color or overlay column whose value is null, or NaN, are drawn
+the rows of a color or symbol column whose value is null, or NaN, are drawn
 as a level of their own, after the column's other levels. The level is
 `MISSING`, a name no column's text can collide with in practice; the page
 shows it as `MISSING_TEXT` and marks a real ``"(null)"`` text as text
@@ -18,12 +18,12 @@ MISSING_TEXT = "(null)"
 TEXT_NOTE = "（文字列）"
 # Its default color, on the color role.
 MISSING_COLOR = "#808080"
-# Its default shape, on the overlay role when it draws shapes; the shapes
-# the other overlay levels take by their place leave it out
+# Its default shape, on the symbol role when it draws shapes; the shapes
+# the other symbol levels take by their place leave it out
 # (`ddviz.shared.shapes.default_shape`).
 MISSING_SHAPE = "x"
 # Roles that can draw their missing level.
-NULL_ROLES = ("color", "overlay")
+NULL_ROLES = ("color", "symbol")
 
 
 def has_missing(levels: list) -> bool:

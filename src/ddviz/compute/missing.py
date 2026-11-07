@@ -1,8 +1,8 @@
-"""Which rows the color, overlay, row and col roles draw, and the level each row is in.
+"""Which rows the color, symbol, row and col roles draw, and the level each row is in.
 
 A role's column draws a row whose value is a level: not null for a
 categorical column, finite for a numeric one. With ``Show null rows`` on the
-color or overlay role (`ddviz.shared.scatter.ScatterSpec.null_roles`), the
+color or symbol role (`ddviz.shared.scatter.ScatterSpec.null_roles`), the
 rows whose value is null or NaN are drawn too, in the role's missing level
 (`ddviz.shared.missing.MISSING`), the last of its levels; an infinite value
 stays out.
@@ -17,7 +17,7 @@ from ddviz.compute.cuts import cut_index
 from ddviz.shared.missing import has_missing
 from ddviz.shared.scatter import ScatterSpec
 
-ROLES = ("color", "overlay", "row", "col")
+ROLES = ("color", "symbol", "row", "col")
 
 
 def numeric_roles(spec: ScatterSpec) -> set[str]:
@@ -39,7 +39,7 @@ def is_missing(column: str, numeric: bool) -> pl.Expr:
 
 
 def drawn_conditions(spec: ScatterSpec) -> list[pl.Expr]:
-    """Return the conditions a drawn row meets on its color, overlay, row and col columns.
+    """Return the conditions a drawn row meets on its color, symbol, row and col columns.
 
     Each role sets its own condition, so that a column on two roles meets
     both: a categorical column must not be null, a numeric one
@@ -80,7 +80,7 @@ def role_index(
     spec : ScatterSpec
         The spec.
     role : str
-        ``"color"``, ``"overlay"``, ``"row"`` or ``"col"``.
+        ``"color"``, ``"symbol"``, ``"row"`` or ``"col"``.
     levels : list
         The role's drawn levels as text, the missing level last if drawn.
     all_levels : list, optional

@@ -1,7 +1,7 @@
 """Rasterization of aggregated bins into series layers and a pixel occupancy map.
 
-Nothing here holds every series at once: with an overlay, the series are the
-pairs of a color level and an overlay level, up to thousands of them, and a
+Nothing here holds every series at once: with a symbol, the series are the
+pairs of a color level and a symbol level, up to thousands of them, and a
 4K plot area takes 8MB per series.
 """
 

@@ -1,4 +1,4 @@
-"""Tests of the overlay: series of a color and an overlay level, drawn in marker shapes."""
+"""Tests of the symbol: series of a color and a symbol level, drawn in marker shapes."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ from ddviz.shared.scatter import ScatterSpec
 from ddviz.shared.shapes import SHAPES, marker
 
 
-def _overlay_spec(spec: ScatterSpec) -> ScatterSpec:
+def _symbol_spec(spec: ScatterSpec) -> ScatterSpec:
     """Return the small dataset colored by color, with shapes by facet."""
-    return replace(spec, col=None, overlay="facet", shape_size=5)
+    return replace(spec, col=None, symbol="facet", shape_size=5)
 
 
 def _decode_mask(png: bytes) -> tuple[np.ndarray, bytes]:
@@ -40,13 +40,13 @@ def _decode_mask(png: bytes) -> tuple[np.ndarray, bytes]:
     return bits, chunks[b"PLTE"][3:6]
 
 
-def test_a_series_is_a_pair_of_a_color_and_an_overlay_level(
+def test_a_series_is_a_pair_of_a_color_and_a_symbol_level(
     scatter_spec: ScatterSpec, scatter_frame: pl.DataFrame
 ) -> None:
-    """Series ``c * 2 + o`` counts the rows of color level c and overlay level o."""
-    agg = aggregate(_overlay_spec(scatter_spec))
+    """Series ``c * 2 + o`` counts the rows of color level c and symbol level o."""
+    agg = aggregate(_symbol_spec(scatter_spec))
     assert agg.levels["color"] == ["a", "b", "c"]
-    assert agg.levels["overlay"] == ["p", "q"]
+    assert agg.levels["symbol"] == ["p", "q"]
     assert agg.grid.n_series == 6
     _, series, _, _ = agg.grid.unpack(agg.bins[KEY].to_numpy())
     counts = np.bincount(series, weights=agg.bins[COUNT].to_numpy(), minlength=6)
@@ -64,8 +64,8 @@ def test_a_series_is_a_pair_of_a_color_and_an_overlay_level(
 def test_each_series_image_spreads_its_pixels_into_its_shape(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
-    """Series s is drawn in its color level's color and its overlay level's shape."""
-    spec = _overlay_spec(scatter_spec)
+    """Series s is drawn in its color level's color and its symbol level's shape."""
+    spec = _symbol_spec(scatter_spec)
     run_plot(spec, tmp_path, lambda _: None)
     manifest = PlotManifest.read(tmp_path)
     data = (tmp_path / IMAGES).read_bytes()
@@ -87,9 +87,9 @@ def test_each_series_image_spreads_its_pixels_into_its_shape(
 def test_more_than_64_series_are_drawn_and_hovered(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
-    """Thousands of series (a level per row by two overlay levels) still hover."""
+    """Thousands of series (a level per row by two symbol levels) still hover."""
     spec = replace(
-        _overlay_spec(scatter_spec),
+        _symbol_spec(scatter_spec),
         color="label",
         width=120,
         height=90,
@@ -110,11 +110,11 @@ def test_more_than_64_series_are_drawn_and_hovered(
         index.close()
 
 
-def test_an_overlay_level_is_drawn_in_its_own_size(
+def test_a_symbol_level_is_drawn_in_its_own_size(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
     """The shapes of a level in `shape_sizes` take that size; the other level's, `shape_size`."""
-    spec = replace(_overlay_spec(scatter_spec), shape_sizes={"q": 11})
+    spec = replace(_symbol_spec(scatter_spec), shape_sizes={"q": 11})
     run_plot(spec, tmp_path, lambda _: None)
     manifest = PlotManifest.read(tmp_path)
     data = (tmp_path / IMAGES).read_bytes()
@@ -130,11 +130,11 @@ def test_an_overlay_level_is_drawn_in_its_own_size(
         assert np.array_equal(bits, atlas(expected, manifest.layout.ncol))
 
 
-def test_an_overlay_level_is_drawn_in_its_own_shape(
+def test_a_symbol_level_is_drawn_in_its_own_shape(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
     """The points of a level in `level_shapes` take that shape; the other level's, the shape of its place."""
-    spec = replace(_overlay_spec(scatter_spec), level_shapes={"q": "triangle-down"})
+    spec = replace(_symbol_spec(scatter_spec), level_shapes={"q": "triangle-down"})
     run_plot(spec, tmp_path, lambda _: None)
     manifest = PlotManifest.read(tmp_path)
     data = (tmp_path / IMAGES).read_bytes()

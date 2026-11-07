@@ -1,4 +1,4 @@
-"""Levels of a numeric column cut into intervals, for the color, overlay, row and col roles.
+"""Levels of a numeric column cut into intervals, for the color, symbol, row and col roles.
 
 A numeric column on Group X or Group Y, or on Color when it is not drawn as
 a gradient, has too many values to be levels of their own. It is cut into

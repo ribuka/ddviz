@@ -44,7 +44,7 @@ def pile_spec(tmp_path: Path, pile_frame: pl.DataFrame) -> ScatterSpec:
         x=["g"],
         y=["y"],
         color="c",
-        overlay="s",
+        symbol="s",
         row=None,
         col=None,
         width=400,
@@ -117,11 +117,11 @@ def test_the_plot_data_counts_the_rows_of_the_piles_once_in_their_series(
     """The saved bins hold every drawn row once, by its color and shape, the piles' rows at their centers."""
     table = bins_table(index.out)
     assert table["count"].sum() == pile_frame.height
-    found = table.group_by("color", "overlay").agg(pl.col("count").sum())
+    found = table.group_by("color", "symbol").agg(pl.col("count").sum())
     expected = pile_frame.group_by("c", "s").len()
     assert dict(
         zip(
-            zip(found["color"], found["overlay"], strict=True),
+            zip(found["color"], found["symbol"], strict=True),
             found["count"],
             strict=True,
         )

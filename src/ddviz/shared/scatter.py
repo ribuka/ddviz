@@ -8,7 +8,7 @@ from ddviz.shared.layout import MARGIN_LEFT
 from ddviz.shared.missing import MISSING, MISSING_SHAPE
 from ddviz.shared.shapes import default_shape
 
-# Default of the most levels a color, overlay, row or col column may have
+# Default of the most levels a color, symbol, row or col column may have
 # (`ScatterSpec.max_levels`).
 MAX_LEVELS = 100
 # Default of the most levels a categorical x or y column may have
@@ -17,8 +17,8 @@ MAX_LEVELS = 100
 # "カテゴリの軸の水準の上限").
 MAX_AXIS_LEVELS = 1_000_000
 # Default size in pixels of the markers (`ScatterSpec.shape_size`): the
-# shapes of the overlay levels, and the filled circles of the points without
-# an overlay.
+# shapes of the symbol levels, and the filled circles of the points without
+# a symbol.
 SHAPE_SIZE = 7
 POINT_SIZE = 5
 # The x column of a graph whose X is empty: a categorical column of one
@@ -29,7 +29,7 @@ ONE_BAND = "\x00one band"
 
 @dataclass(frozen=True)
 class Binning:
-    """How a numeric column on the color, overlay, row or col role becomes levels of intervals (`ddviz.compute.cuts`).
+    """How a numeric column on the color, symbol, row or col role becomes levels of intervals (`ddviz.compute.cuts`).
 
     Parameters
     ----------
@@ -262,7 +262,7 @@ class ScatterSpec:
     selection : Selection or None
         Rows chosen by a box, aggregated as a layer of their own.
     binned : dict of str to Binning
-        Roles (``"color"``, ``"overlay"``, ``"row"``, ``"col"``) whose numeric column is cut
+        Roles (``"color"``, ``"symbol"``, ``"row"``, ``"col"``) whose numeric column is cut
         into intervals, each a level (`ddviz.compute.cuts`).
     gradient : bool
         Whether the color column is numeric and colors each pixel by the
@@ -273,7 +273,7 @@ class ScatterSpec:
         overview's ranges as they are without them, and drop the facet
         panels left without rows (`ddviz.compute.aggregate.aggregate`).
     max_levels : int
-        Most levels a color, overlay, row or col column may have; more are refused
+        Most levels a color, symbol, row or col column may have; more are refused
         before binning. A numeric column on these roles has about one level
         per row: its masks would not fit in memory.
     max_axis_levels : int
@@ -297,21 +297,21 @@ class ScatterSpec:
         How the panels of a numeric x and a numeric y fit smoothing lines
         (`smooth_pairs`), or None for none; without points, such a panel
         draws only the lines.
-    overlay : str or None
+    symbol : str or None
         Column whose levels draw the points in marker shapes
         (`ddviz.shared.shapes`), or None for filled circles. The series are
-        then the pairs of a color level and an overlay level: series ``s``
-        has color level ``s // n`` and overlay level ``s % n``, where ``n``
-        counts the overlay levels.
+        then the pairs of a color level and a symbol level: series ``s``
+        has color level ``s // n`` and symbol level ``s % n``, where ``n``
+        counts the symbol levels.
     shape_size : int
-        Width and height in pixels of the markers, odd: the overlay's
-        shapes, or the circles without an overlay
+        Width and height in pixels of the markers, odd: the symbol's
+        shapes, or the circles without a symbol
         (`ddviz.shared.shapes.marker`).
     shape_sizes : dict of str to int
-        Size of the shapes of single overlay levels, by the level's name
+        Size of the shapes of single symbol levels, by the level's name
         (`marker_sizes`), in place of `shape_size`.
     level_shapes : dict of str to str
-        Shape of single overlay levels, by the level's name
+        Shape of single symbol levels, by the level's name
         (`marker_shapes`), one of `ddviz.shared.shapes.SHAPES`, in place of
         the shape the level's place takes.
     temporal : dict of str to str
@@ -320,7 +320,7 @@ class ScatterSpec:
         (`ddviz.compute.temporal`), and its intervals are named and its axis
         drawn as dates, times or seconds.
     null_roles : list of str
-        Roles (``"color"``, ``"overlay"``) whose rows with a null or NaN
+        Roles (``"color"``, ``"symbol"``) whose rows with a null or NaN
         value are drawn as the role's missing level
         (`ddviz.shared.missing.MISSING`), the last of its levels, when the
         column has such rows; the other roles' rows, and those of a role not
@@ -361,7 +361,7 @@ class ScatterSpec:
     points: bool = True
     box: bool = False
     smooth: Smoothing | None = None
-    overlay: str | None = None
+    symbol: str | None = None
     shape_size: int = POINT_SIZE
     shape_sizes: dict[str, int] = field(default_factory=dict)
     level_shapes: dict[str, str] = field(default_factory=dict)
@@ -425,33 +425,33 @@ class ScatterSpec:
         """
         return self.points or (x, y) not in self.box_pairs() | self.smooth_pairs()
 
-    def marker_sizes(self, overlay_levels: list) -> list[int]:
-        """Return the size of the markers of each overlay level.
+    def marker_sizes(self, symbol_levels: list) -> list[int]:
+        """Return the size of the markers of each symbol level.
 
         Parameters
         ----------
-        overlay_levels : list
-            The overlay's levels drawn.
+        symbol_levels : list
+            The symbol's levels drawn.
 
         Returns
         -------
         list of int
             The size of each level's shapes, from `shape_sizes` by the
             level's name or else `shape_size`; series ``s`` takes item
-            ``s % len``. Without an overlay (or levels), the one size of the
+            ``s % len``. Without a symbol (or levels), the one size of the
             circles.
         """
-        if self.overlay is None or not overlay_levels:
+        if self.symbol is None or not symbol_levels:
             return [self.shape_size]
-        return [self.shape_sizes.get(str(v), self.shape_size) for v in overlay_levels]
+        return [self.shape_sizes.get(str(v), self.shape_size) for v in symbol_levels]
 
-    def marker_shapes(self, overlay_levels: list) -> list[str | None]:
-        """Return the shape of the markers of each overlay level.
+    def marker_shapes(self, symbol_levels: list) -> list[str | None]:
+        """Return the shape of the markers of each symbol level.
 
         Parameters
         ----------
-        overlay_levels : list
-            The overlay's levels drawn.
+        symbol_levels : list
+            The symbol's levels drawn.
 
         Returns
         -------
@@ -460,16 +460,16 @@ class ScatterSpec:
             `level_shapes` by the level's name or else the one of its place
             (`ddviz.shared.shapes.default_shape`), or the x for the missing
             level (`ddviz.shared.missing.MISSING_SHAPE`); series ``s`` takes
-            item ``s % len``. Without an overlay (or levels), ``[None]``: the
+            item ``s % len``. Without a symbol (or levels), ``[None]``: the
             filled circles.
         """
-        if self.overlay is None or not overlay_levels:
+        if self.symbol is None or not symbol_levels:
             return [None]
         return [
             self.level_shapes.get(
                 str(v), MISSING_SHAPE if v == MISSING else default_shape(i)
             )
-            for i, v in enumerate(overlay_levels)
+            for i, v in enumerate(symbol_levels)
         ]
 
     def to_dict(self) -> dict:

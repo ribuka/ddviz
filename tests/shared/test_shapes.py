@@ -1,4 +1,4 @@
-"""Tests of the marker shapes of the overlay levels."""
+"""Tests of the marker shapes of the symbol levels."""
 
 from __future__ import annotations
 

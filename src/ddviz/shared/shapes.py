@@ -1,4 +1,4 @@
-"""Marker shapes of the overlay levels (`ddviz.shared.scatter.ScatterSpec.overlay`), and the circles of the points without one.
+"""Marker shapes of the symbol levels (`ddviz.shared.scatter.ScatterSpec.symbol`), and the circles of the points without one.
 
 The worker spreads each pixel of a series into its shape
 (`ddviz.compute.shapes`); the page draws the shapes in the legend.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-# The shapes in the order the overlay levels take them, cycled: the outlines
+# The shapes in the order the symbol levels take them, cycled: the outlines
 # first, which stay apart where they overlap, then the filled ones.
 SHAPES = (
     "circle",
@@ -24,7 +24,7 @@ SHAPES = (
     "diamond-filled",
     "triangle-down-filled",
 )
-# The shapes the overlay levels take by their place: all but the x, which is
+# The shapes the symbol levels take by their place: all but the x, which is
 # the missing level's (`ddviz.shared.missing.MISSING_SHAPE`). A level may
 # still be given the x by hand (`ddviz.shared.scatter.ScatterSpec.level_shapes`).
 AUTO_SHAPES = tuple(s for s in SHAPES if s != "x")
@@ -62,12 +62,12 @@ def _outline(filled: np.ndarray) -> np.ndarray:
 
 
 def default_shape(level: int) -> str:
-    """Return the shape an overlay level takes when none is picked for it.
+    """Return the shape a symbol level takes when none is picked for it.
 
     Parameters
     ----------
     level : int
-        Index of the overlay level; the shapes cycle over `AUTO_SHAPES`.
+        Index of the symbol level; the shapes cycle over `AUTO_SHAPES`.
 
     Returns
     -------
@@ -78,7 +78,7 @@ def default_shape(level: int) -> str:
 
 
 def kernel(name: str, size: int) -> np.ndarray:
-    """Return a shape of the overlay levels.
+    """Return a shape of the symbol levels.
 
     Parameters
     ----------
@@ -108,9 +108,9 @@ def marker(shape: str | None, size: int) -> np.ndarray:
     Parameters
     ----------
     shape : str or None
-        The shape of the series' overlay level, one of `SHAPES`
+        The shape of the series' symbol level, one of `SHAPES`
         (`ddviz.shared.scatter.ScatterSpec.marker_shapes`); None without an
-        overlay, whose points are filled circles.
+        symbol, whose points are filled circles.
     size : int
         Width and height in pixels, odd.
 

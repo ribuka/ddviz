@@ -30,14 +30,14 @@ from ddviz.shared.scatter import (
 from ddviz.shared.shapes import SHAPES
 
 
-def test_scatter_draws_every_axis_and_overlay_as_shapes() -> None:
-    """The n-th axes are drawn, read and hovered; overlay beside color draws shapes."""
+def test_scatter_draws_every_axis_and_symbol_as_shapes() -> None:
+    """The n-th axes are drawn, read and hovered; symbol beside color draws shapes."""
     encoding = Encoding(
-        x=("a", "a2"), y=("b", "b2", "b3"), color="g", overlay="o", col="h"
+        x=("a", "a2"), y=("b", "b2", "b3"), color="g", symbol="o", col="h"
     )
     files = {c: [f"{c}.parquet"] for c in encoding.columns()}
     spec = scatter_spec(encoding, files, 400, 300, ["#000000"], shape_size=9)
-    assert (spec.x, spec.y, spec.color, spec.overlay, spec.row, spec.col) == (
+    assert (spec.x, spec.y, spec.color, spec.symbol, spec.row, spec.col) == (
         ["a", "a2"],
         ["b", "b2", "b3"],
         "g",
@@ -53,9 +53,9 @@ def test_scatter_draws_every_axis_and_overlay_as_shapes() -> None:
     assert undrawn(encoding, {}) == []
 
 
-def test_overlay_alone_draws_shapes_of_one_color() -> None:
-    """Without a color column, overlay draws its shapes in the one color; a numeric one is cut into intervals."""
-    encoding = Encoding(x=("a",), y=("b",), overlay="o")
+def test_symbol_alone_draws_shapes_of_one_color() -> None:
+    """Without a color column, symbol draws its shapes in the one color; a numeric one is cut into intervals."""
+    encoding = Encoding(x=("a",), y=("b",), symbol="o")
     files = {c: [f"{c}.parquet"] for c in encoding.columns()}
     spec = scatter_spec(
         encoding,
@@ -66,52 +66,52 @@ def test_overlay_alone_draws_shapes_of_one_color() -> None:
         shape_sizes={"p": 11},
         level_shapes={"p": "square"},
     )
-    assert (spec.color, spec.overlay, spec.gradient) == (None, "o", False)
+    assert (spec.color, spec.symbol, spec.gradient) == (None, "o", False)
     assert spec.shape_size == SHAPE_SIZE
     assert (spec.shape_sizes, spec.level_shapes) == ({"p": 11}, {"p": "square"})
     assert spec.binned == {}
     numeric = {"a": True, "b": True, "o": True}
     spec = scatter_spec(encoding, files, 400, 300, ["#000000"], numeric=numeric)
-    assert (spec.color, spec.overlay, spec.gradient) == (None, "o", False)
+    assert (spec.color, spec.symbol, spec.gradient) == (None, "o", False)
     assert spec.binned == {
-        "overlay": Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
+        "symbol": Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
     }
 
 
 def test_show_null_rows_draws_the_missing_rows_of_each_role_by_default() -> None:
-    """Color and overlay each draw their null rows unless the page turns it off, overlay alone too."""
-    both = Encoding(x=("a",), y=("b",), color="g", overlay="o")
+    """Color and symbol each draw their null rows unless the page turns it off, symbol alone too."""
+    both = Encoding(x=("a",), y=("b",), color="g", symbol="o")
     files = {c: [f"{c}.parquet"] for c in both.columns()}
     spec = scatter_spec(both, files, 400, 300, [])
-    assert spec.null_roles == ["color", "overlay"]
+    assert spec.null_roles == ["color", "symbol"]
     for color in (True, False):
-        for overlay in (True, False):
-            show = {"color": color, "overlay": overlay}
+        for symbol in (True, False):
+            show = {"color": color, "symbol": symbol}
             spec = scatter_spec(both, files, 400, 300, [], show_null_rows=show)
             assert spec.null_roles == [r for r, on in show.items() if on]
     assert scatter_spec(
-        both, files, 400, 300, [], show_null_rows={"overlay": False}
+        both, files, 400, 300, [], show_null_rows={"symbol": False}
     ).null_roles == ["color"]
-    alone = Encoding(x=("a",), y=("b",), overlay="o")
-    off = {"color": True, "overlay": False}
+    alone = Encoding(x=("a",), y=("b",), symbol="o")
+    off = {"color": True, "symbol": False}
     assert scatter_spec(alone, files, 400, 300, [], show_null_rows=off).null_roles == []
-    on = {"color": False, "overlay": True}
+    on = {"color": False, "symbol": True}
     assert scatter_spec(alone, files, 400, 300, [], show_null_rows=on).null_roles == [
-        "overlay"
+        "symbol"
     ]
     bare = Encoding(x=("a",), y=("b",))
     assert scatter_spec(bare, files, 400, 300, []).null_roles == []
 
 
-def test_a_numeric_overlay_beside_color_is_cut_into_intervals() -> None:
-    """A numeric overlay column takes shapes by intervals of about the same rows, as a facet."""
-    encoding = Encoding(x=("a",), y=("b",), color="g", overlay="o")
+def test_a_numeric_symbol_beside_color_is_cut_into_intervals() -> None:
+    """A numeric symbol column takes shapes by intervals of about the same rows, as a facet."""
+    encoding = Encoding(x=("a",), y=("b",), color="g", symbol="o")
     files = {c: [f"{c}.parquet"] for c in encoding.columns()}
     numeric = {"a": True, "b": True, "g": False, "o": True}
     spec = scatter_spec(encoding, files, 400, 300, ["#000000"], numeric=numeric)
-    assert spec.overlay == "o"
+    assert spec.symbol == "o"
     assert spec.binned == {
-        "overlay": Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
+        "symbol": Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
     }
 
 
@@ -124,10 +124,10 @@ def test_parse_shape_size() -> None:
             parse_shape_size(bad)
 
 
-def test_the_default_marker_size_is_larger_for_the_overlay_shapes() -> None:
-    """Without a size, the overlay's shapes take `SHAPE_SIZE` and the circles `POINT_SIZE`."""
+def test_the_default_marker_size_is_larger_for_the_symbol_shapes() -> None:
+    """Without a size, the symbol's shapes take `SHAPE_SIZE` and the circles `POINT_SIZE`."""
     files = {c: [f"{c}.parquet"] for c in ("a", "b", "g", "o")}
-    shapes = Encoding(x=("a",), y=("b",), color="g", overlay="o")
+    shapes = Encoding(x=("a",), y=("b",), color="g", symbol="o")
     circles = Encoding(x=("a",), y=("b",), color="g")
     assert scatter_spec(shapes, files, 400, 300, ["#000000"]).shape_size == SHAPE_SIZE
     assert scatter_spec(circles, files, 400, 300, ["#000000"]).shape_size == POINT_SIZE
@@ -382,7 +382,7 @@ def test_scatter_keeps_the_kinds_of_the_temporal_columns_it_reads() -> None:
 
 
 def test_parse_shape_sizes() -> None:
-    """Each overlay level named takes one of `SHAPE_SIZES`; null is none."""
+    """Each symbol level named takes one of `SHAPE_SIZES`; null is none."""
     assert parse_shape_sizes(None) == {}
     assert parse_shape_sizes({"p": 3, "q": 15}) == {"p": 3, "q": 15}
     assert parse_shape_sizes({"__proto__": 9}) == {"__proto__": 9}
@@ -391,10 +391,10 @@ def test_parse_shape_sizes() -> None:
             parse_shape_sizes(bad)
 
 
-def test_overlay_levels_take_their_own_sizes() -> None:
+def test_symbol_levels_take_their_own_sizes() -> None:
     """A level named in `shape_sizes` takes its size, the others `shape_size`; without shapes, none."""
     files = {c: [f"{c}.parquet"] for c in ("a", "b", "g", "o")}
-    shapes = Encoding(x=("a",), y=("b",), color="g", overlay="o")
+    shapes = Encoding(x=("a",), y=("b",), color="g", symbol="o")
     spec = scatter_spec(
         shapes, files, 400, 300, ["#000000"], shape_size=9, shape_sizes={"q": 3}
     )
@@ -407,7 +407,7 @@ def test_overlay_levels_take_their_own_sizes() -> None:
 
 
 def test_parse_level_shapes() -> None:
-    """Each overlay level named takes one of `SHAPES`; two levels may take the same."""
+    """Each symbol level named takes one of `SHAPES`; two levels may take the same."""
     assert parse_level_shapes(None) == {}
     assert parse_level_shapes({"p": "x", "q": "x"}) == {"p": "x", "q": "x"}
     assert parse_level_shapes({"__proto__": "circle"}) == {"__proto__": "circle"}
@@ -416,10 +416,10 @@ def test_parse_level_shapes() -> None:
             parse_level_shapes(bad)
 
 
-def test_overlay_levels_take_their_own_shapes() -> None:
+def test_symbol_levels_take_their_own_shapes() -> None:
     """A level named in `level_shapes` takes its shape, the others that of their place; without shapes, none."""
     files = {c: [f"{c}.parquet"] for c in ("a", "b", "g", "o")}
-    shapes = Encoding(x=("a",), y=("b",), color="g", overlay="o")
+    shapes = Encoding(x=("a",), y=("b",), color="g", symbol="o")
     spec = scatter_spec(
         shapes, files, 400, 300, ["#000000"], level_shapes={"q": "diamond-filled"}
     )

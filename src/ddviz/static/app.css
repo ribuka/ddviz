@@ -1604,7 +1604,7 @@ button {
   line-height: 0;
 }
 
-/* ---- shape panel of an overlay level (shapepanel.js) ---- */
+/* ---- shape panel of a symbol level (shapepanel.js) ---- */
 .shape-panel {
   min-width: 0;
 }

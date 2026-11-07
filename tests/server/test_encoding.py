@@ -14,9 +14,16 @@ def test_dict_round_trip() -> None:
     assert Encoding.from_dict({}) == Encoding()
 
 
+def test_symbol_is_a_role_of_its_own() -> None:
+    """The symbol role takes a column name and keeps it in its dict form."""
+    encoding = Encoding.from_dict({"x": ["a"], "y": ["b"], "symbol": "o"})
+    assert encoding.symbol == "o"
+    assert encoding.to_dict()["symbol"] == "o"
+
+
 def test_columns_lists_each_placed_column_once() -> None:
     """A column on several roles is listed once, in role order."""
-    encoding = Encoding(x=("a",), y=("b", "a"), color="g", overlay="o", row="g")
+    encoding = Encoding(x=("a",), y=("b", "a"), color="g", symbol="o", row="g")
     assert encoding.columns() == ["a", "b", "g", "o"]
 
 
@@ -24,6 +31,7 @@ def test_columns_lists_each_placed_column_once() -> None:
     ("data", "message"),
     [
         ({"z": "a"}, "unknown roles"),
+        ({"overlay": "a"}, "unknown roles"),
         ({"x": "a"}, "x must be a list"),
         ({"y": [1]}, "y must be a list"),
         ({"color": ["a"]}, "color must be a column name"),

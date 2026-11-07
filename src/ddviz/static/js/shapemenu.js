@@ -1,12 +1,12 @@
 // The menus of the size of the markers (`ddviz.server.plan.SHAPE_SIZES`):
 // of every series, opened by a right click on the points' element icon
 // (elements.js), on a color item's marker of the legend (legend.js) or, for
-// a gradient, from its scale's menu (scalemenu.js); of one overlay level's
-// shapes, opened by a right click on that level's marker in the overlay's
+// a gradient, from its scale's menu (scalemenu.js); of one symbol level's
+// shapes, opened by a right click on that level's marker in the symbol's
 // legend. Picking the size of every series drops the sizes of single levels.
 //
 // The menu of a color level's marker also picks the level's color, and that
-// of an overlay level's marker the level's shape, each in a panel opened as
+// of a symbol level's marker the level's shape, each in a panel opened as
 // a submenu (colorpanel.js, shapepanel.js).
 import { colorPanel } from "./colorpanel.js";
 import { shapeCanvas, shapePanel } from "./shapepanel.js";
@@ -14,7 +14,7 @@ import { shapeCanvas, shapePanel } from "./shapepanel.js";
 export const SIZES = [3, 5, 7, 9, 11, 15];
 export const SIZE_HEADING = "点の大きさ（全系列）";
 
-// Heading of the menu of an overlay level's shapes.
+// Heading of the menu of a symbol level's shapes.
 export function levelHeading(level) {
   return `形「${level}」の大きさ`;
 }
@@ -46,7 +46,7 @@ window.addEventListener("keydown", (event) => {
 // level's color and what gets the color picked, or null for the palette's),
 // the menu first has the item that opens the color panel; with `shape`
 // ({current, choices, onPick}: the level's shape, the shapes it can take as
-// `meta.overlay.choices` and what gets the shape picked, or null for the
+// `meta.symbol.choices` and what gets the shape picked, or null for the
 // shape of the level's place), the item that opens the shape panel.
 export function openShapeMenu(event, heading, size, onPick, { color = null, shape = null } = {}) {
   close();

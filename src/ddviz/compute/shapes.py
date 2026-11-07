@@ -1,7 +1,7 @@
 """Spreading of a layer's pixels into their markers (`ddviz.shared.shapes.marker`).
 
 Each pixel with rows becomes the marker of its series, centered on it: the
-shape of its overlay level, or a filled circle without an overlay. Where the
+shape of its symbol level, or a filled circle without a symbol. Where the
 points are dense, the markers merge into a filled area, as plotly's markers
 do. On a 4K plot area, spreading one boolean layer took 10 to 25ms (16 to
 49 pixels in the shape).

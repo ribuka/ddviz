@@ -117,7 +117,7 @@ def test_the_axis_level_limit_holds_for_color(app_page: Page) -> None:
     place(page, "month", "x")
     place(page, "month", "color", plots=False)
     expect(page.locator("#status")).to_contain_text(
-        "month は 420 個で、Color・Overlay・Group・Wrap の上限は 100 個"
+        "month は 420 個で、Color・Symbol・Group・Wrap の上限は 100 個"
     )
 
 

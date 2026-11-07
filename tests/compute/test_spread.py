@@ -39,8 +39,8 @@ def test_spread_top_puts_the_point_of_the_largest_row_on_top() -> None:
     assert out[0, 0].tolist() == [200, 200, 200, 10, 0]
 
 
-def test_marker_covers_its_center_and_is_a_circle_without_an_overlay() -> None:
-    """An outline covers its own pixel; without an overlay the marker is a filled circle."""
+def test_marker_covers_its_center_and_is_a_circle_without_a_symbol() -> None:
+    """An outline covers its own pixel; without a symbol the marker is a filled circle."""
     assert marker("circle", 7)[3, 3]
     assert not kernel("circle", 7)[3, 3]
     circle = marker(None, 5)
