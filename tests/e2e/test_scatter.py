@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 
 import polars as pl
@@ -1610,4 +1611,213 @@ def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(
     expect(page.locator('.zone[data-role="overlay"] .chip')).to_have_count(0)
     expect(page.locator(".filter-card")).to_have_count(2)
     page.wait_for_function(SETTLED)
+    assert errors == []
+
+
+def dialog_at(page: Page, x: float, y: float) -> str | None:
+    """Double-click a point and return the title of the axis dialog it opens, or None; cancel it.
+
+    It waits first for longer than plotly's double click (300ms): the first
+    press of each double click reaches plotly, which would count it with
+    the previous one.
+    """
+    page.wait_for_timeout(400)
+    page.mouse.dblclick(x, y)
+    dialog = page.locator("dialog.axis-dialog")
+    page.wait_for_timeout(100)
+    if not dialog.count():
+        return None
+    expect(dialog).to_have_count(1)
+    title = dialog.locator("h2").inner_text()
+    dialog.get_by_role("button", name="キャンセル").click()
+    expect(dialog).to_have_count(0)
+    return title
+
+
+def test_a_double_click_on_the_left_margin_of_y_opens_its_dialog(
+    app_page: Page,
+) -> None:
+    """The whole margin left of a numeric y opens its dialog once, keeping the zoom and asking nothing; the plot area's edge, the y zone and its chip open none."""
+    from tests.e2e.test_axis_menu import margin_points, y_margins
+
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    full = "document.getElementById('plot')._fullLayout"
+    page.evaluate("Plotly.relayout('plot', {'yaxis.range': [-0.5, 0.5]})")
+    page.wait_for_timeout(300)
+    page.wait_for_function(SETTLED)
+    expect(page.locator("#status")).to_contain_text("表示範囲に")
+    asked: list[str] = []
+    page.on(
+        "request",
+        lambda r: re.search(r"/api/(plot|view|overview)\b", r.url) and asked.append(r.url),
+    )
+    margins = y_margins(page)
+    (row,) = margins["rows"]
+    for x, y in margin_points(margins, row):
+        assert dialog_at(page, x, y) == "Y 軸: y", (x, y)
+    assert page.evaluate(f"{full}.yaxis.range") == [-0.5, 0.5]
+    expect(page.locator("#status")).to_contain_text("表示範囲に")
+
+    # The y zone, its blank and its chip, open no dialog.
+    middle = (row["top"] + row["bottom"]) / 2
+    zone = page.locator('.zone[data-role="y"]')
+    chip = zone.locator(".chip-name").bounding_box()
+    assert dialog_at(page, margins["zone"] - 3, row["bottom"] - 5) is None
+    assert dialog_at(page, chip["x"] + chip["width"] / 2, chip["y"] + chip["height"] / 2) is None
+    expect(zone.locator(".chip-name")).to_have_text("y")
+    assert asked == []
+
+    # The left edge of the plot area goes back to the overview.
+    assert dialog_at(page, row["left"] + 2, middle) is None
+    page.wait_for_function(f"() => {full}.yaxis.range[0] < -0.5")
+    page.wait_for_timeout(300)
+    page.wait_for_function(SETTLED)
+
+    # A selection stays, as the range does.
+    shown = page.evaluate(f"{full}.yaxis.range")
+    selections = box_select(page)
+    below = table_top(page)
+    points = [(x, y) for x, y in margin_points(margins, row) if y < below - 2]
+    assert len(points) >= 8
+    for x, y in points:
+        assert dialog_at(page, x, y) == "Y 軸: y", (x, y)
+    assert selections == []
+    expect(page.locator("#table")).to_be_visible()
+    assert page.evaluate(f"{full}.yaxis.range") == shown
+    assert errors == []
+
+
+def test_the_margin_of_an_axis_without_a_dialog_opens_none(app_page: Page) -> None:
+    """The margin of a categorical or log y opens no dialog, and the menu's items as before."""
+    from tests.e2e.test_axis_menu import y_margins
+
+    page = app_page
+    place(page, "x", "x", plots=False)
+    place(page, "color", "y")
+    margins = y_margins(page)
+    (row,) = margins["rows"]
+    point = ((margins["zone"] + row["left"]) / 2, row["between"])
+    assert dialog_at(page, *point) is None
+
+    place(page, "y", "y")
+    margins = y_margins(page)
+    (row,) = margins["rows"]
+    point = (margins["zone"] + 1, (row["top"] + row["bottom"]) / 2)
+    page.mouse.click(*point, button="right")
+    menu = page.locator(".axis-menu")
+    expect(menu.locator(".scale-menu-heading")).to_have_text("Y 軸: y")
+    menu.get_by_role("button", name="対数表示").click()
+    page.wait_for_function(
+        "() => document.getElementById('plot')._fullLayout.yaxis.type === 'log'"
+    )
+    page.wait_for_timeout(300)
+    page.wait_for_function(SETTLED)
+    assert dialog_at(page, *point) is None
+    page.mouse.click(*point, button="right")
+    expect(menu.get_by_role("button", name="対数表示")).to_have_class(
+        "scale-menu-item checked"
+    )
+    page.keyboard.press("Escape")
+
+
+def box_select(page: Page) -> list[str]:
+    """Select rows with a Box Select drag in the middle of the stage, fold the table, and return the list of the requests on the selection from then on.
+
+    The table lies over the bottom of the stage, which is its own: folded,
+    only its bar does (`table_top`).
+    """
+    page.evaluate("Plotly.relayout('plot', {dragmode: 'select'})")
+    stage = page.locator("#stage").bounding_box()
+    x, y = stage["x"] + stage["width"] / 2, stage["y"] + stage["height"] / 2
+    with page.expect_request("**/api/selection"):
+        page.mouse.move(x - 30, y - 30)
+        page.mouse.down()
+        page.mouse.move(x + 30, y + 30, steps=5)
+        page.mouse.up()
+    expect(page.locator("#table")).to_be_visible()
+    page.locator("#table .table-down").click()
+    expect(page.locator("#table")).to_have_class(re.compile(r"\bcollapsed\b"))
+    page.wait_for_timeout(300)
+    asked: list[str] = []
+    page.on(
+        "request",
+        lambda r: "/api/selection" in r.url and asked.append(f"{r.method} {r.url}"),
+    )
+    return asked
+
+
+def table_top(page: Page) -> float:
+    """Return the top of the table (client pixels), or infinity while it is hidden."""
+    box = page.locator("#table").bounding_box()
+    return box["y"] if box else math.inf
+
+
+# Scrolls a grid to a point and waits for the strips to follow.
+SCROLL_TO = """async (s, [left, top]) => {
+  s.scrollLeft = left;
+  s.scrollTop = top;
+  s.dispatchEvent(new Event("scroll"));
+  for (let i = 0; i < 2; i++) await new Promise((resolve) => requestAnimationFrame(resolve));
+}"""
+
+
+def test_the_left_strip_and_the_gap_left_of_it_open_their_rows_axis(
+    app_page: Page,
+) -> None:
+    """Scrolled both ways and resized, the left strip, its left side and the gap left of it open the axis of the panel row at that height in sight, keeping the selection; above and below the strip, none."""
+    from tests.e2e.test_axis_menu import add_second_y, menu_at, y_margins
+
+    page = app_page
+    errors = watch_errors(page)
+    page.set_viewport_size({"width": 800, "height": 400})
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    add_second_y(page, "x")
+    place(page, "facet", "col")
+    place(page, "color", "row")
+    expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
+    strip = page.locator(".sticky-strip.left")
+    selections = box_select(page)
+
+    for size in [None, {"width": 760, "height": 380}]:
+        if size:
+            page.set_viewport_size(size)
+            page.wait_for_timeout(300)
+            page.wait_for_function(SETTLED)
+        scroller = page.locator("#scroller")
+        scroller.evaluate(SCROLL_TO, [10_000, 90])
+        assert scroller.evaluate("(s) => s.scrollLeft") > 0
+        assert scroller.evaluate("(s) => s.scrollTop") > 0
+        margins = y_margins(page)
+        box = strip.bounding_box()
+        top, bottom = box["y"], min(box["y"] + box["height"], table_top(page) - 2)
+        xs = [
+            margins["zone"] + 1,
+            (margins["zone"] + margins["stage"]) / 2,
+            box["x"] + 1,
+            box["x"] + box["width"] - 1,
+        ]
+        # The levels of Group Y outside, the y columns inside.
+        checked = 0
+        for i, row in enumerate(margins["rows"]):
+            seen = [max(row["top"], top), min(row["bottom"], bottom)]
+            if seen[1] - seen[0] < 8:
+                continue
+            column = ["y", "x"][i % 2]
+            ys = [(seen[0] + seen[1]) / 2]
+            if seen[0] + 3 < row["between"] < seen[1] - 3:
+                ys.append(row["between"])
+            for x in xs:
+                for y in ys:
+                    assert menu_at(page, x, y) == f"Y 軸: {column}", (x, y, size)
+                    assert dialog_at(page, x, y) == f"Y 軸: {column}", (x, y, size)
+                    checked += 1
+        assert checked >= 8
+        # The x strip at the bottom left and the table's bar are not y's.
+        assert menu_at(page, margins["zone"] + 1, bottom + 5) is None
+    assert selections == []
+    expect(page.locator("#table")).to_be_visible()
     assert errors == []
