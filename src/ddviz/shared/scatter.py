@@ -10,6 +10,11 @@ from ddviz.shared.shapes import default_shape
 # Default of the most levels a color, overlay, row or col column may have
 # (`ScatterSpec.max_levels`).
 MAX_LEVELS = 100
+# Default of the most levels a categorical x or y column may have
+# (`ScatterSpec.max_axis_levels`). A million levels drew in about 8s at a
+# peak of 1GB in the worker; more were not measured (`docs/spec.md`,
+# "カテゴリの軸の水準の上限").
+MAX_AXIS_LEVELS = 1_000_000
 # Default size in pixels of the markers (`ScatterSpec.shape_size`): the
 # shapes of the overlay levels, and the filled circles of the points without
 # an overlay.
@@ -270,12 +275,16 @@ class ScatterSpec:
         Most levels a color, overlay, row or col column may have; more are refused
         before binning. A numeric column on these roles has about one level
         per row: its masks would not fit in memory.
+    max_axis_levels : int
+        Most levels a categorical x or y column may have; more are refused
+        before binning. A column also on a role of `max_levels` has to meet
+        both.
     hover_bytes : int or None
         Most bytes the result's hover files may take
         (`ddviz.compute.hoverfit`); None for no limit.
     categorical : list of str
         Columns of x and y that are not numeric: each of their levels is a
-        band of the axis, up to ``max_levels`` levels.
+        band of the axis, up to ``max_axis_levels`` levels.
     points : bool
         Whether the points of every row are drawn. A panel that cannot have
         box plots draws them anyway.
@@ -339,6 +348,7 @@ class ScatterSpec:
     gradient: bool = False
     filters: list[Filter] = field(default_factory=list)
     max_levels: int = MAX_LEVELS
+    max_axis_levels: int = MAX_AXIS_LEVELS
     hover_bytes: int | None = None
     wrap: bool = False
     wrap_cols: int | None = None

@@ -253,21 +253,22 @@ def test_a_scrolled_wrapped_grid_keeps_its_labels_in_the_figure(
     assert result["meta"]["facet_labels"] == []
 
 
-def test_a_categorical_axis_ticks_the_middle_of_each_band(
+def test_a_categorical_axis_leaves_its_ticks_to_the_page(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
-    """A categorical axis has its levels as tick text at 0, 1, ..., escaped as plotly markup."""
+    """A categorical axis has array ticks the page fills from the meta's levels (``static/js/bandticks.js``)."""
     spec = replace(
         scatter_spec, x=["color"], color=None, categorical=["color"], hover=["color"]
     )
-    layout = _figure(spec, tmp_path / "task")["figure"]["layout"]
+    result = _figure(spec, tmp_path / "task")
+    layout = result["figure"]["layout"]
     for key in ("xaxis", "xaxis2"):
         axis = layout[key]
         assert axis["range"] == [-0.5, 2.5]
         assert axis["tickmode"] == "array"
-        assert axis["tickvals"] == [0, 1, 2]
-        assert axis["ticktext"] == ["a", "b", "c"]
+        assert (axis["tickvals"], axis["ticktext"]) == ([], [])
     assert "tickvals" not in layout["yaxis"]
+    assert result["meta"]["axis_levels"] == {"color": ["a", "b", "c"]}
 
 
 def test_box_plots_lie_in_the_meta_of_their_panels(
@@ -486,12 +487,12 @@ def test_the_page_gets_facet_labels_as_text(tmp_path: Path) -> None:
     assert "g = <b>bold</b>" in texts
 
 
-def test_long_categorical_ticks_are_cut_and_numbers_write_e(tmp_path: Path) -> None:
-    """A category tick ends in "…" past its band; an empty level shows its placeholder; numeric ticks write "1e+300"."""
+def test_categorical_levels_go_as_they_are_and_numbers_write_e(tmp_path: Path) -> None:
+    """The page gets a categorical axis's levels unescaped and uncut (it fits and escapes its ticks); numeric ticks write "1e+300"."""
     spec = replace(_worst_spec(tmp_path), x=["g"], categorical=["g"])
-    layout = _figure(spec, tmp_path / "task")["figure"]["layout"]
-    ticks = layout["xaxis"]["ticktext"]
-    assert "（空文字列）" in ticks
-    assert "&lt;b&gt;bold&lt;/b&gt;" in ticks
-    assert any(t.startswith("level_") and t.endswith("…") for t in ticks)
-    assert layout["yaxis"]["exponentformat"] == "e"
+    result = _figure(spec, tmp_path / "task")
+    levels = result["meta"]["axis_levels"]["g"]
+    assert "" in levels
+    assert "<b>bold</b>" in levels
+    assert any(v.startswith("level_") and not v.endswith("…") for v in levels)
+    assert result["figure"]["layout"]["yaxis"]["exponentformat"] == "e"

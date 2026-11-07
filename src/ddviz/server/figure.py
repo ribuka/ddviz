@@ -133,16 +133,19 @@ def _facet_labels(
 def _band_ticks(manifest: PlotManifest, column: str, room: float | None) -> dict:
     """Return the ticks of an axis column: a categorical one's levels at the middle of their bands, else plotly's.
 
-    A level longer than its room (``room`` pixels: its band's width on an x
-    axis; None on a y axis, whose ticks have the left margin) ends in "…".
+    The page gives a categorical column's axis the ticks of the range it
+    shows, thinned to labels that can be read (``static/js/bandticks.js``),
+    from the levels of the meta (``axis_levels``); the figure has none. The
+    one band has a tick under each series' box: a name longer than its
+    room (``room`` pixels: its band's width on an x axis; None on a y axis,
+    whose ticks have the left margin) ends in "…".
     """
     levels = manifest.axis_levels.get(column)
     if levels is None:
         return {}
-    if column == ONE_BAND:
-        ticks = _series_ticks(manifest)
-    else:
-        ticks = dict(enumerate(levels))
+    if column != ONE_BAND:
+        return {"tickmode": "array", "tickvals": [], "ticktext": [], "showgrid": False}
+    ticks = _series_ticks(manifest)
     if room is None:
         room = MARGIN_LEFT - TICK_PAD
     else:

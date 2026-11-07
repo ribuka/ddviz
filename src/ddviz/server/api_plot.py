@@ -59,6 +59,7 @@ def plot_router(
     results: Results,
     broker: TaskBroker,
     max_levels: int,
+    max_axis_levels: int,
     max_hover_bytes: int,
 ) -> APIRouter:
     """Return the routes that draw.
@@ -72,8 +73,10 @@ def plot_router(
     broker : TaskBroker
         Runs the plot tasks.
     max_levels : int
-        Most levels a categorical x, y, color, Group X, Group Y or Wrap
+        Most levels a categorical color, Overlay, Group X, Group Y or Wrap
         column may have.
+    max_axis_levels : int
+        Most levels a categorical x or y column may have.
     max_hover_bytes : int
         Most bytes the hover files of the overview and the view take together.
 
@@ -204,6 +207,7 @@ def plot_router(
                 numeric,
                 color_bins,
                 max_levels,
+                max_axis_levels,
                 wrap_cols,
                 smoothing,
                 shape_size,

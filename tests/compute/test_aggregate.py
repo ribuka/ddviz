@@ -115,7 +115,7 @@ def test_view_bins_only_the_rows_in_its_ranges(
 
 def test_a_role_with_too_many_levels_is_refused(scatter_spec: ScatterSpec) -> None:
     """A numeric column on color has a level per row and is refused before binning."""
-    with pytest.raises(ValueError, match="水準が上限の"):
+    with pytest.raises(ValueError, match="水準が上限を超えるため描けない"):
         aggregate(replace(scatter_spec, color="x"))
 
 
@@ -124,9 +124,76 @@ def test_the_level_limit_comes_from_the_spec(scatter_spec: ScatterSpec) -> None:
     assert aggregate(replace(scatter_spec, max_levels=3)).grid.n_series == 3
     spec = ScatterSpec.from_dict(replace(scatter_spec, max_levels=2).to_dict())
     with pytest.raises(
-        ValueError, match="上限の 2 個を超えるため描けない（color は 3 個）"
+        ValueError, match="（color は 3 個で、Color・Overlay・Group・Wrap の上限は 2 個）"
     ):
         aggregate(spec)
+
+
+def _axis_spec(scatter_spec: ScatterSpec, **changes: object) -> ScatterSpec:
+    """Return the spec with the 3-level ``color`` column on a categorical x, without color and facets."""
+    return replace(
+        scatter_spec,
+        **{"x": ["color"], "color": None, "col": None, "categorical": ["color"], **changes},
+    )
+
+
+@pytest.mark.parametrize("limit", [2, 3, 4])
+def test_the_axis_level_limit_is_its_own(
+    scatter_spec: ScatterSpec, limit: int
+) -> None:
+    """``max_axis_levels`` refuses a categorical x past it (3 levels against 2, 3 and 4); ``max_levels`` does not bind the axis."""
+    spec = ScatterSpec.from_dict(
+        _axis_spec(scatter_spec, max_levels=1, max_axis_levels=limit).to_dict()
+    )
+    if limit < 3:
+        with pytest.raises(
+            ValueError,
+            match=f"（color は 3 個で、X・Y のカテゴリの軸の上限は {limit} 個）。"
+            "水準はフィルタの前の行から数えるため、別の列を使う",
+        ):
+            aggregate(spec)
+    else:
+        assert aggregate(spec).levels["color"] == [None]
+
+
+def test_the_axis_level_limit_binds_a_categorical_y(tmp_path: Path) -> None:
+    """A categorical y column is refused past ``max_axis_levels`` as an x is."""
+    path = tmp_path / "d.parquet"
+    pl.DataFrame({"x": [0.0, 1.0, 2.0], "g": ["a", "b", "c"]}).write_parquet(path)
+    spec = ScatterSpec(
+        files={"x": [str(path)], "g": [str(path)]},
+        x=["x"],
+        y=["g"],
+        color=None,
+        row=None,
+        col=None,
+        width=100,
+        height=100,
+        hover=["x", "g"],
+        categorical=["g"],
+        max_axis_levels=2,
+    )
+    with pytest.raises(ValueError, match="g は 3 個で、X・Y のカテゴリの軸の上限は 2 個"):
+        aggregate(spec)
+    assert aggregate(replace(spec, max_axis_levels=3)).axis_levels == {"g": ["a", "b", "c"]}
+
+
+def test_a_column_on_an_axis_and_color_meets_both_limits(
+    scatter_spec: ScatterSpec,
+) -> None:
+    """The same column on x and color is refused by the lower limit of its roles, either one."""
+    both = _axis_spec(scatter_spec, color="color")
+    assert aggregate(replace(both, max_levels=3, max_axis_levels=3)).grid.n_series == 3
+    with pytest.raises(ValueError, match="Color・Overlay・Group・Wrap の上限は 2 個"):
+        aggregate(replace(both, max_levels=2, max_axis_levels=1_000_000))
+    with pytest.raises(ValueError, match="X・Y のカテゴリの軸の上限は 2 個"):
+        aggregate(replace(both, max_levels=100, max_axis_levels=2))
+
+
+def test_the_series_limit_stays_100_beside_a_million_axis_levels() -> None:
+    """The defaults: 100 levels for color and the other series and panel roles, a million for a categorical x or y."""
+    assert ScatterSpec.__dataclass_fields__["max_levels"].default == 100
+    assert ScatterSpec.__dataclass_fields__["max_axis_levels"].default == 1_000_000
 
 
 def test_each_pair_of_axis_columns_is_a_panel(tmp_path: Path) -> None:
