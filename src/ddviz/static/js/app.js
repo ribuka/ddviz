@@ -1,6 +1,6 @@
 // The page: drop columns on the graph builder's zones, plot, zoom and pan,
 // resize, hover, select rows with a box, and filter rows.
-import { axisAt, decorate, decorationUpdate, emptySettings, openAxisDialog } from "./axisdialog.js";
+import { axisAt, decorate, decorationUpdate, emptySettings, openAxisDialog, yMarginAt } from "./axisdialog.js";
 import { AxisDirections, ascending, oriented } from "./axisdirection.js";
 import { bandTickUpdate, withBandTicks } from "./bandticks.js";
 import { openAxisMenu } from "./axismenu.js";
@@ -126,6 +126,12 @@ fetch("/api/settings")
     layers.draw();
   });
 const sticky = new StickyLabels(document.getElementById("scroller"), gd);
+const builderRoot = document.getElementById("builder");
+const yZone = builderRoot.querySelector(':scope > .zone[data-role="y"]');
+// The elements of the axes' left margin outside the plot (`axisHit`): the
+// gap between the y zone and the plot area is the builder's, the stage's or
+// the scroller's.
+const MARGIN_TARGETS = [builderRoot, ...["stage", "scroller", "canvas"].map((id) => document.getElementById(id))];
 const empty = document.getElementById("empty");
 // Over a plot whose whole result has no rows, which draws empty panels.
 const noRows = document.getElementById("no-rows");
@@ -211,22 +217,37 @@ gd.addEventListener("contextmenu", (event) => {
   // On the tick labels of an axis, the menu of its column (`axismenu.js`).
   const hit = current && axisHit(event);
   if (hit) {
-    const { axis, index } = hit;
-    const meta = current;
-    const column = meta[`${axis}_columns`][index];
-    openAxisMenu(event, {
-      axis,
-      column,
-      log: meta[`${axis}_log`][index],
-      loggable: meta[`${axis}_loggable`][index],
-      onLog: (log) => setAxisLog(meta, axis, column, log),
-      reversed: axisDirections.isReversed(axis, column),
-      onReverse: (reversed) => setAxisReversed(axis, column, reversed),
-    });
+    openAxisMenuOf(event, hit);
     return;
   }
   openPlotMenu(event, gd);
 });
+// The left margin of the y axes reaches out of the plot, over the gap
+// between the plot area and the y zone (`axisHit`): a right click there
+// opens the axis's menu too. One on the plot is the handler's above.
+builderRoot.addEventListener("contextmenu", (event) => {
+  if (gd.contains(event.target)) return;
+  const hit = current && gd._fullLayout && axisHit(event);
+  if (!hit) return;
+  event.preventDefault();
+  hideHover();
+  openAxisMenuOf(event, hit);
+});
+
+// Opens the menu of the axis column `hit` (`axisHit`) of the result drawn.
+function openAxisMenuOf(event, { axis, index }) {
+  const meta = current;
+  const column = meta[`${axis}_columns`][index];
+  openAxisMenu(event, {
+    axis,
+    column,
+    log: meta[`${axis}_log`][index],
+    loggable: meta[`${axis}_loggable`][index],
+    onLog: (log) => setAxisLog(meta, axis, column, log),
+    reversed: axisDirections.isReversed(axis, column),
+    onReverse: (reversed) => setAxisReversed(axis, column, reversed),
+  });
+}
 gd.addEventListener("mousedown", () => {
   dragging = true;
 });
@@ -241,14 +262,15 @@ const settingsOf = (column) => axisSettings.get(column);
 // instead of plotly's autorange of that axis. plotly counts the presses
 // itself (`doubleClickDelay`, 300ms), so the second press does not reach it.
 // The wait here is longer, so that no press plotly would count as a double
-// click gets through.
+// click gets through. The presses are taken on the builder, before plotly's
+// handlers, as the axes' left margin reaches out of the plot (`axisHit`).
 const AXIS_DOUBLE_CLICK_MS = 400;
 let axisPress = null;
-gd.addEventListener(
+builderRoot.addEventListener(
   "mousedown",
   (event) => {
     if (event.button !== 0) return;
-    const hit = axisUnder(event);
+    const hit = current && gd._fullLayout ? axisUnder(event) : null;
     const last = axisPress;
     axisPress = null;
     if (!hit) return;
@@ -275,11 +297,22 @@ function axisUnder(event) {
 }
 
 // Returns the axis column whose tick labels are under a pointer event, of
-// any kind, as `{axis, index}`, or null (`axisUnder`).
+// any kind, as `{axis, index}`, or null (`axisUnder`). A y axis also takes
+// its whole left margin, from the y zone's right edge (the zone keeps its
+// chips and drops) to the plot area of the leftmost panel at that height:
+// in a grid that scrolls, the left strip and the gap left of it
+// (`sticky.js`), which the strip shows the leftmost panels' labels of
+// whatever the scroll; otherwise the figure's margin and the gap
+// (`yMarginAt`). Other UI over the margin (the mode bar, the table) keeps
+// its own.
 function axisHit(event) {
-  const strip = sticky.axisAt(event.clientX, event.clientY);
-  if (!strip) return axisAt(event, gd, current);
-  return { axis: strip.axis, index: strip.axis === "x" ? strip.panel.x : strip.panel.y };
+  const { clientX, clientY, target } = event;
+  const open = gd.contains(target) ? !target.closest(".modebar") : MARGIN_TARGETS.includes(target);
+  if (!open) return null;
+  const from = yZone.getBoundingClientRect().right;
+  const strip = sticky.axisAt(clientX, clientY, from);
+  if (strip) return { axis: strip.axis, index: strip.axis === "x" ? strip.panel.x : strip.panel.y };
+  return axisAt(event, gd, current) ?? (sticky.shown ? null : yMarginAt(clientX, clientY, gd, current, from));
 }
 
 // The scale of each x and y column while the input is open (`axisscale.js`).
@@ -1588,7 +1621,7 @@ async function recolor() {
 // The element icons, made after the builder whose elements they set.
 let elementBar = null;
 const builder = new Builder(
-  document.getElementById("builder"),
+  builderRoot,
   document.getElementById("columns"),
   (encoding) => {
     // Elements no longer possible are turned off; that edit comes back here.
@@ -1640,7 +1673,7 @@ document.querySelector('#builder .zone[data-role="wrap"]').addEventListener("con
 });
 // A changed "Show null rows" plots the graph again: its levels change.
 attachNullMenu(
-  document.getElementById("builder"),
+  builderRoot,
   (role) => builder.placed(role).length > 0,
   showNullRows,
   () => {

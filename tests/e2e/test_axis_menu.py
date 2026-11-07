@@ -2,14 +2,90 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.e2e.test_scatter import SETTLED, place, watch_errors
+from tests.e2e.test_scatter import SETTLED, drop_at, place, watch_errors
 
 pytestmark = pytest.mark.e2e
 
 FULL = "document.getElementById('plot')._fullLayout"
+
+
+# The y axes' left margins, in client pixels, from the DOM and plotly's
+# layout (not from the width of the tick labels, which depends on the fonts):
+# the right edge of the y zone, the left edge of the stage, and per panel row
+# its top and bottom, the left of its leftmost plot area, and the height
+# halfway between its first two tick labels.
+Y_MARGINS = """() => {
+  const gd = document.getElementById("plot");
+  const full = gd._fullLayout;
+  const o = gd.getBoundingClientRect();
+  const rows = new Map();
+  for (const key of Object.keys(full).filter((k) => /^yaxis[0-9]*$/.test(k))) {
+    const ya = full[key];
+    const xa = full[ya.anchor.replace(/^x/, "xaxis")];
+    const top = o.top + ya._offset;
+    const left = o.left + xa._offset;
+    const ticks = ya._vals.filter((t) => !t.minor).map((t) => top + ya.l2p(t.x));
+    const row = rows.get(top);
+    if (!row || left < row.left) {
+      rows.set(top, { top, bottom: top + ya._length, left, between: (ticks[0] + ticks[1]) / 2 });
+    }
+  }
+  return {
+    zone: document.querySelector('#builder > .zone[data-role="y"]').getBoundingClientRect().right,
+    stage: document.getElementById("stage").getBoundingClientRect().left,
+    rows: [...rows.values()].sort((a, b) => a.top - b.top),
+  };
+}"""
+
+
+def y_margins(page: Page) -> dict:
+    """Return the y axes' left margins (`Y_MARGINS`)."""
+    return page.evaluate(Y_MARGINS)
+
+
+def margin_points(margins: dict, row: dict) -> list[tuple[float, float]]:
+    """Return points of a panel row's left margin: its left, middle and axis side, the gap left of the stage, at its top, bottom, middle and between two tick labels.
+
+    The browser rounds the pointer to whole pixels: the edges are taken
+    inside the row.
+    """
+    zone, left = margins["zone"], row["left"]
+    xs = [zone + 1, (zone + left) / 2, left - 1, (zone + margins["stage"]) / 2]
+    ys = [
+        math.ceil(row["top"]),
+        math.floor(row["bottom"]),
+        (row["top"] + row["bottom"]) / 2,
+        row["between"],
+    ]
+    return [(x, y) for x in xs for y in ys]
+
+
+def add_second_y(page: Page, column: str) -> None:
+    """Drop a column at the end of the y zone, as y's second axis."""
+    zone = page.locator('.zone[data-role="y"]').bounding_box()
+    drop_at(page, column, "y", zone["width"] / 2, zone["height"] * 0.95)
+    expect(page.locator('.zone[data-role="y"] .chip-name')).to_have_count(2)
+
+
+def menu_at(page: Page, x: float, y: float) -> str | None:
+    """Right-click a point and return the heading of the axis menu it opens, or None; close the menus."""
+    page.mouse.click(x, y, button="right")
+    menu = page.locator(".axis-menu")
+    heading = (
+        menu.locator(".scale-menu-heading").inner_text() if menu.count() else None
+    )
+    if heading is not None:
+        expect(menu).to_have_count(1)
+        expect(page.locator(".plot-menu")).to_have_count(0)
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
+    expect(page.locator(".plot-menu")).to_have_count(0)
+    return heading
 
 
 def _right_click_tick(page: Page, side: str) -> None:
@@ -172,3 +248,89 @@ def test_a_warning_keeps_the_height_of_the_status_bar(app_page: Page) -> None:
         }"""
     )
     assert heights[1] == heights[0]
+
+
+def test_the_left_margin_of_y_opens_its_menu(app_page: Page) -> None:
+    """The whole margin left of y's tick labels, and the gap left of the stage, open y's menu; around it the plot's menu or none."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    margins = y_margins(page)
+    (row,) = margins["rows"]
+    for x, y in margin_points(margins, row):
+        assert menu_at(page, x, y) == "Y 軸: y", (x, y)
+    middle = (row["top"] + row["bottom"]) / 2
+    halfway = (margins["zone"] + row["left"]) / 2
+    # Above and below the panel, in the y zone and on the plot area: not y's.
+    for x, y in [
+        (halfway, row["top"] - 2),
+        (halfway, row["bottom"] + 2),
+        (margins["zone"] - 3, middle),
+    ]:
+        assert menu_at(page, x, y) is None, (x, y)
+    page.mouse.click(row["left"] + 1, middle, button="right")
+    expect(page.locator(".plot-menu")).to_have_count(1)
+    expect(page.locator(".axis-menu")).to_have_count(0)
+    page.keyboard.press("Escape")
+    assert errors == []
+
+
+def test_each_panel_row_of_the_margin_opens_its_own_column(app_page: Page) -> None:
+    """With two y columns by Group Y, each row of the margin opens its row's column; with Wrap, the leftmost panel's; not between the rows nor on a panel's right edge."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    add_second_y(page, "x")
+    place(page, "facet", "row")
+    margins = y_margins(page)
+    # The levels of Group Y outside, the y columns inside.
+    assert len(margins["rows"]) == 4
+    for row, column in zip(margins["rows"], ["y", "x", "y", "x"], strict=True):
+        for x, y in margin_points(margins, row):
+            assert menu_at(page, x, y) == f"Y 軸: {column}", (x, y)
+
+    # Wrap draws one y column, its panels in two rows.
+    page.locator('.zone[data-role="row"] .chip-remove').click()
+    page.locator('.zone[data-role="y"] .chip-remove').last.click()
+    page.wait_for_timeout(300)
+    page.wait_for_function(SETTLED)
+    place(page, "color", "wrap")
+    page.wait_for_timeout(300)
+    page.wait_for_function(SETTLED)
+    margins = y_margins(page)
+    first, second = margins["rows"]
+    for row in (first, second):
+        for x, y in margin_points(margins, row):
+            assert menu_at(page, x, y) == "Y 軸: y", (x, y)
+    halfway = (margins["zone"] + first["left"]) / 2
+    for y in [first["top"] - 2, (first["bottom"] + second["top"]) / 2, second["bottom"] + 2]:
+        assert menu_at(page, halfway, y) is None, y
+    # The right edge of the first panel is its plot area's, though the second
+    # panel's y drag area may reach over it.
+    right = page.evaluate(
+        "(() => { const a = document.getElementById('plot')._fullLayout.xaxis;"
+        " return document.getElementById('plot').getBoundingClientRect().left"
+        " + a._offset + a._length; })()"
+    )
+    page.mouse.click(right - 1, first["between"], button="right")
+    expect(page.locator(".plot-menu")).to_have_count(1)
+    expect(page.locator(".axis-menu")).to_have_count(0)
+    page.keyboard.press("Escape")
+    assert errors == []
+
+
+def test_the_margin_of_a_categorical_y_grays_out_its_log_item(app_page: Page) -> None:
+    """A categorical y's margin opens its menu with the log item disabled."""
+    page = app_page
+    place(page, "x", "x", plots=False)
+    place(page, "color", "y")
+    margins = y_margins(page)
+    (row,) = margins["rows"]
+    page.mouse.click(margins["zone"] + 1, (row["top"] + row["bottom"]) / 2, button="right")
+    menu = page.locator(".axis-menu")
+    expect(menu.locator(".scale-menu-heading")).to_have_text("Y 軸: color")
+    expect(menu.get_by_role("button", name="対数表示")).to_be_disabled()
+    expect(menu.get_by_role("button", name="向きを反転")).to_be_enabled()
+    page.keyboard.press("Escape")

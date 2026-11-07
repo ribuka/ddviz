@@ -180,6 +180,35 @@ export function axisAt(event, gd, meta) {
   return { axis, index };
 }
 
+// Returns the y axis column whose left margin holds a point (client
+// coordinates) of the plot `gd` of the result `meta`, as `{axis: "y", index}`,
+// or null: right of `from` (the right edge of the y zone, which keeps its
+// chips and drops) and left of the plot area of the leftmost panel at the
+// point's height, from that panel's top to its bottom. The whole margin is
+// its axis's, not only plotly's drag area along the tick labels: gaps
+// between the labels, above them and left of them count. The margins
+// between panel rows, above the top row and below the bottom row are no
+// axis's. Laid out as drawn: null before the plot is drawn.
+export function yMarginAt(clientX, clientY, gd, meta, from) {
+  const full = gd._fullLayout;
+  if (!meta || !full || clientX <= from) return null;
+  const origin = gd.getBoundingClientRect();
+  let left = Infinity;
+  let index = null;
+  for (const panel of meta.panels) {
+    const xa = full[panel.xaxis.replace(/^x/, "xaxis")];
+    const ya = full[panel.yaxis.replace(/^y/, "yaxis")];
+    if (!xa || !ya) continue;
+    const top = origin.top + ya._offset;
+    if (clientY < top || clientY > top + ya._length) continue;
+    if (origin.left + xa._offset < left) {
+      left = origin.left + xa._offset;
+      index = panel.y;
+    }
+  }
+  return index !== null && clientX < left ? { axis: "y", index } : null;
+}
+
 // Writes a number into a field, as the shortest text that reads back the
 // same number: a rounded one could make the range of a deep zoom empty, or
 // change the settings when they are applied again.

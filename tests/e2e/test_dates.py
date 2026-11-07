@@ -210,3 +210,38 @@ def test_a_reversed_datetime_axis_under_a_second_keeps_its_range(
     shown = page.evaluate(SHOWN_X_RANGE)
     assert shown[0] > shown[1]
     assert errors == []
+
+
+@pytest.mark.parametrize(
+    ("column", "chip", "loggable"), [("at", "at", False), ("took", "took (s)", True)]
+)
+def test_the_left_margin_of_a_temporal_y_opens_its_menu_but_no_dialog(
+    app_page: Page, column: str, chip: str, loggable: bool
+) -> None:
+    """A datetime or duration y's margin opens its menu (log as on its tick labels), and a double click there no dialog."""
+    from tests.e2e.test_axis_menu import menu_at, y_margins
+    from tests.e2e.test_scatter import dialog_at
+
+    page = app_page
+    place(page, "y", "x", plots=False)
+    zone = page.locator('.zone[data-role="y"]')
+    page.locator("#columns .column").filter(
+        has=page.get_by_text(column, exact=True)
+    ).drag_to(zone)
+    expect(zone.locator(".chip-name")).to_have_text(chip)
+    page.wait_for_function(SETTLED)
+    margins = y_margins(page)
+    (row,) = margins["rows"]
+    point = ((margins["zone"] + row["left"]) / 2, row["between"])
+    page.mouse.click(*point, button="right")
+    menu = page.locator(".axis-menu")
+    expect(menu.locator(".scale-menu-heading")).to_have_text(f"Y 軸: {column}")
+    log = menu.get_by_role("button", name="対数表示")
+    if loggable:
+        expect(log).to_be_enabled()
+    else:
+        expect(log).to_be_disabled()
+    expect(menu.get_by_role("button", name="向きを反転")).to_be_enabled()
+    page.keyboard.press("Escape")
+    assert menu_at(page, margins["zone"] + 1, row["top"] + 2) == f"Y 軸: {column}"
+    assert dialog_at(page, *point) is None

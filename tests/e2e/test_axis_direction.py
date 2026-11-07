@@ -375,3 +375,31 @@ def test_the_saved_bins_do_not_change_with_the_direction(app_page: Page) -> None
     _reverse(page, "y", "Y 軸: y")
     page.wait_for_function(f"() => {FULL}.yaxis.range[0] > {FULL}.yaxis.range[1]")
     assert saved() == before
+
+
+def test_the_left_margin_of_y_reverses_y(app_page: Page) -> None:
+    """The menu of y's margin, left of its tick labels, reverses y and back, asking nothing."""
+    from tests.e2e.test_axis_menu import y_margins
+
+    page = app_page
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    urls = _record(page)
+    low, high = _range(page, "yaxis")
+    margins = y_margins(page)
+    (row,) = margins["rows"]
+    menu = page.locator(".axis-menu")
+    for expected, checked in [([high, low], False), ([low, high], True)]:
+        page.mouse.click(margins["zone"] + 1, row["between"], button="right")
+        expect(menu.locator(".scale-menu-heading")).to_have_text("Y 軸: y")
+        item = menu.get_by_role("button", name="向きを反転")
+        if checked:
+            expect(item).to_have_class("scale-menu-item checked")
+        item.click()
+        expect(menu).to_have_count(0)
+        page.wait_for_function(
+            f"() => {{ const a = {FULL}.yaxis; const r = a.range.map((v) => a.r2l(v));"
+            f" return (r[0] > r[1]) === {'true' if not checked else 'false'}; }}"
+        )
+        assert _range(page, "yaxis") == pytest.approx(expected)
+    assert urls == []

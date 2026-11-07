@@ -56,18 +56,22 @@ export class StickyLabels {
   // point (client coordinates), as `{axis: "x" | "y", panel}` (the panel's
   // meta), or null. The strips let the pointer through to the plot below,
   // so the page asks them where an axis's labels are (`axisdialog.js`).
-  axisAt(clientX, clientY) {
+  // The left strip's axis reaches left past the strip, over the gap up to
+  // `from` (exclusive; client coordinates), as the margin of a grid that
+  // fits does (`yMarginAt`).
+  axisAt(clientX, clientY, from = Infinity) {
     const { meta } = this;
     const full = this.gd._fullLayout;
-    if (this.root.hidden || !meta || !full) return null;
-    const inside = (strip) => {
+    if (!this.shown || !meta || !full) return null;
+    const inside = (strip, left = Infinity) => {
       const r = strip.getBoundingClientRect();
-      return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+      const after = clientX >= r.left || clientX > left;
+      return after && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
     };
     const origin = this.gd.getBoundingClientRect();
     const { ncol } = meta;
     const count = meta.panels.length;
-    if (inside(this.strips.left)) {
+    if (inside(this.strips.left, from)) {
       const panel = meta.panels.find((p, i) => {
         const ya = full[axisKey(p.yaxis)];
         const top = origin.top + ya._offset;
@@ -84,6 +88,11 @@ export class StickyLabels {
       return panel ? { axis: "x", panel } : null;
     }
     return null;
+  }
+
+  // Whether the strips are shown: the grid scrolls.
+  get shown() {
+    return !this.root.hidden;
   }
 
   // Returns the room in pixels the y tick labels of the left strip take
