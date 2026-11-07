@@ -5,11 +5,16 @@
 // zones edit the graph (`ddviz.server.encoding.Encoding`):
 // - A column dropped on a zone takes that role, replacing the column there.
 // - On X and Y, which hold several columns (the n-th axes), the zone is
-//   split along its axis into one equal region per column. A column dropped
-//   in the first INSERT_SHARE of the n-th region goes in before the n-th
-//   column, in its last INSERT_SHARE after it, and in between it replaces
-//   it. X runs left to right and Y top to bottom, as the panels of the axis
-//   columns do.
+//   split along its axis into a region per column. A column dropped in the
+//   first INSERT_SHARE of the n-th region goes in before the n-th column,
+//   in its last INSERT_SHARE after it, and in between it replaces it. X
+//   runs left to right and Y top to bottom, as the panels of the axis
+//   columns do. With two columns or more, each chip stands at the middle of
+//   its region. The regions are the drawn axes of the columns where the
+//   page gives them (`setAxes`): each axis's range, the gaps between them
+//   split at their middle; a drop before the first goes in first, one past
+//   the last goes in last. Else (one column, no drawn axes, or a direction
+//   that scrolls) the zone is split into equal regions.
 // - A placed column (a chip) dragged to another zone moves there; when that
 //   zone holds a column, the two swap roles.
 // - A chip's × button, or dropping it on the column list or outside every
@@ -39,6 +44,10 @@ const FACETS = ["row", "col"];
 const INSERT_SHARE = 0.25;
 // Words for before and after a chip on each axis.
 const SIDES = { x: ["左", "右"], y: ["上", "下"] };
+// Pixels kept between two chips spread over their regions, and between a
+// chip and the zone's edge (its border and padding).
+const CHIP_GAP = 4;
+const ZONE_INSET = 4;
 
 // The column being dragged: `{name, numeric, temporal, placed}` from the
 // column list, where `placed()` is called when a drop takes it, or
@@ -59,16 +68,35 @@ export function draggedColumn() {
   return dragged;
 }
 
-// Returns what a drop at `at` does on a zone from `start` to `end` along
-// its axis holding `count` columns: the zone is split into `count` equal
-// regions, and a drop in the first INSERT_SHARE of the n-th region goes in
-// at n, one in its last INSERT_SHARE goes in at n + 1, and one in between
-// replaces the column at n. The end of a region and the start of the next
-// go in at the same place.
-export function locate(count, start, end, at) {
+// Returns `count` equal regions (`[start, end]` each) of a zone from
+// `start` to `end` along its axis.
+function equalRegions(count, start, end) {
   const size = (end - start) / count;
-  const index = Math.min(Math.max(Math.floor((at - start) / size), 0), count - 1);
-  const part = (at - start) / size - index;
+  return Array.from({ length: count }, (_, i) => [start + i * size, start + (i + 1) * size]);
+}
+
+// Returns the regions of axes drawn at `spans` (`[start, end]` each, in
+// order along the axis): each axis's span, with the gap to the next split
+// at its middle. They touch: the end of one is the start of the next.
+function axisRegions(spans) {
+  return spans.map(([start, end], i) => [
+    i === 0 ? start : (spans[i - 1][1] + start) / 2,
+    i === spans.length - 1 ? end : (end + spans[i + 1][0]) / 2,
+  ]);
+}
+
+// Returns what a drop at `at` along the axis does over `regions` (touching,
+// in order): one in the first INSERT_SHARE of the n-th region goes in at n,
+// one in its last INSERT_SHARE goes in at n + 1, and one in between (both
+// bounds included) replaces the column at n. One before the first region
+// goes in first, one past the last goes in last. The end of a region and
+// the start of the next go in at the same place.
+function locate(regions, at) {
+  if (at < regions[0][0]) return { index: 0, insert: true };
+  if (at > regions.at(-1)[1]) return { index: regions.length, insert: true };
+  const index = regions.findIndex(([, end]) => at <= end);
+  const [start, end] = regions[index];
+  const part = end > start ? (at - start) / (end - start) : 0.5;
   if (part < INSERT_SHARE) return { index, insert: true };
   if (part > 1 - INSERT_SHARE) return { index: index + 1, insert: true };
   return { index, insert: false };
@@ -90,6 +118,8 @@ export class Builder {
     this.temporal = new Map();
     this.tip = document.getElementById("drop-tip");
     this.line = document.getElementById("drop-line");
+    // The drawn axes of a role's columns (`setAxes`): none yet.
+    this.axes = () => null;
     for (const zone of this.zones) this.attachZone(zone);
     // A chip dropped on the column list or outside every zone is removed.
     for (const target of [columnList, document]) {
@@ -253,12 +283,66 @@ export class Builder {
   }
 
   // Returns what a drop at the pointer on an axis zone does (`locate` over
-  // the zone's box): go in at `index`, or replace the column at `index`.
+  // the zone's regions): go in at `index`, or replace the column at `index`.
   position(zone, event) {
     const role = zone.dataset.role;
     const at = role === "x" ? event.clientX : event.clientY;
+    return locate(this.regions(zone).regions, at);
+  }
+
+  // Sets where the columns of X and Y are drawn: `axes(role)` returns the
+  // span (`[start, end]` in client coordinates along the axis) of each of
+  // the role's columns, in their order, or null when the drawn figure does
+  // not give them (no figure, a figure of other columns, or a direction that
+  // scrolls). Call `layout` when they change.
+  setAxes(axes) {
+    this.axes = axes;
+    this.layout();
+  }
+
+  // Returns the regions of an axis zone's columns (`{regions, spans}`):
+  // those of the drawn axes, with their spans, for two columns or more when
+  // the page gives them; else equal regions of the zone, without spans.
+  regions(zone) {
+    const role = zone.dataset.role;
+    const count = this.placed(role).length;
+    const spans = count > 1 ? this.axes(role) : null;
+    if (spans?.length === count) return { regions: axisRegions(spans), spans };
     const [start, end] = this.span(role, zone.getBoundingClientRect());
-    return locate(this.placed(role).length, start, end, at);
+    return { regions: equalRegions(count, start, end), spans: null };
+  }
+
+  // Puts each chip of X and Y, when they hold two columns or more, at the
+  // middle of its region (of its drawn axis's span when there is one),
+  // within the region and the zone; a long name is cut to fit. One chip is
+  // centered by the zone's flex layout.
+  layout() {
+    for (const zone of this.zones) {
+      const role = zone.dataset.role;
+      if (!AXES.includes(role)) continue;
+      const chips = [...zone.querySelectorAll(".chip")];
+      const spread = chips.length > 1;
+      zone.classList.toggle("spread", spread);
+      if (!spread) continue;
+      const box = zone.getBoundingClientRect();
+      const [zoneStart, zoneEnd] = this.span(role, box);
+      const { regions, spans } = this.regions(zone);
+      chips.forEach((chip, i) => {
+        const start = Math.max(regions[i][0] + (i > 0 ? CHIP_GAP / 2 : 0), zoneStart + ZONE_INSET);
+        const end = Math.min(regions[i][1] - (i < chips.length - 1 ? CHIP_GAP / 2 : 0), zoneEnd - ZONE_INSET);
+        chip.style.maxInlineSize = `${Math.max(end - start, 0)}px`;
+        const size = role === "x" ? chip.offsetWidth : chip.offsetHeight;
+        const middle = spans ? (spans[i][0] + spans[i][1]) / 2 : (regions[i][0] + regions[i][1]) / 2;
+        // Its start in client coordinates, within the room left for it.
+        const from = Math.min(Math.max(middle - size / 2, start), Math.max(end - size, start));
+        if (role === "x") {
+          chip.style.left = `${from - box.left - zone.clientLeft}px`;
+        } else {
+          // The rotated zone (app.css) turns its box upside down.
+          chip.style.top = `${box.height - size - (from - box.top) - zone.clientTop}px`;
+        }
+      });
+    }
   }
 
   // Returns what a drop on `role` removes besides, as Wrap and the facets
@@ -365,6 +449,7 @@ export class Builder {
       zone.replaceChildren(label, ...chips);
       zone.classList.toggle("filled", placed.length > 0);
     }
+    this.layout();
   }
 
   chip(role, name, index) {

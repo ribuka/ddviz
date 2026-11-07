@@ -7,7 +7,7 @@ import re
 
 import polars as pl
 import pytest
-from playwright.sync_api import ConsoleMessage, Page, Route, expect
+from playwright.sync_api import ConsoleMessage, Locator, Page, Route, expect
 
 from ddviz.server.settings import LegendSettings, PlotSettings, Settings
 
@@ -988,45 +988,49 @@ def drop_at(page: Page, column: str, role: str, x: float, y: float) -> None:
 
 
 def test_axis_drops_split_the_zone_into_a_region_per_axis(app_page: Page) -> None:
-    """On X and Y, the zone is split into a region per axis: the first quarter of the n-th goes in before the n-th axis, the last quarter after it, the middle half replaces it."""
+    """Without drawn axes, X and Y are split into equal regions per column: the first quarter of the n-th goes in before the n-th axis, the last quarter after it, the middle half replaces it."""
     page = app_page
     expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
-    place(page, "y", "y")
     x_zone = page.locator('.zone[data-role="x"]')
     y_zone = page.locator('.zone[data-role="y"]')
     x_names = x_zone.locator(".chip-name")
     y_names = y_zone.locator(".chip-name")
 
-    # X runs left to right. One axis: the whole zone is its region.
+    def drop(column: str, zone: Locator, x: float, y: float) -> None:
+        page.locator("#columns .column").filter(
+            has=page.get_by_text(column, exact=True)
+        ).drag_to(zone, target_position={"x": x, "y": y})
+
+    # X runs left to right; Y is empty, so nothing is drawn. One axis: the whole zone is its region.
+    place(page, "x", "x", plots=False)
     zone = x_zone.bounding_box()
     middle = zone["height"] / 2
-    drop_at(page, "y", "x", zone["width"] * 0.4, middle)
+    drop("y", x_zone, zone["width"] * 0.4, middle)
     expect(x_names).to_have_text(["y"])
-    drop_at(page, "x", "x", zone["width"] * 0.9, middle)
+    drop("x", x_zone, zone["width"] * 0.9, middle)
     expect(x_names).to_have_text(["y", "x"])
     # Two axes: the end of the first half goes in between them.
-    zone = x_zone.bounding_box()
-    drop_at(page, "facet", "x", zone["width"] * 0.45, middle)
+    drop("facet", x_zone, zone["width"] * 0.45, middle)
     expect(x_names).to_have_text(["y", "facet", "x"])
     # Three axes: the middle of the third replaces the third.
-    zone = x_zone.bounding_box()
-    drop_at(page, "color", "x", zone["width"] * 5 / 6, middle)
+    drop("color", x_zone, zone["width"] * 5 / 6, middle)
     expect(x_names).to_have_text(["y", "facet", "color"])
+    for _ in range(3):
+        x_zone.locator(".chip-remove").first.click()
+    expect(x_names).to_have_count(0)
 
-    # Y runs top to bottom: the start of the zone goes in first.
+    # Y runs top to bottom; categorical columns without X draw nothing.
+    place(page, "color", "y", plots=False)
     zone = y_zone.bounding_box()
     center = zone["width"] / 2
-    drop_at(page, "x", "y", center, zone["height"] * 0.1)
-    expect(y_names).to_have_text(["x", "y"])
+    drop("facet", y_zone, center, zone["height"] * 0.1)
+    expect(y_names).to_have_text(["facet", "color"])
     # The start of the second half goes in between them.
-    zone = y_zone.bounding_box()
-    drop_at(page, "facet", "y", center, zone["height"] * 0.55)
-    expect(y_names).to_have_text(["x", "facet", "y"])
+    drop("label", y_zone, center, zone["height"] * 0.55)
+    expect(y_names).to_have_text(["facet", "label", "color"])
     # The middle of the first third replaces the first.
-    zone = y_zone.bounding_box()
-    drop_at(page, "color", "y", center, zone["height"] / 6)
-    expect(y_names).to_have_text(["color", "facet", "y"])
+    drop("x", y_zone, center, zone["height"] / 6)
+    expect(y_names).to_have_text(["x", "label", "color"])
 
 
 def test_axis_drop_marks_follow_the_regions(app_page: Page) -> None:
