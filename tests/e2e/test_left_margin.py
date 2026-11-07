@@ -64,6 +64,8 @@ def scatter_path(tmp_path: Path) -> Path:
         {
             "n": n,
             "pay": 94_000 + 12_000 * rng.random(ROWS),
+            # Ticks of many digits (1.00020e+5), wider than 50 pixels in any font.
+            "fine": 100_000 + 40 * rng.random(ROWS),
             "interest": -1_234_567.891 - 0.002 * rng.random(ROWS),
             "small": rng.random(ROWS),
             "when": [start + timedelta(milliseconds=int(i)) for i in n],
@@ -206,7 +208,7 @@ def test_a_scrolled_grid_keeps_the_labels_in_its_strip(app_page: Page) -> None:
     errors = watch_errors(page)
     page.set_viewport_size({"width": 900, "height": 700})
     place(page, "n", "x", plots=False)
-    place(page, "pay", "y")
+    place(page, "fine", "y")
     place(page, "facet", "row")
     place(page, "g", "col")
     settle(page)
@@ -241,7 +243,7 @@ def test_a_scrolled_grid_keeps_the_labels_in_its_strip(app_page: Page) -> None:
         button="right",
     )
     menu = page.locator(".axis-menu")
-    expect(menu.locator(".scale-menu-heading")).to_have_text("Y 軸: pay")
+    expect(menu.locator(".scale-menu-heading")).to_have_text("Y 軸: fine")
     page.keyboard.press("Escape")
     assert not errors
 
@@ -258,11 +260,12 @@ def test_times_and_a_log_axis_show_whole(app_page: Page) -> None:
     assert any(":" in label["text"] for label in shown["labels"])
     assert_whole(shown)
 
-    place(page, "pay", "y")
+    place(page, "fine", "y")
+    settle(page)
     ticks = page.locator("#plot .ytick text")
     box = ticks.nth(ticks.count() // 2).bounding_box()
     page.mouse.click(
-        box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, button="right"
+        box["x"] + box["width"] - 6, box["y"] + box["height"] / 2, button="right"
     )
     page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
     page.wait_for_function(f"() => {FULL}.yaxis.type === 'log'")
@@ -329,7 +332,7 @@ def test_a_wider_margin_that_scrolls_keeps_the_drawing_aligned(
     assert y_labels(page)["margin"] == 50
 
     # Amounts need a wider margin: the panels no longer fit, and scroll.
-    place(page, "pay", "y")
+    place(page, "fine", "y")
     settle(page)
     expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
     shown = y_labels(page)
@@ -342,7 +345,7 @@ def test_a_wider_margin_that_scrolls_keeps_the_drawing_aligned(
     label = page.locator("#hover-label")
     expect(label).to_be_visible()
     lines = dict(line.split(": ", 1) for line in label.inner_text().splitlines())
-    assert 94_000 <= float(lines["pay"]) <= 106_000
+    assert 100_000 <= float(lines["fine"]) <= 100_040
 
     # Short labels again: the grid fits at 50.
     place(page, "small", "y")
