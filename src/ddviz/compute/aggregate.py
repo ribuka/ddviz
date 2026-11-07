@@ -62,6 +62,13 @@ RANGE_PADDING = 0.02
 # Most piles a plot draws (`ddviz.compute.stacks`): the page draws each with
 # its number of rows.
 MAX_PILES = 100_000
+# Rows a pair's bins are aggregated from at a time (`_binned`). The peak of a
+# streaming group_by with many groups grows with its rows: binning x against
+# y with about 700K non-empty bins peaked at 2.34GB on 100M rows and 4.17GB
+# on 200M in one query, against 1.53GB and 1.57GB 25M rows at a time, in
+# about the same time (2.2s and 1.9s on 200M rows). 10M rows at a time
+# peaked a little lower (1.50GB on 200M) but reads the files in more passes.
+ROWS_PER_PASS = 25_000_000
 
 
 @dataclass(frozen=True)
@@ -191,6 +198,41 @@ def _bin_expr(value: pl.Expr, bounds: tuple[float, float], n: int) -> pl.Expr:
     return scaled.floor().clip(0, n - 1).cast(pl.Int64)
 
 
+def _binned(
+    scan: pl.LazyFrame, rows: int, query: Callable[[pl.LazyFrame], pl.LazyFrame]
+) -> pl.DataFrame:
+    """Return the bins of `query` over `scan`, `ROWS_PER_PASS` rows at a time.
+
+    Parameters
+    ----------
+    scan : polars.LazyFrame
+        The rows, with their row index `INDEX` (`_scan`): a slice keeps the
+        index of the whole scan, so the representative row of a bin is the
+        same row whichever slice it is in.
+    rows : int
+        Rows of `scan`.
+    query : callable
+        Turns rows into their bins: `KEY`, `COUNT` (UInt32) and the largest
+        `INDEX` of each key.
+
+    Returns
+    -------
+    polars.DataFrame
+        The bins of all the rows, one per key, in no particular order.
+    """
+    found = None
+    for start in range(0, max(rows, 1), ROWS_PER_PASS):
+        part = query(scan.slice(start, ROWS_PER_PASS)).collect(engine="streaming")
+        if found is not None:
+            part = (
+                pl.concat([found, part])
+                .group_by(KEY)
+                .agg(pl.col(COUNT).sum().cast(pl.UInt32), pl.col(INDEX).max())
+            )
+        found = part
+    return found
+
+
 def _scan(
     spec: ScatterSpec, columns: list[str], row_index: str | None = None
 ) -> pl.LazyFrame:
@@ -206,7 +248,10 @@ def _scan(
 def _range_query(spec: ScatterSpec, column: str) -> pl.LazyFrame:
     """Return the query of the finite minimum and maximum of a numeric column."""
     value = pl.col(column).cast(pl.Float64)
-    finite = value.filter(value.is_finite())
+    # Not ``value.filter(...)``: a filter inside an expression holds the rows
+    # it keeps until the minimum is taken, and the ranges of x and y on 1.11
+    # billion rows went past 6GB; nulls in their place peaked at 0.69GB.
+    finite = pl.when(value.is_finite()).then(value)
     return _scan(spec, [column]).select(
         finite.min().alias("min"), finite.max().alias("max")
     )
@@ -236,7 +281,8 @@ def _log_axes(spec: ScatterSpec) -> _LogAxes:
     queries = []
     for c in columns:
         value = pl.col(c).cast(pl.Float64)
-        positive = value.filter(on_axis(value, True))
+        # Nulls in place of the others, as `_range_query` does.
+        positive = pl.when(on_axis(value, True)).then(value)
         queries.append(
             _scan(spec, [c, *filter_columns(spec.filters)])
             .filter(*filter_conditions(spec.filters))
@@ -630,7 +676,7 @@ def aggregate(
 
     def pair(
         xi: int, yj: int, extra: list[pl.Expr], extra_columns: list[str]
-    ) -> pl.LazyFrame:
+    ) -> pl.DataFrame:
         """Return the bins of the panels of one pair of axis columns, of the rows `extra` keeps."""
         x_col, y_col = spec.x[xi], spec.y[yj]
         outlier = pl.lit(True)
@@ -667,23 +713,42 @@ def aggregate(
             _bin_expr(y, y_ranges[yj], grid.height),
             _bin_expr(x, x_ranges[xi], grid.width),
         )
-        return (
-            _scan(spec, [x_col, y_col, *used, *extra_columns], INDEX)
-            .filter(
-                x.is_finite(),
-                y.is_finite(),
-                x.is_between(*x_ranges[xi]),
-                y.is_between(*y_ranges[yj]),
-                *valid,
-                *extra,
+
+        def query(rows: pl.LazyFrame) -> pl.LazyFrame:
+            return (
+                rows.filter(
+                    x.is_finite(),
+                    y.is_finite(),
+                    x.is_between(*x_ranges[xi]),
+                    y.is_between(*y_ranges[yj]),
+                    *valid,
+                    *extra,
+                )
+                # The group, like the key, reads the drawn facet levels: only
+                # the rows kept above have one.
+                .select(key.alias(KEY), pl.col(INDEX), outlier.alias(_OUTLIER))
+                .filter(pl.col(_OUTLIER))
+                .group_by(KEY)
+                .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
             )
-            # The group, like the key, reads the drawn facet levels: only the
-            # rows kept above have one.
-            .select(key.alias(KEY), pl.col(INDEX), outlier.alias(_OUTLIER))
-            .filter(pl.col(_OUTLIER))
-            .group_by(KEY)
-            .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
+
+        # The slices are of the scan, before the filter: each holds the same
+        # rows whatever the filter keeps.
+        return _binned(
+            _scan(spec, [x_col, y_col, *used, *extra_columns], INDEX),
+            n_rows(),
+            query,
         )
+
+    counted: list[int] = []
+
+    def n_rows() -> int:
+        """Return the rows of the plot, counted once from the files' footers."""
+        if not counted:
+            # Any column read from files: the one band has none.
+            column = next(c for c in [*spec.x, *spec.y] if c != ONE_BAND)
+            counted.append(_scan(spec, [column]).select(pl.len()).collect().item())
+        return counted[0]
 
     categorical = set(spec.categorical)
     marker_box = marker_boxes(
@@ -768,9 +833,7 @@ def aggregate(
                     if pair_piles is not None:
                         drawn.append(pair_piles)
                 else:
-                    found.append(
-                        pair(xi, yj, extra, extra_columns).collect(engine="streaming")
-                    )
+                    found.append(pair(xi, yj, extra, extra_columns))
         return pl.concat(found).sort(KEY), pl.concat(pile_bins).sort(KEY), drawn
 
     bins = pile_bins = None
