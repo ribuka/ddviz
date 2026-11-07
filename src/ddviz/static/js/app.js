@@ -562,7 +562,13 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   requestedSize = size;
   statusLine.show("集約中…");
   const mine = ++generation;
+  // The plot is in flight until it is drawn or has failed, its images
+  // included: meanwhile no view, size or selection is asked for, which would
+  // supersede it or kill its task.
   plotting = mine;
+  const settled = () => {
+    if (plotting === mine) plotting = 0;
+  };
   const started = performance.now();
   let response = null;
   let text;
@@ -582,13 +588,12 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     text = await response.text();
   } catch (error) {
     console.error(error);
-    if (plotting === mine) plotting = 0;
+    settled();
     if (mine !== generation) return null;
     // The answer was lost: the server may have taken the plot.
     serverAhead = true;
     return plotFailed(`描画の要求に失敗した（${error.message}）`, askedSize, restoring);
   }
-  if (plotting === mine) plotting = 0;
   // Superseded by a newer request. The server drops a plot that a newer plot
   // superseded while it ran (409), but not one it finished before.
   if (mine !== generation) {
@@ -596,6 +601,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     return null;
   }
   if (!response.ok) {
+    settled();
     // A cancel that no newer request of this page made is a failure too.
     return plotFailed(response.status === 409 ? "描画が中断された" : errorText(text), askedSize, restoring);
   }
@@ -608,6 +614,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     ({ figure, meta } = JSON.parse(text));
   } catch (error) {
     console.error(error);
+    settled();
     return plotFailed(`描画の応答を読めなかった（${error.message}）`, askedSize, restoring);
   }
   timings.fetch = Math.round(performance.now() - started);
@@ -621,19 +628,18 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     closeImages(bitmaps);
     return null;
   }
-  if (!bitmaps) return plotFailed("図の画像を読み込めなかった", askedSize, restoring);
+  if (!bitmaps) {
+    settled();
+    return plotFailed("図の画像を読み込めなかった", askedSize, restoring);
+  }
   const kept = keptView();
   const drawStarted = performance.now();
   try {
     // The selection and the shapes of another overlay column go with the drawn plot.
     clearSelection(false);
     movedWhilePlotting = false;
-    pickedShapes(encoding.overlay);
-    // The colors picked for the levels stay while the color column does.
-    keepPicked(meta.color.column);
     setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
     requested = { x: [], y: [] };
-    legend.set(meta);
     setCurrent(meta);
     shownSize = size;
     setPending(false);
@@ -648,6 +654,13 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     Plotly.purge(gd);
     await Plotly.newPlot(gd, figure.data, forPlotly(withSelectionBox(layout, meta)), PLOT_CONFIG);
     timings.plot = Math.round(performance.now() - drawStarted);
+    // The legend and the colors and shapes picked change once the figure is
+    // drawn: a figure that fails keeps them for the graph drawn again.
+    legend.set(meta);
+    // The colors picked for the levels stay while the color column does.
+    keepPicked(meta.color.column);
+    // The shapes picked stay while the overlay column does.
+    pickedShapes(encoding.overlay);
     layers.attach();
     sticky.attach();
     gd.on("plotly_relayout", onRelayout);
@@ -662,6 +675,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     // The figure drawn is this graph's: a later failure comes back to it.
     builder.commit(candidate);
     serverAhead = false;
+    settled();
     statusLine.show(rowsText(meta));
     timings.plotAndImages = Math.round(performance.now() - drawStarted);
     setInfo();
@@ -671,6 +685,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     }
   } catch (error) {
     console.error(error);
+    settled();
     if (overview?.bitmaps !== bitmaps) closeImages(bitmaps);
     if (mine !== generation) return null;
     return plotFailed(`図を描けなかった（${error.message}）`, askedSize, restoring, kept);

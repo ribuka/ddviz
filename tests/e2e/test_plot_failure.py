@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -623,3 +624,79 @@ def test_a_plot_waiting_for_its_images_is_not_committed(app_page: Page) -> None:
     assert placed_names(page) == before
     expect(status).to_have_text("エラー: 新しい失敗")
     assert [b["encoding"]["color"] for b in bodies] == ["color", "color", None]
+
+
+# Makes the next `Plotly.newPlot` fail once.
+BREAK_NEW_PLOT = """() => {
+  const original = Plotly.newPlot;
+  Plotly.newPlot = () => {
+    Plotly.newPlot = original;
+    return Promise.reject(new Error("broken"));
+  };
+}"""
+
+
+def test_a_figure_that_cannot_be_drawn_keeps_the_legend(app_page: Page) -> None:
+    """A figure whose drawing throws plots the drawn graph again with its legend's inactive levels and its view."""
+    page = app_page
+    status = page.locator("#status")
+    start(page)
+    draw(page, "color", "color")
+    items = page.locator("#legend .legend-item")
+    items.first.click()
+    expect(items.first).to_have_class(re.compile(r"\binactive\b"))
+    page.evaluate("Plotly.relayout('plot', {'xaxis.range': [100, 300]})")
+    expect(status).to_contain_text("表示範囲")
+    page.wait_for_function(SETTLED)
+    shown = page.evaluate(X_RANGE)
+    before = placed_names(page)
+    page.evaluate(BREAK_NEW_PLOT)
+    with page.expect_response("**/api/view") as view:
+        drop(page, "facet", "color")
+    assert view.value.ok
+    expect(status).to_contain_text("図を描けなかった（broken）")
+    assert placed_names(page) == before
+    expect(page.locator("#legend .legend-title")).to_have_text("color")
+    expect(items.first).to_have_class(re.compile(r"\binactive\b"))
+    expect(items.nth(1)).not_to_have_class(re.compile(r"\binactive\b"))
+    assert page.evaluate(X_RANGE) == pytest.approx(shown)
+
+
+def test_a_zoom_while_the_images_load_waits_for_the_plot(app_page: Page) -> None:
+    """A zoom while a plot's images load asks for no view: the plot is drawn and committed, legend and all."""
+    page = app_page
+    errors = watch_errors(page)
+    status = page.locator("#status")
+    start(page)
+    held: list[Route] = []
+    views: list[str] = []
+    page.on("request", lambda r: views.append(r.url) if r.url.endswith("/api/view") else None)
+
+    def images(route: Route) -> None:
+        if held:
+            route.continue_()
+        else:
+            held.append(route)
+
+    page.route("**/api/images/*", images)
+    drop(page, "color", "color")
+    for _ in range(100):
+        if held:
+            break
+        page.wait_for_timeout(100)
+    assert held
+    page.evaluate("Plotly.relayout('plot', {'xaxis.range': [100, 300]})")
+    settle(page)
+    assert views == []
+    held[0].continue_()
+    expect(page.locator("#legend .legend-title")).to_have_text("color")
+    page.wait_for_function(SETTLED)
+    expect(zone(page, "color").locator(".chip-name")).to_have_text(["color"])
+    # Committed: a failure now comes back to it.
+    page.unroute("**/api/images/*")
+    failing(page)
+    drop(page, "facet", "col")
+    expect(status).to_have_text("エラー: 集約に失敗した 1")
+    assert placed_names(page)["color"] == ["color"]
+    expect(page.locator("#legend .legend-title")).to_have_text("color")
+    assert errors == []
