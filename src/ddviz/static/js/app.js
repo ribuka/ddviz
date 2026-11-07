@@ -1,6 +1,6 @@
 // The page: drop columns on the graph builder's zones, plot, zoom and pan,
 // resize, hover, select rows with a box, and filter rows.
-import { axisAt, decorate, decorationUpdate, emptySettings, openAxisDialog, yMarginAt } from "./axisdialog.js";
+import { axisAt, decorate, decorationUpdate, emptySettings, isEmpty, openAxisDialog, yMarginAt } from "./axisdialog.js";
 import { AxisDirections, ascending, oriented } from "./axisdirection.js";
 import { bandTickUpdate, withBandTicks } from "./bandticks.js";
 import { openAxisMenu } from "./axismenu.js";
@@ -253,9 +253,9 @@ gd.addEventListener("mousedown", () => {
 });
 
 // The settings of the numeric axis columns (`axisdialog.js`), by column
-// name: their ticks and reference lines, kept for every graph that draws
-// the column on a numeric axis. The range set in the dialog is a view, as
-// a zoom's: going back to the overview drops it.
+// name: their ticks, the format of their labels and reference lines, kept
+// for every graph that draws the column on a numeric axis. The range set
+// in the dialog is a view, as a zoom's: going back to the overview drops it.
 const axisSettings = new Map();
 const settingsOf = (column) => axisSettings.get(column);
 // A double click on the tick labels of a numeric axis opens its dialog
@@ -420,7 +420,7 @@ function openAxis({ axis, index }) {
 // again, as after a zoom. The drawn result may have changed since the
 // dialog opened: the range goes to the column's axis, if still numeric.
 async function applyAxis(axis, column, settings, picked) {
-  if (settings.dtick === null && !settings.lines.length) axisSettings.delete(column);
+  if (isEmpty(settings)) axisSettings.delete(column);
   else axisSettings.set(column, settings);
   if (!current || !gd._fullLayout) return;
   const meta = current;
