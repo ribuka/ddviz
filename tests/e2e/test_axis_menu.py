@@ -150,3 +150,25 @@ def test_a_box_dragged_on_a_log_axis_selects_by_its_values(app_page: Page) -> No
     )
     assert again == [pytest.approx(v, rel=1e-2) for v in expected]
     assert errors == []
+
+
+def test_a_warning_keeps_the_height_of_the_status_bar(app_page: Page) -> None:
+    """A warning's icon does not make the bar taller, which would shrink the plot area.
+
+    A short line stands in for the font of the CI runner (Linux), where the
+    icon made the bar taller and the overview was aggregated again
+    (`docs/spec.md`, "フッターのエラーと警告").
+    """
+    page = app_page
+    heights = page.evaluate(
+        """() => {
+          const bar = document.getElementById('statusbar');
+          bar.style.lineHeight = '12px';
+          const warning = document.getElementById('log-warning');
+          const before = bar.getBoundingClientRect().height;
+          warning.textContent = 'x が 0 以下の 1 行を描いていません';
+          warning.hidden = false;
+          return [before, bar.getBoundingClientRect().height];
+        }"""
+    )
+    assert heights[1] == heights[0]

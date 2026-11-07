@@ -1102,6 +1102,10 @@ button {
   width: 14px;
   height: 14px;
   margin-right: 5px;
+  /* The negative margins keep the icon out of the line's height: a font
+     with a short line (Linux's) made the bar taller under a warning, the
+     plot area shorter, and the overview aggregated again. */
+  margin-block: -4px;
   vertical-align: -2px;
   color: var(--text-on-color);
   font-size: 11px;
