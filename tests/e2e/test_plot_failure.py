@@ -16,7 +16,8 @@ from tests.e2e.test_scatter import PAINTED_PIXEL, SETTLED, placed_names, watch_e
 
 pytestmark = pytest.mark.e2e
 
-# Levels of the categorical month column: more than the limit of 100.
+# Levels of the categorical month column: more than Color's limit of 100
+# (`plot.max_levels`), within that of X and Y (`plot.max_axis_levels`).
 MONTHS = 420
 
 
@@ -123,7 +124,7 @@ def start(page: Page) -> None:
 
 
 def test_a_refused_level_limit_keeps_the_plot_and_can_be_tried_again(app_page: Page) -> None:
-    """Month (420 levels) on the X of period hits the real limit: the chip, the figure and the next request stay period's, and the same drop can be tried again."""
+    """Month (420 levels) on Color hits the real limit: the empty Color, the figure and the next request stay as they were, and the same drop can be tried again."""
     page = app_page
     errors = watch_errors(page)
     start(page)
@@ -134,13 +135,13 @@ def test_a_refused_level_limit_keeps_the_plot_and_can_be_tried_again(app_page: P
 
     for attempt in range(2):
         with page.expect_response("**/api/plot") as response:
-            drop(page, "month", "x")
+            drop(page, "month", "color")
         assert not response.value.ok
-        assert bodies[-1]["encoding"]["x"] == ["month"]
+        assert bodies[-1]["encoding"]["color"] == "month"
         assert len(bodies) == attempt + 1
         expect(status).to_contain_text("上限")
         expect(status).to_have_class("notice-error")
-        expect(zone(page, "x").locator(".chip-name")).to_have_text(["period"])
+        expect(zone(page, "color").locator(".chip-name")).to_have_count(0)
         assert placed_names(page) == before
         assert page.evaluate(LAYOUT) == layout
     # The same error again replaces its toast.
@@ -149,6 +150,7 @@ def test_a_refused_level_limit_keeps_the_plot_and_can_be_tried_again(app_page: P
     with page.expect_response("**/api/plot") as response:
         drop(page, "color", "color")
     assert response.value.ok
+    assert bodies[-1]["encoding"]["color"] == "color"
     assert bodies[-1]["encoding"]["x"] == ["period"]
     page.wait_for_function(SETTLED)
     expect(status).not_to_have_class("notice-error")
