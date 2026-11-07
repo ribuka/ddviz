@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -14,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from ddviz.server.app import create_app
 from ddviz.server.auth import COOKIE
+from ddviz.server.broker import TaskBroker
 from ddviz.server.settings import (
     ColumnsSettings,
     HoverSettings,
@@ -24,6 +27,7 @@ from ddviz.server.settings import (
 from ddviz.shared.missing import MISSING, MISSING_COLOR
 from ddviz.shared.scatter import POINT_SIZE
 from ddviz.shared.shapes import SHAPES, kernel
+from ddviz.shared.tasks import PlotTask
 
 ENCODING = {"x": ["x"], "y": ["y"], "color": "color", "col": "facet"}
 SIZE = {"width": 400, "height": 300}
@@ -918,3 +922,72 @@ def test_plot_refuses_bad_axis_scales(client: TestClient, scales: object) -> Non
         json={"encoding": ENCODING, **SIZE, **HIDE_NULLS, "axis_scales": scales},
     )
     assert response.status_code == 400, response.text
+
+
+def test_a_failed_plot_keeps_the_drawn_results_and_selection(client: TestClient) -> None:
+    """A refused plot, or one whose task fails, leaves the overview, the view and the selection drawn."""
+    meta = _plot(client)["meta"]
+    body = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
+    view = client.post("/api/view", json=body).json()["meta"]
+    box = {"task": view["task"], "panel": 0, "x_range": [-1, 1], "y_range": [-1, 1]}
+    selected = client.post("/api/selection", json=box).json()
+
+    # Too many levels: the worker refuses the label column (one per row).
+    many = {**ENCODING, "x": ["label"]}
+    refused = client.post("/api/plot", json={"encoding": many, **SIZE, **HIDE_NULLS})
+    assert refused.status_code >= 400
+    assert "上限" in refused.json()["detail"]
+    # Refused before any task: a bad number of wrapped panels.
+    bad = client.post(
+        "/api/plot", json={"encoding": ENCODING, **SIZE, **HIDE_NULLS, "wrap_cols": 0}
+    )
+    assert bad.status_code == 400
+
+    again = client.post("/api/view", json=body).json()["meta"]
+    assert again["task"] == view["task"]
+    assert again["task_seconds"] == 0.0
+    overview = client.post("/api/overview", json=SIZE).json()["meta"]
+    assert overview["task"] == meta["task"]
+    assert client.get(f"/api/images/{meta['task']}").status_code == 200
+    # The server still holds the selection: asked again by the task alone.
+    held = client.post("/api/selection", json={"task": view["task"]}).json()
+    assert held["rows"] == selected["rows"]
+    assert client.get("/api/table").json()["rows"] == selected["rows"]
+
+
+def test_a_superseded_plot_does_not_replace_the_results(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plot that a newer plot request superseded answers 409 and leaves the results, though the newer one failed."""
+    meta = _plot(client)["meta"]
+    entered = threading.Event()
+    release = threading.Event()
+    run = TaskBroker.run
+
+    async def held_run(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        """Hold the first plot task until the newer request has been answered."""
+        if isinstance(task, PlotTask) and not entered.is_set():
+            entered.set()
+            await asyncio.to_thread(release.wait, 30)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", held_run)
+    answers: list[int] = []
+    other = {**ENCODING, "col": None}
+
+    def first() -> None:
+        response = client.post("/api/plot", json={"encoding": other, **SIZE, **HIDE_NULLS})
+        answers.append(response.status_code)
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    assert entered.wait(30)
+    bad = client.post(
+        "/api/plot", json={"encoding": ENCODING, **SIZE, **HIDE_NULLS, "wrap_cols": 0}
+    )
+    assert bad.status_code == 400
+    release.set()
+    thread.join(60)
+    assert answers == [409]
+    overview = client.post("/api/overview", json=SIZE).json()["meta"]
+    assert overview["task"] == meta["task"]

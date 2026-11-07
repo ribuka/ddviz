@@ -7,7 +7,7 @@ import json
 import pytest
 from playwright.sync_api import Page, Route, expect
 
-from tests.e2e.test_scatter import SETTLED, place
+from tests.e2e.test_scatter import place
 
 pytestmark = pytest.mark.e2e
 
@@ -21,16 +21,28 @@ def fail(route: Route) -> None:
     )
 
 
+def drop(page: Page, column: str, role: str) -> None:
+    """Drag a column onto a role's zone, without waiting for the chip: a failed plot takes it back."""
+    source = page.locator("#columns .column").filter(
+        has=page.get_by_text(column, exact=True)
+    )
+    source.drag_to(page.locator(f'.zone[data-role="{role}"]'))
+
+
 def test_an_error_shows_its_icon_and_a_toast(app_page: Page) -> None:
-    """A failed plot marks the status as an error and opens a toast; the next plot clears the mark."""
+    """A failed plot marks the status as an error and opens a toast, and takes its drop back; the next plot clears the mark."""
     page = app_page
     page.route("**/api/plot", fail)
     place(page, "x", "x", plots=False)
-    place(page, "y", "y", plots=False)
+    drop(page, "y", "y")
 
     status = page.locator("#status")
     expect(status).to_have_text("エラー: 集約に失敗した")
     expect(status).to_have_class("notice-error")
+    # The first plot failed: back to the graph before the drop, without a figure.
+    expect(page.locator('.zone[data-role="y"] .chip')).to_have_count(0)
+    expect(page.locator('.zone[data-role="x"] .chip-name')).to_have_text("x")
+    expect(page.locator("#empty")).to_be_visible()
     icon = status.evaluate("e => getComputedStyle(e, '::before').content")
     assert "!" in icon
 
@@ -48,8 +60,7 @@ def test_an_error_shows_its_icon_and_a_toast(app_page: Page) -> None:
     expect(toast).to_have_count(0)
 
     page.unroute("**/api/plot")
-    place(page, "color", "color", plots=False)
-    page.wait_for_function(SETTLED)
+    place(page, "y", "y")
     expect(status).not_to_have_class("notice-error")
     expect(page.locator("#toasts .toast")).to_have_count(0)
 
@@ -58,7 +69,7 @@ def show_error(page: Page) -> None:
     """Fail a plot so that an error toast opens."""
     page.route("**/api/plot", fail)
     place(page, "x", "x", plots=False)
-    place(page, "y", "y", plots=False)
+    drop(page, "y", "y")
     expect(page.locator("#toasts .toast")).to_have_count(1)
 
 

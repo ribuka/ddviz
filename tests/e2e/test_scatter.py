@@ -277,13 +277,26 @@ def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
     place(page, "facet", "overlay")
     wait_top_row(page, 2)
 
-    # Another wrap column closes the form and goes back to automatic.
+    # A wrap column whose plot fails (too many levels) closes the form and
+    # keeps the column and the number (Issue #101).
     wrap.locator(".chip-name").click(button="right")
     expect(form).to_be_visible()
-    place(page, "label", "wrap", plots=False)
+    page.locator("#columns .column").filter(
+        has=page.get_by_text("label", exact=True)
+    ).drag_to(wrap)
     expect(form).to_have_count(0)
-    place(page, "color", "wrap")
-    wait_top_row(page, auto)
+    expect(page.locator("#status")).to_have_class("notice-error")
+    expect(wrap.locator(".chip-name")).to_have_text("color")
+    # The error's toast lies over Wrap.
+    toasts = page.locator("#toasts .toast")
+    toasts.get_by_role("button", name="閉じる").click()
+    expect(toasts).to_have_count(0)
+    wrap.locator(".chip-name").click(button="right")
+    expect(field).to_have_value("2")
+    page.keyboard.press("Escape")
+    wait_top_row(page, 2)
+    # Another wrap column goes back to automatic.
+    place(page, "facet", "wrap")
     wrap.locator(".chip-name").click(button="right")
     expect(automatic).to_be_checked()
 

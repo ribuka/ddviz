@@ -54,8 +54,9 @@ class Results:
     def __init__(self) -> None:
         self.overview: HoverIndex | None = None
         self.view: HoverIndex | None = None
-        # Bumped by every new plot, so that a view or a resized overview of
-        # an older plot is dropped.
+        # Bumped by every new plot's result, so that a view, a resized
+        # overview or a selection of an older plot is dropped. A plot that
+        # fails leaves it: the views of the drawn plot stay valid.
         self.plot_id = 0
         self.selection: Selection | None = None
         self.layer: Layer | None = None
@@ -78,6 +79,7 @@ class Results:
 
     def set_plot(self, index: HoverIndex) -> None:
         """Make a new plot's result the overview, dropping the old results and the selection."""
+        self.plot_id += 1
         # Open the new result before closing the old ones, whose files are
         # memory-mapped and cannot be removed while open on Windows.
         old = (self.overview, self.view)

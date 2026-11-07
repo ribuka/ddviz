@@ -99,6 +99,18 @@ export class ElementBar {
     return changed;
   }
 
+  // Returns the chosen and the blocked elements, to go back to with `restore`.
+  state() {
+    return { chosen: [...this.chosen], blocked: [...this.blocked] };
+  }
+
+  // Goes back to a `state`, without telling `onChange`.
+  restore({ chosen, blocked }) {
+    this.chosen = new Set(chosen);
+    this.blocked = new Set(blocked);
+    this.render();
+  }
+
   // Whether the points' icon opens the menu of the markers' size: while a
   // scatter plot (a graph with the points element) is drawn.
   pointsMenu() {

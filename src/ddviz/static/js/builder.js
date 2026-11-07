@@ -22,6 +22,10 @@
 //   Wrap has a column.
 // While dragging, a tip says what a drop would do, a line marks where a
 // column would go in, and an outline marks the chip it would replace.
+// An edit is a candidate until the page commits it (its graph is drawn, or
+// needs no figure): a failed plot rolls the zones back to the last committed
+// state, with the state the page derives from them (`related`), and without
+// calling `onChange` again.
 
 // Roles that hold a list of columns (the n-th axes after the first).
 const AXES = ["x", "y"];
@@ -72,10 +76,13 @@ export function locate(count, start, end, at) {
 
 export class Builder {
   // `root` holds the zones (`[data-role]`); `columnList` takes chips dropped
-  // to remove them; `onChange` gets the graph after each edit.
-  constructor(root, columnList, onChange) {
+  // to remove them; `onChange` gets the graph after each edit. `related`
+  // (`{save, load}`) saves and loads the page's state derived from the
+  // graph, which a snapshot keeps beside it.
+  constructor(root, columnList, onChange, related = null) {
     this.zones = [...root.querySelectorAll(".zone[data-role]")];
     this.onChange = onChange;
+    this.related = related;
     this.encoding = { x: [], y: [], color: null, overlay: null, row: null, col: null, wrap: null, elements: ["points"] };
     // Whether each placed column is numeric, for the filter pane a chip is dragged to.
     this.numeric = new Map();
@@ -102,6 +109,47 @@ export class Builder {
       });
     }
     document.addEventListener("dragend", () => this.endDrag());
+    // Counts the edits, so that a snapshot tells whether an edit came after it.
+    this.edits = 0;
+    this.render();
+    this.committed = this.snapshot();
+  }
+
+  // Returns the graph, the kinds of its columns and the related state as
+  // they are now.
+  snapshot() {
+    return {
+      encoding: structuredClone(this.encoding),
+      numeric: new Map(this.numeric),
+      temporal: new Map(this.temporal),
+      related: this.related?.save() ?? null,
+      edits: this.edits,
+    };
+  }
+
+  // Makes `state` (a snapshot; by default the state now) the one a rollback
+  // goes back to.
+  commit(state = this.snapshot()) {
+    this.committed = state;
+  }
+
+  // Whether an edit came after the committed state: it is still a candidate.
+  uncommitted() {
+    return this.edits !== this.committed.edits;
+  }
+
+  // Goes back to the committed state, the related state too, without
+  // telling `onChange`: nothing is plotted again.
+  rollback() {
+    const { encoding, numeric, temporal, related } = this.committed;
+    this.encoding = structuredClone(encoding);
+    this.numeric = new Map(numeric);
+    this.temporal = new Map(temporal);
+    if (related !== null) this.related?.load(related);
+    // The committed state again, under a new count: an older snapshot of
+    // the same count is not taken for it.
+    this.edits += 1;
+    this.committed = { ...this.committed, edits: this.edits };
     this.render();
   }
 
@@ -301,6 +349,7 @@ export class Builder {
   }
 
   changed() {
+    this.edits += 1;
     this.render();
     this.onChange(structuredClone(this.encoding));
   }
