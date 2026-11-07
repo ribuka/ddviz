@@ -83,6 +83,10 @@ def plot_router(
         The routes.
     """
     router = APIRouter()
+    # Number of the latest plot request: a plot that a newer one superseded
+    # does not replace the results, so that a newer plot that fails leaves
+    # those the page draws.
+    latest = 0
 
     async def run_plot(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
         """Run a plot task beside the open results; return its result, or None when a newer task killed it."""
@@ -156,6 +160,9 @@ def plot_router(
 
     @router.post("/api/plot")
     async def plot(request: PlotRequest) -> JSONResponse:
+        nonlocal latest
+        latest += 1
+        mine = latest
         try:
             encoding = Encoding.from_dict(request.encoding)
         except ValueError as error:
@@ -208,8 +215,10 @@ def plot_router(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        results.plot_id += 1
         index, timing = await run_plot(spec)
+        if index is not None and mine != latest:
+            drop(index)
+            index = None
         if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
         results.set_plot(index)

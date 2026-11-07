@@ -50,3 +50,16 @@ def test_a_held_result_not_replaced_stays(tmp_path: Path) -> None:
     assert index.out.exists()
     results.set_overview(_Index(tmp_path / "2"))
     assert not index.out.exists()
+
+
+def test_only_a_new_plot_result_moves_the_plot_id(tmp_path: Path) -> None:
+    """A new plot's result drops the views and selections of the older plot; a resized overview or a view does not."""
+    results = Results()
+    assert results.plot_id == 0
+    results.set_plot(_Index(tmp_path / "1"))
+    assert results.plot_id == 1
+    results.set_view(_Index(tmp_path / "2"))
+    results.set_overview(_Index(tmp_path / "3"))
+    assert results.plot_id == 1
+    results.set_plot(_Index(tmp_path / "4"))
+    assert results.plot_id == 2

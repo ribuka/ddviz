@@ -10,6 +10,7 @@ import polars as pl
 import pytest
 from playwright.sync_api import Locator, Page, Route, expect
 
+from tests.e2e.test_notice import drop
 from tests.e2e.test_scatter import SETTLED, place
 
 pytestmark = pytest.mark.e2e
@@ -135,7 +136,7 @@ def test_a_long_error_keeps_the_status_bar_on_one_line(app_page: Page) -> None:
     height = bar.bounding_box()["height"]
     page.route("**/api/plot", fail)
     place(page, "x", "x", plots=False)
-    place(page, "y", "y", plots=False)
+    drop(page, "y", "y")
     status = page.locator("#status")
     expect(status).to_have_class("notice-error")
     expect(status).to_have_attribute("title", f"エラー: 読めない: {path}")

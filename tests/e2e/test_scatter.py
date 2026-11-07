@@ -277,13 +277,26 @@ def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
     place(page, "facet", "overlay")
     wait_top_row(page, 2)
 
-    # Another wrap column closes the form and goes back to automatic.
+    # A wrap column whose plot fails (too many levels) closes the form and
+    # keeps the column and the number (Issue #101).
     wrap.locator(".chip-name").click(button="right")
     expect(form).to_be_visible()
-    place(page, "label", "wrap", plots=False)
+    page.locator("#columns .column").filter(
+        has=page.get_by_text("label", exact=True)
+    ).drag_to(wrap)
     expect(form).to_have_count(0)
-    place(page, "color", "wrap")
-    wait_top_row(page, auto)
+    expect(page.locator("#status")).to_have_class("notice-error")
+    expect(wrap.locator(".chip-name")).to_have_text("color")
+    # The error's toast lies over Wrap.
+    toasts = page.locator("#toasts .toast")
+    toasts.get_by_role("button", name="閉じる").click()
+    expect(toasts).to_have_count(0)
+    wrap.locator(".chip-name").click(button="right")
+    expect(field).to_have_value("2")
+    page.keyboard.press("Escape")
+    wait_top_row(page, 2)
+    # Another wrap column goes back to automatic.
+    place(page, "facet", "wrap")
     wrap.locator(".chip-name").click(button="right")
     expect(automatic).to_be_checked()
 
@@ -772,15 +785,21 @@ HOLD_IMAGES = """() => {
 
 
 def test_a_color_picked_while_the_images_decode_draws_them(app_page: Page) -> None:
-    """A color picked before the first images are decoded draws them in that color."""
+    """A color picked before the images of a view are decoded draws them in that color.
+
+    A plot's figure and legend change only once its images are decoded
+    (Issue #101), so the images decoding under the legend are a view's.
+    """
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
     place(page, "x", "x", plots=False)
     place(page, "y", "y")
+    place(page, "color", "color")
     page.wait_for_function(PAINTED_PIXEL)
     page.evaluate(HOLD_IMAGES)
-    place(page, "color", "color")
+    with page.expect_response("**/api/view"):
+        page.evaluate("Plotly.relayout('plot', {'xaxis.range': [-0.5, 0.5]})")
     legend = page.locator("#legend")
     legend.locator(".legend-marker").first.click(button="right")
     page.locator(".shape-menu").get_by_text("色", exact=True).hover()

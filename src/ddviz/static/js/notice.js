@@ -23,10 +23,22 @@ export class StatusLine {
   constructor(element, toasts) {
     this.element = element;
     this.toasts = toasts;
+    this.held = false;
+  }
+
+  // Keeps the error shown: plain messages are dropped until `release`. A
+  // failed plot holds its error while the page restores the drawn state.
+  hold() {
+    this.held = true;
+  }
+
+  release() {
+    this.held = false;
   }
 
   // Shows a plain message (progress, rows), dropping an earlier error's look.
   show(text) {
+    if (this.held) return;
     this.element.classList.remove("notice-error");
     this.element.textContent = text;
     // The bar shows one line; a long message ends in "…" (app.css).

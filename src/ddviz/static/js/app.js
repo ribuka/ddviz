@@ -338,7 +338,7 @@ async function setAxisLog(meta, axis, column, log) {
     });
   }
   axisScales.set(axis, column, log);
-  const drawn = await plot(plottedEncoding, { keepSelection: true });
+  const drawn = await plot(plottedEncoding);
   if (drawn === "refused") axisScales.set(axis, column, !log);
   if (!drawn || drawn === "refused") return;
   // The other axes back at their ranges: a view, as after a zoom.
@@ -517,17 +517,34 @@ function sameSize(a, b) {
 
 const CONVERT_RETRY_MS = 300;
 
+// Whether the server may hold a result that the page did not draw: a plot
+// whose answer was lost, or that failed after the server replaced its
+// results (its images did not come, or it could not be drawn). A failure
+// then plots the committed graph again, back at the drawn view and
+// selection, so that the server's results are those drawn.
+let serverAhead = false;
+// Whether the axes were zoomed or panned while a plot was in flight: no view
+// is asked for meanwhile, so a failed plot asks for it (`resumeShown`).
+let movedWhilePlotting = false;
+
 // Aggregates the overview of a graph (`ddviz.server.encoding.Encoding`) and draws it.
-// Returns the meta drawn, "refused" when the server refused the graph (the
-// drawn plot stays), or null when a newer request superseded it.
-async function plot(encoding, { keepSelection = false } = {}) {
-  // A change of scale keeps the selection until its result comes.
-  if (!keepSelection) clearSelection(false);
+// The graph and the state derived from it are a candidate (`Builder`) until
+// its result is drawn with its images: only then are they committed, the
+// selection dropped and the drawn figure, legend and ranges replaced. A
+// failure keeps the drawn figure, its ranges, legend and selection, and
+// rolls the zones back to the last committed graph (`plotFailed`). Returns
+// the meta drawn, "refused" on a failure, or null when a newer request
+// superseded it. `restoring` plots the committed graph again after a
+// failure, leaving the error shown; `keep` (`keptView`) is the view and the
+// selection it draws again.
+async function plot(encoding, { restoring = false, keep = null } = {}) {
+  if (!restoring) statusLine.release();
   const size = stageSize();
   plottedEncoding = encoding;
-  // Another overlay column drops the shapes picked, with or without a color
-  // column: overlay alone colors the series and sends none.
-  const shapes = pickedShapes(encoding.overlay);
+  const candidate = builder.snapshot();
+  // Another overlay column drops the shapes picked once its result is drawn,
+  // with or without a color column: overlay alone colors the series and sends none.
+  const shapes = encoding.overlay === levelShapes.column ? pickedShapes(encoding.overlay) : null;
   const body = {
     encoding,
     ...size,
@@ -541,80 +558,236 @@ async function plot(encoding, { keepSelection = false } = {}) {
     show_null_rows: { ...showNullRows },
     axis_scales: axisScales.request(encoding),
   };
+  const askedSize = requestedSize;
   requestedSize = size;
   statusLine.show("集約中…");
   const mine = ++generation;
+  // The plot is in flight until it is drawn or has failed, its images
+  // included: meanwhile no view, size or selection is asked for, which would
+  // supersede it or kill its task.
   plotting = mine;
+  const settled = () => {
+    if (plotting === mine) plotting = 0;
+  };
   const started = performance.now();
-  let response;
-  for (;;) {
-    response = await fetch("/api/plot", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    // An edit dropped while an earlier plot converts its columns is refused
-    // (it would kill the conversion); it waits for the conversion's end.
-    if (response.status !== 409 || mine !== generation) break;
-    if ((await response.clone().json()).detail !== "converting") break;
-    await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
+  let response = null;
+  let text;
+  try {
+    for (;;) {
+      response = await fetch("/api/plot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      // An edit dropped while an earlier plot converts its columns is refused
+      // (it would kill the conversion); it waits for the conversion's end.
+      if (response.status !== 409 || mine !== generation) break;
+      if ((await response.clone().json()).detail !== "converting") break;
+      await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
+    }
+    text = await response.text();
+  } catch (error) {
+    console.error(error);
+    settled();
+    if (mine !== generation) return null;
+    // The answer was lost: the server may have taken the plot.
+    serverAhead = true;
+    return plotFailed(`描画の要求に失敗した（${error.message}）`, askedSize, restoring);
   }
-  if (plotting === mine) plotting = 0;
-  if (response.status === 409 || mine !== generation) return null; // superseded by a newer request
-  const text = await response.text();
+  // Superseded by a newer request. The server drops a plot that a newer plot
+  // superseded while it ran (409), but not one it finished before.
+  if (mine !== generation) {
+    if (response.ok) supersededDone(text);
+    return null;
+  }
   if (!response.ok) {
-    converting.hidden = true;
-    statusLine.error(errorText(text));
-    return "refused";
+    settled();
+    // A cancel that no newer request of this page made is a failure too.
+    return plotFailed(response.status === 409 ? "描画が中断された" : errorText(text), askedSize, restoring);
   }
   converting.hidden = true;
-  if (keepSelection) clearSelection(false);
+  // The server's results are this plot's until it is drawn.
+  serverAhead = true;
+  let figure;
+  let meta;
+  try {
+    ({ figure, meta } = JSON.parse(text));
+  } catch (error) {
+    console.error(error);
+    settled();
+    return plotFailed(`描画の応答を読めなかった（${error.message}）`, askedSize, restoring);
+  }
   timings.fetch = Math.round(performance.now() - started);
   timings.size = Math.round(text.length / 1024);
-  const { figure, meta } = JSON.parse(text);
-  // The colors picked for the levels stay while the color column does.
-  keepPicked(meta.color.column);
-  // The images decode while plotly draws the axes.
-  const images = fetchImages(meta);
   timings.task = Number(meta.task_seconds.toFixed(2));
   timings.convert = Number(meta.convert_seconds.toFixed(2));
-  setOverview({ figure: structuredClone(figure), meta, size, bitmaps: null });
-  requested = { x: [], y: [] };
-  legend.set(meta);
-  setCurrent(meta);
-  shownSize = size;
-  const drawStarted = performance.now();
-  setPending(false);
-  empty.hidden = true;
-  showImages(meta, null);
-  Plotly.purge(gd);
-  const layout = orientedLayout(decorate(figure.layout, meta, settingsOf), meta);
-  drawnKey = figureKey(figure.data, layout);
-  await Plotly.newPlot(gd, figure.data, forPlotly(layout), PLOT_CONFIG);
-  timings.plot = Math.round(performance.now() - drawStarted);
-  layers.attach();
-  sticky.attach();
-  gd.on("plotly_relayout", onRelayout);
-  gd.on("plotly_selected", (event) => {
-    if (!ownReact) onSelected(event);
-  });
-  gd.on("plotly_deselect", () => {
-    if (!ownReact) clearSelection();
-  });
-  statusLine.show(rowsText(meta));
-  const bitmaps = await images;
-  if (overview?.meta !== meta) {
+  // The images come before the drawn figure changes: a failure keeps it.
+  const bitmaps = await fetchImages(meta);
+  if (mine !== generation) {
+    // A newer request decides; the server holds this result (`serverAhead`).
     closeImages(bitmaps);
     return null;
   }
-  overview.bitmaps = bitmaps;
-  if (current === meta) showImages(meta, bitmaps);
-  timings.plotAndImages = Math.round(performance.now() - drawStarted);
-  setInfo();
+  if (!bitmaps) {
+    settled();
+    return plotFailed("図の画像を読み込めなかった", askedSize, restoring);
+  }
+  const kept = keptView();
+  const drawStarted = performance.now();
+  try {
+    // The selection and the shapes of another overlay column go with the drawn plot.
+    clearSelection(false);
+    movedWhilePlotting = false;
+    setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
+    requested = { x: [], y: [] };
+    setCurrent(meta);
+    shownSize = size;
+    setPending(false);
+    empty.hidden = true;
+    showImages(meta, null);
+    // A plot drawn again after a failure has the view and the box drawn before.
+    const view = keep && sameAxes(keep, meta) ? keep : null;
+    if (view?.box) selection = { box: view.box, base: null, bitmaps: null, fresh: true };
+    const ranged = view?.zoomed ? withRanges(figure.layout, meta, view.ranges) : figure.layout;
+    const layout = orientedLayout(decorate(ranged, meta, settingsOf), meta);
+    drawnKey = figureKey(figure.data, layout);
+    Plotly.purge(gd);
+    await Plotly.newPlot(gd, figure.data, forPlotly(withSelectionBox(layout, meta)), PLOT_CONFIG);
+    timings.plot = Math.round(performance.now() - drawStarted);
+    // The legend and the colors and shapes picked change once the figure is
+    // drawn: a figure that fails keeps them for the graph drawn again.
+    legend.set(meta);
+    // The colors picked for the levels stay while the color column does.
+    keepPicked(meta.color.column);
+    // The shapes picked stay while the overlay column does.
+    pickedShapes(encoding.overlay);
+    layers.attach();
+    sticky.attach();
+    gd.on("plotly_relayout", onRelayout);
+    gd.on("plotly_selected", (event) => {
+      if (!ownReact) onSelected(event);
+    });
+    gd.on("plotly_deselect", () => {
+      if (!ownReact) clearSelection();
+    });
+    showImages(meta, bitmaps);
+    if (view?.box) layers.setSelection({ box: view.box });
+    // The figure drawn is this graph's: a later failure comes back to it.
+    builder.commit(candidate);
+    serverAhead = false;
+    settled();
+    statusLine.show(rowsText(meta));
+    timings.plotAndImages = Math.round(performance.now() - drawStarted);
+    setInfo();
+    if (view?.zoomed) {
+      requestView(view.ranges);
+      return meta;
+    }
+  } catch (error) {
+    console.error(error);
+    settled();
+    if (overview?.bitmaps !== bitmaps) closeImages(bitmaps);
+    if (mine !== generation) return null;
+    return plotFailed(`図を描けなかった（${error.message}）`, askedSize, restoring, kept);
+  }
   // The area may have changed size, or the filter, while the plot was aggregated.
   if (filtersKey(meta.filters) !== filtersKey(filters)) applyFilters();
   else if (!sameSize(stageSize(), size)) onResize();
+  else followSelection();
   return meta;
+}
+
+// Returns the view and the selection drawn now, for a plot of the same
+// graph to draw again (`plot`'s `keep`): the ranges of each x and y column
+// (`shownRanges`), whether they are zoomed from the overview's, and the
+// selection's box. Null without a figure.
+function keptView() {
+  if (!overview || !gd._fullLayout) return null;
+  const ranges = shownRanges(overview.meta);
+  const { x_ranges: x, y_ranges: y } = overview.meta;
+  const zoomed = !(sameRanges(ranges.x, x) && sameRanges(ranges.y, y));
+  return { ranges, zoomed, box: selection ? structuredClone(selection.box) : null };
+}
+
+// Whether a kept view (`keptView`) has a range for each axis column of a result.
+function sameAxes(keep, meta) {
+  return keep.ranges.x.length === meta.x_axes.length && keep.ranges.y.length === meta.y_axes.length;
+}
+
+// Returns `layout` with the axis ranges of each x and y column given (`shownRanges`).
+function withRanges(layout, meta, ranges) {
+  const out = { ...layout };
+  for (const panel of meta.panels) {
+    const xKey = axisKey(panel.xaxis);
+    const yKey = axisKey(panel.yaxis);
+    out[xKey] = { ...layout[xKey], range: ranges.x[panel.x] };
+    out[yKey] = { ...layout[yKey], range: ranges.y[panel.y] };
+  }
+  return out;
+}
+
+// A superseded plot that the server finished before the newer request came
+// replaced the server's results, unless a newer plot's result replaced them
+// since (a later task): the drawn graph is plotted again, now or on the
+// failure of the plot in flight (`serverAhead`).
+function supersededDone(text) {
+  if (!overview) return;
+  let task;
+  try {
+    task = JSON.parse(text).meta.task;
+  } catch {
+    return;
+  }
+  if (task <= overview.meta.task) return;
+  if (plotting) serverAhead = true;
+  else if (plottedEncoding) plot(plottedEncoding, { restoring: true, keep: keptView() });
+}
+
+// Tells of a failed plot in the status bar and a toast, and keeps the drawn
+// state: the zones go back to the committed graph with what derives from it
+// (`Builder.rollback`), and the drawn figure, its ranges, legend and
+// selection stay, as the server's results do. When the server may hold a
+// result that is not drawn (`serverAhead`), the committed graph is plotted
+// again at the drawn view with the drawn selection (`kept`), or the figure
+// removed when none was drawn. The error stays shown until the next edit
+// (`StatusLine.hold`). Returns "refused".
+function plotFailed(message, askedSize, restoring, kept = keptView()) {
+  converting.hidden = true;
+  statusLine.error(message);
+  statusLine.hold();
+  requestedSize = askedSize;
+  if (builder.uncommitted() || serverAhead) builder.rollback();
+  if (serverAhead && !restoring) {
+    if (plottedEncoding) {
+      plot(plottedEncoding, { restoring: true, keep: kept });
+    } else {
+      clearPlot();
+      builder.commit();
+      serverAhead = false;
+    }
+  } else {
+    resumeShown();
+  }
+  return "refused";
+}
+
+// Brings the drawn figure up to date after a failed plot, which superseded
+// the requests of its views: a new size, a pending view, a zoom or a filter
+// is aggregated again; else the selection, whose task the plot may have
+// killed, is asked for again.
+function resumeShown() {
+  if (!overview) return;
+  if (!sameSize(stageSize(), requestedSize)) {
+    onResize();
+  } else if (waiting || movedWhilePlotting || filtersKey(current.filters) !== filtersKey(filters)) {
+    movedWhilePlotting = false;
+    hideHover();
+    const shown = shownRanges(overview.meta);
+    if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) showOverview();
+    else requestView(shown);
+  } else {
+    followSelection();
+  }
 }
 
 // Returns the status of a result: its rows, and whether the filter left rows out.
@@ -819,6 +992,7 @@ function onSelected(event) {
     return;
   }
   if (!current) return;
+  statusLine.release();
   const box = boxOf(current, event.range);
   if (!box) return;
   closeImages(selection?.bitmaps);
@@ -871,7 +1045,10 @@ async function followSelection() {
   if (!response.ok) {
     // Killed by a newer aggregation: asked again once its result is drawn.
     selection.base = null;
-    if (response.status !== 409) statusLine.error(errorText(await response.text()));
+    const text = await response.text();
+    if (response.status !== 409) statusLine.error(errorText(text));
+    // Killed by a plot that failed: asked again, unless another aggregation goes on.
+    else if (errorText(text) === "cancelled" && !plotting && !waiting && mine === selectionGeneration) followSelection();
     return;
   }
   const layer = await response.json();
@@ -1051,11 +1228,18 @@ function onRelayout(event) {
   if (!overview) return;
   const keys = Object.keys(event);
   if (ownRelayout && keys.every((key) => key in ownRelayout)) return;
-  if (keys.some((key) => key.endsWith("autorange"))) {
+  const autorange = keys.some((key) => key.endsWith("autorange"));
+  if (!autorange && !keys.some((key) => /^[xy]axis\d*\.range/.test(key))) return;
+  // A view asked for now would kill the plot in flight: a failed plot asks for it.
+  if (plotting) {
+    movedWhilePlotting = true;
+    return;
+  }
+  statusLine.release();
+  if (autorange) {
     showOverview();
     return;
   }
-  if (!keys.some((key) => /^[xy]axis\d*\.range/.test(key))) return;
   const shown = shownRanges(overview.meta);
   if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) {
     showOverview();
@@ -1124,6 +1308,7 @@ new FilterPane(
   document.getElementById("filters"),
   (conditions) => {
     filters = conditions;
+    statusLine.release();
     applyFilters();
   },
   (count, text) => leftPane.setFilter(count, text),
@@ -1334,8 +1519,27 @@ const builder = new Builder(
       closeWrapMenu();
     }
     drawnRolesKey = key;
-    if (drawable(encoding)) plot(encoding);
-    else clearPlot();
+    if (drawable(encoding)) {
+      plot(encoding);
+    } else {
+      // A graph without a figure is committed at once: no plot can fail.
+      statusLine.release();
+      clearPlot();
+      serverAhead = false;
+      builder.commit();
+    }
+  },
+  {
+    // The state derived from the graph, which a failed plot rolls back with
+    // it. The wrap's number to a row with none set is the drawn result's.
+    save: () => ({ drawnRolesKey, colorBins, wrapCols, plottedEncoding, elements: elementBar?.state() ?? null }),
+    load: (state) => {
+      ({ drawnRolesKey, colorBins, wrapCols, plottedEncoding } = state);
+      if (state.elements) elementBar.restore(state.elements);
+      wrapAuto = current?.wrap_auto_cols ?? null;
+      setWrapAuto(wrapAuto);
+      closeWrapMenu();
+    },
   },
 );
 // A right click on the Wrap zone while it holds a column opens the form of
@@ -1368,5 +1572,7 @@ elementBar = new ElementBar(
   },
 );
 elementBar.setSmoothText(smoothingText(smoothing));
+// The empty graph with its element icons is the first committed state.
+builder.commit();
 await attachColumnList(document.getElementById("columns"));
 showCasts(document.getElementById("casts"));
