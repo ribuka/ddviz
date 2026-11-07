@@ -157,6 +157,7 @@ def plot_router(
                 {f.column: source.parts(f.column) for f in filters},
                 manifest.x_ranges if x_ranges is None else x_ranges,
                 manifest.y_ranges if y_ranges is None else y_ranges,
+                margin_left=request.margin_left,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -216,6 +217,7 @@ def plot_router(
                 level_shapes,
                 request.show_null_rows.model_dump(),
                 request.axis_scales,
+                request.margin_left,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error

@@ -11,6 +11,7 @@
 // The ticks are made again for each range shown (`bandTickUpdate`): zoomed
 // in to bands that each hold their label, every level shown is named.
 
+import { MARGIN_LEFT } from "./leftmargin.js";
 import { levelText } from "./names.js";
 
 // plotly's font of the tick labels.
@@ -21,6 +22,10 @@ const WIDTH_MARGIN = 1.1;
 // Gap in pixels between the labels of an x axis, and from a y axis's labels
 // to the edge of the figure (as `ddviz.server.figure.TICK_PAD`).
 const TICK_PAD = 6;
+// Room in pixels of a y axis's labels: the left margin of a figure's
+// labels at its smallest (`leftmargin.js`), which the labels of a
+// categorical axis do not widen (`ddviz.server.figure`).
+const Y_ROOM = MARGIN_LEFT - TICK_PAD;
 // Room in pixels a label of a y axis takes along the axis: a line of 12px text.
 const LINE_PX = 16;
 // Widest an x label is drawn when bands are narrower: a longer one ends in "…".
@@ -125,7 +130,7 @@ export function withBandTicks(layout, meta) {
     if (!axis?.range) continue;
     const [d0, d1] = axis.domain ?? [0, 1];
     const length = (across ? height : width) * (d1 - d0);
-    out[key] = { ...axis, ...bandTicks(levels, axis.range, length, across, (margin.l ?? 0) - TICK_PAD) };
+    out[key] = { ...axis, ...bandTicks(levels, axis.range, length, across, Y_ROOM) };
   }
   return out;
 }
@@ -140,7 +145,7 @@ export function bandTickUpdate(gd, meta) {
   for (const [key, levels, across] of bandAxes(meta)) {
     const axis = full[key];
     if (!axis?.range) continue;
-    const ticks = bandTicks(levels, axis.range, axis._length, across, full.margin.l - TICK_PAD);
+    const ticks = bandTicks(levels, axis.range, axis._length, across, Y_ROOM);
     const drawn = gd.layout[key] ?? {};
     if (!sameList(drawn.tickvals, ticks.tickvals) || !sameList(drawn.ticktext, ticks.ticktext)) {
       update[`${key}.tickvals`] = ticks.tickvals;

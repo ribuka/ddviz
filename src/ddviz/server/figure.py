@@ -43,6 +43,11 @@ TICK_PAD = 6
 # Numeric ticks write an exponent as "1e+300", not plotly's "1×10³⁰⁰": the
 # left margin had room for the exponent only, without the digits before it.
 EXPONENT = {"exponentformat": "e"}
+# The tick labels of a grid that scrolls are in the page's strips
+# (``static/js/sticky.js``), from the text plotly makes for them: plotly
+# makes them, but in no color. Without labels of its own (``showticklabels``
+# off), plotly leaves the exponent out of that text ("1.05" for 1.05e+5).
+HIDDEN_LABELS = {"tickfont": {"color": "rgba(0,0,0,0)"}}
 # Size in pixels of the shapes drawn in the panel that picks a level's
 # shape (`_overlay`).
 CHOICE_SIZE = 9
@@ -75,7 +80,7 @@ def _facet_labels(
     the column's name is on the chip of its drop zone.
     """
     labels = []
-    width = layout.width - MARGIN_LEFT - MARGIN_RIGHT
+    width = layout.width - layout.margin_left - MARGIN_RIGHT
     height = layout.height - MARGIN_TOP - MARGIN_BOTTOM
     if spec.wrap:
         for panel, level in enumerate(levels["col"]):
@@ -138,7 +143,8 @@ def _band_ticks(manifest: PlotManifest, column: str, room: float | None) -> dict
     from the levels of the meta (``axis_levels``); the figure has none. The
     one band has a tick under each series' box: a name longer than its
     room (``room`` pixels: its band's width on an x axis; None on a y axis,
-    whose ticks have the left margin) ends in "…".
+    whose ticks have the left margin of `MARGIN_LEFT` whatever the figure's,
+    which grows for the labels of the other y axes alone) ends in "…".
     """
     levels = manifest.axis_levels.get(column)
     if levels is None:
@@ -344,6 +350,8 @@ def build_figure(manifest: PlotManifest) -> dict:
         ``[role, column]`` each), the bin grid, the data range of each column, where each
         series' PNG lies in the images file (`ddviz.shared.manifest.IMAGES`; its
         panels are tiles, ``ncol`` to a row, as `ddviz.compute.raster.atlas`),
+        whether each y column is categorical (``y_categorical``), the
+        left margin (``margin_left``, `ddviz.shared.layout.left_margin`),
         the panels a wrapped grid would put to a row with no number set
         (``wrap_auto_cols``, `ddviz.shared.layout.wrap_columns`; None
         without wrapping),
@@ -370,7 +378,7 @@ def build_figure(manifest: PlotManifest) -> dict:
         "width": layout.width,
         "height": layout.height,
         "margin": {
-            "l": MARGIN_LEFT,
+            "l": layout.margin_left,
             "r": MARGIN_RIGHT,
             "t": MARGIN_TOP,
             "b": MARGIN_BOTTOM,
@@ -398,7 +406,8 @@ def build_figure(manifest: PlotManifest) -> dict:
             "domain": layout.x_domain(pcol),
             "anchor": y_axis,
             "range": list(x_ranges[xi]),
-            "showticklabels": not layout.scroll and bottom,
+            "showticklabels": bottom,
+            **(HIDDEN_LABELS if layout.scroll else {}),
             "zeroline": False,
             **EXPONENT,
             **_band_ticks(manifest, spec.x[xi], layout.panel_width),
@@ -411,7 +420,12 @@ def build_figure(manifest: PlotManifest) -> dict:
             "domain": layout.y_domain(prow),
             "anchor": x_axis,
             "range": list(y_ranges[yj]),
-            "showticklabels": not layout.scroll and pcol == 0,
+            "showticklabels": pcol == 0,
+            **(HIDDEN_LABELS if layout.scroll else {}),
+            # plotly hides a label that would cross the figure's left edge;
+            # the page measures every label to size the left margin
+            # (``static/js/leftmargin.js``), so they all show.
+            "ticklabeloverflow": "allow",
             "zeroline": False,
             **EXPONENT,
             **_band_ticks(manifest, spec.y[yj], None),
@@ -480,6 +494,12 @@ def build_figure(manifest: PlotManifest) -> dict:
         "y_loggable": [_loggable_axis(manifest, c) for c in spec.y],
         "x_log": [c in spec.log_x for c in spec.x],
         "y_log": [c in spec.log_y for c in spec.y],
+        # Whether each y column is categorical: its labels are cut to the
+        # room of `MARGIN_LEFT` (``static/js/bandticks.js``) and leave the
+        # left margin out (``static/js/leftmargin.js``).
+        "y_categorical": [c in manifest.axis_levels for c in spec.y],
+        # Left margin in pixels (`ddviz.shared.layout.left_margin`).
+        "margin_left": layout.margin_left,
         # The log axis columns with rows left out for a value not positive.
         "nonpositive": manifest.nonpositive,
         "grid": asdict(manifest.grid),
@@ -499,7 +519,9 @@ def build_figure(manifest: PlotManifest) -> dict:
         # levels and the size requested), whatever number the user set; None
         # without a wrap column.
         "wrap_auto_cols": (
-            wrap_columns(axes.wrap, spec.width, spec.height) if axes.wrap else None
+            wrap_columns(axes.wrap, spec.width, spec.height, spec.margin_left)
+            if axes.wrap
+            else None
         ),
         "rows": manifest.rows,
         "scroll": layout.scroll,

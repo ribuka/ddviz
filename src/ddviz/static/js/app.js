@@ -14,6 +14,7 @@ import { ElementBar } from "./elements.js";
 import { FilterPane } from "./filters.js";
 import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
+import { fitMargin, MARGIN_LEFT, neededMargin } from "./leftmargin.js";
 import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { levelText } from "./names.js";
@@ -131,9 +132,13 @@ const noRows = document.getElementById("no-rows");
 // Decoded images on the canvas; freed when replaced, unless the overview's.
 let shownImages = null;
 // Size of the plot area that the latest request was made for, and that the
-// drawn result was aggregated for.
+// drawn result was aggregated for, with the left margin (`stageSize`).
 let requestedSize = null;
 let shownSize = null;
+// Left margin the y tick labels of the drawn figure need (`leftmargin.js`),
+// as measured when a plot, a view or the axis settings were last settled;
+// a request asks for it, within the area's width (`stageSize`).
+let leftMargin = MARGIN_LEFT;
 // Conditions of the local filter (`ddviz.server.plan.parse_filters`) that every
 // request carries; a result's meta has those it was aggregated with.
 let filters = [];
@@ -285,7 +290,8 @@ const axisDirections = new AxisDirections();
 
 // Reverses the axes of a column, or puts them back, on the result drawn: only
 // their direction changes, at the shown range. Nothing is aggregated or
-// asked of the server, and the selection stays.
+// asked of the server, and the selection stays, unless the labels need
+// another left margin (`followMargin`).
 async function setAxisReversed(axis, column, reversed) {
   axisDirections.set(axis, column, reversed);
   if (!current || !gd._fullLayout) return;
@@ -307,6 +313,7 @@ async function setAxisReversed(axis, column, reversed) {
   } finally {
     ownRelayout = null;
   }
+  if (meta === current) followMargin(false);
 }
 
 // Whether two ranges run the same way.
@@ -386,10 +393,15 @@ async function applyAxis(axis, column, settings, picked) {
   } finally {
     ownRelayout = null;
   }
+  if (meta !== current) return;
   const index = meta[`${axis}_columns`].indexOf(column);
-  if (meta !== current || index < 0 || !meta[`${axis}_numeric`][index]) return;
-  const key = axisKey(meta[`${axis}_axes`][index]);
-  if (sameRange(ascending(linearRange(gd._fullLayout[key])), picked)) return;
+  const key = index < 0 || !meta[`${axis}_numeric`][index] ? null : axisKey(meta[`${axis}_axes`][index]);
+  if (!key || sameRange(ascending(linearRange(gd._fullLayout[key])), picked)) {
+    // The ticks' labels changed at the same range.
+    followMargin(false);
+    return;
+  }
+  // A new range is a view (`onRelayout`), which measures the margin.
   await Plotly.relayout(gd, { [`${key}.range`]: oriented(picked, axisDirections.isReversed(axis, column)) });
 }
 window.addEventListener("mouseup", () => {
@@ -506,14 +518,40 @@ async function fetchImages(meta) {
   }
 }
 
-// Returns the size of the plot area, which the figure is aggregated for; a
-// grid of many panels may be larger and scroll in it.
+// Returns the size of the plot area, which the figure is aggregated for, and
+// the left margin it is asked for (`leftMargin` within its width); a grid of
+// many panels may be larger and scroll in it.
 function stageSize() {
-  return { width: Math.floor(stage.clientWidth), height: Math.floor(stage.clientHeight) };
+  const width = Math.floor(stage.clientWidth);
+  return { width, height: Math.floor(stage.clientHeight), margin_left: fitMargin(leftMargin, width) };
 }
 
 function sameSize(a, b) {
-  return a !== null && b !== null && a.width === b.width && a.height === b.height;
+  return (
+    a !== null && b !== null && a.width === b.width && a.height === b.height && a.margin_left === b.margin_left
+  );
+}
+
+// Measures the left margin the y tick labels of the figure drawn need
+// (`leftmargin.js`) and keeps it as `leftMargin`. A plot, a view or axis
+// settings once settled take it as measured: it grows or shrinks. Within an
+// operation, the result drawn for the margin asked for may need more (its
+// panels and their ticks changed): `grow` keeps only a larger margin, and
+// a smaller one waits for the next operation. Returns whether it changed.
+function measureMargin(grow) {
+  const needed = neededMargin(gd, current, sticky);
+  if (needed === null) return false;
+  const next = grow ? Math.max(needed, leftMargin) : needed;
+  if (next === leftMargin) return false;
+  leftMargin = next;
+  return true;
+}
+
+// Measures the left margin (`measureMargin`), and aggregates the shown
+// figure again for a new one, as for a new size of the area (`onResize`).
+// The same margin, or one that its width does not let grow, asks nothing.
+function followMargin(grow) {
+  if (measureMargin(grow)) onResize();
 }
 
 const CONVERT_RETRY_MS = 300;
@@ -680,6 +718,9 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     statusLine.show(rowsText(meta));
     timings.plotAndImages = Math.round(performance.now() - drawStarted);
     setInfo();
+    // The labels of the new figure set its margin; a new one is aggregated
+    // as a new size is (below), or with the view drawn again.
+    measureMargin(false);
     if (view?.zoomed) {
       requestView(view.ranges);
       return meta;
@@ -1104,31 +1145,42 @@ function clearSelection(server = true) {
 // Goes back to the overview's images and ranges; no worker runs, unless the
 // overview was aggregated for another size of the plot area.
 async function showOverview() {
-  generation++;
+  const mine = ++generation;
   requested = { x: [], y: [] };
   const { meta, size, bitmaps } = overview;
   const figure = structuredClone(overview.figure);
   setCurrent(meta);
-  if (!sameSize(size, stageSize()) || filtersKey(meta.filters) !== filtersKey(filters)) {
+  // The overview has its own margin, which its labels are measured at below.
+  const area = stageSize();
+  if (size.width !== area.width || size.height !== area.height || filtersKey(meta.filters) !== filtersKey(filters)) {
     // The overview of the old size or filter stands in, stretched to the drawn figure.
     setPending(true);
     const { width, height } = gd._fullLayout;
     await draw(figure.data, { ...figure.layout, width, height }, meta, bitmaps);
+    measureMargin(false);
     requestOverview();
     return;
   }
   setPending(false);
+  requestedSize = size;
   shownSize = size;
   await draw(figure.data, figure.layout, meta, bitmaps);
   statusLine.show(rowsText(meta));
   setInfo();
+  // The overview's labels set the margin again: back from a zoom, it may shrink.
+  if (mine === generation) followMargin(false);
 }
 
 // Whether a result is the one drawn, at the figure size drawn: a new size of
 // the area that keeps the layout gets the drawn result back, with no redraw.
 function isDrawn(meta, layout) {
   const full = gd._fullLayout;
-  return meta.task === current.task && full.width === layout.width && full.height === layout.height;
+  return (
+    meta.task === current.task &&
+    full.width === layout.width &&
+    full.height === layout.height &&
+    full.margin.l === layout.margin.l
+  );
 }
 
 // Aggregates the overview again for the current size of the plot area. The
@@ -1173,6 +1225,7 @@ async function requestOverview() {
   if (mine === generation) setPending(false);
   statusLine.show(rowsText(meta));
   setInfo();
+  if (mine === generation) followMargin(true);
 }
 
 // Aggregates the shown ranges again. Until the result comes, plotly keeps
@@ -1226,6 +1279,7 @@ async function requestView({ x: xRanges, y: yRanges }) {
   if (mine === generation) setPending(false);
   statusLine.show(rowsText(meta, "表示範囲に "));
   setInfo();
+  if (mine === generation) followMargin(true);
 }
 
 // The panels of one x or y column share its axis (`matches`), so the view is
@@ -1256,7 +1310,11 @@ function onRelayout(event) {
     showOverview();
     return;
   }
-  if (sameRanges(shown.x, requested.x) && sameRanges(shown.y, requested.y)) return;
+  // The labels of the new range, drawn now, set the margin the view asks for.
+  measureMargin(false);
+  if (sameRanges(shown.x, requested.x) && sameRanges(shown.y, requested.y) && sameSize(stageSize(), requestedSize)) {
+    return;
+  }
   requestView(shown);
 }
 
@@ -1296,11 +1354,13 @@ function onResize() {
 
 async function onResizeSettled() {
   if (plotting === generation) return;
-  const size = stageSize();
   if (!current.scroll) {
     // The figure no longer matches a result of its size.
     drawnKey = null;
-    await Plotly.relayout(gd, size);
+    const { width, height } = stageSize();
+    await Plotly.relayout(gd, { width, height });
+    // Its panels, and so its labels, changed with the size.
+    measureMargin(false);
   }
   if (requested.x.length) {
     requestView(shownRanges(current));

@@ -122,9 +122,15 @@ def _panel_bins(spec: ScatterSpec) -> tuple[int, int]:
         spec.wrap_cols,
         spec.width,
         spec.height,
+        spec.margin_left,
     )
     layout = grid_layout(
-        spec.width, spec.height, axes.rows, axes.cols, WRAP_GAP if spec.wrap else GAP
+        spec.width,
+        spec.height,
+        axes.rows,
+        axes.cols,
+        WRAP_GAP if spec.wrap else GAP,
+        spec.margin_left,
     )
     return layout.panel_width, layout.panel_height
 

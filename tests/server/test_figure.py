@@ -88,13 +88,23 @@ def _overview_dir(tmp_path: Path, spec: ScatterSpec) -> Path:
 def test_a_scrolled_grid_leaves_its_labels_to_the_page(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:
-    """When the panels are too small for the size, plotly draws no tick or facet labels; the meta has the facet labels."""
+    """When the panels are too small for the size, plotly shows no tick or facet labels; the meta has the facet labels.
+
+    plotly makes the tick labels of the outer panels, in no color: without
+    them, it leaves the exponent out of the text the page's strips show.
+    """
     small = replace(scatter_spec, width=300, height=200)
     result = _figure(small, tmp_path / "task")
     layout = result["figure"]["layout"]
     assert result["meta"]["scroll"]
     assert layout["width"] > 300
-    assert not any(layout[a]["showticklabels"] for a in ("xaxis", "yaxis", "xaxis2"))
+    assert [layout[a]["showticklabels"] for a in ("xaxis", "yaxis", "yaxis2")] == [
+        True,
+        True,
+        False,
+    ]
+    hidden = {"color": "rgba(0,0,0,0)"}
+    assert all(layout[a]["tickfont"] == hidden for a in ("xaxis", "yaxis", "xaxis2"))
     assert layout["annotations"] == []
     titles = [a["text"] for a in result["meta"]["facet_labels"]]
     assert titles == ["facet = p", "facet = q"]
@@ -111,6 +121,29 @@ def test_a_fitting_grid_labels_the_outer_panels(
     assert layout["yaxis"]["showticklabels"]
     assert not layout["yaxis2"]["showticklabels"]
     assert layout["annotations"] == result["meta"]["facet_labels"]
+    assert "tickfont" not in layout["yaxis"]
+
+
+def test_the_left_margin_is_the_specs_for_the_whole_figure(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """A wider left margin moves every panel right, narrows them, and is the figure's margin."""
+    narrow = _figure(replace(scatter_spec, width=800, height=400), tmp_path / "a")
+    wide = _figure(
+        replace(scatter_spec, width=800, height=400, margin_left=90), tmp_path / "b"
+    )
+    a, b = narrow["figure"]["layout"], wide["figure"]["layout"]
+    assert (a["margin"]["l"], b["margin"]["l"]) == (50, 90)
+    assert (narrow["meta"]["margin_left"], wide["meta"]["margin_left"]) == (50, 90)
+    assert b["width"] == a["width"] == 800
+    for key in ("xaxis", "xaxis2"):
+        lo, hi = b[key]["domain"]
+        assert (
+            round((hi - lo) * (800 - 90 - 30))
+            == round((a[key]["domain"][1] - a[key]["domain"][0]) * (800 - 50 - 30)) - 20
+        )
+    assert b["yaxis"]["ticklabeloverflow"] == "allow"
+    assert wide["meta"]["y_categorical"] == [False]
 
 
 def test_the_panels_of_one_axis_column_share_its_axis(

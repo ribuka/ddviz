@@ -15,6 +15,7 @@ from ddviz.shared.layout import (
     AxisGrid,
     facet_grid,
     grid_layout,
+    left_margin,
     wrap_columns,
 )
 
@@ -131,3 +132,35 @@ def test_a_wrapped_grid_leaves_room_between_its_rows() -> None:
     assert scrolled.height == (
         MARGIN_TOP + MARGIN_BOTTOM + 3 * scrolled.panel_height + 2 * WRAP_GAP
     )
+
+
+def test_left_margin_stays_within_the_area() -> None:
+    """The margin asked for is at least 50 and leaves a pixel beside the right margin and the scroll bar."""
+    assert left_margin(30, 1000) == MARGIN_LEFT
+    assert left_margin(84, 1000) == 84
+    assert left_margin(500, 300) == 300 - MARGIN_RIGHT - SCROLLBAR - 1
+    assert left_margin(500, 60) == MARGIN_LEFT
+
+
+def test_a_wider_left_margin_narrows_the_panels_and_may_scroll() -> None:
+    """The margin is the same for every panel row; the panels share what is left, at their smallest scrolling."""
+    layout = grid_layout(1000, 700, nrow=2, ncol=3, margin_left=90)
+    assert layout.margin_left == 90
+    assert layout.panel_width == (1000 - 90 - MARGIN_RIGHT - 2 * GAP) // 3
+    lo, hi = layout.x_domain(2)
+    area = 1000 - 90 - MARGIN_RIGHT
+    assert round(lo * area) == 2 * (layout.panel_width + GAP)
+    assert round(hi * area) == 3 * layout.panel_width + 2 * GAP
+    fits = grid_layout(600, 400, nrow=1, ncol=3)
+    assert not fits.scroll
+    scrolled = grid_layout(600, 400, nrow=1, ncol=3, margin_left=100)
+    assert scrolled.scroll
+    assert scrolled.panel_width == MIN_PANEL_WIDTH
+    assert scrolled.width == 100 + MARGIN_RIGHT + 3 * MIN_PANEL_WIDTH + 2 * GAP
+
+
+def test_the_left_margin_counts_in_the_wrapped_panels_to_a_row() -> None:
+    """A wider margin leaves less width, so as many or fewer panels go to a row."""
+    assert wrap_columns(6, 680, 960, 400) <= wrap_columns(6, 680, 960)
+    axes = facet_grid(1, 6, 1, 1, True, None, 900, 300, 300)
+    assert axes.ncol == wrap_columns(6, 900, 300, 300)
