@@ -75,10 +75,9 @@ export function attachSearchHistory(input, onPick) {
     heading.className = "scale-menu-heading";
     heading.textContent = "検索の履歴";
     menu.append(heading);
-    words.forEach((word, i) => {
+    words.forEach((word) => {
       const row = document.createElement("div");
       row.className = "search-history-row";
-      row.classList.toggle("active", i === active);
       const text = document.createElement("button");
       text.type = "button";
       text.className = "search-history-word";
@@ -104,9 +103,22 @@ export function attachSearchHistory(input, onPick) {
     menu.append(separator, clear);
     document.body.append(menu);
     const rect = input.getBoundingClientRect();
+    const top = rect.bottom + 2;
     menu.style.left = `${rect.left}px`;
-    menu.style.top = `${rect.bottom + 2}px`;
+    menu.style.top = `${top}px`;
     menu.style.width = `${Math.max(rect.width, 170)}px`;
+    // The list scrolls within the room below the box, so that its last
+    // keyword and the row that removes them all can be reached.
+    menu.style.maxHeight = `${Math.max(window.innerHeight - top - 4, 60)}px`;
+    showActive();
+  }
+
+  // Marks the keyword ↓ and ↑ have moved to and scrolls it into the list,
+  // without making the list again (which would scroll it back to the top).
+  function showActive() {
+    const rows = menu.querySelectorAll(".search-history-row");
+    rows.forEach((row, i) => row.classList.toggle("active", i === active));
+    rows[active]?.scrollIntoView({ block: "nearest" });
   }
 
   input.addEventListener("focus", open);
@@ -124,7 +136,7 @@ export function attachSearchHistory(input, onPick) {
       const step = event.key === "ArrowDown" ? 1 : -1;
       active = (active + step + words.length + 1) % (words.length + 1);
       if (active === words.length) active = -1;
-      render();
+      showActive();
     } else if (event.key === "Enter" && menu && active >= 0) {
       event.preventDefault();
       pick(words[active]);
