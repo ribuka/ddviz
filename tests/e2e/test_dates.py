@@ -582,6 +582,26 @@ def test_wrong_fields_of_a_temporal_axis_tell_why_and_change_nothing(
     assert page.evaluate(SHOWN_X_RANGE) == shown
     assert page.evaluate(f"{FULL}.xaxis.tickmode") == "auto"
     assert urls == []
+    dialog.get_by_role("button", name="キャンセル").click()
+
+    # A time past the dates plotly draws (infinite, or past the year 9999)
+    # is refused, as an end and as a line.
+    put(page, "clock", "x")
+    urls.clear()
+    dialog = open_dialog(page, "x")
+    errors = dialog.locator(".axis-dialog-error")
+    huge = ["9" * 309 + ":00", "100000000000000:00", "-100000000000000:00"]
+    for text in huge:
+        dialog.locator("input[name=max]").fill(text)
+        dialog.get_by_role("button", name="OK").click()
+        expect(errors.nth(1)).to_have_text("時間が大きすぎます")
+        dialog.locator("input[name=line]").fill(text)
+        dialog.get_by_role("button", name="追加").click()
+        expect(errors.nth(4)).to_have_text("時間が大きすぎます")
+    expect(dialog.locator(".axis-dialog-line")).to_have_count(0)
+    expect(dialog).to_be_visible()
+    assert page.evaluate(LINES) == []
+    assert urls == []
 
 
 def test_temporal_ticks_and_their_minor_splits_draw_on_every_panel_and_stay(

@@ -156,6 +156,15 @@ const AXIS_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const AXIS_CLOCK = /^(\d+):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?$/;
 // A time zone after a time: "Z", "+09:00", "-0500".
 const AXIS_ZONE = /(?:Z|[+-]\d{1,2}(?::?\d{2})?)$/i;
+// The milliseconds of the dates of four-digit years, 0000-01-01 up to
+// 10000-01-01 (excluded): the dates `dateText` writes for plotly.
+function yearStart(year) {
+  const date = new Date(0);
+  date.setUTCFullYear(year, 0, 1);
+  return date.getTime();
+}
+const AXIS_FIRST_MS = yearStart(0);
+const AXIS_END_MS = yearStart(10_000);
 
 // Returns the fraction of a second of `us` microseconds (0 <= us < 1e6) as
 // ".123456" without trailing zeros, or "" for none.
@@ -219,7 +228,11 @@ export function readAxisValue(kind, text) {
   if (kind === "time") {
     const m = /^([+-]?)(.*)$/.exec(value);
     const ms = clockMs(m[2], Infinity);
-    if (ms !== null) return { value: m[1] === "-" ? -ms : ms };
+    if (ms !== null) {
+      const signed = m[1] === "-" ? -ms : ms;
+      // Past the years plotly's date axis writes, a time cannot be drawn.
+      return signed >= AXIS_FIRST_MS && signed < AXIS_END_MS ? { value: signed } : { error: "時間が大きすぎます" };
+    }
     if (AXIS_ZONE.test(value) && clockMs(value.replace(AXIS_ZONE, ""), Infinity) !== null) {
       return { error: "タイムゾーンは付けられません" };
     }
