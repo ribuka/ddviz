@@ -184,13 +184,14 @@ def test_a_datetime_axis_under_a_second_draws_its_points(
 
 
 def test_a_duration_chip_names_its_seconds(app_page: Page) -> None:
-    """A duration placed on an axis is named with its unit, seconds."""
+    """A duration placed on an axis is named with its unit, seconds; its tooltip is the column's own name."""
     page = app_page
     expect(page.locator("#columns .column").filter(has_text="took")).to_be_visible()
     page.locator("#columns .column").filter(
         has=page.get_by_text("took", exact=True)
     ).drag_to(page.locator('.zone[data-role="x"]'))
     expect(page.locator('.zone[data-role="x"] .chip-name')).to_have_text("took (s)")
+    expect(page.locator('.zone[data-role="x"] .chip')).to_have_attribute("title", "took")
 
 
 @pytest.mark.parametrize("step", [dt.timedelta(microseconds=500)])
