@@ -1496,6 +1496,30 @@ def test_a_double_click_on_a_numeric_axis_sets_its_range_ticks_and_lines(
     assert page.evaluate(f"[{full}.yaxis.tickmode, {full}.shapes.length]") == ["auto", 0]
 
 
+def test_two_presses_on_an_axis_within_plotlys_delay_open_its_dialog(
+    app_page: Page,
+) -> None:
+    """Two presses on an axis's tick labels 450ms apart, which plotly counts as a double click (`doubleClickDelay`, 500ms), open the dialog and keep the range."""
+    page = app_page
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    full = "document.getElementById('plot')._fullLayout"
+    assert page.evaluate("document.getElementById('plot')._context.doubleClickDelay") == 500
+    shown = page.evaluate(f"{full}.yaxis.range")
+
+    tick = page.locator("#plot .ytick text").first.bounding_box()
+    page.mouse.move(tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2)
+    page.mouse.down()
+    page.mouse.up()
+    page.wait_for_timeout(450)
+    page.mouse.down()
+    page.mouse.up()
+    dialog = page.locator("dialog.axis-dialog")
+    expect(dialog).to_be_visible()
+    expect(dialog.locator("h2")).to_have_text("Y 軸: y")
+    assert page.evaluate(f"{full}.yaxis.range") == pytest.approx(shown)
+
+
 def test_a_double_click_on_a_categorical_axis_opens_its_angle_alone(
     app_page: Page,
 ) -> None:

@@ -288,11 +288,11 @@ function angleOn(meta, role, index) {
 }
 // A double click on the tick labels of an axis with a dialog (`dialogKind`) opens it
 // instead of plotly's autorange of that axis. plotly counts the presses
-// itself (`doubleClickDelay`, 300ms), so the second press does not reach it.
-// The wait here is longer, so that no press plotly would count as a double
-// click gets through. The presses are taken on the builder, before plotly's
+// itself, within its `doubleClickDelay`, so the second press does not reach
+// it. The wait here is plotly's own, read on each press, so that every pair
+// plotly would count as a double click opens the dialog, whatever plotly's
+// version or config. The presses are taken on the builder, before plotly's
 // handlers, as the axes' left margin reaches out of the plot (`axisHit`).
-const AXIS_DOUBLE_CLICK_MS = 400;
 let axisPress = null;
 builderRoot.addEventListener(
   "mousedown",
@@ -307,7 +307,7 @@ builderRoot.addEventListener(
     // Select's selection. A press on a strip's numeric axis is the axis's.
     if (hit.strip) event.stopPropagation();
     const near = last && Math.hypot(event.clientX - last.x, event.clientY - last.y) <= 4;
-    if (near && last.axis === hit.axis && last.index === hit.index && event.timeStamp - last.time < AXIS_DOUBLE_CLICK_MS) {
+    if (near && last.axis === hit.axis && last.index === hit.index && event.timeStamp - last.time < gd._context.doubleClickDelay) {
       event.stopPropagation();
       event.preventDefault();
       hideHover();
