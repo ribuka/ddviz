@@ -59,7 +59,7 @@ def client(server: TestClient) -> TestClient:
 
 
 @pytest.mark.parametrize(
-    "path", ["/", "/static/js/app.js", "/api/schema", "/api/events", "/api/images/1"]
+    "path", ["/", "/static/js/app.js", "/api/schema", "/api/events", "/api/images/1", "/api/memory"]
 )
 def test_requests_without_the_token_are_refused(server: TestClient, path: str) -> None:
     """Without the cookie, every page, file and API answers 403, SSE included."""

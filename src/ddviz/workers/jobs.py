@@ -1,5 +1,7 @@
 """Windows Job Object that kills worker processes with the UI and caps their memory.
 
+It also lists the processes in it, for the memory shown in the footer.
+
 On other platforms every function here does nothing.
 """
 
@@ -7,6 +9,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import threading
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -16,7 +19,9 @@ _HANDLE = ctypes.c_void_p
 _DWORD = ctypes.c_uint32
 _BOOL = ctypes.c_int
 
+_JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+_ERROR_MORE_DATA = 234
 _JOB_OBJECT_LIMIT_JOB_MEMORY = 0x200
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 _CREATE_SUSPENDED = 0x4
@@ -83,6 +88,11 @@ def _kernel32() -> ctypes.WinDLL:
             [handle, ctypes.c_int, ctypes.c_void_p, dword],
         ),
         ("AssignProcessToJobObject", bool_, [handle, handle]),
+        (
+            "QueryInformationJobObject",
+            bool_,
+            [handle, ctypes.c_int, ctypes.c_void_p, dword, ctypes.c_void_p],
+        ),
         ("CloseHandle", bool_, [handle]),
         ("GlobalMemoryStatusEx", bool_, [ctypes.c_void_p]),
     ]:
@@ -131,6 +141,8 @@ class WorkerJob:
 
     def __init__(self, memory_limit: int | None) -> None:
         self._handle = None
+        # `close` waits for a listing in another thread to finish with the handle.
+        self._lock = threading.Lock()
         #: The cap in force: None off Windows, where there is no job.
         self.memory_limit = memory_limit if _IS_WINDOWS else None
         if not _IS_WINDOWS:
@@ -189,8 +201,67 @@ class WorkerJob:
         finally:
             k32.CloseHandle(process)
 
+    def process_ids(self) -> list[int] | None:
+        """Return the ids of the processes in the job, waiting and working alike.
+
+        Returns
+        -------
+        list of int or None
+            The ids; None off Windows, once the job is closed, or when the
+            job cannot be queried.
+        """
+        with self._lock:
+            if not self._handle:
+                return None
+            return _list_processes(_kernel32(), self._handle)
+
     def close(self) -> None:
         """Close the job, killing every worker in it."""
-        if self._handle:
-            _kernel32().CloseHandle(self._handle)
-            self._handle = None
+        with self._lock:
+            if self._handle:
+                _kernel32().CloseHandle(self._handle)
+                self._handle = None
+
+
+def _list_processes(k32: ctypes.WinDLL, job: int) -> list[int] | None:
+    """Return the process ids in a job, growing the buffer until all fit.
+
+    Parameters
+    ----------
+    k32 : ctypes.WinDLL
+        kernel32 (`_kernel32`).
+    job : int
+        Handle of the job.
+
+    Returns
+    -------
+    list of int or None
+        The ids; None when the job cannot be queried.
+    """
+    capacity = 16
+    while True:
+
+        class _ProcessIdList(ctypes.Structure):
+            """JOBOBJECT_BASIC_PROCESS_ID_LIST with room for `capacity` ids."""
+
+            _fields_ = [
+                ("NumberOfAssignedProcesses", _DWORD),
+                ("NumberOfProcessIdsInList", _DWORD),
+                ("ProcessIdList", ctypes.c_size_t * capacity),
+            ]
+
+        info = _ProcessIdList()
+        ok = k32.QueryInformationJobObject(
+            job,
+            _JOB_OBJECT_BASIC_PROCESS_ID_LIST,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+            None,
+        )
+        if not ok and ctypes.get_last_error() != _ERROR_MORE_DATA:
+            return None
+        listed = info.NumberOfProcessIdsInList
+        if ok and listed >= info.NumberOfAssignedProcesses:
+            return [int(pid) for pid in info.ProcessIdList[:listed]]
+        # More processes than room: the job may also have grown since.
+        capacity = max(capacity * 2, info.NumberOfAssignedProcesses + 8)

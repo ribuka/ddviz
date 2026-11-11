@@ -13,6 +13,7 @@ import argparse
 import secrets
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,7 +21,12 @@ if TYPE_CHECKING:  # a worker does not import fastapi
     from fastapi import FastAPI
 
 
-def make_app(paths: list[str], recursive: bool, token: str) -> FastAPI:
+def make_app(
+    paths: list[str],
+    recursive: bool,
+    token: str,
+    frontend_pids: Callable[[], list[int] | None] | None = None,
+) -> FastAPI:
     """Build the UI server for a Parquet file, a folder of them or several files.
 
     Parameters
@@ -32,6 +38,9 @@ def make_app(paths: list[str], recursive: bool, token: str) -> FastAPI:
         For a folder, also read the files in its subfolders.
     token : str
         Secret of this run; requests without it are refused.
+    frontend_pids : callable or None
+        Returns the ids of the window's WebView2 processes, for the memory in
+        the footer; None in a browser.
 
     Returns
     -------
@@ -52,6 +61,7 @@ def make_app(paths: list[str], recursive: bool, token: str) -> FastAPI:
         default_history_root(),
         load_settings(),
         token,
+        frontend_pids,
     )
 
 

@@ -19,12 +19,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from ddviz.server.api_history import history_router
+from ddviz.server.api_memory import memory_router
 from ddviz.server.api_plot import plot_router
 from ddviz.server.api_selection import selection_router
 from ddviz.server.api_source import source_router
 from ddviz.server.auth import TokenAuth
 from ddviz.server.broker import TaskBroker
 from ddviz.server.history import SearchHistory, history_file
+from ddviz.server.memory import FrontendPids, MemoryMeter
 from ddviz.server.results import Results
 from ddviz.server.settings import Settings
 from ddviz.server.source import Source
@@ -41,6 +43,7 @@ def create_app(
     history_root: Path,
     settings: Settings,
     token: str,
+    frontend_pids: FrontendPids | None = None,
 ) -> FastAPI:
     """Create the UI server for a Parquet file, a folder of them or several files.
 
@@ -62,6 +65,9 @@ def create_app(
         The settings (`ddviz.server.settings`).
     token : str
         Secret of this run; requests without it are refused with 403.
+    frontend_pids : callable or None
+        Returns the ids of the window's WebView2 processes for the memory in
+        the footer (`ddviz.server.memory`); None in a browser.
 
     Returns
     -------
@@ -71,6 +77,7 @@ def create_app(
     broker = TaskBroker(root)
     source = Source(data_paths, recursive, cache_root, settings, broker)
     results = Results()
+    meter = MemoryMeter(frontend_pids)
     history = SearchHistory(
         history_file(history_root, source.paths),
         source.paths,
@@ -83,9 +90,11 @@ def create_app(
         job = WorkerJob(total // 2 if total else None)
         log = open(root / "workers.log", "ab")  # noqa: ASYNC230, SIM115 - kept open while serving
         broker.start(job, log)
+        meter.job = job
         try:
             yield
         finally:
+            meter.job = None
             broker.close()
             job.close()
             results.close()
@@ -107,6 +116,7 @@ def create_app(
 
     app.include_router(source_router(source, settings.columns.max_listed))
     app.include_router(history_router(history))
+    app.include_router(memory_router(meter))
     app.include_router(
         plot_router(
             source,

@@ -1292,9 +1292,30 @@ button {
   white-space: nowrap;
 }
 
-#statusbar details {
+/* The memory and "計測" stand at the right. The memory keeps its one line:
+   when the footer is narrow, the status ends in "…" and a warning wraps, as
+   without it. Its numbers have a fixed width, so that a new value never
+   moves or wraps anything (a taller footer shrinks the plot, which
+   aggregates again). */
+#memory {
   flex: none;
   margin-left: auto;
+  white-space: nowrap;
+  cursor: help;
+}
+
+#memory > * + * {
+  margin-left: 1em;
+}
+
+.memory-value {
+  display: inline-block;
+  min-width: 9ch;
+  text-align: right;
+}
+
+#statusbar details {
+  flex: none;
 }
 
 #statusbar summary {

@@ -30,6 +30,7 @@ import { fitBottom, fitMargin, MARGIN_BOTTOM, MARGIN_LEFT, neededBottom, neededM
 import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { levelText } from "./names.js";
+import { MemoryMeter } from "./memory.js";
 import { StatusLine, Toasts, errorText } from "./notice.js";
 import { attachNullMenu } from "./nullmenu.js";
 import { openPlotMenu } from "./plotmenu.js";
@@ -42,6 +43,8 @@ import { forPlotly, linearRange, plotlyRange } from "./temporal.js";
 import { closeWrapMenu, openWrapMenu, setWrapAuto } from "./wrapmenu.js";
 
 const statusLine = new StatusLine(document.getElementById("status"), new Toasts(document.getElementById("toasts")));
+// The memory in use, fetched as soon as the page shows and then about every second.
+new MemoryMeter(document.getElementById("memory-backend"), document.getElementById("memory-frontend")).fetch();
 const hoverWarning = document.getElementById("hover-warning");
 const logWarning = document.getElementById("log-warning");
 const info = document.getElementById("info");

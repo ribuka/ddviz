@@ -2032,9 +2032,13 @@ def test_the_filter_pane_steps_and_drags_its_height_keeping_the_conditions(
     values = [lo.input_value(), hi.input_value()]
     task = status.inner_text()
     plot = page.locator("#plot").bounding_box()
+    # The footer's memory is fetched about every second whatever the user does.
     requests: list[str] = []
     page.on(
-        "request", lambda r: requests.append(r.url) if "/api/" in r.url else None
+        "request",
+        lambda r: requests.append(r.url)
+        if "/api/" in r.url and "/api/memory" not in r.url
+        else None,
     )
 
     # Maximized: the whole left pane, the column list hidden.
