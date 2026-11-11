@@ -6,7 +6,7 @@ import math
 
 from ddviz.server.encoding import Encoding
 from ddviz.shared.axisscale import parse_axis_scales
-from ddviz.shared.layout import MARGIN_LEFT, left_margin
+from ddviz.shared.layout import MARGIN_BOTTOM, MARGIN_LEFT, bottom_margin, left_margin
 from ddviz.shared.scatter import (
     MAX_AXIS_LEVELS,
     MAX_LEVELS,
@@ -259,6 +259,7 @@ def scatter_spec(
     show_null_rows: dict[str, bool] | None = None,
     axis_scales: object = None,
     margin_left: int = MARGIN_LEFT,
+    margin_bottom: int = MARGIN_BOTTOM,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -331,6 +332,9 @@ def scatter_spec(
     margin_left : int, optional
         Left margin the page asks for, in pixels; kept within the width
         (`ddviz.shared.layout.left_margin`).
+    margin_bottom : int, optional
+        Bottom margin the page asks for, in pixels; kept within the height
+        (`ddviz.shared.layout.bottom_margin`).
 
     Returns
     -------
@@ -413,6 +417,7 @@ def scatter_spec(
         log_x=log_x,
         log_y=log_y,
         margin_left=left_margin(margin_left, width),
+        margin_bottom=bottom_margin(margin_bottom, height),
     )
 
 

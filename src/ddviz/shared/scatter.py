@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
-from ddviz.shared.layout import MARGIN_LEFT
+from ddviz.shared.layout import MARGIN_BOTTOM, MARGIN_LEFT
 from ddviz.shared.missing import MISSING, MISSING_SHAPE
 from ddviz.shared.shapes import default_shape
 
@@ -335,6 +335,10 @@ class ScatterSpec:
         Left margin of the figure in pixels, for the y tick labels the page
         measured (`ddviz.shared.layout.left_margin`): the panels have the
         width left of `width`.
+    margin_bottom : int
+        Bottom margin of the figure in pixels, for the x tick labels the
+        page measured at an angle set (`ddviz.shared.layout.bottom_margin`):
+        the panels have the height left of `height`.
     """
 
     files: dict[str, list[str]]
@@ -370,6 +374,7 @@ class ScatterSpec:
     log_x: list[str] = field(default_factory=list)
     log_y: list[str] = field(default_factory=list)
     margin_left: int = MARGIN_LEFT
+    margin_bottom: int = MARGIN_BOTTOM
 
     def box_pairs(self) -> set[tuple[str, str]]:
         """Return the pairs of axis columns whose panels have box plots.

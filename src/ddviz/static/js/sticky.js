@@ -9,17 +9,25 @@
 // mode bar, at the figure's top right, follows the scroll the same way and
 // stays at the top right of the area, above the top strip.
 
-// Gap in pixels between a y tick label and the plot area's edge.
+// Gap in pixels between a y tick label and the plot area's edge, and
+// between the plot area's bottom edge and an x tick label.
 const TICK_GAP = 4;
+const X_TICK_TOP = 3;
+// Half the height in pixels of a line of a label: a label at an angle turns
+// about the middle of its height at its end.
+const HALF_LINE = 8;
 
 function axisKey(id) {
   return id.replace(/^([xy])/, "$1axis");
 }
 
+// `angleOf(meta, role, index)` is the angle of the tick labels of an axis
+// column, in degrees clockwise, or null for level labels.
 export class StickyLabels {
-  constructor(scroller, gd) {
+  constructor(scroller, gd, angleOf = () => null) {
     this.scroller = scroller;
     this.gd = gd;
+    this.angleOf = angleOf;
     this.meta = null;
     this.root = document.createElement("div");
     this.root.className = "sticky-labels";
@@ -71,7 +79,19 @@ export class StickyLabels {
     const origin = this.gd.getBoundingClientRect();
     const { ncol } = meta;
     const count = meta.panels.length;
+    // A label at an angle may reach past its panel: the label's own axis.
+    const label = (strip) => {
+      for (const span of strip.querySelectorAll(".tick")) {
+        const r = span.getBoundingClientRect();
+        if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+          return meta.panels[Number(span.dataset.panel)];
+        }
+      }
+      return null;
+    };
     if (inside(this.strips.left, from)) {
+      const own = label(this.strips.left);
+      if (own) return { axis: "y", panel: own };
       const panel = meta.panels.find((p, i) => {
         const ya = full[axisKey(p.yaxis)];
         const top = origin.top + ya._offset;
@@ -80,6 +100,8 @@ export class StickyLabels {
       return panel ? { axis: "y", panel } : null;
     }
     if (inside(this.strips.bottom)) {
+      const own = label(this.strips.bottom);
+      if (own) return { axis: "x", panel: own };
       const panel = meta.panels.find((p, i) => {
         const xa = full[axisKey(p.xaxis)];
         const left = origin.left + xa._offset;
@@ -96,15 +118,28 @@ export class StickyLabels {
   }
 
   // Returns the room in pixels the y tick labels of the left strip take
-  // from the plot area's edge, of every panel row, whole and not cut by the
-  // strip: their widest, with the gap that sets them off the edge. The
-  // labels of a categorical axis leave it out (`leftmargin.js`).
+  // from the plot area's edge, of every panel row, whole (turned) and not
+  // cut by the strip, with the gap that sets them off the edge. The labels
+  // of a categorical axis not at an angle set leave it out (`leftmargin.js`).
   labelsWidth() {
-    let widest = 0;
+    const edge = this.strips.left.getBoundingClientRect().right;
+    let room = 0;
     for (const span of this.strips.left.querySelectorAll(".tick.y[data-measured]")) {
-      widest = Math.max(widest, span.getBoundingClientRect().width);
+      room = Math.max(room, edge - span.getBoundingClientRect().left);
     }
-    return widest ? widest + TICK_GAP : 0;
+    return room;
+  }
+
+  // Returns the room in pixels the x tick labels at an angle set of the
+  // bottom strip take below the plot area's edge, whole and not cut by the
+  // strip; 0 without such labels (`leftmargin.js`).
+  labelsHeight() {
+    const edge = this.strips.bottom.getBoundingClientRect().top;
+    let room = 0;
+    for (const span of this.strips.bottom.querySelectorAll(".tick.x[data-measured]")) {
+      room = Math.max(room, span.getBoundingClientRect().bottom - edge);
+    }
+    return room;
   }
 
   draw() {
@@ -142,12 +177,14 @@ export class StickyLabels {
     meta.panels.forEach((panel, p) => {
       if (p % ncol === 0) {
         const ya = full[axisKey(panel.yaxis)];
-        const measured = !meta.y_categorical[panel.y];
+        const angle = this.angleOf(meta, "y", panel.y);
+        const measured = !meta.y_categorical[panel.y] || angle !== null;
         for (const tick of ya?._vals ?? []) {
           // Minor ticks (the axis dialog's) have no labels.
           if (tick.minor) continue;
           const y = ya._offset + ya.l2p(tick.x) - sy - t;
-          const span = label("tick y", tick.text, { right: `${TICK_GAP}px`, top: `${y}px` }, true);
+          const span = label("tick y", tick.text, yTickStyle(y, angle), true);
+          span.dataset.panel = p;
           if (measured) span.dataset.measured = "";
           yTicks.push(span);
         }
@@ -156,10 +193,14 @@ export class StickyLabels {
       // the cells below it empty.
       if (p + ncol >= count) {
         const xa = full[axisKey(panel.xaxis)];
+        const angle = this.angleOf(meta, "x", panel.x);
         for (const tick of xa?._vals ?? []) {
           if (tick.minor) continue;
           const x = xa._offset + xa.l2p(tick.x) - sx;
-          xTicks.push(label("tick x", tick.text, { left: `${x}px`, top: "3px" }, true));
+          const span = label("tick x", tick.text, xTickStyle(x, angle), true);
+          span.dataset.panel = p;
+          if (angle !== null) span.dataset.measured = "";
+          xTicks.push(span);
         }
       }
     });
@@ -180,6 +221,40 @@ export class StickyLabels {
     top.replaceChildren(...cols);
     right.replaceChildren(...rows);
   }
+}
+
+// Returns the style of a y tick label at height `y` of the left strip, at
+// `angle` (degrees clockwise, or null for level). A label at an angle
+// turns about the middle of its height at its end, by the tick's height,
+// and moves left so that no corner crosses the gap off the plot area.
+function yTickStyle(y, angle) {
+  if (angle === null) return { right: `${TICK_GAP}px`, top: `${y}px` };
+  const turn = (angle * Math.PI) / 180;
+  return {
+    right: `${TICK_GAP + HALF_LINE * Math.abs(Math.sin(turn))}px`,
+    top: `${y}px`,
+    transformOrigin: "100% 50%",
+    transform: `translateY(-50%) rotate(${angle}deg)`,
+  };
+}
+
+// Returns the style of an x tick label at `x` of the bottom strip, at
+// `angle` (as `yTickStyle`). A label at an angle turns about the middle of
+// its height at the end next to the tick (its start for a clockwise angle,
+// its end otherwise), so that it reads away from the axis, and moves down
+// so that no corner crosses the gap below the plot area. An angle of 0
+// draws the label centered under the tick, as a level one.
+function xTickStyle(x, angle) {
+  if (!angle) return { left: `${x}px`, top: `${X_TICK_TOP}px` };
+  const turn = (angle * Math.PI) / 180;
+  const top = X_TICK_TOP + HALF_LINE * Math.abs(Math.cos(turn));
+  const start = angle > 0;
+  return {
+    left: `${x}px`,
+    top: `${top}px`,
+    transformOrigin: start ? "0 50%" : "100% 50%",
+    transform: `${start ? "translateY(-50%)" : "translate(-100%, -50%)"} rotate(${angle}deg)`,
+  };
 }
 
 // Returns a facet label's element. One cut to fit its panels

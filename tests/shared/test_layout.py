@@ -13,6 +13,7 @@ from ddviz.shared.layout import (
     SCROLLBAR,
     WRAP_GAP,
     AxisGrid,
+    bottom_margin,
     facet_grid,
     grid_layout,
     left_margin,
@@ -164,3 +165,36 @@ def test_the_left_margin_counts_in_the_wrapped_panels_to_a_row() -> None:
     assert wrap_columns(6, 680, 960, 400) <= wrap_columns(6, 680, 960)
     axes = facet_grid(1, 6, 1, 1, True, None, 900, 300, 300)
     assert axes.ncol == wrap_columns(6, 900, 300, 300)
+
+
+def test_bottom_margin_stays_within_the_area() -> None:
+    """The margin asked for is at least 30 and leaves a pixel beside the top margin and the scroll bar."""
+    assert bottom_margin(10, 800) == MARGIN_BOTTOM
+    assert bottom_margin(MARGIN_BOTTOM, 800) == MARGIN_BOTTOM
+    assert bottom_margin(140, 800) == 140
+    assert bottom_margin(500, 300) == 300 - MARGIN_TOP - SCROLLBAR - 1
+    assert bottom_margin(500, 60) == MARGIN_BOTTOM
+
+
+def test_a_higher_bottom_margin_lowers_the_panels_and_may_scroll() -> None:
+    """Every panel column shares the bottom margin; the panels share the height left, at their smallest scrolling."""
+    layout = grid_layout(1000, 700, nrow=2, ncol=3, margin_bottom=130)
+    assert layout.margin_bottom == 130
+    area = 700 - MARGIN_TOP - 130
+    assert layout.panel_height == (area - GAP) // 2
+    lo, hi = layout.y_domain(1)
+    assert lo == 1 - (layout.panel_height + GAP + layout.panel_height) / area
+    assert round(hi * area) == area - (layout.panel_height + GAP)
+    assert not grid_layout(600, 400, nrow=2, ncol=1).scroll
+    scrolled = grid_layout(600, 400, nrow=2, ncol=1, margin_bottom=120)
+    assert scrolled.scroll
+    assert scrolled.panel_height == MIN_PANEL_HEIGHT
+    assert scrolled.height == MARGIN_TOP + 120 + 2 * MIN_PANEL_HEIGHT + GAP
+    assert scrolled.margin_bottom == 120
+
+
+def test_the_bottom_margin_counts_in_the_wrapped_panels_to_a_row() -> None:
+    """A higher margin leaves less height, so as many or more panels go to a row."""
+    assert wrap_columns(6, 960, 680, 50, 300) >= wrap_columns(6, 960, 680)
+    axes = facet_grid(1, 6, 1, 1, True, None, 300, 900, 50, 400)
+    assert axes.ncol == wrap_columns(6, 300, 900, 50, 400)

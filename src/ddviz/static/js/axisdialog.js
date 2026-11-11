@@ -8,6 +8,9 @@
 // ticks: it changes only plotly's labels, not the values of the axis. A
 // temporal axis (`axisKind`) takes its values as dates, times or seconds
 // (`temporal.js`), its interval with a unit, and keeps plotly's labels.
+// The angle of the major tick labels is set on a linear numeric axis and
+// on a categorical one, whose dialog shows the other settings disabled
+// (`dialogKind`); it is kept by role and column apart from the settings.
 
 import { axisText, dateText, isDateKind, readAxisValue } from "./temporal.js";
 
@@ -69,6 +72,47 @@ export function axisKind(meta, axis, index) {
   const kind = meta.temporal?.[meta[`${axis}_columns`][index]];
   if (isDateKind(kind)) return kind;
   return kind === "duration" && !meta[`${axis}_log`][index] ? "duration" : null;
+}
+
+// Whether the axis column `index` of `axis` of `meta` is categorical: its
+// levels are bands (`axis_levels`), not the one band of an empty x.
+function isBandAxis(meta, axis, index) {
+  if (axis === "x" && meta.one_band) return false;
+  return Boolean(meta.axis_levels?.[meta[`${axis}_columns`][index]]);
+}
+
+// Returns the kind of the dialog that a double click on the axis column
+// `index` of `axis` of `meta` opens: `axisKind`, "category" for a
+// categorical axis (the angle of its labels alone), or null (a log axis,
+// the one band).
+export function dialogKind(meta, axis, index) {
+  return axisKind(meta, axis, index) ?? (isBandAxis(meta, axis, index) ? "category" : null);
+}
+
+// Whether the angle of the tick labels of the axis column `index` of `axis`
+// of `meta` is drawn: a linear numeric axis or a categorical one. A
+// temporal or log axis, and the one band, keep plotly's own; the angle set
+// stays for the column and is drawn again on a linear axis.
+export function hasAngle(meta, axis, index) {
+  const kind = dialogKind(meta, axis, index);
+  return kind === "number" || kind === "category";
+}
+
+// The angles a tick label may be set to, in degrees: 0 is level, a
+// positive angle turns it clockwise on the screen.
+export const MAX_ANGLE = 90;
+const ANGLE_ERROR = "−90〜90 の整数にしてください";
+
+// Reads the angle of the tick labels typed in a field: `{value}` (an
+// integer from -90 to 90), `{value: null}` for an empty field (plotly's
+// automatic labels), or `{error}`. Only ASCII digits and one sign.
+export function readAngle(text) {
+  const trimmed = text.trim();
+  if (trimmed === "") return { value: null };
+  if (!/^[+-]?[0-9]+$/.test(trimmed)) return { error: ANGLE_ERROR };
+  const value = Number(trimmed);
+  if (Math.abs(value) > MAX_ANGLE) return { error: ANGLE_ERROR };
+  return { value: value === 0 ? 0 : value };
 }
 
 // Returns the unit picked for the interval of a temporal axis of `kind`
@@ -269,14 +313,34 @@ function dialogAxes(meta) {
   return axes;
 }
 
+// Returns the axes of the panels of `meta` whose labels take an angle
+// (`hasAngle`), as `[key, role, column]`.
+function angleAxes(meta) {
+  const axes = [];
+  for (const panel of meta.panels) {
+    for (const [role, axis, index] of [
+      ["x", panel.xaxis, panel.x],
+      ["y", panel.yaxis, panel.y],
+    ]) {
+      if (hasAngle(meta, role, index)) axes.push([axis.replace(/^([xy])/, "$1axis"), role, meta[`${role}_columns`][index]]);
+    }
+  }
+  return axes;
+}
+
 // Returns `layout` (a figure's layout for `meta`) with the ticks and
 // reference lines of the settings of its axis columns with a dialog
-// (`settingsOf(column)`, or undefined for none).
-export function decorate(layout, meta, settingsOf) {
+// (`settingsOf(column)`, or undefined for none), and the angles of their
+// tick labels (`angleOf(role, column)`, or null for plotly's own).
+export function decorate(layout, meta, settingsOf, angleOf = () => null) {
   const out = { ...layout };
   for (const [key, kind, column] of dialogAxes(meta)) {
     const settings = settingsOf(column);
     if (settings) out[key] = { ...out[key], ...withoutNulls(axisAttributes(settings, kind)) };
+  }
+  for (const [key, role, column] of angleAxes(meta)) {
+    const angle = angleOf(role, column);
+    if (angle !== null) out[key] = { ...out[key], tickangle: angle };
   }
   const shapes = lineShapes(meta, settingsOf);
   if (shapes.length) out.shapes = shapes;
@@ -291,16 +355,18 @@ function axisAttributes(settings, kind) {
   return kind === "number" ? { ...ticks, ...formatAttributes(settings) } : ticks;
 }
 
-// Returns the relayout that draws `settingsOf` on the drawn figure of `meta`:
-// the tick and label attributes of every axis of its columns with a
-// dialog, and the shapes.
-export function decorationUpdate(meta, settingsOf) {
+// Returns the relayout that draws `settingsOf` and `angleOf` on the drawn
+// figure of `meta`: the tick and label attributes of every axis of its
+// columns with a dialog, the shapes, and the angles of the labels (null
+// gives an axis plotly's own back).
+export function decorationUpdate(meta, settingsOf, angleOf = () => null) {
   const update = { shapes: lineShapes(meta, settingsOf) };
   for (const [key, kind, column] of dialogAxes(meta)) {
     for (const [name, value] of Object.entries(axisAttributes(settingsOf(column), kind))) {
       update[`${key}.${name}`] = value;
     }
   }
+  for (const [key, role, column] of angleAxes(meta)) update[`${key}.tickangle`] = angleOf(role, column);
   return update;
 }
 
@@ -371,6 +437,45 @@ export function yMarginAt(clientX, clientY, gd, meta, from) {
   return index !== null && clientX < left ? { axis: "y", index } : null;
 }
 
+// Returns the axis column whose tick label drawn by plotly holds a point
+// (client coordinates) of the plot `gd` of the result `meta`, as `{axis,
+// index}`, or null. A label turned to an angle reaches out of plotly's drag
+// area of its axis: an x label below it, a y label above or below its
+// panel's margin (`yMarginAt`); a point in a panel's plot area is the
+// panel's.
+export function labelAt(clientX, clientY, gd, meta) {
+  const full = gd._fullLayout;
+  if (!meta || !full) return null;
+  const origin = gd.getBoundingClientRect();
+  const within = (r) => clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+  let hit = null;
+  for (const panel of meta.panels) {
+    const xa = full[panel.xaxis.replace(/^x/, "xaxis")];
+    const ya = full[panel.yaxis.replace(/^y/, "yaxis")];
+    if (!xa || !ya) continue;
+    const area = {
+      left: origin.left + xa._offset,
+      right: origin.left + xa._offset + xa._length,
+      top: origin.top + ya._offset,
+      bottom: origin.top + ya._offset + ya._length,
+    };
+    if (within(area)) return null;
+    for (const [axis, id, index] of [
+      ["x", panel.xaxis, panel.x],
+      ["y", panel.yaxis, panel.y],
+    ]) {
+      if (hit) break;
+      for (const text of gd.querySelectorAll(`.${id}tick text`)) {
+        if (within(text.getBoundingClientRect())) {
+          hit = { axis, index };
+          break;
+        }
+      }
+    }
+  }
+  return hit;
+}
+
 // Writes a number into a field, as the shortest text that reads back the
 // same number: a rounded one could make the range of a deep zoom empty, or
 // change the settings when they are applied again.
@@ -380,15 +485,20 @@ function numberText(value) {
 
 let open = null;
 
-// Opens the dialog of an axis column of `kind` (`axisKind`). `title` heads
+// Opens the dialog of an axis column of `kind` (`dialogKind`). `title` heads
 // it ("X 軸: x"), `range` is the range shown (ascending), `settings` the
 // column's (`emptySettings` for none), `drawn` plotly's interval of the
-// drawn axis (`drawnUnit`). `onApply(settings, range)` draws them, on OK
+// drawn axis (`drawnUnit`), `angle` that of its tick labels (null for
+// plotly's own). `onApply(settings, range, angle)` draws them, on OK
 // (which closes the dialog) and on Apply (which keeps it open); Cancel and
 // Esc close it, keeping what was applied. An end left as written is the
 // very value it was written from, so that applying a range left alone
-// moves no axis.
-export function openAxisDialog({ title, kind = "number", range, settings, drawn = null, onApply }) {
+// moves no axis. A categorical axis shows the fields of a numeric one
+// disabled: only the angle is checked and applied (`onApply(null, null,
+// angle)`). A temporal axis has no angle (`angle` undefined to `onApply`).
+export function openAxisDialog({ title, kind = "number", range, settings, drawn = null, angle = null, onApply }) {
+  const category = kind === "category";
+  if (category) kind = "number";
   const temporal = kind !== "number";
   open?.close();
   const dialog = document.createElement("dialog");
@@ -482,9 +592,15 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
   };
   format.addEventListener("change", usable);
   usable();
-  // A temporal axis keeps plotly's labels: no format to pick.
+  // A temporal axis keeps plotly's labels: no format to pick, nor angle.
   if (temporal) {
     for (const row of [formatRow, digits.parentElement, separatorsRow]) row.remove();
+  }
+  const turn = temporal ? null : field(ticksBox, "ラベルの角度 (°)", angle === null ? "" : String(angle), "angle", "自動");
+  if (turn) {
+    turn.inputMode = "numeric";
+    turn.title = "−90〜90 の整数。0 は水平、正は時計回り。空欄は自動";
+    turn.parentElement.classList.add("axis-dialog-angle");
   }
 
   const linesBox = section("参照線");
@@ -547,8 +663,25 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
     addLine();
   });
 
+  // A categorical axis takes the angle alone: the other fields show, but
+  // can be neither edited nor focused.
+  if (category) {
+    for (const control of dialog.querySelectorAll("input, select, button")) {
+      if (control === turn) continue;
+      control.disabled = true;
+      control.closest(".axis-dialog-field, .axis-dialog-line")?.classList.add("off");
+    }
+  }
+
   // Applies the fields, or shows why not; returns whether they were applied.
   const apply = () => {
+    const turned = turn ? readAngle(turn.value) : { value: undefined };
+    if (turn) errors.get("angle").textContent = turned.error ?? "";
+    if (category) {
+      if (turned.error) return false;
+      onApply(null, null, turned.value);
+      return true;
+    }
     const read = readFields({
       kind,
       min: min.value,
@@ -564,7 +697,7 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
     for (const name of ["min", "max", "dtick", "minor", "digits"]) {
       errors.get(name).textContent = read.errors?.[name] ?? "";
     }
-    if (read.errors) return false;
+    if (read.errors || turned.error) return false;
     known = {
       min: { text: min.value, value: read.range[0] },
       max: { text: max.value, value: read.range[1] },
@@ -580,6 +713,7 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
         separators: read.separators,
       },
       read.range,
+      turned.value,
     );
     return true;
   };
@@ -601,8 +735,9 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
   button("適用", apply);
   dialog.append(buttons);
 
-  // Enter in a field of the range or ticks is OK; Esc is Cancel (the dialog's own).
-  for (const input of [min, max, dtick, minor, digits]) {
+  // Enter in a field of the range or ticks, or in the angle, is OK; Esc is
+  // Cancel (the dialog's own).
+  for (const input of [min, max, dtick, minor, digits, turn].filter(Boolean)) {
     input.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
@@ -616,7 +751,8 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
   document.body.append(dialog);
   open = dialog;
   dialog.showModal();
-  min.focus();
-  min.select();
+  const first = category ? turn : min;
+  first.focus();
+  first.select();
   return dialog;
 }

@@ -13,7 +13,6 @@ from dataclasses import asdict
 
 from ddviz.server.labeltext import facet_text, fit_text, level_text, plotly_text
 from ddviz.shared.layout import (
-    MARGIN_BOTTOM,
     MARGIN_LEFT,
     MARGIN_RIGHT,
     MARGIN_TOP,
@@ -81,7 +80,7 @@ def _facet_labels(
     """
     labels = []
     width = layout.width - layout.margin_left - MARGIN_RIGHT
-    height = layout.height - MARGIN_TOP - MARGIN_BOTTOM
+    height = layout.height - MARGIN_TOP - layout.margin_bottom
     if spec.wrap:
         for panel, level in enumerate(levels["col"]):
             prow, pcol = divmod(panel, layout.ncol)
@@ -360,6 +359,7 @@ def build_figure(manifest: PlotManifest) -> dict:
         panels are tiles, ``ncol`` to a row, as `ddviz.compute.raster.atlas`),
         whether each y column is categorical (``y_categorical``), the
         left margin (``margin_left``, `ddviz.shared.layout.left_margin`),
+        the bottom margin (``margin_bottom``, `ddviz.shared.layout.bottom_margin`),
         the panels a wrapped grid would put to a row with no number set
         (``wrap_auto_cols``, `ddviz.shared.layout.wrap_columns`; None
         without wrapping),
@@ -389,7 +389,7 @@ def build_figure(manifest: PlotManifest) -> dict:
             "l": layout.margin_left,
             "r": MARGIN_RIGHT,
             "t": MARGIN_TOP,
-            "b": MARGIN_BOTTOM,
+            "b": layout.margin_bottom,
             "autoexpand": False,
         },
         "hovermode": False,
@@ -508,6 +508,8 @@ def build_figure(manifest: PlotManifest) -> dict:
         "y_categorical": [c in manifest.axis_levels for c in spec.y],
         # Left margin in pixels (`ddviz.shared.layout.left_margin`).
         "margin_left": layout.margin_left,
+        # Bottom margin in pixels (`ddviz.shared.layout.bottom_margin`).
+        "margin_bottom": layout.margin_bottom,
         # The log axis columns with rows left out for a value not positive.
         "nonpositive": manifest.nonpositive,
         "grid": asdict(manifest.grid),
@@ -527,7 +529,13 @@ def build_figure(manifest: PlotManifest) -> dict:
         # levels and the size requested), whatever number the user set; None
         # without a wrap column.
         "wrap_auto_cols": (
-            wrap_columns(axes.wrap, spec.width, spec.height, spec.margin_left)
+            wrap_columns(
+                axes.wrap,
+                spec.width,
+                spec.height,
+                spec.margin_left,
+                spec.margin_bottom,
+            )
             if axes.wrap
             else None
         ),
