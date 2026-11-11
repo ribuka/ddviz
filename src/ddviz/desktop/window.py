@@ -28,6 +28,7 @@ from ddviz.desktop.webview2_access import (
     installed_runtime_version,
     windows_build,
 )
+from ddviz.desktop.webview2_processes import FrontendProcesses
 
 _log = logging.getLogger(__name__)
 
@@ -217,10 +218,15 @@ class _App:
             self._thread.join()
 
 
+#: Builds the UI server's app for an input, whether to read its subfolders,
+#: the token, and what returns the ids of the window's WebView2 processes.
+MakeApp = Callable[[list[str], bool, str, Callable[[], list[int] | None]], object]
+
+
 def run_window(
     paths: list[str] | None,
     recursive: bool,
-    make_app: Callable[[list[str], bool, str], object],
+    make_app: MakeApp,
     label: Callable[[list[str]], str],
 ) -> int:
     """Run the app in its own window until the window closes.
@@ -235,7 +241,9 @@ def run_window(
         For a folder, also read the files in its subfolders.
     make_app : callable
         Builds the ASGI app of the UI server for an input, whether to read
-        its subfolders, and the token that requests must carry.
+        its subfolders, the token that requests must carry, and what returns
+        the ids of the window's WebView2 processes (for the memory in the
+        footer).
     label : callable
         Names an input in the window's title
         (`ddviz.shared.inputs.input_label`; the window does not import it).
@@ -312,7 +320,7 @@ class _Chooser:
 def _run(
     paths: list[str] | None,
     recursive: bool,
-    make_app: Callable[[list[str], bool, str], object],
+    make_app: MakeApp,
     label: Callable[[list[str]], str],
 ) -> bool:
     """Show the window until it closes; return whether everything went well."""
@@ -330,7 +338,15 @@ def _run(
         height=860,
         min_size=(800, 600),
     )
-    app = _App(window, paths, recursive, make_app, label)
+    frontend = FrontendProcesses()
+    frontend.attach(window)
+    app = _App(
+        window,
+        paths,
+        recursive,
+        lambda p, r, t: make_app(p, r, t, frontend.pids),
+        label,
+    )
     chooser.app = app
     # Not private: private mode deletes the WebView2 user data on every exit.
     webview.start(
