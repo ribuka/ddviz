@@ -90,7 +90,7 @@ def test_the_tick_menu_reverses_x_and_y_without_a_request(app_page: Page) -> Non
     """X, Y and both turn at the shown range, keep the hover on the drawn points, and turn back; no request aggregates."""
     page = app_page
     errors = watch_errors(page)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     # The conversions of `axisdirection.js` at their edges.
     checks = page.evaluate(
@@ -170,7 +170,7 @@ def test_a_reversed_axis_zooms_selects_and_resets_in_ascending_values(
     """On reversed axes, a zoom and a box send ascending ranges; the selection stays through a reversal; Reset axes keeps it."""
     page = app_page
     errors = watch_errors(page)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     _reverse(page, "x", "X 軸: x")
     _reverse(page, "y", "Y 軸: y")
@@ -250,7 +250,7 @@ def test_facets_turn_together_and_the_other_axes_stay(app_page: Page) -> None:
     """The facets of a column turn together; a second X column and the same column on Y stay as they are."""
     page = app_page
     errors = watch_errors(page)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "x", "y")
     place(page, "facet", "col")
     _reverse(page, "x", "X 軸: x")
@@ -282,7 +282,7 @@ def test_a_categorical_axis_and_the_strips_of_a_scrolled_grid_turn(
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 800, "height": 600})
-    place(page, "color", "x", plots=False)
+    place(page, "color", "x")
     place(page, "y", "y")
     place(page, "facet", "col")
     expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
@@ -324,7 +324,7 @@ def test_a_reversed_log_axis_stays_log(app_page: Page) -> None:
     """A log axis turns and keeps its scale; a zoom sends ascending values."""
     page = app_page
     errors = watch_errors(page)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     _right_click_shown_tick(page, "x")
     page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
@@ -360,7 +360,7 @@ def test_a_reversed_log_axis_stays_log(app_page: Page) -> None:
 def test_the_saved_bins_do_not_change_with_the_direction(app_page: Page) -> None:
     """The CSV of the plot data is the same before and after a reversal of X and Y."""
     page = app_page
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     button = page.locator('#plot .modebar-btn[data-title^="データを保存"]')
 
@@ -382,7 +382,7 @@ def test_the_left_margin_of_y_reverses_y(app_page: Page) -> None:
     from tests.e2e.test_axis_menu import y_margins
 
     page = app_page
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     urls = _record(page)
     low, high = _range(page, "yaxis")

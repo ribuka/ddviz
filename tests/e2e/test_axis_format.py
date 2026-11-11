@@ -96,7 +96,7 @@ def test_the_format_of_y_labels_applies_without_aggregating(app_page: Page) -> N
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "pay", "y")
     settle(page)
     # The automatic labels turn to exponents, as before.
@@ -192,7 +192,7 @@ def test_exponent_and_percent_keep_the_values(app_page: Page) -> None:
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "amount", "x", plots=False)
+    place(page, "amount", "x")
     place(page, "rate", "y")
     settle(page)
 
@@ -255,7 +255,7 @@ def test_a_column_format_follows_it_to_every_axis_and_view(app_page: Page) -> No
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "pay", "y")
     place(page, "g", "col")
     settle(page)

@@ -61,7 +61,7 @@ def test_long_names_end_in_an_ellipsis_inside_their_boxes(app_page: Page) -> Non
     """A long name on Y, on Group Y and in the legend stays in its box and ends in "…" (a chip's tooltip is the whole name); an empty level shows its placeholder."""
     page = app_page
     expect(page.locator("#columns .column").first).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, LONG, "y")
     place(page, "g", "color")
 
@@ -91,7 +91,7 @@ def test_huge_numbers_stay_short_and_no_rows_are_told(app_page: Page) -> None:
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.first).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     no_rows = page.locator("#no-rows")
     expect(no_rows).to_be_hidden()
@@ -137,7 +137,7 @@ def test_a_long_error_keeps_the_status_bar_on_one_line(app_page: Page) -> None:
     expect(page.locator("#columns .column").first).to_be_visible()
     height = bar.bounding_box()["height"]
     page.route("**/api/plot", fail)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     drop(page, "y", "y")
     status = page.locator("#status")
     expect(status).to_have_class("notice-error")
@@ -161,7 +161,7 @@ def test_cut_facet_labels_stay_over_their_panels(app_page: Page) -> None:
     """A facet label of wide letters is cut to its panel; on a grid that scrolls, its strip label has the whole text as a tooltip."""
     page = app_page
     expect(page.locator("#columns .column").first).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "w", "col")
     labels = page.locator("#plot .annotation-text")

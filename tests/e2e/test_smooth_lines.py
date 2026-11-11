@@ -82,7 +82,7 @@ def test_the_line_shows_its_white_edge_over_dense_points_and_a_selection(
     """Over dense points of its own color the line keeps a white edge, before and after a box selection's layer comes, and follows a picked color."""
     page = app_page
     expect(page.locator("#columns .column").filter(has_text="y")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "c", "color")
     page.wait_for_function(PAINTED_PIXEL)

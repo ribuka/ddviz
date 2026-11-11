@@ -107,7 +107,7 @@ def test_the_tick_menu_toggles_a_log_axis(app_page: Page) -> None:
     """Log x keeps y's zoom, warns of the rows not positive, survives Reset axes and goes back to linear."""
     page = app_page
     errors = watch_errors(page)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     # A zoom of y, which the change of x's scale keeps.
     page.evaluate("Plotly.relayout('plot', {'yaxis.range': [-0.5, 0.5]})")
@@ -165,7 +165,7 @@ def test_the_tick_menu_toggles_a_log_axis(app_page: Page) -> None:
 def test_the_log_item_of_a_categorical_axis_is_grayed_out(app_page: Page) -> None:
     """A categorical axis's menu shows the item disabled; Escape closes it."""
     page = app_page
-    place(page, "color", "x", plots=False)
+    place(page, "color", "x")
     place(page, "y", "y")
     _right_click_tick(page, "x")
     menu = page.locator(".axis-menu")
@@ -185,7 +185,7 @@ def test_a_box_dragged_on_a_log_axis_selects_by_its_values(app_page: Page) -> No
     """A Box Select drag on a log x sends the values under the box's edges, and the layer and table follow."""
     page = app_page
     errors = watch_errors(page)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     _right_click_tick(page, "x")
     page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
@@ -254,7 +254,7 @@ def test_the_left_margin_of_y_opens_its_menu(app_page: Page) -> None:
     """The whole margin left of y's tick labels, and the gap left of the stage, open y's menu; around it the plot's menu or none."""
     page = app_page
     errors = watch_errors(page)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     margins = y_margins(page)
     (row,) = margins["rows"]
@@ -280,7 +280,7 @@ def test_each_panel_row_of_the_margin_opens_its_own_column(app_page: Page) -> No
     """With two y columns by Group Y, each row of the margin opens its row's column; with Wrap, the leftmost panel's; not between the rows nor on a panel's right edge."""
     page = app_page
     errors = watch_errors(page)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     add_second_y(page, "x")
     place(page, "facet", "row")
@@ -324,7 +324,7 @@ def test_each_panel_row_of_the_margin_opens_its_own_column(app_page: Page) -> No
 def test_the_margin_of_a_categorical_y_grays_out_its_log_item(app_page: Page) -> None:
     """A categorical y's margin opens its menu with the log item disabled."""
     page = app_page
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "color", "y")
     margins = y_margins(page)
     (row,) = margins["rows"]

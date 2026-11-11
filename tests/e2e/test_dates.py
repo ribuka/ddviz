@@ -24,6 +24,7 @@ from tests.e2e.test_scatter import (
     SETTLED,
     dialog_at,
     place,
+    wait_idle,
     watch_errors,
 )
 
@@ -99,7 +100,7 @@ def test_a_datetime_axis_hovers_and_filters_as_dates(
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="took")).to_be_visible()
     expect(columns.filter(has_text="at").locator(".column-type")).to_have_text("◷")
-    place(page, "at", "x", plots=False)
+    place(page, "at", "x")
     place(page, "y", "y")
     pixel = page.wait_for_function(PAINTED_PIXEL).json_value()
     assert (
@@ -163,7 +164,7 @@ def test_a_datetime_axis_under_a_second_draws_its_points(
     page = app_page
     errors: list[object] = []
     page.on("pageerror", lambda error: errors.append(error))
-    place(page, "at", "x", plots=False)
+    place(page, "at", "x")
     place(page, "y", "y")
     pixel = page.wait_for_function(PAINTED_PIXEL).json_value()
     expect(page.locator("#status")).not_to_contain_text("表示範囲")
@@ -202,7 +203,7 @@ def test_a_reversed_datetime_axis_under_a_second_keeps_its_range(
     page = app_page
     errors: list[object] = []
     page.on("pageerror", lambda error: errors.append(error))
-    place(page, "at", "x", plots=False)
+    place(page, "at", "x")
     place(page, "y", "y")
     low, high = page.evaluate(SHOWN_X_RANGE)
     ticks = page.locator("#plot .xtick text")
@@ -243,7 +244,7 @@ def test_the_left_margin_of_a_temporal_y_opens_its_menu_and_dialog(
 ) -> None:
     """A datetime or duration y's margin opens its menu (log as on its tick labels), and a double click there its dialog."""
     page = app_page
-    place(page, "y", "x", plots=False)
+    place(page, "y", "x")
     zone = page.locator('.zone[data-role="y"]')
     page.locator("#columns .column").filter(
         has=page.get_by_text(column, exact=True)
@@ -306,17 +307,15 @@ UNIT_MS = {
 }
 
 
-def put(page: Page, column: str, role: str, plots: bool = True) -> None:
-    """Drag a column onto a role's zone (a duration's chip names its seconds), and wait for the plot it starts."""
+def put(page: Page, column: str, role: str) -> None:
+    """Drag a column onto a role's zone (a duration's chip names its seconds), and wait for what it starts to be drawn (`wait_idle`)."""
     zone = page.locator(f'.zone[data-role="{role}"]')
     page.locator("#columns .column").filter(
         has=page.get_by_text(column, exact=True)
     ).drag_to(zone)
     name = re.compile(rf"^{re.escape(column)}( \(s\))?$")
     expect(zone.locator(".chip-name").filter(has_text=name)).to_have_count(1)
-    if plots:
-        page.wait_for_timeout(300)
-        page.wait_for_function(SETTLED)
+    wait_idle(page)
 
 
 def record(page: Page) -> list[str]:
@@ -427,7 +426,7 @@ def test_a_temporal_axis_sets_its_range_and_reference_lines(
     """A double click on a temporal axis opens its column's dialog at the range shown; the range and the line typed land on their axis's coordinates, and the overview keeps the line."""
     page = app_page
     errors = watch_errors(page)
-    put(page, column, role, plots=False)
+    put(page, column, role)
     put(page, "y", "x" if role == "y" else "y")
     # A date y widens the margin once drawn.
     settle(page)
@@ -474,7 +473,7 @@ def test_a_range_left_as_written_keeps_a_deep_zoom_and_a_reversed_axis_its_direc
     """Applied as written, the range of a zoom within milliseconds stays the very same and asks nothing; a range typed on a reversed axis keeps it reversed."""
     page = app_page
     errors = watch_errors(page)
-    put(page, "at", "x", plots=False)
+    put(page, "at", "x")
     put(page, "y", "y")
     low, high = page.evaluate(SHOWN_X_RANGE)
     start = low + (high - low) / 3 + 0.000123
@@ -524,7 +523,7 @@ def test_wrong_fields_of_a_temporal_axis_tell_why_and_change_nothing(
 ) -> None:
     """Dates that do not exist, wrong times, empty ends, a minimum not below the maximum, wrong intervals and splits, and a wrong line are each refused beside their field."""
     page = app_page
-    put(page, "at", "x", plots=False)
+    put(page, "at", "x")
     put(page, "y", "y")
     shown = page.evaluate(SHOWN_X_RANGE)
     urls = record(page)
@@ -619,7 +618,7 @@ def test_temporal_ticks_and_their_minor_splits_draw_on_every_panel_and_stay(
     """Fixed intervals of a unit and their minor splits draw on every panel of the column without aggregating, stay through the overview and a new plot, and cleared go back to plotly's ticks."""
     page = app_page
     errors = watch_errors(page)
-    put(page, "clock", "x", plots=False)
+    put(page, "clock", "x")
     put(page, "y", "y")
     put(page, "group", "col")
     urls = record(page)
@@ -699,7 +698,7 @@ def test_the_unit_of_an_automatic_interval_follows_the_ticks_drawn(
 ) -> None:
     """Without an interval set, the unit picked follows plotly's ticks of the zoom: seconds, days, months or years; a duration's are seconds."""
     page = app_page
-    put(page, "at", "x", plots=False)
+    put(page, "at", "x")
     put(page, "y", "y")
     start = epoch_ms(START)
     picked = []
@@ -733,7 +732,7 @@ def test_the_unit_of_an_automatic_interval_follows_the_ticks_drawn(
 def test_a_log_duration_hides_its_settings_until_linear_again(app_page: Page) -> None:
     """A duration on a log axis opens no dialog and draws none of its settings; linear again, it draws them."""
     page = app_page
-    put(page, "y", "x", plots=False)
+    put(page, "y", "x")
     put(page, "took", "y")
     dialog = open_dialog(page, "y")
     dialog.locator("input[name=dtick]").fill("100")
@@ -770,8 +769,8 @@ def test_the_strips_and_the_rows_of_temporal_axes_open_their_columns(
     """Scrolled, the strips' tick labels open the dialogs of the temporal x and y; the margin of each y row opens its column's."""
     page = app_page
     page.set_viewport_size({"width": 800, "height": 600})
-    put(page, "at", "x", plots=False)
-    put(page, "clock", "y", plots=False)
+    put(page, "at", "x")
+    put(page, "clock", "y")
     put(page, "group", "col")
     expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
     page.locator("#scroller").evaluate(SCROLL_AND_SETTLE, 10_000)
@@ -804,7 +803,7 @@ def test_finer_ticks_of_a_temporal_y_widen_its_margin(app_page: Page) -> None:
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    put(page, "y", "x", plots=False)
+    put(page, "y", "x")
     put(page, "clock", "y")
     page.evaluate(
         "Plotly.relayout('plot', {'yaxis.range': ['1970-01-01 10:00:00', '1970-01-01 10:00:30']})"
@@ -877,7 +876,7 @@ def test_calendar_ticks_of_a_date_x_follow_the_months(app_page: Page) -> None:
     """Every 5 months with monthly minor ticks on a date x: the 1st of each month across a common and a leap February, without aggregating."""
     page = app_page
     errors = watch_errors(page)
-    put(page, "day", "x", plots=False)
+    put(page, "day", "x")
     put(page, "y", "y")
     urls = record(page)
     dialog = open_dialog(page, "x")
@@ -923,8 +922,8 @@ def test_calendar_ticks_of_a_zoned_y_stay_on_its_local_years(
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 800, "height": 600})
-    put(page, "y", "x", plots=False)
-    put(page, "zoned", "y", plots=False)
+    put(page, "y", "x")
+    put(page, "zoned", "y")
     put(page, "group", "col")
     dialog = open_dialog(page, "y")
     dialog.locator("input[name=dtick]").fill("2")
@@ -988,7 +987,7 @@ def test_wrong_calendar_intervals_and_the_minor_check(app_page: Page) -> None:
     """A calendar interval takes positive integers whose months are safe; 1 or none turns the minor ticks off; the minor splits and the check are kept apart."""
     page = app_page
     errors = watch_errors(page)
-    put(page, "day", "x", plots=False)
+    put(page, "day", "x")
     put(page, "y", "y")
     urls = record(page)
     dialog = open_dialog(page, "x")
@@ -1101,7 +1100,7 @@ def test_automatic_calendar_ticks_pick_their_unit(
 ) -> None:
     """Plotly's own ticks of months or years pick that unit with an empty interval; a unit alone keeps them automatic."""
     page = app_page
-    put(page, "day", "x", plots=False)
+    put(page, "day", "x")
     put(page, "y", "y")
     page.evaluate(
         f"Plotly.relayout('plot', {{'xaxis.range': ['2020-01-01', '{2020 + years}-01-01']}})"
@@ -1128,7 +1127,7 @@ def test_times_and_durations_have_no_calendar_units(
 ) -> None:
     """A time's or a duration's interval takes no months nor years."""
     page = app_page
-    put(page, column, "x", plots=False)
+    put(page, column, "x")
     put(page, "y", "y")
     dialog = open_dialog(page, "x")
     units = dialog.locator("select[name=unit] option").evaluate_all(
