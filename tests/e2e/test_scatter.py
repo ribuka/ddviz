@@ -1732,10 +1732,12 @@ def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(
     expect(page.locator('.zone[data-role="x"] .chip-name')).to_have_text(["x"])
 
     # A folded pane takes the drop on its head and opens.
-    page.locator(".filter-toggle").click()
+    page.locator(".filter-down").click()
     expect(filters).to_have_class(re.compile(r"\bcollapsed\b"))
     page.locator('.zone[data-role="color"] .chip').drag_to(page.locator(".filter-head"))
-    expect(filters).not_to_have_class(re.compile(r"\bcollapsed\b"))
+    expect(filters).not_to_have_class(re.compile(r"\b(collapsed|maximized)\b"))
+    expect(page.locator(".filter-up")).to_be_enabled()
+    expect(page.locator(".filter-down")).to_be_enabled()
     levels = page.locator(".filter-card").nth(1).locator(".filter-level")
     expect(levels).not_to_have_count(0)
     expect(page.locator('.zone[data-role="color"] .chip-name')).to_have_text(["color"])
@@ -1966,4 +1968,225 @@ def test_the_left_strip_and_the_gap_left_of_it_open_their_rows_axis(
         assert menu_at(page, margins["zone"] + 1, bottom + 5) is None
     assert selections == []
     expect(page.locator("#table")).to_be_visible()
+    assert errors == []
+
+
+def drag_filter_edge(page: Page, dy: float) -> None:
+    """Drag the filter pane's top edge by `dy` pixels with the mouse (down when positive)."""
+    box = page.locator(".filter-resize").bounding_box()
+    x = box["x"] + box["width"] / 2
+    y = box["y"] + box["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x, y + dy, steps=8)
+    page.mouse.up()
+
+
+def pane_height(locator: Locator) -> float:
+    """Return the height of an element in CSS pixels."""
+    return locator.evaluate("e => e.getBoundingClientRect().height")
+
+
+def test_the_filter_pane_steps_and_drags_its_height_keeping_the_conditions(
+    app_page: Page,
+) -> None:
+    """▲ and ▼ step the filter pane through folded, open and maximized, as a double click on its head does; its top edge drags its height within bounds, which open comes back to; none of it changes the conditions, the plot area or sends a request."""
+    page = app_page
+    errors = watch_errors(page)
+    page.set_viewport_size({"width": 1280, "height": 800})
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    filters = page.locator("#filters")
+    columns = page.locator("#columns")
+    left = page.locator("#left")
+    up = page.locator(".filter-up")
+    down = page.locator(".filter-down")
+    handle = page.locator(".filter-resize")
+    status = page.locator("#status")
+
+    # Open at first, below the column list.
+    expect(filters).not_to_have_class(re.compile(r"\b(collapsed|maximized)\b"))
+    expect(up).to_be_enabled()
+    expect(down).to_be_enabled()
+    expect(up).to_have_attribute("title", "左ペインいっぱいに広げる")
+    expect(down).to_have_attribute(
+        "title", "フィルタ欄を畳む（条件の要約は見出しに残る）"
+    )
+    expect(handle).to_have_attribute("title", "ドラッグで高さを変える")
+    assert handle.evaluate("e => getComputedStyle(e).cursor") == "ns-resize"
+
+    # A condition, applied.
+    page.locator('.zone[data-role="x"] .chip').drag_to(filters)
+    expect(page.locator(".filter-card .filter-range input")).to_have_count(2)
+    lo, hi = page.locator(".filter-card .filter-range input").all()
+    task = status.inner_text()
+    lo.fill("0")
+    hi.fill("10")
+    hi.press("Enter")
+    expect(status).not_to_have_text(task)
+    page.wait_for_function(SETTLED)
+    summary = page.locator(".filter-summary")
+    expect(summary).to_contain_text("x:")
+    condition = summary.inner_text()
+    values = [lo.input_value(), hi.input_value()]
+    task = status.inner_text()
+    plot = page.locator("#plot").bounding_box()
+    requests: list[str] = []
+    page.on(
+        "request", lambda r: requests.append(r.url) if "/api/" in r.url else None
+    )
+
+    # Maximized: the whole left pane, the column list hidden.
+    up.click()
+    expect(filters).to_have_class(re.compile(r"\bmaximized\b"))
+    expect(columns).to_be_hidden()
+    expect(up).to_be_disabled()
+    expect(down).to_have_attribute("title", "元の高さに戻す")
+    assert abs(pane_height(filters) - left.evaluate("e => e.clientHeight")) <= 2
+    expect(summary).to_have_text(condition)
+    down.click()
+    expect(filters).not_to_have_class(re.compile(r"\bmaximized\b"))
+    expect(columns).to_be_visible()
+    default = pane_height(filters)
+
+    # Folded: the head only, no handle.
+    down.click()
+    expect(filters).to_have_class(re.compile(r"\bcollapsed\b"))
+    expect(down).to_be_disabled()
+    expect(up).to_have_attribute("title", "フィルタ欄を開く")
+    expect(handle).to_be_hidden()
+    expect(summary).to_have_text(condition)
+
+    # A double click on the head steps once: up when folded, down otherwise.
+    head = page.locator(".filter-head > span").first
+    head.dblclick()
+    expect(filters).not_to_have_class(re.compile(r"\bcollapsed\b"))
+    head.dblclick()
+    expect(filters).to_have_class(re.compile(r"\bcollapsed\b"))
+    up.click()
+    up.click()
+    expect(filters).to_have_class(re.compile(r"\bmaximized\b"))
+    head.dblclick()
+    expect(filters).not_to_have_class(re.compile(r"\b(collapsed|maximized)\b"))
+    # A button's double click steps by its two clicks, not a third time.
+    down.dblclick()
+    expect(filters).to_have_class(re.compile(r"\bcollapsed\b"))
+    up.click()
+
+    # Dragging the edge up makes the pane taller as it moves; a click alone does nothing.
+    box = handle.bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    assert abs(pane_height(filters) - default) <= 1
+    drag_filter_edge(page, -100)
+    taller = pane_height(filters)
+    assert abs(taller - (default + 100)) <= 2, (default, taller)
+    drag_filter_edge(page, 40)
+    dragged = pane_height(filters)
+    assert abs(dragged - (taller - 40)) <= 2, (taller, dragged)
+    expect(columns).to_be_visible()
+
+    # Bounds: the column list keeps 160px, the pane 80px; the state stays open.
+    left_height = left.evaluate("e => e.clientHeight")
+    drag_filter_edge(page, -2000)
+    assert abs(pane_height(filters) - (left_height - 160)) <= 2
+    expect(filters).not_to_have_class(re.compile(r"\bmaximized\b"))
+    drag_filter_edge(page, 2000)
+    assert abs(pane_height(filters) - 80) <= 2
+    expect(filters).not_to_have_class(re.compile(r"\bcollapsed\b"))
+    drag_filter_edge(page, -150)
+    dragged = pane_height(filters)
+
+    # Open comes back to the dragged height from either end.
+    down.click()
+    up.click()
+    assert abs(pane_height(filters) - dragged) <= 1
+    up.click()
+    down.click()
+    assert abs(pane_height(filters) - dragged) <= 1
+
+    # Folding the left pane and opening it keeps the pane's state.
+    down.click()
+    page.locator(".left-close").click()
+    page.locator("#left-strip").click()
+    expect(filters).to_have_class(re.compile(r"\bcollapsed\b"))
+    up.click()
+    assert abs(pane_height(filters) - dragged) <= 1
+    up.click()
+    expect(filters).to_have_class(re.compile(r"\bmaximized\b"))
+    page.wait_for_function(SETTLED)
+    plot = page.locator("#plot").bounding_box()
+
+    # Dragging down from maximized brings the pane back to open.
+    drag_filter_edge(page, 200)
+    expect(filters).not_to_have_class(re.compile(r"\bmaximized\b"))
+    expect(columns).to_be_visible()
+    assert pane_height(filters) <= left_height - 160 + 2
+
+    # A shorter window fits the height in; a taller one gives it back.
+    drag_filter_edge(page, -2000)
+    full = pane_height(filters)
+    page.set_viewport_size({"width": 1280, "height": 600})
+    shorter = left.evaluate("e => e.clientHeight")
+    assert abs(pane_height(filters) - (shorter - 160)) <= 2
+    page.set_viewport_size({"width": 1280, "height": 800})
+    assert abs(pane_height(filters) - full) <= 2
+    page.wait_for_function(SETTLED)
+    requests_before_resize = len(requests)
+
+    # Nothing of it changed the condition, the card, or the plot area. Only
+    # the left pane's folding and the window's size (which change the plot
+    # area) sent requests.
+    expect(summary).to_have_text(condition)
+    assert [lo.input_value(), hi.input_value()] == values
+    assert page.locator("#plot").bounding_box() == plot
+    drag_filter_edge(page, 100)
+    page.locator(".filter-down").click()
+    page.locator(".filter-up").click()
+    page.locator(".filter-up").click()
+    page.wait_for_timeout(500)
+    assert len(requests) == requests_before_resize
+    assert page.locator("#plot").bounding_box() == plot
+    expect(summary).to_have_text(condition)
+    assert errors == []
+
+
+def test_the_maximized_filter_pane_scrolls_to_its_end_and_keeps_its_state_on_a_drop(
+    app_page: Page,
+) -> None:
+    """A maximized pane scrolls to its last card and its drop target; a chip dropped on it adds a card and keeps it maximized, a known column changes nothing."""
+    page = app_page
+    errors = watch_errors(page)
+    page.set_viewport_size({"width": 1280, "height": 520})
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    place(page, "color", "color")
+    filters = page.locator("#filters")
+    for role in ["x", "y"]:
+        page.locator(f'.zone[data-role="{role}"] .chip').drag_to(filters)
+    page.locator("#columns .column").filter(
+        has=page.get_by_text("facet", exact=True)
+    ).drag_to(filters)
+    expect(page.locator(".filter-card")).to_have_count(3)
+    expect(page.locator(".filter-level")).not_to_have_count(0)
+
+    page.locator(".filter-up").click()
+    expect(filters).to_have_class(re.compile(r"\bmaximized\b"))
+    page.locator('.zone[data-role="color"] .chip').drag_to(filters)
+    expect(page.locator(".filter-card")).to_have_count(4)
+    expect(filters).to_have_class(re.compile(r"\bmaximized\b"))
+    expect(page.locator(".filter-card").nth(3).locator(".filter-level")).not_to_have_count(0)
+    # A short window makes the overflow certain whatever the font metrics of the platform.
+    page.set_viewport_size({"width": 1280, "height": 360})
+    body = page.locator(".filter-body")
+    assert body.evaluate("e => e.scrollHeight > e.clientHeight")
+    body.evaluate("e => { e.scrollTop = e.scrollHeight; }")
+    expect(page.locator(".filter-drop")).to_be_in_viewport()
+    assert body.evaluate("e => e.scrollTop + e.clientHeight >= e.scrollHeight - 1")
+
+    # A known column changes nothing.
+    page.locator('.zone[data-role="x"] .chip').drag_to(filters)
+    expect(page.locator(".filter-card")).to_have_count(4)
+    expect(filters).to_have_class(re.compile(r"\bmaximized\b"))
     assert errors == []

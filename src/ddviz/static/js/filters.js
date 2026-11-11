@@ -18,6 +18,18 @@ const TICK_SETTLE_MS = 400;
 const STEPS = 1000;
 const SUMMARY_RETRY_MS = 300;
 const MS_PER_DAY = 86_400_000;
+// Heights of the pane, lowest first: its head only (with the conditions in
+// words), below the column list (55% of the left pane at most, or the height
+// it was dragged to), and the whole left pane, the column list hidden. ▲ and
+// ▼ step through them, as the table of the selected rows does.
+const STATES = ["collapsed", "open", "maximized"];
+const TITLES = {
+  up: { collapsed: "フィルタ欄を開く", open: "左ペインいっぱいに広げる" },
+  down: { open: "フィルタ欄を畳む（条件の要約は見出しに残る）", maximized: "元の高さに戻す" },
+};
+// Bounds of a dragged height: the pane's own, and what it leaves the column list.
+const MIN_HEIGHT = 80;
+const MIN_COLUMNS_HEIGHT = 160;
 
 // Returns a number short enough for the pane.
 export function formatNumber(value) {
@@ -42,7 +54,9 @@ export class FilterPane {
     this.root = root;
     this.list = root.querySelector(".filter-list");
     this.head = root.querySelector(".filter-summary");
-    this.toggle = root.querySelector(".filter-toggle");
+    this.up = root.querySelector(".filter-up");
+    this.down = root.querySelector(".filter-down");
+    this.state = "open";
     this.tip = document.getElementById("drop-tip");
     this.onChange = onChange;
     this.onSummary = onSummary;
@@ -52,16 +66,73 @@ export class FilterPane {
     this.cards = [];
     this.committed = "[]";
     this.timer = null;
-    this.toggle.addEventListener("click", () => this.setCollapsed(!root.classList.contains("collapsed")));
-    root.querySelector(".filter-head").addEventListener("dblclick", () => this.toggle.click());
+    this.up.addEventListener("click", () => this.step(1));
+    this.down.addEventListener("click", () => this.step(-1));
+    // A double click on the head steps once: up from folded, else down. A
+    // button's own double click has already stepped by its two clicks.
+    root.querySelector(".filter-head").addEventListener("dblclick", (event) => {
+      if (event.target.closest("button")) return;
+      this.step(this.state === "collapsed" ? 1 : -1);
+    });
+    this.attachResize(root.querySelector(".filter-resize"));
     this.attachDrop();
+    this.setState("open");
     this.render();
   }
 
-  setCollapsed(collapsed) {
-    this.root.classList.toggle("collapsed", collapsed);
-    this.toggle.textContent = collapsed ? "▲" : "▼";
-    this.toggle.title = collapsed ? "フィルタ欄を開く" : "フィルタ欄を畳む（条件の要約は見出しに残る）";
+  // Raises (1) or lowers (-1) the pane by one of `STATES`.
+  step(by) {
+    const i = STATES.indexOf(this.state) + by;
+    if (i >= 0 && i < STATES.length) this.setState(STATES[i]);
+  }
+
+  // Only the pane's height changes: the cards, the conditions, the column
+  // list and the plot area stay as they are, so nothing is sent or drawn again.
+  setState(state) {
+    this.state = state;
+    this.root.classList.toggle("collapsed", state === "collapsed");
+    this.root.classList.toggle("maximized", state === "maximized");
+    this.up.disabled = state === "maximized";
+    this.down.disabled = state === "collapsed";
+    this.up.title = TITLES.up[state] ?? "";
+    this.down.title = TITLES.down[state] ?? "";
+  }
+
+  // Drags the pane's top edge: up makes it taller, down lower, leaving the
+  // column list `MIN_COLUMNS_HEIGHT`. The height dragged to is kept apart from
+  // the state (`--filter-height` with the class `sized`), for going back to
+  // it from either end; CSS fits it into a shorter left pane. A drag down from
+  // the maximized pane brings it back to open; a click alone changes nothing.
+  attachResize(handle) {
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      const startY = event.clientY;
+      const startHeight = this.root.offsetHeight;
+      // The head and the handle always fit.
+      const floor = this.root.querySelector(".filter-head").offsetHeight + handle.offsetHeight;
+      const limit = Math.max(this.root.parentElement.clientHeight - MIN_COLUMNS_HEIGHT, floor);
+      const lowest = Math.min(MIN_HEIGHT, limit);
+      this.root.style.setProperty("--filter-floor", `${floor}px`);
+      const move = (e) => {
+        if (this.state === "maximized") {
+          if (e.clientY <= startY) return;
+          this.setState("open");
+        }
+        const height = Math.min(Math.max(startHeight + startY - e.clientY, lowest), limit);
+        this.root.style.setProperty("--filter-height", `${height}px`);
+        this.root.classList.add("sized");
+      };
+      const end = () => {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", end);
+        handle.removeEventListener("pointercancel", end);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", end);
+      handle.addEventListener("pointercancel", end);
+    });
   }
 
   // A column from the list, or a placed one (a chip, which stays placed),
@@ -104,7 +175,8 @@ export class FilterPane {
     if (this.cards.some((c) => c.name === name)) return;
     const card = { name, numeric, summary: null, range: null, levels: new Set(), contains: "", element: null };
     this.cards.push(card);
-    this.setCollapsed(false);
+    // A folded pane opens to show the card; a maximized one stays so.
+    if (this.state === "collapsed") this.setState("open");
     this.render();
     this.loadSummary(card);
   }
