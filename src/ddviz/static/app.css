@@ -1763,6 +1763,10 @@ button {
   padding-left: 102px;
 }
 
+.axis-dialog-field[hidden] {
+  display: none;
+}
+
 .axis-dialog-check input {
   width: auto;
   margin: 0;

@@ -7,6 +7,7 @@ browser's local time, and the axes must show the data's (UTC) times anyway.
 from __future__ import annotations
 
 import datetime as dt
+import itertools
 import re
 from pathlib import Path
 
@@ -75,9 +76,16 @@ def temporal_frame(step: dt.timedelta) -> pl.DataFrame:
 
 @pytest.fixture
 def scatter_path(tmp_path: Path, temporal_frame: pl.DataFrame) -> Path:
-    """Serve the temporal rows instead of the scatter fixture's."""
+    """Serve the temporal rows instead of the scatter fixture's, with zoned every third day at New York's time.
+
+    Zoned is only in the file: reading its values back in Python needs the
+    time zone database, which Windows lacks without `tzdata`.
+    """
     path = tmp_path / "temporal.parquet"
-    temporal_frame.write_parquet(path)
+    zoned = pl.Series([START + dt.timedelta(days=3 * i) for i in range(ROWS)])
+    temporal_frame.with_columns(
+        zoned=zoned.dt.replace_time_zone("America/New_York")
+    ).write_parquet(path)
     return path
 
 
@@ -354,10 +362,10 @@ def at_ms(text: str) -> float:
 
 
 def unit_of(dtick: float | str, seconds: bool = False) -> str:
-    """Return the unit the dialog picks for plotly's interval: the largest up to it, weeks for months."""
+    """Return the unit the dialog picks for plotly's interval: the largest up to it; years for a multiple of 12 months, months otherwise."""
     if isinstance(dtick, str):
         assert dtick.startswith("M")
-        return "week"
+        return "year" if int(dtick[1:]) % 12 == 0 else "month"
     ms = dtick * 1000 if seconds else dtick
     return max(
         (u for u, size in UNIT_MS.items() if size <= ms),
@@ -688,7 +696,7 @@ def test_temporal_ticks_and_their_minor_splits_draw_on_every_panel_and_stay(
 def test_the_unit_of_an_automatic_interval_follows_the_ticks_drawn(
     app_page: Page,
 ) -> None:
-    """Without an interval set, the unit picked follows plotly's ticks of the zoom: seconds, days, weeks for months; a duration's are seconds."""
+    """Without an interval set, the unit picked follows plotly's ticks of the zoom: seconds, days, months or years; a duration's are seconds."""
     page = app_page
     put(page, "at", "x", plots=False)
     put(page, "y", "y")
@@ -708,7 +716,8 @@ def test_the_unit_of_an_automatic_interval_follows_the_ticks_drawn(
         expect(dialog.locator("select[name=unit]")).to_have_value(unit_of(drawn))
         dialog.get_by_role("button", name="キャンセル").click()
         picked.append((unit_of(drawn), drawn))
-    assert [unit for unit, _ in picked] == ["second", "day", "week"]
+    assert [unit for unit, _ in picked][:2] == ["second", "day"]
+    assert picked[-1][0] in {"month", "year"}
     assert str(picked[-1][1]).startswith("M")
 
     put(page, "took", "x")
@@ -823,3 +832,306 @@ def test_finer_ticks_of_a_temporal_y_widen_its_margin(app_page: Page) -> None:
     assert axis["range"] == pytest.approx(shown)
     assert axis["dtick"] == 500
     assert errors == []
+
+
+# The ticks drawn on the axis `key`, in linear units: the major ones and the
+# minor ones (plotly's `_vals`), and the texts of the major ones.
+TICKS = """(key) => {
+  const a = document.getElementById("plot")._fullLayout[key];
+  const major = a._vals.filter((t) => !t.minor);
+  return {
+    major: major.map((t) => t.x),
+    minor: a._vals.filter((t) => t.minor).map((t) => t.x),
+    text: major.map((t) => t.text),
+  };
+}"""
+EPOCH = dt.datetime(1970, 1, 1)  # noqa: DTZ001
+COUNT_ERROR = "有効な正の整数を入力してください"
+
+
+def month_of(ms: float) -> int:
+    """Return the months since 1970-01 of a tick at midnight on the 1st of a month (read as UTC)."""
+    at = EPOCH + dt.timedelta(milliseconds=ms)
+    assert (at.day, at.time()) == (1, dt.time()), at
+    return (at.year - 1970) * 12 + at.month - 1
+
+
+def assert_calendar(ticks: dict, every: int, minor: int | None) -> None:
+    """Check major ticks every `every` months from 1970-01, and minor ones every `minor` months between them, none on a major tick."""
+    majors = sorted(month_of(x) for x in ticks["major"])
+    assert len(majors) >= 2, majors
+    assert all(m % every == 0 for m in majors), majors
+    assert all(b - a == every for a, b in itertools.pairwise(majors))
+    minors = sorted(month_of(x) for x in ticks["minor"])
+    if minor is None:
+        assert minors == []
+        return
+    assert not set(minors) & set(majors)
+    for a, b in itertools.pairwise(majors):
+        between = [m for m in minors if a < m < b]
+        assert between == list(range(a + minor, b, minor)), (a, b, minors)
+
+
+def test_calendar_ticks_of_a_date_x_follow_the_months(app_page: Page) -> None:
+    """Every 5 months with monthly minor ticks on a date x: the 1st of each month across a common and a leap February, without aggregating."""
+    page = app_page
+    errors = watch_errors(page)
+    put(page, "day", "x", plots=False)
+    put(page, "y", "y")
+    urls = record(page)
+    dialog = open_dialog(page, "x")
+    units = dialog.locator("select[name=unit] option").evaluate_all(
+        "(options) => options.map((o) => o.value)"
+    )
+    assert units == [*UNIT_MS, "month", "year"]
+    dialog.locator("input[name=dtick]").fill("5")
+    dialog.locator("select[name=unit]").select_option("month")
+    expect(dialog.locator("input[name=minor]")).to_be_hidden()
+    check = dialog.locator("input[name=calendar-minor]")
+    expect(
+        dialog.locator(".axis-dialog-check:has([name=calendar-minor])")
+    ).to_have_text("1か月ごとに補助目盛りを表示")
+    expect(check).not_to_be_checked()
+    check.check()
+    dialog.get_by_role("button", name="OK").click()
+    expect(dialog).to_have_count(0)
+    axis = page.evaluate(AXIS, "xaxis")
+    assert (axis["tickmode"], axis["dtick"], axis["tick0"]) == ("linear", "M5", 0)
+    assert (axis["minor"], axis["minor0"]) == ("M1", 0)
+    ticks = page.evaluate(TICKS, "xaxis")
+    assert_calendar(ticks, 5, 1)
+    every = {*ticks["major"], *ticks["minor"]}
+    for month in ["2027-02-01", "2027-03-01", "2028-02-01", "2028-03-01"]:
+        assert at_ms(month) in every, month
+    page.wait_for_timeout(300)
+    assert urls == []
+
+    # Opened again: the interval, its unit and the check.
+    dialog = open_dialog(page, "x")
+    expect(dialog.locator("input[name=dtick]")).to_have_value("5")
+    expect(dialog.locator("select[name=unit]")).to_have_value("month")
+    expect(dialog.locator("input[name=calendar-minor]")).to_be_checked()
+    dialog.get_by_role("button", name="キャンセル").click()
+    assert errors == []
+
+
+def test_calendar_ticks_of_a_zoned_y_stay_on_its_local_years(
+    app_page: Page,
+) -> None:
+    """Every 2 years with yearly minor ticks on a zoned datetime y: January 1st of even years at its local time, through a reversed axis, a pan, a zoom and a new plot, on every panel and the strip."""
+    page = app_page
+    errors = watch_errors(page)
+    page.set_viewport_size({"width": 800, "height": 600})
+    put(page, "y", "x", plots=False)
+    put(page, "zoned", "y", plots=False)
+    put(page, "group", "col")
+    dialog = open_dialog(page, "y")
+    dialog.locator("input[name=dtick]").fill("2")
+    dialog.locator("select[name=unit]").select_option("year")
+    check = dialog.locator("input[name=calendar-minor]")
+    expect(
+        dialog.locator(".axis-dialog-check:has([name=calendar-minor])")
+    ).to_have_text("1年ごとに補助目盛りを表示")
+    check.check()
+    dialog.get_by_role("button", name="OK").click()
+    expect(dialog).to_have_count(0)
+    page.wait_for_timeout(300)
+    page.wait_for_function(SETTLED)
+
+    def assert_years() -> None:
+        for key in ["yaxis", "yaxis2"]:
+            axis = page.evaluate(AXIS, key)
+            assert (axis["dtick"], axis["tick0"]) == ("M24", 0)
+            assert (axis["minor"], axis["minor0"]) == ("M12", 0)
+            assert_calendar(page.evaluate(TICKS, key), 24, 12)
+
+    assert_years()
+    # The axis is at the column's local time: its first value is New York's
+    # midnight of 2026-10-31, at that very coordinate.
+    low = min(page.evaluate(AXIS, "yaxis")["range"])
+    assert low < at_ms("2026-10-31") < low + 400 * DAY_MS
+
+    # Reversed, panned and zoomed, the ticks keep the calendar.
+    margins = y_margins(page)
+    row = margins["rows"][0]
+    page.wait_for_timeout(400)
+    page.mouse.click(
+        (margins["zone"] + row["left"]) / 2, row["between"], button="right"
+    )
+    page.locator(".axis-menu").get_by_role("button", name="向きを反転").click()
+    page.wait_for_function(
+        "() => { const r = document.getElementById('plot')._fullLayout.yaxis.range;"
+        " return r[0] > r[1]; }"
+    )
+    page.wait_for_timeout(300)
+    page.wait_for_function(SETTLED)
+    assert_years()
+    for a, b in [("2029-03-05 07:00", "2036-07-09"), ("2027-06-01", "2032-02-01")]:
+        page.evaluate(f"Plotly.relayout('plot', {{'yaxis.range': ['{b}', '{a}']}})")
+        page.wait_for_timeout(300)
+        page.wait_for_function(SETTLED)
+        assert_years()
+    put(page, "took", "x")
+    assert_years()
+
+    # The strip of a scrolled grid shows the panels' major ticks.
+    expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
+    page.locator("#scroller").evaluate(SCROLL_AND_SETTLE, 10_000)
+    texts = page.evaluate(TICKS, "yaxis")["text"]
+    strip = page.locator(".sticky-labels:not([hidden]) .sticky-strip .tick.y")
+    assert strip.all_text_contents() == texts
+    assert errors == []
+
+
+def test_wrong_calendar_intervals_and_the_minor_check(app_page: Page) -> None:
+    """A calendar interval takes positive integers whose months are safe; 1 or none turns the minor ticks off; the minor splits and the check are kept apart."""
+    page = app_page
+    errors = watch_errors(page)
+    put(page, "day", "x", plots=False)
+    put(page, "y", "y")
+    urls = record(page)
+    dialog = open_dialog(page, "x")
+    dtick = dialog.locator("input[name=dtick]")
+    unit = dialog.locator("select[name=unit]")
+    check = dialog.locator("input[name=calendar-minor]")
+    minor = dialog.locator("input[name=minor]")
+    error = dialog.locator(".axis-dialog-error").nth(2)
+    dialog.locator("input[name=line]").fill("2027-01-01")
+    dialog.get_by_role("button", name="追加").click()
+    for which, text in [
+        ("month", "0"),
+        ("month", "-1"),
+        ("month", "1.5"),
+        ("month", "1e2"),
+        ("month", "9007199254740992"),
+        ("year", "750599937895083"),
+    ]:
+        unit.select_option(which)
+        dtick.fill(text)
+        expect(check).to_be_disabled()
+        dialog.get_by_role("button", name="適用").click()
+        expect(error).to_have_text(COUNT_ERROR)
+        assert page.evaluate(LINES) == []
+        assert page.evaluate(AXIS, "xaxis")["tickmode"] == "auto"
+    dtick.fill(" 750599937895082 ")
+    expect(check).to_be_enabled()
+    dtick.fill(" 3 ")
+    unit.select_option("month")
+    check.check()
+    dialog.get_by_role("button", name="適用").click()
+    expect(error).to_have_text("")
+    axis = page.evaluate(AXIS, "xaxis")
+    assert (axis["dtick"], axis["minor"]) == ("M3", "M1")
+    assert len(page.evaluate(LINES)) == 1
+
+    # Disabled for a while, the check comes back as it was.
+    dtick.fill("1")
+    expect(check).to_be_disabled()
+    expect(check).to_be_checked()
+    dtick.fill("")
+    expect(check).to_be_disabled()
+    dtick.fill("3")
+    expect(check).to_be_enabled()
+    expect(check).to_be_checked()
+    # Weeks take minor splits; their field and the check stay apart.
+    unit.select_option("week")
+    expect(check).to_be_hidden()
+    expect(minor).to_have_value("")
+    minor.fill("7")
+    dtick.fill("1")
+    dialog.get_by_role("button", name="適用").click()
+    axis = page.evaluate(AXIS, "xaxis")
+    assert (axis["dtick"], axis["minor"]) == (7 * DAY_MS, DAY_MS)
+    unit.select_option("month")
+    dtick.fill("3")
+    expect(check).to_be_checked()
+    dialog.get_by_role("button", name="適用").click()
+    assert page.evaluate(AXIS, "xaxis")["minor"] == "M1"
+    unit.select_option("week")
+    expect(minor).to_have_value("7")
+    unit.select_option("month")
+
+    # Unchecked, an interval of 1 or none: no minor grid lines are left.
+    check.uncheck()
+    dialog.get_by_role("button", name="適用").click()
+    axis = page.evaluate(AXIS, "xaxis")
+    assert (axis["dtick"], axis["minor"]) == ("M3", None)
+    check.check()
+    dialog.get_by_role("button", name="適用").click()
+    assert page.evaluate(AXIS, "xaxis")["minor"] == "M1"
+    dtick.fill("1")
+    dialog.get_by_role("button", name="適用").click()
+    expect(error).to_have_text("")
+    axis = page.evaluate(AXIS, "xaxis")
+    assert (axis["dtick"], axis["minor"]) == ("M1", None)
+    assert page.evaluate(TICKS, "xaxis")["minor"] == []
+    dtick.fill("3")
+    expect(check).not_to_be_checked()
+    check.check()
+    dialog.get_by_role("button", name="適用").click()
+    assert page.evaluate(AXIS, "xaxis")["minor"] == "M1"
+    dtick.fill("")
+    dialog.get_by_role("button", name="適用").click()
+    axis = page.evaluate(AXIS, "xaxis")
+    assert (axis["tickmode"], axis["minor"]) == ("auto", None)
+    dtick.fill("3")
+    expect(check).not_to_be_checked()
+
+    # 12 months set open again as 12 months.
+    dtick.fill("12")
+    dialog.get_by_role("button", name="OK").click()
+    expect(dialog).to_have_count(0)
+    assert page.evaluate(AXIS, "xaxis")["dtick"] == "M12"
+    dialog = open_dialog(page, "x")
+    expect(dialog.locator("input[name=dtick]")).to_have_value("12")
+    expect(dialog.locator("select[name=unit]")).to_have_value("month")
+    dialog.get_by_role("button", name="キャンセル").click()
+    page.wait_for_timeout(300)
+    assert urls == []
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    ("years", "drawn", "picked"),
+    [(2, "M3", "month"), (6, "M12", "year"), (10, "M24", "year")],
+)
+def test_automatic_calendar_ticks_pick_their_unit(
+    app_page: Page, years: int, drawn: str, picked: str
+) -> None:
+    """Plotly's own ticks of months or years pick that unit with an empty interval; a unit alone keeps them automatic."""
+    page = app_page
+    put(page, "day", "x", plots=False)
+    put(page, "y", "y")
+    page.evaluate(
+        f"Plotly.relayout('plot', {{'xaxis.range': ['2020-01-01', '{2020 + years}-01-01']}})"
+    )
+    page.wait_for_timeout(300)
+    page.wait_for_function(SETTLED)
+    assert page.evaluate(f"{FULL}.xaxis.dtick") == drawn
+    dialog = open_dialog(page, "x")
+    expect(dialog.locator("input[name=dtick]")).to_have_value("")
+    expect(dialog.locator("select[name=unit]")).to_have_value(picked)
+    expect(dialog.locator("input[name=calendar-minor]")).to_be_disabled()
+    dialog.locator("select[name=unit]").select_option(
+        "month" if picked == "year" else "year"
+    )
+    dialog.get_by_role("button", name="OK").click()
+    expect(dialog).to_have_count(0)
+    assert page.evaluate(AXIS, "xaxis")["tickmode"] == "auto"
+    assert page.evaluate(f"{FULL}.xaxis.dtick") == drawn
+
+
+@pytest.mark.parametrize("column", ["clock", "took"])
+def test_times_and_durations_have_no_calendar_units(
+    app_page: Page, column: str
+) -> None:
+    """A time's or a duration's interval takes no months nor years."""
+    page = app_page
+    put(page, column, "x", plots=False)
+    put(page, "y", "y")
+    dialog = open_dialog(page, "x")
+    units = dialog.locator("select[name=unit] option").evaluate_all(
+        "(options) => options.map((o) => o.value)"
+    )
+    assert units == list(UNIT_MS)
+    expect(dialog.locator("input[name=calendar-minor]")).to_have_count(0)

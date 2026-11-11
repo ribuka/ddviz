@@ -38,6 +38,15 @@ export const UNITS = [
   ["week", "週", 604_800_000],
 ];
 const UNIT_MS = Object.fromEntries(UNITS.map(([key, , ms]) => [key, ms]));
+// The calendar units of the interval of a date or datetime axis, in
+// months: plotly's "M<n>" intervals, which follow the lengths of the months
+// and leap years. Their minor ticks are one unit each, checked or not.
+export const CALENDAR_UNITS = [
+  ["month", "月", 1],
+  ["year", "年", 12],
+];
+const UNIT_MONTHS = Object.fromEntries(CALENDAR_UNITS.map(([key, , months]) => [key, months]));
+const COUNT_ERROR = "有効な正の整数を入力してください";
 // The formats of the tick labels, and the fields each one uses: the digits
 // after the decimal point (of the mantissa, of the value times 100) and the
 // thousands separators.
@@ -57,7 +66,10 @@ const FORMAT_TYPES = { fixed: "f", exponent: "e", percent: "%" };
 
 // Returns the empty settings of a column: automatic ticks and labels, no
 // reference lines.
-// `unit` is that of the interval of a temporal axis (`UNITS`), null without one.
+// `unit` is that of the interval of a temporal axis (`UNITS`,
+// `CALENDAR_UNITS`), null without one. `minor` is the number of parts the
+// interval is split into: with a calendar unit, the interval itself (a
+// minor tick every month or year), null without them.
 export function emptySettings() {
   return { dtick: null, unit: null, minor: null, lines: [], format: "auto", digits: null, separators: false };
 }
@@ -115,13 +127,42 @@ export function readAngle(text) {
   return { value: value === 0 ? 0 : value };
 }
 
+// Whether an axis of `kind` takes the calendar units: a datetime or date
+// axis, not a time's (a day long) nor a duration's.
+export function hasCalendar(kind) {
+  return kind === "datetime" || kind === "date";
+}
+
+// Whether `unit` is a calendar unit (`CALENDAR_UNITS`).
+function isCalendar(unit) {
+  return Object.hasOwn(UNIT_MONTHS, unit ?? "");
+}
+
+// Reads the interval of a calendar `unit` typed in a field: `{value}` (a
+// positive integer whose months are a safe integer), `{value: null}` for
+// an empty field, or `{error}`. Only ASCII digits.
+export function readCount(text, unit) {
+  const trimmed = text.trim();
+  if (trimmed === "") return { value: null };
+  if (!/^[0-9]+$/.test(trimmed)) return { error: COUNT_ERROR };
+  const value = Number(trimmed);
+  if (value === 0 || !Number.isSafeInteger(value * UNIT_MONTHS[unit])) return { error: COUNT_ERROR };
+  return { value };
+}
+
 // Returns the unit picked for the interval of a temporal axis of `kind`
 // without one set, from plotly's interval `drawn` of its axis (`dtick`:
 // milliseconds on a date axis, seconds of a duration, "M<n>" for months
-// and years): the largest unit up to it, milliseconds below them, weeks
-// for months; a day for a date and a second otherwise when there is none.
+// and years): the largest unit up to it, milliseconds below them; for
+// "M<n>", years when n is a multiple of 12 and months otherwise (weeks on
+// an axis without calendar units); a day for a date and a second otherwise
+// when there is none.
 export function drawnUnit(kind, drawn) {
-  if (typeof drawn === "string" && /^M\d+$/.test(drawn)) return "week";
+  const months = typeof drawn === "string" ? drawn.match(/^M(\d+)$/) : null;
+  if (months) {
+    if (!hasCalendar(kind)) return "week";
+    return Number(months[1]) % 12 === 0 ? "year" : "month";
+  }
   const ms = kind === "duration" ? drawn * 1000 : drawn;
   if (typeof drawn !== "number" || !(Number.isFinite(ms) && ms > 0)) return kind === "date" ? "day" : "second";
   let picked = "millisecond";
@@ -169,7 +210,10 @@ function readNumber(text, optional = false) {
 // that is wrong (`{errors: {field: text}}`). An end whose text is that of
 // `known` (`{min: {text, value}, max}`) is that value: the text of a
 // temporal value is rounded. A field the format does not use is neither
-// checked nor kept; a temporal axis keeps plotly's labels.
+// checked nor kept; a temporal axis keeps plotly's labels. A calendar unit
+// takes a positive integer (`readCount`) and the check of its minor ticks
+// (`calendarMinor`), kept from an interval of 2 on; the field of the minor
+// splits is then neither checked nor kept.
 export function readFields({
   kind = "number",
   min,
@@ -177,6 +221,7 @@ export function readFields({
   dtick,
   unit = null,
   minor,
+  calendarMinor = false,
   format = "auto",
   digits = "",
   separators = false,
@@ -190,17 +235,20 @@ export function readFields({
   if (lo.error) errors.min = lo.error;
   if (hi.error) errors.max = hi.error;
   if (!lo.error && !hi.error && lo.value >= hi.value) errors.max = "最小値より大きくしてください";
-  const step = readNumber(dtick, true);
+  const calendar = hasCalendar(kind) && isCalendar(unit);
+  const step = calendar ? readCount(dtick, unit) : readNumber(dtick, true);
   if (step.error) errors.dtick = step.error;
-  else if (step.value !== null && step.value <= 0) errors.dtick = "0 より大きくしてください";
-  else if (temporal && step.value !== null) {
+  else if (!calendar && step.value !== null && step.value <= 0) errors.dtick = "0 より大きくしてください";
+  else if (!calendar && temporal && step.value !== null) {
     const size = plotlyStep(kind, step.value, unit);
     if (!(Number.isFinite(size) && size > 0)) errors.dtick = "この単位では使えない間隔です";
   }
   const most = temporal ? MAX_TEMPORAL_MINOR : MAX_MINOR;
-  const parts = readNumber(minor, true);
+  const parts = calendar
+    ? { value: calendarMinor && step.value >= 2 ? step.value : null }
+    : readNumber(minor, true);
   if (parts.error) errors.minor = parts.error;
-  else if (parts.value !== null) {
+  else if (parts.value !== null && !calendar) {
     if (!Number.isInteger(parts.value) || parts.value < 2 || parts.value > most) {
       errors.minor = `2〜${most} の整数にしてください`;
     } else if (step.value === null && !errors.dtick) {
@@ -241,10 +289,25 @@ export function formatAttributes(settings) {
 // linear ticks every `dtick` from 0 and minor grid lines splitting each
 // interval, or plotly's automatic ticks (null removes what an earlier
 // setting set). The ticks of a temporal axis start at 1970-01-01 00:00 (a
-// time's midnight) or at 0 seconds, every `dtick` of its unit.
+// time's midnight) or at 0 seconds, every `dtick` of its unit. Those of a
+// calendar unit (on a datetime or date axis) are plotly's "M<n>" from
+// 1970-01-01, with a minor grid line every month or year (plotly draws
+// none where a major tick is); on another axis, plotly's own.
 export function tickAttributes(settings, kind = "number") {
   const { dtick, unit, minor } = { ...emptySettings(), ...settings };
-  if (dtick === null) return { tickmode: null, tick0: null, dtick: null, minor: null };
+  const auto = { tickmode: null, tick0: null, dtick: null, minor: null };
+  if (dtick === null) return auto;
+  if (isCalendar(unit)) {
+    if (!hasCalendar(kind)) return auto;
+    const tick0 = dateText(0);
+    const months = UNIT_MONTHS[unit];
+    return {
+      tickmode: "linear",
+      tick0,
+      dtick: `M${dtick * months}`,
+      minor: minor === null ? null : { tick0, dtick: `M${months}`, showgrid: true },
+    };
+  }
   if (kind !== "number") {
     const step = plotlyStep(kind, dtick, unit);
     const tick0 = isDateKind(kind) ? dateText(0) : 0;
@@ -555,16 +618,44 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
   const ticksBox = section("目盛り");
   const dtick = field(ticksBox, "間隔", numberText(settings.dtick), "dtick", "自動");
   // The unit of a temporal interval: the one set, else that of plotly's ticks.
+  const calendar = hasCalendar(kind);
   const unit = document.createElement("select");
   unit.name = "unit";
-  unit.title = "間隔の単位。1 日は 24 時間、1 週は 7 日";
+  unit.title = `間隔の単位。1 日は 24 時間、1 週は 7 日${calendar ? "。月・年は暦に沿う" : ""}`;
   const picked = settings.dtick !== null && settings.unit ? settings.unit : drawnUnit(kind, drawn);
-  for (const [key, text] of UNITS) unit.append(new Option(text, key, false, key === picked));
+  for (const [key, text] of [...UNITS, ...(calendar ? CALENDAR_UNITS : [])]) {
+    unit.append(new Option(text, key, false, key === picked));
+  }
   if (temporal) dtick.after(unit);
-  const minor = field(ticksBox, "補助目盛りの数", numberText(settings.minor), "minor", "なし");
+  // The minor splits of a fixed interval, and in their place the check of
+  // the minor ticks of a calendar one: two inputs, neither turned into the other.
+  const setCalendar = isCalendar(settings.unit);
+  const minor = field(ticksBox, "補助目盛りの数", setCalendar ? "" : numberText(settings.minor), "minor", "なし");
   minor.inputMode = "numeric";
   const most = temporal ? MAX_TEMPORAL_MINOR : MAX_MINOR;
   minor.title = `主目盛りの 1 間隔を何分割するか（2〜${most}）。間隔を入れたときだけ使える`;
+  const monthly = document.createElement("input");
+  Object.assign(monthly, { type: "checkbox", name: "calendar-minor" });
+  monthly.checked = setCalendar && settings.minor !== null;
+  const monthlyText = document.createElement("span");
+  const monthlyRow = document.createElement("label");
+  monthlyRow.className = "axis-dialog-field axis-dialog-check";
+  monthlyRow.title = "間隔が 2 以上のときだけ使える";
+  monthlyRow.append(monthly, monthlyText);
+  if (calendar) minor.parentElement.after(monthlyRow);
+  // Shows the input of the unit picked. The check is usable from an
+  // interval of 2 on, and keeps its state while it is not.
+  const calendarFields = () => {
+    const on = calendar && isCalendar(unit.value);
+    minor.parentElement.hidden = on;
+    monthlyRow.hidden = !on;
+    monthlyText.textContent = unit.value === "year" ? "1年ごとに補助目盛りを表示" : "1か月ごとに補助目盛りを表示";
+    monthly.disabled = !(on && readCount(dtick.value, unit.value).value >= 2);
+    monthlyRow.classList.toggle("off", monthly.disabled);
+  };
+  unit.addEventListener("change", calendarFields);
+  dtick.addEventListener("input", calendarFields);
+  calendarFields();
   // The format of the labels. A field the format does not use is disabled
   // but keeps what was typed, shown again when a format using it is picked.
   const format = document.createElement("select");
@@ -689,6 +780,7 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
       dtick: dtick.value,
       unit: unit.value,
       minor: minor.value,
+      calendarMinor: monthly.checked,
       format: format.value,
       digits: digits.value,
       separators: separators.checked,
@@ -702,6 +794,11 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
       min: { text: min.value, value: read.range[0] },
       max: { text: max.value, value: read.range[1] },
     };
+    // An empty interval or one of 1 applied takes the minor ticks off.
+    if (calendar && isCalendar(unit.value) && read.minor === null) {
+      monthly.checked = false;
+      calendarFields();
+    }
     onApply(
       {
         dtick: read.dtick,
