@@ -13,7 +13,14 @@ import polars as pl
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.e2e.test_scatter import SETTLED, drop_at, place, watch_errors
+from tests.e2e.test_scatter import (
+    SETTLED,
+    drawn_task,
+    drop_at,
+    new_result,
+    place,
+    watch_errors,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -97,8 +104,8 @@ def spans(page: Page, role: str, n: int) -> dict:
 
 
 def new_plot(page: Page, task: str) -> None:
-    """Wait for a plot after the one whose status was `task`."""
-    expect(page.locator("#status")).not_to_have_text(task)
+    """Wait for a plot after the result of `task` (`drawn_task`)."""
+    new_result(page, task)
     page.wait_for_function(SETTLED)
 
 
@@ -128,7 +135,7 @@ def test_chips_stand_at_the_middle_of_their_axes(app_page: Page) -> None:
     assert x_spans["axes"][0][1] < x_spans["axes"][1][0] + 2
 
     # A reorder: the first chip dropped on the middle of the second swaps them.
-    task = page.locator("#status").inner_text()
+    task = drawn_task(page)
     x_chips = page.locator('.zone[data-role="x"] .chip')
     x_chips.nth(0).drag_to(x_chips.nth(1))
     expect(page.locator('.zone[data-role="x"] .chip-name')).to_have_text(["facet", "x"])
@@ -167,7 +174,7 @@ def test_chips_follow_the_first_facet_and_the_filter(app_page: Page) -> None:
     assert first[1][1] < x_zone["x"] + x_zone["width"] * 0.6
 
     # Keep only the second level: its panels are the first ones now.
-    task = page.locator("#status").inner_text()
+    task = drawn_task(page)
     page.locator("#columns .column").filter(
         has=page.get_by_text("facet", exact=True)
     ).drag_to(page.locator("#filters"))
@@ -265,7 +272,7 @@ def test_drops_on_aligned_axes_follow_the_axes(app_page: Page) -> None:
     page.evaluate("() => document.dispatchEvent(new DragEvent('dragend'))")
 
     # The drops do what the marks said (without Group X, so that more axes still fit).
-    task = page.locator("#status").inner_text()
+    task = drawn_task(page)
     page.locator('.zone[data-role="col"] .chip-remove').click()
     new_plot(page, task)
     wait_aligned(page, "x", 2)
@@ -340,11 +347,11 @@ def test_long_chips_fit_their_regions_and_chips_without_a_figure(
         )
 
     # Its × removes it, and a drag of it swaps it with the first.
-    task = page.locator("#status").inner_text()
+    task = drawn_task(page)
     y_zone.locator(".chip").nth(1).locator(".chip-remove").click()
     expect(y_zone.locator(".chip-name")).to_have_text(["y"])
     new_plot(page, task)
-    task = page.locator("#status").inner_text()
+    task = drawn_task(page)
     x_chips = x_zone.locator(".chip")
     x_chips.nth(1).drag_to(x_chips.nth(0))
     expect(x_zone.locator(".chip-name")).to_have_text([LONG, "x"])
