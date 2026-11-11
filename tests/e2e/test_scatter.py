@@ -79,8 +79,8 @@ QUIET_MS = 400
 def wait_idle(page: Page) -> None:
     """Wait until nothing is aggregated, and still nothing (the same status) after `QUIET_MS`.
 
-    A drop that makes the graph drawable starts a plot, even of one axis
-    column (a band), and the result drawn may aggregate again for its margin.
+    A drop that makes the graph drawable starts a plot, even of numeric Y
+    columns alone (a band), and the result drawn may aggregate again for its margin.
     A drag during either is lost (Issue #140).
     """
     status = page.locator("#status")
