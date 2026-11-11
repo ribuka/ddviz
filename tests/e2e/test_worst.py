@@ -57,7 +57,7 @@ def inside(inner: Locator, outer: Locator) -> bool:
 
 
 def test_long_names_end_in_an_ellipsis_inside_their_boxes(app_page: Page) -> None:
-    """A long name on Y, on Group Y and in the legend stays in its box and ends in "…"; an empty level shows its placeholder."""
+    """A long name on Y, on Group Y and in the legend stays in its box and ends in "…" (a chip's tooltip is the whole name); an empty level shows its placeholder."""
     page = app_page
     expect(page.locator("#columns .column").first).to_be_visible()
     place(page, "x", "x", plots=False)
@@ -69,6 +69,7 @@ def test_long_names_end_in_an_ellipsis_inside_their_boxes(app_page: Page) -> Non
             place(page, LONG, "row")
         zone = page.locator(f'.zone[data-role="{role}"]')
         chip = zone.locator(".chip")
+        expect(chip).to_have_attribute("title", LONG)
         assert inside(chip, zone)
         assert inside(chip.locator(".chip-remove"), zone)
         assert chip.locator(".chip-name").evaluate("e => e.scrollHeight > e.clientHeight")
