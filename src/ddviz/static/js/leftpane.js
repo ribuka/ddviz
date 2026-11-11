@@ -2,7 +2,11 @@
 // into a strip that keeps the filter's conditions in sight, and the strip
 // opens it again; its right edge drags to change its width. Either changes
 // the plot area's size, which app.js aggregates again once it settles.
-const MIN_WIDTH = 160;
+// The narrowest width (CSS, without the right border) the open pane drags
+// to: the column-kind buttons (All, Numeric, Categorical) take 204px in one
+// row with their margins in WebView2 (Segoe UI 13px); a font that sets them
+// wider raises it to fit them.
+const MIN_WIDTH = 210;
 const MAX_WIDTH = 600;
 
 export class LeftPane {
@@ -27,14 +31,25 @@ export class LeftPane {
     this.strip.title = count ? `列とフィルタの欄を開く\nフィルタ：${text}` : "列とフィルタの欄を開く";
   }
 
+  // The pane's width that holds the column-kind buttons in one row, with the
+  // row's right padding. The buttons do not shrink, so the last one's right
+  // edge is the same at any width.
+  kindsWidth() {
+    const row = this.root.querySelector(".column-kinds");
+    const right = row.lastElementChild.getBoundingClientRect().right;
+    return Math.ceil(right - this.root.getBoundingClientRect().left + parseFloat(getComputedStyle(row).paddingRight));
+  }
+
   attachResize(handle) {
     handle.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       handle.setPointerCapture(event.pointerId);
       const startX = event.clientX;
-      const startWidth = this.root.offsetWidth;
+      // The width as CSS sets it, without the right border.
+      const startWidth = parseFloat(getComputedStyle(this.root).width);
+      const minWidth = Math.max(MIN_WIDTH, this.kindsWidth());
       const move = (e) => {
-        const width = Math.min(Math.max(startWidth + e.clientX - startX, MIN_WIDTH), MAX_WIDTH);
+        const width = Math.min(Math.max(startWidth + e.clientX - startX, minWidth), MAX_WIDTH);
         this.root.style.width = `${width}px`;
       };
       const up = () => {

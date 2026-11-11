@@ -1181,6 +1181,46 @@ def test_group_y_reads_top_to_bottom_and_the_kind_tabs_show_the_chosen(
     assert name["y"] < remove["y"]
 
 
+def assert_kinds_fit(page: Page) -> None:
+    """Assert the column-kind buttons lie in one row inside the left pane's content."""
+    left = page.locator("#left").evaluate(
+        "e => ({x: e.getBoundingClientRect().left, inner: e.clientWidth})"
+    )
+    boxes = [
+        page.locator(".column-kinds button").nth(i).bounding_box() for i in range(3)
+    ]
+    assert len({round(box["y"]) for box in boxes}) == 1
+    assert boxes[0]["x"] >= left["x"]
+    assert boxes[2]["x"] + boxes[2]["width"] <= left["x"] + left["inner"]
+    # The label is not clipped: the button is as wide as its text needs.
+    assert page.locator(".column-kinds button").nth(2).evaluate(
+        "b => b.scrollWidth <= b.clientWidth"
+    )
+
+
+def test_the_left_pane_at_its_narrowest_holds_the_column_kinds(app_page: Page) -> None:
+    """Dragged to its narrowest, the left pane still holds All, Numeric and Categorical in one row; folded, it keeps its strip's width."""
+    page = app_page
+    expect(page.locator("#columns .column").first).to_be_visible()
+    assert_kinds_fit(page)
+    handle = page.locator(".left-resize").bounding_box()
+    x, y = handle["x"] + handle["width"] / 2, handle["y"] + 100
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x - 400, y, steps=5)
+    page.mouse.up()
+    width = page.locator("#left").evaluate("e => parseFloat(getComputedStyle(e).width)")
+    assert 210 <= width < 240
+    assert_kinds_fit(page)
+    tabs = page.locator(".column-kinds button")
+    tabs.nth(2).click()
+    expect(tabs.nth(2)).to_have_class(re.compile(r"\bon\b"))
+
+    page.locator(".left-close").click()
+    expect(page.locator("#left")).to_have_class(re.compile(r"\bcollapsed\b"))
+    expect(page.locator("#left")).to_have_css("width", "26px")
+
+
 def test_the_side_stacks_symbol_color_and_the_legend(app_page: Page) -> None:
     """The pane right of the figure holds Symbol, then Color, then the legend, top to bottom."""
     page = app_page

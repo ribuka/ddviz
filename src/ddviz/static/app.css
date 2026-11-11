@@ -491,7 +491,10 @@ button {
   padding: 0 8px 4px;
 }
 
+/* The buttons keep their width, so the left pane's narrowest width
+   (leftpane.js) holds the row. */
 .column-kinds button {
+  flex: none;
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--bg);
