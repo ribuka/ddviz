@@ -143,3 +143,116 @@ export function forPlotly(layout) {
   }
   return out;
 }
+
+// The values of a temporal axis in the axis dialog (`axisdialog.js`), as
+// text and back. Unlike the filters' text, a date may hold a time of day
+// (an end of a zoom within a day), and a time is the signed time since
+// midnight, past a day too ("-00:01:00", "24:01:00"): the axis is panned
+// there. A duration is seconds.
+
+const US_PER_MS = 1000;
+const US_PER_SECOND = 1_000_000;
+const AXIS_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+const AXIS_CLOCK = /^(\d+):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?$/;
+// A time zone after a time: "Z", "+09:00", "-0500".
+const AXIS_ZONE = /(?:Z|[+-]\d{1,2}(?::?\d{2})?)$/i;
+// The milliseconds of the dates of four-digit years, 0000-01-01 up to
+// 10000-01-01 (excluded): the dates `dateText` writes for plotly.
+function yearStart(year) {
+  const date = new Date(0);
+  date.setUTCFullYear(year, 0, 1);
+  return date.getTime();
+}
+const AXIS_FIRST_MS = yearStart(0);
+const AXIS_END_MS = yearStart(10_000);
+
+// Returns the fraction of a second of `us` microseconds (0 <= us < 1e6) as
+// ".123456" without trailing zeros, or "" for none.
+function fractionText(us) {
+  return us ? `.${pad(us, 6)}`.replace(/0+$/, "") : "";
+}
+
+// Returns a value of an axis of `kind` (milliseconds of a date kind,
+// seconds of a duration) as the dialog writes it: a datetime as
+// "2026-10-31 12:34:56.123456", a date as "2026-10-31" at midnight (else as
+// a datetime), a time as "-00:01:00" or "24:01:00.5"; to the microsecond,
+// without trailing zeros.
+export function axisText(kind, value) {
+  if (!isDateKind(kind)) return String(value);
+  const us = Math.round(value * US_PER_MS);
+  if (kind === "time") {
+    const a = Math.abs(us);
+    const s = Math.floor(a / US_PER_SECOND);
+    const clock = `${pad(Math.floor(s / 3600), 2)}:${pad(Math.floor(s / 60) % 60, 2)}:${pad(s % 60, 2)}`;
+    return `${us < 0 ? "-" : ""}${clock}${fractionText(a - s * US_PER_SECOND)}`;
+  }
+  const seconds = Math.floor(us / US_PER_SECOND);
+  const date = new Date(seconds * 1000);
+  const day = `${pad(date.getUTCFullYear(), 4)}-${pad(date.getUTCMonth() + 1, 2)}-${pad(date.getUTCDate(), 2)}`;
+  if (kind === "date" && us % US_PER_DAY === 0) return day;
+  const clock = `${pad(date.getUTCHours(), 2)}:${pad(date.getUTCMinutes(), 2)}:${pad(date.getUTCSeconds(), 2)}`;
+  return `${day} ${clock}${fractionText(us - seconds * US_PER_SECOND)}`;
+}
+
+// Returns the milliseconds of a clock "12:34", "12:34:56" or
+// "12:34:56.123456789" (hours of any count), or null.
+function clockMs(text, maxHours) {
+  const m = AXIS_CLOCK.exec(text);
+  if (!m) return null;
+  const [h, min, s] = [m[1], m[2], m[3] ?? "0"].map(Number);
+  if (h > maxHours || min > 59 || s > 59) return null;
+  const fraction = m[4] ? Number(`0.${m[4]}`) * 1000 : 0;
+  return ((h * 60 + min) * 60 + s) * 1000 + fraction;
+}
+
+// The reason a text is no value of a date kind.
+const SHAPES = {
+  datetime: "2026-10-31 12:34:56 の形で入れてください",
+  date: "2026-10-31 か 2026-10-31 12:30 の形で入れてください",
+  time: "12:34:56 や -00:01:00 の形で入れてください",
+};
+
+// Reads a value of an axis of `kind` typed in the dialog (`axisText`):
+// `{value}`, or `{error}` with the reason. A datetime or a date takes a
+// date and an optional time of day (0:00 up to 24:00, apart by a space or
+// "T"); a time a signed clock of any hours; a duration finite seconds.
+// Minutes and seconds go up to 59, a fraction of a second to 9 digits. No
+// time zone: the axis is at the column's wall-clock time.
+export function readAxisValue(kind, text) {
+  const value = text.trim();
+  if (!isDateKind(kind)) {
+    const seconds = value === "" ? NaN : Number(value);
+    return Number.isFinite(seconds) ? { value: seconds } : { error: "秒数を入れてください" };
+  }
+  if (value === "") return { error: "値を入れてください" };
+  if (kind === "time") {
+    const m = /^([+-]?)(.*)$/.exec(value);
+    const ms = clockMs(m[2], Infinity);
+    if (ms !== null) {
+      const signed = m[1] === "-" ? -ms : ms;
+      // Past the years plotly's date axis writes, a time cannot be drawn.
+      return signed >= AXIS_FIRST_MS && signed < AXIS_END_MS ? { value: signed } : { error: "時間が大きすぎます" };
+    }
+    if (AXIS_ZONE.test(value) && clockMs(value.replace(AXIS_ZONE, ""), Infinity) !== null) {
+      return { error: "タイムゾーンは付けられません" };
+    }
+    return { error: /^[+-]?\d+:\d{2}/.test(value) ? "時刻が正しくありません" : SHAPES.time };
+  }
+  const m = /^(\d{4}-\d{2}-\d{2})(?:(?:\s+|T)(.*))?$/.exec(value);
+  const d = m && AXIS_DAY.exec(m[1]);
+  if (!d) return { error: SHAPES[kind] };
+  const [y, mo, dd] = d.slice(1).map(Number);
+  const date = new Date(0);
+  date.setUTCFullYear(y, mo - 1, dd);
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== dd) {
+    return { error: "存在しない日付です" };
+  }
+  if (m[2] === undefined) return { value: date.getTime() };
+  const time = m[2].trim();
+  const ms = clockMs(time, 23);
+  if (ms !== null) return { value: date.getTime() + ms };
+  if (AXIS_ZONE.test(time) && clockMs(time.replace(AXIS_ZONE, ""), 23) !== null) {
+    return { error: "タイムゾーンは付けられません" };
+  }
+  return { error: /^\d+:\d{2}/.test(time) ? "時刻が正しくありません" : SHAPES[kind] };
+}

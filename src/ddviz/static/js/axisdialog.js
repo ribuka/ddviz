@@ -1,11 +1,15 @@
-// The settings of a numeric axis, opened by a double click on its tick
-// labels: its range, the interval of its ticks, how many minor ticks split
-// each interval, and reference lines across its panels. The panels of one
+// The settings of a numeric or temporal axis, opened by a double click on
+// its tick labels: its range, the interval of its ticks, how many minor
+// ticks split each interval, and reference lines across its panels. The panels of one
 // axis column share its axis (`matches`), so the settings are kept by
 // column and drawn on every panel of the column (`decorate`); the range is
 // the view of the column, which is aggregated again as a zoom is. The
 // format of the tick labels (decimal, exponent, percent) is kept with the
-// ticks: it changes only plotly's labels, not the values of the axis.
+// ticks: it changes only plotly's labels, not the values of the axis. A
+// temporal axis (`axisKind`) takes its values as dates, times or seconds
+// (`temporal.js`), its interval with a unit, and keeps plotly's labels.
+
+import { axisText, dateText, isDateKind, readAxisValue } from "./temporal.js";
 
 // The look of a new reference line, and the dashes offered.
 export const LINE_COLOR = "#000000";
@@ -16,8 +20,21 @@ const DASHES = [
   ["dot", "点線"],
 ];
 const LINE_WIDTH = 1.5;
-// Most minor ticks a tick interval is split into.
+// Most minor ticks a tick interval is split into, on a numeric axis and on
+// a temporal one.
 const MAX_MINOR = 100;
+const MAX_TEMPORAL_MINOR = 10;
+// The units of the interval of a temporal axis, in milliseconds: a day is
+// always 24 hours, a week 7 days.
+export const UNITS = [
+  ["millisecond", "ミリ秒", 1],
+  ["second", "秒", 1000],
+  ["minute", "分", 60_000],
+  ["hour", "時間", 3_600_000],
+  ["day", "日", 86_400_000],
+  ["week", "週", 604_800_000],
+];
+const UNIT_MS = Object.fromEntries(UNITS.map(([key, , ms]) => [key, ms]));
 // The formats of the tick labels, and the fields each one uses: the digits
 // after the decimal point (of the mantissa, of the value times 100) and the
 // thousands separators.
@@ -37,8 +54,52 @@ const FORMAT_TYPES = { fixed: "f", exponent: "e", percent: "%" };
 
 // Returns the empty settings of a column: automatic ticks and labels, no
 // reference lines.
+// `unit` is that of the interval of a temporal axis (`UNITS`), null without one.
 export function emptySettings() {
-  return { dtick: null, minor: null, lines: [], format: "auto", digits: null, separators: false };
+  return { dtick: null, unit: null, minor: null, lines: [], format: "auto", digits: null, separators: false };
+}
+
+// Returns the kind of the dialog of the axis column `index` of `axis` ("x"
+// or "y") of the result `meta`: "number" for a numeric axis (`x_numeric`:
+// linear, not categorical, temporal or the one band), the temporal kind
+// for a datetime, date or time column, "duration" for a duration column on
+// a linear axis; null for an axis without one (categorical, log, the band).
+export function axisKind(meta, axis, index) {
+  if (meta[`${axis}_numeric`][index]) return "number";
+  const kind = meta.temporal?.[meta[`${axis}_columns`][index]];
+  if (isDateKind(kind)) return kind;
+  return kind === "duration" && !meta[`${axis}_log`][index] ? "duration" : null;
+}
+
+// Returns the unit picked for the interval of a temporal axis of `kind`
+// without one set, from plotly's interval `drawn` of its axis (`dtick`:
+// milliseconds on a date axis, seconds of a duration, "M<n>" for months
+// and years): the largest unit up to it, milliseconds below them, weeks
+// for months; a day for a date and a second otherwise when there is none.
+export function drawnUnit(kind, drawn) {
+  if (typeof drawn === "string" && /^M\d+$/.test(drawn)) return "week";
+  const ms = kind === "duration" ? drawn * 1000 : drawn;
+  if (typeof drawn !== "number" || !(Number.isFinite(ms) && ms > 0)) return kind === "date" ? "day" : "second";
+  let picked = "millisecond";
+  for (const [key, , size] of UNITS) if (size <= ms) picked = key;
+  return picked;
+}
+
+// Returns the interval of a temporal axis of `kind` as plotly takes it:
+// milliseconds on a date axis, seconds of a duration.
+function plotlyStep(kind, dtick, unit) {
+  const ms = dtick * UNIT_MS[unit];
+  return kind === "duration" ? ms / 1000 : ms;
+}
+
+// Reads a value of an axis of `kind` typed in a field: `{value}` or `{error}`.
+function readValue(kind, text) {
+  return kind === "number" ? readNumber(text) : readAxisValue(kind, text);
+}
+
+// Writes a value of an axis of `kind` into a field.
+function valueText(kind, value) {
+  return kind === "number" ? numberText(value) : axisText(kind, value);
 }
 
 // Whether `settings` change nothing of plotly's own axis: no settings to keep.
@@ -57,32 +118,53 @@ function readNumber(text, optional = false) {
   return Number.isFinite(value) ? { value } : { error: "数値を入れてください" };
 }
 
-// Checks the fields of the dialog (texts as typed, the format picked and
-// whether the separators are checked) and returns the settings and range
-// they make, `{range, dtick, minor, format, digits, separators}`, or the
-// reason of each field that is wrong (`{errors: {field: text}}`). A field
-// the format does not use is neither checked nor kept.
-export function readFields({ min, max, dtick, minor, format = "auto", digits = "", separators = false }) {
+// Checks the fields of the dialog of an axis of `kind` (texts as typed, the
+// unit of the interval, the format picked and whether the separators are
+// checked) and returns the settings and range they make, `{range, dtick,
+// unit, minor, format, digits, separators}`, or the reason of each field
+// that is wrong (`{errors: {field: text}}`). An end whose text is that of
+// `known` (`{min: {text, value}, max}`) is that value: the text of a
+// temporal value is rounded. A field the format does not use is neither
+// checked nor kept; a temporal axis keeps plotly's labels.
+export function readFields({
+  kind = "number",
+  min,
+  max,
+  dtick,
+  unit = null,
+  minor,
+  format = "auto",
+  digits = "",
+  separators = false,
+  known = {},
+}) {
   const errors = {};
-  const lo = readNumber(min);
-  const hi = readNumber(max);
+  const temporal = kind !== "number";
+  const end = (name, text) => (known[name]?.text === text ? { value: known[name].value } : readValue(kind, text));
+  const lo = end("min", min);
+  const hi = end("max", max);
   if (lo.error) errors.min = lo.error;
   if (hi.error) errors.max = hi.error;
   if (!lo.error && !hi.error && lo.value >= hi.value) errors.max = "最小値より大きくしてください";
   const step = readNumber(dtick, true);
   if (step.error) errors.dtick = step.error;
   else if (step.value !== null && step.value <= 0) errors.dtick = "0 より大きくしてください";
+  else if (temporal && step.value !== null) {
+    const size = plotlyStep(kind, step.value, unit);
+    if (!(Number.isFinite(size) && size > 0)) errors.dtick = "この単位では使えない間隔です";
+  }
+  const most = temporal ? MAX_TEMPORAL_MINOR : MAX_MINOR;
   const parts = readNumber(minor, true);
   if (parts.error) errors.minor = parts.error;
   else if (parts.value !== null) {
-    if (!Number.isInteger(parts.value) || parts.value < 2 || parts.value > MAX_MINOR) {
-      errors.minor = `2〜${MAX_MINOR} の整数にしてください`;
+    if (!Number.isInteger(parts.value) || parts.value < 2 || parts.value > most) {
+      errors.minor = `2〜${most} の整数にしてください`;
     } else if (step.value === null && !errors.dtick) {
       errors.minor = "間隔を入れたときだけ使えます";
     }
   }
   let places = null;
-  if (USES_DIGITS.has(format)) {
+  if (!temporal && USES_DIGITS.has(format)) {
     const trimmed = digits.trim();
     places = /^[0-9]+$/.test(trimmed) ? Number(trimmed) : NaN;
     if (!(places <= MAX_DIGITS)) errors.digits = `0〜${MAX_DIGITS} の整数にしてください`;
@@ -91,10 +173,11 @@ export function readFields({ min, max, dtick, minor, format = "auto", digits = "
   return {
     range: [lo.value, hi.value],
     dtick: step.value,
+    unit: temporal && step.value !== null ? unit : null,
     minor: parts.value,
-    format,
+    format: temporal ? "auto" : format,
     digits: places,
-    separators: USES_SEPARATORS.has(format) && separators,
+    separators: !temporal && USES_SEPARATORS.has(format) && separators,
   };
 }
 
@@ -110,12 +193,24 @@ export function formatAttributes(settings) {
   return { tickformat: `${comma}.${digits}${FORMAT_TYPES[format]}`, separatethousands: null };
 }
 
-// Returns the plotly attributes of an axis with `settings`: linear ticks
-// every `dtick` from 0 and minor grid lines splitting each interval, or
-// plotly's automatic ticks (null removes what an earlier setting set).
-export function tickAttributes(settings) {
-  const { dtick, minor } = settings ?? emptySettings();
+// Returns the plotly attributes of an axis of `kind` with `settings`:
+// linear ticks every `dtick` from 0 and minor grid lines splitting each
+// interval, or plotly's automatic ticks (null removes what an earlier
+// setting set). The ticks of a temporal axis start at 1970-01-01 00:00 (a
+// time's midnight) or at 0 seconds, every `dtick` of its unit.
+export function tickAttributes(settings, kind = "number") {
+  const { dtick, unit, minor } = { ...emptySettings(), ...settings };
   if (dtick === null) return { tickmode: null, tick0: null, dtick: null, minor: null };
+  if (kind !== "number") {
+    const step = plotlyStep(kind, dtick, unit);
+    const tick0 = isDateKind(kind) ? dateText(0) : 0;
+    return {
+      tickmode: "linear",
+      tick0,
+      dtick: step,
+      minor: minor === null ? null : { tick0, dtick: step / minor, showgrid: true },
+    };
+  }
   return {
     tickmode: "linear",
     tick0: 0,
@@ -124,18 +219,21 @@ export function tickAttributes(settings) {
   };
 }
 
-// Returns the plotly shapes of the reference lines of every numeric axis
-// column of a result (`meta`): a vertical line across each panel of an x
-// column, a horizontal one across each panel of a y column.
+// Returns the plotly shapes of the reference lines of every axis column of
+// a result (`meta`) with a dialog (`axisKind`): a vertical line across each
+// panel of an x column, a horizontal one across each panel of a y column.
+// A line on a date axis is at plotly's date text (`dateText`).
 function lineShapes(meta, settingsOf) {
   const shapes = [];
   for (const panel of meta.panels) {
     const across = [
-      [meta.x_numeric[panel.x] && settingsOf(meta.x_columns[panel.x]), panel.xaxis, panel.yaxis, "x"],
-      [meta.y_numeric[panel.y] && settingsOf(meta.y_columns[panel.y]), panel.yaxis, panel.xaxis, "y"],
+      [axisKind(meta, "x", panel.x), meta.x_columns[panel.x], panel.xaxis, panel.yaxis, "x"],
+      [axisKind(meta, "y", panel.y), meta.y_columns[panel.y], panel.yaxis, panel.xaxis, "y"],
     ];
-    for (const [settings, along, other, axis] of across) {
+    for (const [kind, column, along, other, axis] of across) {
+      const settings = kind ? settingsOf(column) : undefined;
       for (const line of settings?.lines ?? []) {
+        const at = isDateKind(kind) ? dateText(line.value) : line.value;
         const [ref, otherRef] = axis === "x" ? ["xref", "yref"] : ["yref", "xref"];
         const [at0, at1, span0, span1] = axis === "x" ? ["x0", "x1", "y0", "y1"] : ["y0", "y1", "x0", "x1"];
         shapes.push({
@@ -143,8 +241,8 @@ function lineShapes(meta, settingsOf) {
           layer: "above",
           [ref]: along,
           [otherRef]: `${other} domain`,
-          [at0]: line.value,
-          [at1]: line.value,
+          [at0]: at,
+          [at1]: at,
           [span0]: 0,
           [span1]: 1,
           line: { color: line.color, dash: line.dash, width: LINE_WIDTH },
@@ -155,21 +253,30 @@ function lineShapes(meta, settingsOf) {
   return shapes;
 }
 
+// Returns the axes of the panels of `meta` with a dialog, as `[key, kind,
+// column]` (`xaxis2`, `axisKind`, the axis column).
+function dialogAxes(meta) {
+  const axes = [];
+  for (const panel of meta.panels) {
+    for (const [role, axis, index] of [
+      ["x", panel.xaxis, panel.x],
+      ["y", panel.yaxis, panel.y],
+    ]) {
+      const kind = axisKind(meta, role, index);
+      if (kind) axes.push([axis.replace(/^([xy])/, "$1axis"), kind, meta[`${role}_columns`][index]]);
+    }
+  }
+  return axes;
+}
+
 // Returns `layout` (a figure's layout for `meta`) with the ticks and
-// reference lines of the settings of its numeric axis columns
+// reference lines of the settings of its axis columns with a dialog
 // (`settingsOf(column)`, or undefined for none).
 export function decorate(layout, meta, settingsOf) {
   const out = { ...layout };
-  for (const panel of meta.panels) {
-    for (const [axis, index, columns, numeric] of [
-      [panel.xaxis, panel.x, meta.x_columns, meta.x_numeric],
-      [panel.yaxis, panel.y, meta.y_columns, meta.y_numeric],
-    ]) {
-      const settings = numeric[index] ? settingsOf(columns[index]) : undefined;
-      if (!settings) continue;
-      const key = axis.replace(/^([xy])/, "$1axis");
-      out[key] = { ...out[key], ...withoutNulls(axisAttributes(settings)) };
-    }
+  for (const [key, kind, column] of dialogAxes(meta)) {
+    const settings = settingsOf(column);
+    if (settings) out[key] = { ...out[key], ...withoutNulls(axisAttributes(settings, kind)) };
   }
   const shapes = lineShapes(meta, settingsOf);
   if (shapes.length) out.shapes = shapes;
@@ -177,26 +284,21 @@ export function decorate(layout, meta, settingsOf) {
 }
 
 // Returns the plotly attributes of the ticks and their labels of an axis
-// with `settings` (or undefined for none).
-function axisAttributes(settings) {
-  return { ...tickAttributes(settings), ...formatAttributes(settings) };
+// of `kind` with `settings` (or undefined for none): a temporal axis keeps
+// plotly's labels.
+function axisAttributes(settings, kind) {
+  const ticks = tickAttributes(settings, kind);
+  return kind === "number" ? { ...ticks, ...formatAttributes(settings) } : ticks;
 }
 
 // Returns the relayout that draws `settingsOf` on the drawn figure of `meta`:
-// the tick and label attributes of every axis of its numeric columns, and
-// the shapes.
+// the tick and label attributes of every axis of its columns with a
+// dialog, and the shapes.
 export function decorationUpdate(meta, settingsOf) {
   const update = { shapes: lineShapes(meta, settingsOf) };
-  for (const panel of meta.panels) {
-    for (const [axis, index, columns, numeric] of [
-      [panel.xaxis, panel.x, meta.x_columns, meta.x_numeric],
-      [panel.yaxis, panel.y, meta.y_columns, meta.y_numeric],
-    ]) {
-      if (!numeric[index]) continue;
-      const key = axis.replace(/^([xy])/, "$1axis");
-      for (const [name, value] of Object.entries(axisAttributes(settingsOf(columns[index])))) {
-        update[`${key}.${name}`] = value;
-      }
+  for (const [key, kind, column] of dialogAxes(meta)) {
+    for (const [name, value] of Object.entries(axisAttributes(settingsOf(column), kind))) {
+      update[`${key}.${name}`] = value;
     }
   }
   return update;
@@ -278,12 +380,16 @@ function numberText(value) {
 
 let open = null;
 
-// Opens the dialog of an axis column. `title` heads it ("X 軸: x"), `range`
-// is the range shown, `settings` the column's (`emptySettings` for none).
-// `onApply(settings, range)` draws them, on OK (which closes the dialog) and
-// on Apply (which keeps it open); Cancel and Esc close it, keeping what was
-// applied.
-export function openAxisDialog({ title, range, settings, onApply }) {
+// Opens the dialog of an axis column of `kind` (`axisKind`). `title` heads
+// it ("X 軸: x"), `range` is the range shown (ascending), `settings` the
+// column's (`emptySettings` for none), `drawn` plotly's interval of the
+// drawn axis (`drawnUnit`). `onApply(settings, range)` draws them, on OK
+// (which closes the dialog) and on Apply (which keeps it open); Cancel and
+// Esc close it, keeping what was applied. An end left as written is the
+// very value it was written from, so that applying a range left alone
+// moves no axis.
+export function openAxisDialog({ title, kind = "number", range, settings, drawn = null, onApply }) {
+  const temporal = kind !== "number";
   open?.close();
   const dialog = document.createElement("dialog");
   dialog.className = "axis-dialog";
@@ -300,12 +406,21 @@ export function openAxisDialog({ title, range, settings, onApply }) {
     text.className = "axis-dialog-label";
     text.textContent = label;
     const input = document.createElement("input");
-    Object.assign(input, { type: "text", inputMode: "decimal", value, placeholder, name });
+    const typed = isDateKind(kind) && ["min", "max", "line"].includes(name) ? "text" : "decimal";
+    Object.assign(input, { type: "text", inputMode: typed, value, placeholder, name });
     input.spellcheck = false;
     const error = document.createElement("span");
     error.className = "axis-dialog-error";
     errors.set(name, error);
-    row.append(text, input, error);
+    row.append(text, input);
+    // The values of a duration are seconds.
+    if (kind === "duration" && ["min", "max", "line"].includes(name)) {
+      const unit = document.createElement("span");
+      unit.className = "axis-dialog-unit";
+      unit.textContent = "秒";
+      row.append(unit);
+    }
+    row.append(error);
     section.append(row);
     return input;
   };
@@ -320,13 +435,26 @@ export function openAxisDialog({ title, range, settings, onApply }) {
   };
 
   const rangeBox = section("範囲");
-  const min = field(rangeBox, "最小値", numberText(range[0]), "min");
-  const max = field(rangeBox, "最大値", numberText(range[1]), "max");
+  const min = field(rangeBox, "最小値", valueText(kind, range[0]), "min");
+  const max = field(rangeBox, "最大値", valueText(kind, range[1]), "max");
+  // The ends as written, and the values they stand for (`readFields`).
+  let known = {
+    min: { text: min.value, value: range[0] },
+    max: { text: max.value, value: range[1] },
+  };
   const ticksBox = section("目盛り");
   const dtick = field(ticksBox, "間隔", numberText(settings.dtick), "dtick", "自動");
+  // The unit of a temporal interval: the one set, else that of plotly's ticks.
+  const unit = document.createElement("select");
+  unit.name = "unit";
+  unit.title = "間隔の単位。1 日は 24 時間、1 週は 7 日";
+  const picked = settings.dtick !== null && settings.unit ? settings.unit : drawnUnit(kind, drawn);
+  for (const [key, text] of UNITS) unit.append(new Option(text, key, false, key === picked));
+  if (temporal) dtick.after(unit);
   const minor = field(ticksBox, "補助目盛りの数", numberText(settings.minor), "minor", "なし");
   minor.inputMode = "numeric";
-  minor.title = "主目盛りの 1 間隔を何分割するか。間隔を入れたときだけ使える";
+  const most = temporal ? MAX_TEMPORAL_MINOR : MAX_MINOR;
+  minor.title = `主目盛りの 1 間隔を何分割するか（2〜${most}）。間隔を入れたときだけ使える`;
   // The format of the labels. A field the format does not use is disabled
   // but keeps what was typed, shown again when a format using it is picked.
   const format = document.createElement("select");
@@ -354,6 +482,10 @@ export function openAxisDialog({ title, range, settings, onApply }) {
   };
   format.addEventListener("change", usable);
   usable();
+  // A temporal axis keeps plotly's labels: no format to pick.
+  if (temporal) {
+    for (const row of [formatRow, digits.parentElement, separatorsRow]) row.remove();
+  }
 
   const linesBox = section("参照線");
   const value = field(linesBox, "値", "", "line");
@@ -373,7 +505,7 @@ export function openAxisDialog({ title, range, settings, onApply }) {
         row.className = "axis-dialog-line";
         const at = document.createElement("span");
         at.className = "axis-dialog-line-value";
-        at.textContent = numberText(line.value);
+        at.textContent = valueText(kind, line.value);
         const color = document.createElement("input");
         Object.assign(color, { type: "color", value: line.color, title: "色" });
         color.addEventListener("input", () => {
@@ -401,7 +533,7 @@ export function openAxisDialog({ title, range, settings, onApply }) {
   renderLines();
 
   const addLine = () => {
-    const read = readNumber(value.value);
+    const read = readValue(kind, value.value);
     errors.get("line").textContent = read.error ?? "";
     if (read.error) return;
     lines = [...lines, { value: read.value, color: LINE_COLOR, dash: LINE_DASH }];
@@ -418,21 +550,29 @@ export function openAxisDialog({ title, range, settings, onApply }) {
   // Applies the fields, or shows why not; returns whether they were applied.
   const apply = () => {
     const read = readFields({
+      kind,
       min: min.value,
       max: max.value,
       dtick: dtick.value,
+      unit: unit.value,
       minor: minor.value,
       format: format.value,
       digits: digits.value,
       separators: separators.checked,
+      known,
     });
     for (const name of ["min", "max", "dtick", "minor", "digits"]) {
       errors.get(name).textContent = read.errors?.[name] ?? "";
     }
     if (read.errors) return false;
+    known = {
+      min: { text: min.value, value: read.range[0] },
+      max: { text: max.value, value: read.range[1] },
+    };
     onApply(
       {
         dtick: read.dtick,
+        unit: read.unit,
         minor: read.minor,
         lines: lines.map((line) => ({ ...line })),
         format: read.format,
