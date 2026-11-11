@@ -164,7 +164,7 @@ def test_the_status_shows_rows_and_work_without_the_task_number(
           );
         }"""
     )
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     rows = scatter_frame.filter(pl.col("x").is_finite(), pl.col("y").is_finite()).height
     status = page.locator("#status")
@@ -172,7 +172,7 @@ def test_the_status_shows_rows_and_work_without_the_task_number(
     task = drawn_task(page)
 
     # Coloring keeps the rows: the new result is known by its task.
-    place(page, "color", "color", plots=False)
+    place(page, "color", "color")
     new_result(page, task)
     page.wait_for_function(SETTLED)
     expect(status).to_have_text(f"{rows:,} 行")
