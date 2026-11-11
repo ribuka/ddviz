@@ -2177,6 +2177,8 @@ def test_the_maximized_filter_pane_scrolls_to_its_end_and_keeps_its_state_on_a_d
     expect(page.locator(".filter-card")).to_have_count(4)
     expect(filters).to_have_class(re.compile(r"\bmaximized\b"))
     expect(page.locator(".filter-card").nth(3).locator(".filter-level")).not_to_have_count(0)
+    # A short window makes the overflow certain whatever the font metrics of the platform.
+    page.set_viewport_size({"width": 1280, "height": 360})
     body = page.locator(".filter-body")
     assert body.evaluate("e => e.scrollHeight > e.clientHeight")
     body.evaluate("e => { e.scrollTop = e.scrollHeight; }")
