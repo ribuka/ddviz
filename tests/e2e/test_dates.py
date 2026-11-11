@@ -611,7 +611,7 @@ def test_temporal_ticks_and_their_minor_splits_draw_on_every_panel_and_stay(
     page = app_page
     errors = watch_errors(page)
     put(page, "clock", "x", plots=False)
-    put(page, "y", "y", plots=False)
+    put(page, "y", "y")
     put(page, "group", "col")
     urls = record(page)
     dialog = open_dialog(page, "x")
