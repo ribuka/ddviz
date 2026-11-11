@@ -30,3 +30,16 @@
 - Keep E2E to the end-to-end flow (load, draw, hover); test the logic in `tests/server` and `tests/compute`.
 - To debug a failure, add `--tracing retain-on-failure --headed` and open the trace with `uv run -m playwright show-trace test-results/<test>/trace.zip`.
 - CI runs the E2E job on ubuntu-latest and uploads `test-results/` as an artifact when it fails.
+
+### Do not depend on font metrics
+
+CI runs on Linux, where the fonts differ from Windows (no Segoe UI; Japanese text and line heights differ). A size measured locally does not hold there.
+
+- Never make a test's premise a value that text width or height decides: whether something overflows or fits, how many lines text wraps to, or whether a margin grows.
+- To test overflow or wrapping, use a condition that makes it certain with any font: shrink the window well past the limit, or use a string far longer (or a number with far more digits) than needed.
+- When comparing heights or widths, allow a margin for the font difference instead of an exact value; compare positions measured on the page with each other rather than with numbers measured on Windows.
+- Past failures on CI:
+  - 786d511: the left-margin E2E assumed that tick labels like `1.06e+5` overflow the 50px margin; the narrower Linux font fit them. Rewritten with ticks of more digits (`1.00020e+5`) that exceed 50px with any font.
+  - 3b7dbbf (PR #112; `docs/spec.md`, "フッターのエラーと警告"): with the low line height of the Linux font, the warning icon made the footer taller, the plot area shrank and re-aggregated, and the E2E drag was taken as a zoom.
+  - `docs/spec.md`, "最悪のデータでの表示" (確かめたこと): the status-bar height check allows an increase under 10px, because Japanese text makes it 2px taller on Linux.
+  - 6b48d0c (PR #137): the E2E assumed the filter cards overflow a 520px-high window; locally (Segoe UI) they overflowed by only 32px, and on CI they did not overflow. Rewritten to shrink the window to 360px.
