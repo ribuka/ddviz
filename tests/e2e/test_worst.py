@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from itertools import pairwise
 from pathlib import Path
 
@@ -11,7 +12,7 @@ import pytest
 from playwright.sync_api import Locator, Page, Route, expect
 
 from tests.e2e.test_notice import drop
-from tests.e2e.test_scatter import SETTLED, place
+from tests.e2e.test_scatter import SETTLED, drawn_task, new_result, place
 
 pytestmark = pytest.mark.e2e
 
@@ -105,14 +106,14 @@ def test_huge_numbers_stay_short_and_no_rows_are_told(app_page: Page) -> None:
     card = page.locator(".filter-card").nth(1)
     expect(card.locator(".filter-range input")).to_have_count(2)
     status = page.locator("#status")
-    task = status.inner_text()
+    task = drawn_task(page)
     lo, hi = card.locator(".filter-range input").all()
     lo.fill("1")
     hi.fill("1.1")
     hi.press("Enter")
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
-    expect(status).to_contain_text(": 0 行")
+    expect(status).to_have_text(re.compile(r"^0 行"))
     expect(no_rows).to_have_text("フィルタの条件に合う行が無い")
     expect(no_rows).to_be_visible()
 
@@ -174,10 +175,9 @@ def test_cut_facet_labels_stay_over_their_panels(app_page: Page) -> None:
     for left, right in pairwise(boxes):
         assert left["x"] + left["width"] <= right["x"]
 
-    status = page.locator("#status")
-    task = status.inner_text()
+    task = drawn_task(page)
     page.set_viewport_size({"width": 700, "height": 500})
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     cut = page.locator(".sticky-strip .facet.col").filter(has_text="WW")
     expect(cut).to_have_attribute("title", f"w = {WIDE_LEVEL}")

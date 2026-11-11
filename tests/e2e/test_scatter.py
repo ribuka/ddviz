@@ -43,6 +43,22 @@ SETTLED = """() => {
 }"""
 
 
+def drawn_task(page: Page) -> str:
+    """Return the task of the result the status shows.
+
+    The status marks it in `data-task`; its text may stay the same over a
+    new result (the same rows), so tests wait for the mark.
+    """
+    status = page.locator("#status")
+    expect(status).to_have_attribute("data-task", re.compile(r"^\d+$"))
+    return status.get_attribute("data-task")
+
+
+def new_result(page: Page, task: str) -> None:
+    """Wait for the status to show a result after the one of `task`."""
+    expect(page.locator("#status")).not_to_have_attribute("data-task", task)
+
+
 def place(page: Page, column: str, role: str, plots: bool = True) -> None:
     """Drag a column onto a role's zone, check that it landed, and wait for the plot it starts.
 
@@ -103,6 +119,38 @@ TOP_ROW_PANELS = """() => {
 def wait_top_row(page: Page, n: int) -> None:
     """Wait until the figure puts `n` panels in its top row."""
     page.wait_for_function(f"() => ({TOP_ROW_PANELS})() === {n}")
+
+
+def test_the_status_shows_rows_and_work_without_the_task_number(
+    app_page: Page, scatter_frame: pl.DataFrame
+) -> None:
+    """The status shows the rows of a result and, while a plot runs, what it does; never the task number (Issue #134)."""
+    page = app_page
+    page.evaluate(
+        """() => {
+          window.statusTexts = [];
+          const status = document.querySelector("#status");
+          new MutationObserver(() => window.statusTexts.push(status.textContent)).observe(
+            status, { childList: true, characterData: true, subtree: true },
+          );
+        }"""
+    )
+    place(page, "x", "x", plots=False)
+    place(page, "y", "y")
+    rows = scatter_frame.filter(pl.col("x").is_finite(), pl.col("y").is_finite()).height
+    status = page.locator("#status")
+    expect(status).to_have_text(f"{rows:,} 行")
+    task = drawn_task(page)
+
+    # Coloring keeps the rows: the new result is known by its task.
+    place(page, "color", "color", plots=False)
+    new_result(page, task)
+    page.wait_for_function(SETTLED)
+    expect(status).to_have_text(f"{rows:,} 行")
+
+    texts = page.evaluate("window.statusTexts")
+    assert any(text.endswith("中…") for text in texts), texts
+    assert not any(re.search(r"task\s*\d", text) for text in texts), texts
 
 
 def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:
@@ -450,7 +498,7 @@ def test_smoothing_lines_draw_alone_and_change_their_method(app_page: Page) -> N
     status = page.locator("#status")
     expect(status).to_contain_text("点は描いていない")
     page.wait_for_function(PAINTED_PIXEL)
-    task = status.inner_text()
+    task = drawn_task(page)
 
     smooth.click(button="right")
     menu = page.locator(".scale-menu")
@@ -460,7 +508,7 @@ def test_smoothing_lines_draw_alone_and_change_their_method(app_page: Page) -> N
     menu.get_by_text("lowess", exact=True).click()
     expect(menu).to_have_count(0)
     expect(smooth).to_have_attribute("title", re.compile("lowess、frac = 2/3"))
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     expect(status).to_contain_text("点は描いていない")
     page.wait_for_function(PAINTED_PIXEL)
 
@@ -479,7 +527,7 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
     card = page.locator(".filter-card")
     expect(card).to_contain_text("部分一致で絞る")
     status = page.locator("#status")
-    task = status.inner_text()
+    task = drawn_task(page)
     box = card.locator(".filter-contains input")
     # The Enter that commits an IME conversion keeps the box in use.
     box.focus()
@@ -491,7 +539,7 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
     expect(box).to_be_focused()
     box.fill("r12")
     box.press("Enter")
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     expect(status).to_contain_text("（フィルタ後）")
     page.wait_for_function(SETTLED)
     kept = scatter_frame.filter(
@@ -499,7 +547,7 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
         pl.col("x").is_finite(),
         pl.col("y").is_finite(),
     ).height
-    expect(status).to_contain_text(f": {kept:,} 行")
+    expect(status).to_have_text(f"{kept:,} 行（フィルタ後）")
     expect(page.locator(".filter-summary")).to_have_text("（1）label: 「r12」を含む")
 
 
@@ -560,8 +608,7 @@ def test_symbol_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
     expect(shapes.first).to_have_class(re.compile("inactive"))
     expect(legend.locator(".legend-item.inactive")).to_have_count(1)
 
-    status = page.locator("#status")
-    task = status.inner_text()
+    task = drawn_task(page)
     shapes.nth(1).locator(".legend-marker").click(button="right")
     menu = page.locator(".shape-menu")
     expect(menu.locator(".scale-menu-heading")).to_have_text(
@@ -570,7 +617,7 @@ def test_symbol_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
     expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
     menu.get_by_text("11 px", exact=True).click()
     expect(menu).to_have_count(0)
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     # Only that level's shapes grow.
     expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "11")
@@ -580,13 +627,13 @@ def test_symbol_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
     expect(points).to_have_attribute("title", re.compile("7〜11 px"))
 
     # The points' icon sizes every level, dropping the level's own size.
-    task = status.inner_text()
+    task = drawn_task(page)
     points.click(button="right")
     expect(menu.locator(".scale-menu-heading")).to_have_text("点の大きさ（全系列）")
     # The size of every series is still 7 px; picking it drops the level's 11 px.
     expect(menu.locator(".scale-menu-item.checked")).to_have_count(0)
     menu.get_by_text("7 px", exact=True).click()
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "7")
     expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
@@ -620,8 +667,7 @@ def test_a_symbol_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> No
     expect(menu.locator(".shape-item")).to_have_count(0)
     page.keyboard.press("Escape")
 
-    status = page.locator("#status")
-    task = status.inner_text()
+    task = drawn_task(page)
     marker.click(button="right")
     expect(menu.locator(".scale-menu-item").first).to_have_text("形")
     expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
@@ -639,7 +685,7 @@ def test_a_symbol_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> No
     menu.get_by_text("形", exact=True).hover()
     panel.locator('.shape-cell[data-shape="x"]').click()
     expect(menu).to_have_count(0)
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     page.wait_for_function(PAINTED_PIXEL)
     assert sample.evaluate("(canvas) => canvas.toDataURL()") != before
@@ -649,9 +695,9 @@ def test_a_symbol_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> No
     expect(panel.locator(".shape-cell.current")).to_have_attribute("data-shape", "x")
     # The size stays as it was.
     expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
-    task = status.inner_text()
+    task = drawn_task(page)
     panel.get_by_text("既定の形に戻す").click()
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     assert sample.evaluate("(canvas) => canvas.toDataURL()") == before
 
@@ -706,20 +752,19 @@ def test_symbol_alone_draws_shapes_of_one_color(app_page: Page) -> None:
     expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "7")
     assert page.evaluate(OPAQUE_COLORS) == one_color
 
-    status = page.locator("#status")
-    task = status.inner_text()
+    task = drawn_task(page)
     marker = shapes.nth(1).locator(".legend-marker")
     marker.click(button="right")
     menu = page.locator(".shape-menu")
     expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
     menu.get_by_text("11 px", exact=True).click()
     expect(menu).to_have_count(0)
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "11")
     expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
 
-    task = status.inner_text()
+    task = drawn_task(page)
     marker.click(button="right")
     menu.get_by_text("形", exact=True).hover()
     panel = page.locator(".shape-panel")
@@ -727,7 +772,7 @@ def test_symbol_alone_draws_shapes_of_one_color(app_page: Page) -> None:
         "data-shape", "square"
     )
     panel.locator('.shape-cell[data-shape="x"]').click()
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     marker.click(button="right")
     menu.get_by_text("形", exact=True).hover()
@@ -912,8 +957,7 @@ def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     page.keyboard.press("Escape")
     expect(menu).to_have_count(0)
 
-    status = page.locator("#status")
-    task = status.inner_text()
+    task = drawn_task(page)
     # A single color has no legend: the points' icon opens the menu.
     legend = page.locator("#legend")
     expect(legend.locator(".legend-item")).to_have_count(0)
@@ -922,7 +966,7 @@ def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     expect(menu.locator(".scale-menu-item.checked")).to_have_text("5 px")
     menu.get_by_text("9 px", exact=True).click()
     expect(menu).to_have_count(0)
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     page.wait_for_function(f"() => ({PAINTED_COUNT})() > {small}")
 
@@ -930,14 +974,14 @@ def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     place(page, "x", "color")
     bar = legend.locator(".colorbar")
     expect(bar).to_be_visible()
-    task = status.inner_text()
+    task = drawn_task(page)
     bar.click(button="right")
     menu = page.locator(".scale-menu")
     expect(menu.get_by_text("点の大きさ（全系列）")).to_be_visible()
     expect(menu.locator(".scale-menu-item.checked").last).to_have_text("9 px")
     menu.get_by_text("3 px", exact=True).click()
     expect(menu).to_have_count(0)
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     page.wait_for_function(PAINTED_PIXEL)
 
@@ -1038,7 +1082,7 @@ def test_the_mode_bar_saves_the_plot_data(app_page: Page) -> None:
     table = pl.read_csv(download.path())
     assert table.columns[:3] == ["x_column", "x_lo", "x_hi"]
     status = page.locator("#status").text_content()
-    assert f" {table['count'].sum():,} 行" in status
+    assert status.startswith(f"{table['count'].sum():,} 行")
     expect(menu).to_have_count(0)
 
 
@@ -1702,17 +1746,17 @@ def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(
     card = page.locator(".filter-card")
     expect(card.locator(".filter-range input")).to_have_count(2)
     lo, hi = card.locator(".filter-range input").all()
-    task = status.inner_text()
+    task = drawn_task(page)
     lo.fill("0")
     hi.fill("10")
     hi.press("Enter")
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     expect(status).to_contain_text("（フィルタ後）")
     summary = page.locator(".filter-summary")
     expect(summary).to_contain_text("x:")
     condition = summary.inner_text()
-    task = status.inner_text()
+    task = drawn_task(page)
 
     # The same column again: refused, with the tip saying so while it hovers.
     x_chip.hover()
@@ -1728,7 +1772,7 @@ def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(
     expect(card).to_have_count(1)
     expect(summary).to_have_text(condition)
     expect(lo).to_have_value("0")
-    expect(status).to_have_text(task)
+    expect(status).to_have_attribute("data-task", task)
     expect(page.locator('.zone[data-role="x"] .chip-name')).to_have_text(["x"])
 
     # A folded pane takes the drop on its head and opens.
@@ -1742,7 +1786,7 @@ def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(
     expect(levels).not_to_have_count(0)
     expect(page.locator('.zone[data-role="color"] .chip-name')).to_have_text(["color"])
     levels.filter(has=page.get_by_text("a", exact=True)).locator("input").check()
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     expect(summary).to_contain_text("color:")
 
@@ -2003,7 +2047,6 @@ def test_the_filter_pane_steps_and_drags_its_height_keeping_the_conditions(
     up = page.locator(".filter-up")
     down = page.locator(".filter-down")
     handle = page.locator(".filter-resize")
-    status = page.locator("#status")
 
     # Open at first, below the column list.
     expect(filters).not_to_have_class(re.compile(r"\b(collapsed|maximized)\b"))
@@ -2020,17 +2063,17 @@ def test_the_filter_pane_steps_and_drags_its_height_keeping_the_conditions(
     page.locator('.zone[data-role="x"] .chip').drag_to(filters)
     expect(page.locator(".filter-card .filter-range input")).to_have_count(2)
     lo, hi = page.locator(".filter-card .filter-range input").all()
-    task = status.inner_text()
+    task = drawn_task(page)
     lo.fill("0")
     hi.fill("10")
     hi.press("Enter")
-    expect(status).not_to_have_text(task)
+    new_result(page, task)
     page.wait_for_function(SETTLED)
     summary = page.locator(".filter-summary")
     expect(summary).to_contain_text("x:")
     condition = summary.inner_text()
     values = [lo.input_value(), hi.input_value()]
-    task = status.inner_text()
+    task = drawn_task(page)
     plot = page.locator("#plot").bounding_box()
     # The footer's memory is fetched about every second whatever the user does.
     requests: list[str] = []

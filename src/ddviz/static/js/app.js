@@ -89,6 +89,21 @@ function showConverting(message) {
   convertingBar.value = message.done;
 }
 
+// What each stage of a plot pool's task does, as the status shows it while
+// the task runs. The task number stays internal (Issue #134).
+const STAGES = {
+  schema: "列を読み込み中…",
+  levels: "範囲と水準を調べ中…",
+  facets: "パネルの水準を調べ中…",
+  boxes: "箱ひげを計算中…",
+  smooth: "平滑化を計算中…",
+  bins: "点を集約中…",
+  rows: "ホバー用のデータを読み込み中…",
+  selection: "選んだ行を集約中…",
+  raster: "画像を描画中…",
+  write: "結果を書き出し中…",
+};
+
 const events = new EventSource("/api/events");
 events.onmessage = (event) => {
   const message = JSON.parse(event.data);
@@ -98,7 +113,7 @@ events.onmessage = (event) => {
     return;
   }
   converting.hidden = true;
-  statusLine.show(`task ${message.task}: ${message.stage}`);
+  statusLine.show(STAGES[message.stage] ?? "処理中…");
 };
 
 // The overview (whole data range) as the server sent it with the size it was
@@ -853,7 +868,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     builder.commit(candidate);
     serverAhead = false;
     settled();
-    statusLine.show(rowsText(meta));
+    showRows(meta);
     timings.plotAndImages = Math.round(performance.now() - drawStarted);
     setInfo();
     // The labels of the new figure set its margin; a new one is aggregated
@@ -970,6 +985,13 @@ function resumeShown() {
   }
 }
 
+// Shows the status of a result drawn, and marks the status with its task:
+// tests wait for a new result by the mark, as the text may stay the same.
+function showRows(meta, where = "") {
+  statusLine.element.dataset.task = meta.task;
+  statusLine.show(rowsText(meta, where));
+}
+
 // Returns the status of a result: its rows, and whether the filter left rows out.
 function rowsText(meta, where = "") {
   const filtered = meta.filters.length ? "（フィルタ後）" : "";
@@ -979,7 +1001,7 @@ function rowsText(meta, where = "") {
   if (meta.panels.every((p) => !p.points)) {
     drawn = meta.panels.some((p) => p.boxes.length) ? "（外れ値）" : "（点は描いていない）";
   }
-  return `task ${meta.task}: ${where}${meta.rows.toLocaleString()} 行${drawn}${filtered}`;
+  return `${where}${meta.rows.toLocaleString()} 行${drawn}${filtered}`;
 }
 
 // Returns whether two ranges are equal up to a small part of their span. A
@@ -1276,7 +1298,7 @@ function clearSelection(server = true) {
   table.show(null);
   if (server) {
     fetch("/api/selection", { method: "DELETE" });
-    if (current) statusLine.show(rowsText(current));
+    if (current) showRows(current);
   }
 }
 
@@ -1303,7 +1325,7 @@ async function showOverview() {
   requestedSize = size;
   shownSize = size;
   await draw(figure.data, figure.layout, meta, bitmaps);
-  statusLine.show(rowsText(meta));
+  showRows(meta);
   setInfo();
   // The overview's labels set the margin again: back from a zoom, it may shrink.
   if (mine === generation) followMargin(false);
@@ -1361,7 +1383,7 @@ async function requestOverview() {
   hideHover();
   if (!drawn) await draw(figure.data, figure.layout, meta, bitmaps);
   if (mine === generation) setPending(false);
-  statusLine.show(rowsText(meta));
+  showRows(meta);
   setInfo();
   if (mine === generation) followMargin(true);
 }
@@ -1415,7 +1437,7 @@ async function requestView({ x: xRanges, y: yRanges }) {
   // The images and the panels' placement change; the axes stay where the user put them.
   if (!drawn) await draw(figure.data, withShownRanges(figure.layout, meta), meta, bitmaps);
   if (mine === generation) setPending(false);
-  statusLine.show(rowsText(meta, "表示範囲に "));
+  showRows(meta, "表示範囲に ");
   setInfo();
   if (mine === generation) followMargin(true);
 }
