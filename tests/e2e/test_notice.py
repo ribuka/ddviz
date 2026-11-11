@@ -33,7 +33,7 @@ def test_an_error_shows_its_icon_and_a_toast(app_page: Page) -> None:
     """A failed plot marks the status as an error and opens a toast, and takes its drop back; the next plot clears the mark."""
     page = app_page
     page.route("**/api/plot", fail)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     drop(page, "y", "y")
 
     status = page.locator("#status")
@@ -68,7 +68,7 @@ def test_an_error_shows_its_icon_and_a_toast(app_page: Page) -> None:
 def show_error(page: Page) -> None:
     """Fail a plot so that an error toast opens."""
     page.route("**/api/plot", fail)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     drop(page, "y", "y")
     expect(page.locator("#toasts .toast")).to_have_count(1)
 

@@ -59,20 +59,49 @@ def new_result(page: Page, task: str) -> None:
     expect(page.locator("#status")).not_to_have_attribute("data-task", task)
 
 
-def place(page: Page, column: str, role: str, plots: bool = True) -> None:
-    """Drag a column onto a role's zone, check that it landed, and wait for the plot it starts.
+# Whether nothing is being aggregated: no conversion covers the page, the
+# drawn images are not marked as waiting for a new size (`setPending` in
+# app.js), and the status shows neither "集約中" nor a task's progress
+# (`task N: <stage>`; a result, which may start with its task, an error or
+# nothing is fine).
+IDLE = r"""() => {
+  const text = document.querySelector("#status").textContent;
+  return document.getElementById("converting").hidden
+    && !document.getElementById("plot").classList.contains("pending")
+    && !text.includes("集約中")
+    && !/^task \d+: [a-z ]+$/.test(text);
+}"""
+# Longer than the wait of app.js before it aggregates again for a new size or
+# margin (`RESIZE_SETTLE_MS`, 300ms), which a drawn result may start.
+QUIET_MS = 400
 
-    A plot drawn during the next drag moves the zones (on the CI runner, the
-    drop then missed its zone).
+
+def wait_idle(page: Page) -> None:
+    """Wait until nothing is aggregated, and still nothing (the same status) after `QUIET_MS`.
+
+    A drop that makes the graph drawable starts a plot, even of one axis
+    column (a band), and the result drawn may aggregate again for its margin.
+    A drag during either is lost (Issue #140).
     """
+    status = page.locator("#status")
+    for _ in range(20):
+        page.wait_for_function(IDLE)
+        before = status.text_content()
+        page.wait_for_timeout(QUIET_MS)
+        if page.evaluate(IDLE) and status.text_content() == before:
+            return
+    raise AssertionError("the page did not stop aggregating")
+
+
+def place(page: Page, column: str, role: str) -> None:
+    """Drag a column onto a role's zone, check that it landed, and wait for what it starts to be drawn (`wait_idle`)."""
     source = page.locator("#columns .column").filter(
         has=page.get_by_text(column, exact=True)
     )
     zone = page.locator(f'.zone[data-role="{role}"]')
     source.drag_to(zone)
     expect(zone.locator(".chip-name")).to_have_text(column)
-    if plots:
-        page.wait_for_function(SETTLED)
+    wait_idle(page)
 
 
 def test_a_scatter_plot_draws_and_hovers(
@@ -158,7 +187,7 @@ def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     for column, role in [("y", "y"), ("facet", "col"), ("color", "wrap")]:
         place(page, column, role)
     wrap = page.locator('.zone[data-role="wrap"]')
@@ -189,7 +218,7 @@ def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
     wrap.click(button="right")
     expect(form).to_have_count(0)
 
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "color", "wrap")
     page.wait_for_function(PAINTED_PIXEL)
@@ -483,7 +512,7 @@ def test_smoothing_lines_draw_alone_and_change_their_method(app_page: Page) -> N
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     for column, role in [("y", "y"), ("color", "color")]:
         place(page, column, role)
     page.wait_for_function(PAINTED_PIXEL)
@@ -520,7 +549,7 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     source = columns.filter(has=page.get_by_text("label", exact=True))
     source.drag_to(page.locator("#filters"))
@@ -560,7 +589,7 @@ def test_inactive_series_at_opacity_0_vanish_and_do_not_hover(app_page: Page) ->
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     for column, role in [("y", "y"), ("color", "color")]:
         place(page, column, role)
     page.locator("#elements .element").nth(2).click()
@@ -594,7 +623,7 @@ def test_symbol_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     for column, role in [("y", "y"), ("color", "color"), ("facet", "symbol")]:
         place(page, column, role)
     page.wait_for_function(PAINTED_PIXEL)
@@ -646,7 +675,7 @@ def test_a_symbol_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> No
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     for column, role in [("y", "y"), ("color", "color"), ("facet", "symbol")]:
         place(page, column, role)
     page.wait_for_function(PAINTED_PIXEL)
@@ -733,7 +762,7 @@ def test_symbol_alone_draws_shapes_of_one_color(app_page: Page) -> None:
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     page.wait_for_function(PAINTED_PIXEL)
     one_color = page.evaluate(OPAQUE_COLORS)
@@ -799,7 +828,7 @@ def test_a_color_level_takes_a_color_picked_on_its_marker(app_page: Page) -> Non
     page.on("request", lambda r: plots.append(r.url) if "/api/plot" in r.url else None)
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     # The images land after the status: the drop waits for them.
     page.wait_for_function(PAINTED_PIXEL)
@@ -904,7 +933,7 @@ def test_a_color_picked_while_the_images_decode_draws_them(app_page: Page) -> No
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "color", "color")
     page.wait_for_function(PAINTED_PIXEL)
@@ -943,7 +972,7 @@ def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     points = page.locator('#elements .element[data-element="points"]')
     points.click(button="right")
     expect(page.locator(".shape-menu")).to_have_count(0)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     page.wait_for_function(PAINTED_PIXEL)
     small = page.evaluate(PAINTED_COUNT)
@@ -1030,7 +1059,7 @@ def test_the_mode_bar_shows_without_hover_and_stays_in_sight(app_page: Page) -> 
     page.set_viewport_size({"width": 800, "height": 600})
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "facet", "col")
     expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
@@ -1065,7 +1094,7 @@ def test_the_mode_bar_shows_without_hover_and_stays_in_sight(app_page: Page) -> 
 def test_the_mode_bar_saves_the_plot_data(app_page: Page) -> None:
     """The mode bar's download button opens a menu that saves the overview's bins as CSV; Esc closes it."""
     page = app_page
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     button = page.locator('#plot .modebar-btn[data-title^="データを保存"]')
     button.click()
@@ -1111,7 +1140,7 @@ def test_axis_drops_split_the_zone_into_a_region_per_axis(app_page: Page) -> Non
         ).drag_to(zone, target_position={"x": x, "y": y})
 
     # X runs left to right; Y is empty, so nothing is drawn. One axis: the whole zone is its region.
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     zone = x_zone.bounding_box()
     middle = zone["height"] / 2
     drop("y", x_zone, zone["width"] * 0.4, middle)
@@ -1129,7 +1158,7 @@ def test_axis_drops_split_the_zone_into_a_region_per_axis(app_page: Page) -> Non
     expect(x_names).to_have_count(0)
 
     # Y runs top to bottom; categorical columns without X draw nothing.
-    place(page, "color", "y", plots=False)
+    place(page, "color", "y")
     zone = y_zone.bounding_box()
     center = zone["width"] / 2
     drop("facet", y_zone, center, zone["height"] * 0.1)
@@ -1146,7 +1175,7 @@ def test_axis_drop_marks_follow_the_regions(app_page: Page) -> None:
     """While dragging over X, the tip, the line and the outline follow the regions: the middle outlines the column it replaces, the ends show a line."""
     page = app_page
     expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     x_zone = page.locator('.zone[data-role="x"]')
     tip = page.locator("#drop-tip")
@@ -1213,7 +1242,7 @@ def test_group_y_reads_top_to_bottom_and_the_kind_tabs_show_the_chosen(
     expect(tabs.nth(0)).not_to_have_css("background-color", on["background-color"])
     tabs.nth(0).click()
 
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "facet", "row")
     expect(page.locator('.zone[data-role="row"]')).to_have_css("transform", "none")
@@ -1334,7 +1363,7 @@ WATCH_PENDING = """() => {
 def test_the_pending_mark_shows_only_on_a_slow_result(app_page: Page) -> None:
     """A zoom fades the images and shows "集約中…" only when its result takes long; a fast one is drawn without them (Issue #45)."""
     page = app_page
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     page.wait_for_function(PAINTED_PIXEL)
     plot = page.locator("#plot")
@@ -1377,7 +1406,7 @@ def test_a_right_click_on_the_plot_picks_the_drag_mode_and_resets_the_axes(
 ) -> None:
     """The plot's right-click menu checks the drag mode, switches it as the mode bar does, resets the axes to the overview without aggregating, and keeps a box selection."""
     page = app_page
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     plots: list[str] = []
     page.on(
@@ -1507,7 +1536,7 @@ def test_a_double_click_on_a_numeric_axis_sets_its_range_ticks_and_lines(
 ) -> None:
     """The axis dialog checks its fields, aggregates the range it sets, and draws ticks and lines on every panel of the column; going back to the overview keeps them."""
     page = app_page
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "facet", "col")
     views: list[str] = []
@@ -1585,7 +1614,7 @@ def test_two_presses_on_an_axis_within_plotlys_delay_open_its_dialog(
 ) -> None:
     """Two presses on an axis's tick labels 450ms apart, which plotly counts as a double click (`doubleClickDelay`, 500ms), open the dialog and keep the range."""
     page = app_page
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     full = "document.getElementById('plot')._fullLayout"
     assert page.evaluate("document.getElementById('plot')._context.doubleClickDelay") == 500
@@ -1609,7 +1638,7 @@ def test_a_double_click_on_a_categorical_axis_opens_its_angle_alone(
 ) -> None:
     """A categorical axis opens the dialog with the angle of its labels alone; the axis keeps its range (Issue #127)."""
     page = app_page
-    place(page, "color", "x", plots=False)
+    place(page, "color", "x")
     place(page, "y", "y")
     full = "document.getElementById('plot')._fullLayout"
     shown = page.evaluate(f"{full}.xaxis.range")
@@ -1628,7 +1657,7 @@ def test_the_strips_of_a_scrolled_grid_open_the_axis_dialog(app_page: Page) -> N
     """Scrolled, the tick labels in the strips open their axis's dialog, not the plot's reset; a range of many digits comes back whole."""
     page = app_page
     page.set_viewport_size({"width": 800, "height": 600})
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "facet", "col")
     expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
@@ -1702,7 +1731,7 @@ def test_a_chip_dragged_to_the_filters_adds_a_card_and_stays_placed(
     page = app_page
     errors = watch_errors(page)
     expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     if index:
         # The end of the zone adds a second axis after the first.
@@ -1735,7 +1764,7 @@ def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(
     page = app_page
     errors = watch_errors(page)
     expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "color", "color")
     filters = page.locator("#filters")
@@ -1834,7 +1863,7 @@ def test_a_double_click_on_the_left_margin_of_y_opens_its_dialog(
 
     page = app_page
     errors = watch_errors(page)
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     full = "document.getElementById('plot')._fullLayout"
     page.evaluate("Plotly.relayout('plot', {'yaxis.range': [-0.5, 0.5]})")
@@ -1887,7 +1916,7 @@ def test_the_margin_of_an_axis_without_a_dialog_opens_none(app_page: Page) -> No
     from tests.e2e.test_axis_menu import y_margins
 
     page = app_page
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "color", "y")
     margins = y_margins(page)
     (row,) = margins["rows"]
@@ -1965,7 +1994,7 @@ def test_the_left_strip_and_the_gap_left_of_it_open_their_rows_axis(
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 800, "height": 400})
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     add_second_y(page, "x")
     place(page, "facet", "col")

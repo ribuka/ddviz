@@ -44,7 +44,7 @@ def test_show_null_rows_toggles_per_zone_and_the_missing_level_is_colored(
     """The zones' menu turns the null rows off and on, kept per zone across moves; the missing level is gray, apart from the "(null)" text, and takes a color."""
     page = app_page
     expect(page.locator("#columns .column").filter(has_text="k")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "k", "color")
     page.wait_for_function(PAINTED_PIXEL)
@@ -117,7 +117,7 @@ def test_a_gradient_has_its_missing_level_under_the_bar(app_page: Page) -> None:
     """A numeric color keeps its bar; its null and NaN rows are a gray item under it, toggled and colored on their own."""
     page = app_page
     expect(page.locator("#columns .column").filter(has_text="v")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     place(page, "v", "color")
     page.wait_for_function(PAINTED_PIXEL)

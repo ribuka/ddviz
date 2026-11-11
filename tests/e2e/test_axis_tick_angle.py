@@ -174,7 +174,7 @@ def test_a_categorical_axis_sets_the_angle_alone(app_page: Page) -> None:
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "kind", "x", plots=False)
+    place(page, "kind", "x")
     place(page, "small", "y")
     settle(page)
     dialog = open_dialog(page, "x")
@@ -212,7 +212,7 @@ def test_the_angles_draw_as_set(app_page: Page, angle: str) -> None:
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "small", "y")
     settle(page)
     for role in ["x", "y"]:
@@ -246,7 +246,7 @@ def test_the_angles_draw_as_set(app_page: Page, angle: str) -> None:
 def test_wrong_angles_tell_why_and_change_nothing(app_page: Page) -> None:
     """−91, 91, 22.5, text and full-width digits are refused beside the field, with the other edits."""
     page = app_page
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "small", "y")
     settle(page)
     urls = record(page)
@@ -277,7 +277,7 @@ def test_wrong_angles_tell_why_and_change_nothing(app_page: Page) -> None:
 def test_apply_ok_enter_cancel_and_esc(app_page: Page) -> None:
     """Apply keeps the dialog open, OK and Enter close it; Cancel and Esc drop the edits since the last apply; the dialog opens with the angle applied."""
     page = app_page
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "small", "y")
     settle(page)
     dialog = set_angle(page, "x", "30", "適用")
@@ -317,7 +317,7 @@ def test_an_angle_alone_asks_nothing(app_page: Page) -> None:
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "small", "y")
     settle(page)
     page.evaluate("Plotly.relayout('plot', {'xaxis.range': [100, 900]})")
@@ -341,7 +341,7 @@ def test_x_and_y_of_one_column_keep_their_own_angles(app_page: Page) -> None:
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1300, "height": 800})
-    place(page, "small", "x", plots=False)
+    place(page, "small", "x")
     place(page, "small", "y")
     place(page, "two", "col")
     place_second(page, "other", "y")
@@ -402,7 +402,7 @@ def test_x_and_y_of_one_column_keep_their_own_angles(app_page: Page) -> None:
 def test_a_log_axis_hides_its_angle_until_linear(app_page: Page) -> None:
     """A numeric axis on a log scale draws plotly's labels and opens no dialog; linear again, its angle comes back."""
     page = app_page
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "other", "y")
     settle(page)
     set_angle(page, "y", "45")
@@ -436,7 +436,7 @@ def test_long_x_labels_at_90_fit_the_bottom_margin(app_page: Page, angle: str) -
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 900})
-    place(page, "name", "x", plots=False)
+    place(page, "name", "x")
     place(page, "small", "y")
     settle(page)
     assert margins(page)["b"] == 30
@@ -477,7 +477,7 @@ def test_a_turned_y_sets_the_left_margin(app_page: Page) -> None:
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "interest", "y")
     settle(page)
     level = margins(page)["l"]
@@ -518,7 +518,7 @@ def test_the_strips_of_a_scrolled_grid_turn_their_labels(app_page: Page) -> None
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 900, "height": 700})
-    place(page, "name", "x", plots=False)
+    place(page, "name", "x")
     place(page, "interest", "y")
     place(page, "facet", "row")
     place(page, "g", "col")
@@ -579,7 +579,7 @@ def test_the_strips_of_a_scrolled_grid_turn_their_labels(app_page: Page) -> None
 def test_temporal_axes_and_the_one_band_have_no_angle(app_page: Page) -> None:
     """A temporal axis's dialog has no angle; the one band of an empty X opens no dialog."""
     page = app_page
-    place(page, "when", "x", plots=False)
+    place(page, "when", "x")
     place(page, "small", "y")
     settle(page)
     dialog = open_dialog(page, "x")

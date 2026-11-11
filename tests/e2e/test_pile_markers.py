@@ -47,7 +47,7 @@ def test_a_pile_hovers_with_its_rows_and_a_zoom_parts_it(app_page: Page) -> None
     """Equal rows past their band's room show one marker of all their rows; zoomed in on their band, they are points again."""
     page = app_page
     expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
-    place(page, "g", "x", plots=False)
+    place(page, "g", "x")
     place(page, "y", "y")
     expect(page.locator("#plot .xtick text")).to_have_text(["a", "b", "c", "d"])
 

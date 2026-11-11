@@ -76,7 +76,7 @@ def test_420_levels_on_x_tick_what_reads_and_name_every_band_zoomed_in(
 ) -> None:
     """Months on X draw with thinned, whole labels; zoomed to 10 bands, each band is named."""
     page = app_page
-    place(page, "v", "y", plots=False)
+    place(page, "v", "y")
     place(page, "month", "x")
     assert_readable(ticks(page, "x"), MONTHS, "x")
 
@@ -95,7 +95,7 @@ def test_420_levels_on_x_tick_what_reads_and_name_every_band_zoomed_in(
 def test_420_levels_on_y_tick_one_label_a_line(app_page: Page) -> None:
     """Months on Y draw with thinned labels that do not overlap."""
     page = app_page
-    place(page, "v", "x", plots=False)
+    place(page, "v", "x")
     place(page, "month", "y")
     assert_readable(ticks(page, "y"), MONTHS, "y")
 
@@ -103,7 +103,7 @@ def test_420_levels_on_y_tick_one_label_a_line(app_page: Page) -> None:
 def test_10000_levels_draw_with_tens_of_ticks(app_page: Page) -> None:
     """10,000 levels on X, past the limit of the series roles, draw at once with tens of ticks."""
     page = app_page
-    place(page, "v", "y", plots=False)
+    place(page, "v", "y")
     place(page, "id", "x")
     levels = [f"L{i}" for i in range(IDS)]
     assert_readable(ticks(page, "x"), levels, "x")
@@ -113,9 +113,9 @@ def test_10000_levels_draw_with_tens_of_ticks(app_page: Page) -> None:
 def test_the_axis_level_limit_holds_for_color(app_page: Page) -> None:
     """The months on X draw, and on Color too are refused by Color's limit of 100."""
     page = app_page
-    place(page, "v", "y", plots=False)
+    place(page, "v", "y")
     place(page, "month", "x")
-    place(page, "month", "color", plots=False)
+    place(page, "month", "color")
     expect(page.locator("#status")).to_contain_text(
         "month は 420 個で、Color・Symbol・Group・Wrap の上限は 100 個"
     )
@@ -124,7 +124,7 @@ def test_the_axis_level_limit_holds_for_color(app_page: Page) -> None:
 def test_worst_levels_tick_in_their_bands(app_page: Page) -> None:
     """A long level ends in "…" within its band, an empty one shows its placeholder, and markup is shown as text."""
     page = app_page
-    place(page, "v", "y", plots=False)
+    place(page, "v", "y")
     place(page, "w", "x")
     drawn = ticks(page, "x")
     texts = [t["text"] for t in drawn]

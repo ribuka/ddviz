@@ -63,7 +63,7 @@ def test_several_files_load_draw_and_hover_as_one_table(
     casts.get_by_role("button", name="OK").click()
     expect(casts).to_be_hidden()
 
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     pixel = page.wait_for_function(PAINTED_PIXEL).json_value()
     page.mouse.move(pixel["x"], pixel["y"])

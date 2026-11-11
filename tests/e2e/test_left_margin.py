@@ -148,7 +148,7 @@ def test_long_y_labels_of_two_rows_show_whole(app_page: Page) -> None:
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "pay", "y")
     place_second_y(page, "interest")
     settle(page)
@@ -167,7 +167,7 @@ def test_short_labels_keep_50_grow_when_zoomed_and_shrink_back(app_page: Page) -
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "small", "y")
     settle(page)
     assert y_labels(page)["margin"] == 50
@@ -207,7 +207,7 @@ def test_a_scrolled_grid_keeps_the_labels_in_its_strip(app_page: Page) -> None:
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 900, "height": 700})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "fine", "y")
     place(page, "facet", "row")
     place(page, "g", "col")
@@ -253,7 +253,7 @@ def test_times_and_a_log_axis_show_whole(app_page: Page) -> None:
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "when", "y")
     settle(page)
     shown = y_labels(page)
@@ -283,7 +283,7 @@ def test_a_categorical_y_keeps_its_cut_labels_beside_a_numeric_one(
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "name", "y")
     settle(page)
     assert y_labels(page)["margin"] == 50
@@ -315,7 +315,7 @@ def test_a_wider_margin_that_scrolls_keeps_the_drawing_aligned(
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x", plots=False)
+    place(page, "n", "x")
     place(page, "small", "y")
     place(page, "g", "col")
     settle(page)

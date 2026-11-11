@@ -112,7 +112,7 @@ def new_plot(page: Page, task: str) -> None:
 def two_by_two(page: Page) -> None:
     """Place x and facet on X, and x and y on Y (top to bottom)."""
     expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     place(page, "y", "y")
     x_box = page.locator('.zone[data-role="x"]').bounding_box()
     drop_at(page, "facet", "x", x_box["width"] - 5, x_box["height"] / 2)
@@ -315,7 +315,7 @@ def test_long_chips_fit_their_regions_and_chips_without_a_figure(
     expect(x_zone.locator(".zone-label")).to_be_visible()
 
     # No figure (Y is empty): one chip is centered, two spread evenly.
-    place(page, "x", "x", plots=False)
+    place(page, "x", "x")
     zone = x_zone.bounding_box()
     chip = x_zone.locator(".chip").bounding_box()
     assert abs(chip["x"] + chip["width"] / 2 - (zone["x"] + zone["width"] / 2)) <= 2
