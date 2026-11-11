@@ -9,8 +9,8 @@ import {
   emptySettings,
   hasAngle,
   isEmpty,
+  labelAt,
   openAxisDialog,
-  xLabelAt,
   yMarginAt,
 } from "./axisdialog.js";
 import { AxisDirections, ascending, oriented } from "./axisdirection.js";
@@ -349,7 +349,7 @@ function axisHit(event) {
   return (
     axisAt(event, gd, current) ??
     yMarginAt(clientX, clientY, gd, current, from) ??
-    xLabelAt(clientX, clientY, gd, current)
+    labelAt(clientX, clientY, gd, current)
   );
 }
 

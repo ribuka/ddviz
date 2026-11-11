@@ -437,11 +437,13 @@ export function yMarginAt(clientX, clientY, gd, meta, from) {
   return index !== null && clientX < left ? { axis: "y", index } : null;
 }
 
-// Returns the x axis column whose tick label drawn by plotly holds a point
-// (client coordinates) of the plot `gd` of the result `meta`, as `{axis:
-// "x", index}`, or null. A label turned to an angle reaches below plotly's
-// drag area of its axis; a point in a panel's plot area is the panel's.
-export function xLabelAt(clientX, clientY, gd, meta) {
+// Returns the axis column whose tick label drawn by plotly holds a point
+// (client coordinates) of the plot `gd` of the result `meta`, as `{axis,
+// index}`, or null. A label turned to an angle reaches out of plotly's drag
+// area of its axis: an x label below it, a y label above or below its
+// panel's margin (`yMarginAt`); a point in a panel's plot area is the
+// panel's.
+export function labelAt(clientX, clientY, gd, meta) {
   const full = gd._fullLayout;
   if (!meta || !full) return null;
   const origin = gd.getBoundingClientRect();
@@ -458,11 +460,16 @@ export function xLabelAt(clientX, clientY, gd, meta) {
       bottom: origin.top + ya._offset + ya._length,
     };
     if (within(area)) return null;
-    if (hit) continue;
-    for (const text of gd.querySelectorAll(`.${panel.xaxis}tick text`)) {
-      if (within(text.getBoundingClientRect())) {
-        hit = { axis: "x", index: panel.x };
-        break;
+    for (const [axis, id, index] of [
+      ["x", panel.xaxis, panel.x],
+      ["y", panel.yaxis, panel.y],
+    ]) {
+      if (hit) break;
+      for (const text of gd.querySelectorAll(`.${id}tick text`)) {
+        if (within(text.getBoundingClientRect())) {
+          hit = { axis, index };
+          break;
+        }
       }
     }
   }

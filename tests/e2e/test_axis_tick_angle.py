@@ -488,6 +488,20 @@ def test_a_turned_y_sets_the_left_margin(app_page: Page) -> None:
     shown = labels(page, "y")
     for label in shown["labels"]:
         assert label["left"] >= shown["edge"]["left"] + 2 - 0.5
+    # A turned label reaching above its panel opens the dialog from there.
+    top = page.evaluate(
+        f"document.getElementById('plot').getBoundingClientRect().top + {FULL}.yaxis._offset"
+    )
+    above = [label for label in shown["labels"] if label["top"] < top - 8]
+    assert above
+    label = above[0]
+    page.wait_for_timeout(APART_MS)
+    page.mouse.dblclick((label["left"] + label["right"]) / 2, label["top"] + 3)
+    dialog = page.locator("dialog.axis-dialog")
+    expect(dialog.locator("h2")).to_have_text("Y 軸: interest")
+    expect(dialog.locator("input[name=angle]")).to_have_value("90")
+    dialog.get_by_role("button", name="キャンセル").click()
+    expect(dialog).to_have_count(0)
     set_angle(page, "y", "-45")
     settle(page)
     shown = labels(page, "y")
