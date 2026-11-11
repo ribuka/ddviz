@@ -65,6 +65,23 @@ def test_resized_spec_with_another_filter_finds_its_panels(
     assert spec.files["label"] == ["label.parquet"]
 
 
+def test_resized_spec_keeps_the_margins_within_the_size(manifest: PlotManifest) -> None:
+    """The margins asked for are kept within the size (`left_margin`, `bottom_margin`), and another margin is another layout."""
+    spec = resized_spec(
+        manifest,
+        400,
+        300,
+        [],
+        {},
+        manifest.x_ranges,
+        manifest.y_ranges,
+        margin_left=10,
+        margin_bottom=1000,
+    )
+    assert (spec.margin_left, spec.margin_bottom) == (50, 300 - 54 - 17 - 1)
+    assert not unchanged(manifest, spec)
+
+
 def test_resized_spec_needs_a_range_per_axis_column(manifest: PlotManifest) -> None:
     """A request with the wrong number of ranges is refused."""
     with pytest.raises(ValueError, match="one range"):

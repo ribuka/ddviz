@@ -1449,11 +1449,11 @@ def test_a_double_click_on_a_numeric_axis_sets_its_range_ticks_and_lines(
     expect(dialog).to_be_visible()
     errors = dialog.locator(".axis-dialog-error")
     expect(errors).to_have_text(
-        ["", "最小値より大きくしてください", "0 より大きくしてください", "", "", ""]
+        ["", "最小値より大きくしてください", "0 より大きくしてください", "", "", "", ""]
     )
     dialog.locator("input[name=line]").fill("a")
     dialog.get_by_role("button", name="追加").click()
-    expect(errors.nth(5)).to_have_text("数値を入れてください")
+    expect(errors.nth(6)).to_have_text("数値を入れてください")
     assert views == []
 
     dialog.locator("input[name=min]").fill("-1")
@@ -1496,15 +1496,24 @@ def test_a_double_click_on_a_numeric_axis_sets_its_range_ticks_and_lines(
     assert page.evaluate(f"[{full}.yaxis.tickmode, {full}.shapes.length]") == ["auto", 0]
 
 
-def test_a_double_click_on_a_categorical_axis_opens_no_dialog(app_page: Page) -> None:
-    """A categorical axis keeps plotly's double click: no dialog opens."""
+def test_a_double_click_on_a_categorical_axis_opens_its_angle_alone(
+    app_page: Page,
+) -> None:
+    """A categorical axis opens the dialog with the angle of its labels alone; the axis keeps its range (Issue #127)."""
     page = app_page
     place(page, "color", "x", plots=False)
     place(page, "y", "y")
+    full = "document.getElementById('plot')._fullLayout"
+    shown = page.evaluate(f"{full}.xaxis.range")
     tick = page.locator("#plot .xtick text").first.bounding_box()
     page.mouse.dblclick(tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2)
-    page.wait_for_timeout(300)
-    expect(page.locator("dialog.axis-dialog")).to_have_count(0)
+    dialog = page.locator("dialog.axis-dialog")
+    expect(dialog.locator("h2")).to_have_text("X 軸: color")
+    expect(dialog.locator("input[name=min]")).to_be_disabled()
+    expect(dialog.locator("input[name=angle]")).to_be_enabled()
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    assert page.evaluate(f"{full}.xaxis.range") == shown
 
 
 def test_the_strips_of_a_scrolled_grid_open_the_axis_dialog(app_page: Page) -> None:
@@ -1764,7 +1773,7 @@ def test_a_double_click_on_the_left_margin_of_y_opens_its_dialog(
 
 
 def test_the_margin_of_an_axis_without_a_dialog_opens_none(app_page: Page) -> None:
-    """The margin of a categorical or log y opens no dialog, and the menu's items as before."""
+    """The margin of a categorical y opens the dialog of its angle; that of a log y opens none, and the menu's items as before."""
     from tests.e2e.test_axis_menu import y_margins
 
     page = app_page
@@ -1773,7 +1782,7 @@ def test_the_margin_of_an_axis_without_a_dialog_opens_none(app_page: Page) -> No
     margins = y_margins(page)
     (row,) = margins["rows"]
     point = ((margins["zone"] + row["left"]) / 2, row["between"])
-    assert dialog_at(page, *point) is None
+    assert dialog_at(page, *point) == "Y 軸: color"
 
     place(page, "y", "y")
     margins = y_margins(page)

@@ -146,6 +146,21 @@ def test_the_left_margin_is_the_specs_for_the_whole_figure(
     assert wide["meta"]["y_categorical"] == [False]
 
 
+def test_the_bottom_margin_is_the_specs_for_the_whole_figure(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """A higher bottom margin raises the panels' bottom, lowers them, and is the figure's margin."""
+    low = _figure(replace(scatter_spec, width=800, height=400), tmp_path / "a")
+    high = _figure(
+        replace(scatter_spec, width=800, height=400, margin_bottom=110), tmp_path / "b"
+    )
+    a, b = low["figure"]["layout"], high["figure"]["layout"]
+    assert (a["margin"]["b"], b["margin"]["b"]) == (30, 110)
+    assert (low["meta"]["margin_bottom"], high["meta"]["margin_bottom"]) == (30, 110)
+    assert b["height"] == a["height"] == 400
+    assert high["meta"]["grid"]["height"] == low["meta"]["grid"]["height"] - 80
+
+
 def test_the_panels_of_one_axis_column_share_its_axis(
     tmp_path: Path, scatter_spec: ScatterSpec
 ) -> None:

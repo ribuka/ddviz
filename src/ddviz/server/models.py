@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, StrictBool
 
-from ddviz.shared.layout import MARGIN_LEFT
+from ddviz.shared.layout import MARGIN_BOTTOM, MARGIN_LEFT
 
 
 class ShowNullRows(BaseModel):
@@ -20,13 +20,16 @@ class PlotRequest(BaseModel):
     """Body of ``POST /api/plot``: the graph (`ddviz.server.encoding.Encoding.to_dict`) and the plot area size.
 
     ``margin_left`` is the left margin the page asks for, for the y tick
-    labels it measured (`ddviz.shared.layout.left_margin`).
+    labels it measured (`ddviz.shared.layout.left_margin`), and
+    ``margin_bottom`` the bottom margin, for the x tick labels at an angle
+    set (`ddviz.shared.layout.bottom_margin`).
     """
 
     encoding: dict
     width: int
     height: int
     margin_left: int = MARGIN_LEFT
+    margin_bottom: int = MARGIN_BOTTOM
     filters: list[dict] = []
     color_bins: dict | None = None
     wrap_cols: int | None = None
@@ -39,11 +42,12 @@ class PlotRequest(BaseModel):
 
 
 class SizeRequest(BaseModel):
-    """Body of ``POST /api/overview``: the size of the plot area in pixels, the left margin asked for (`PlotRequest`) and the local filter."""
+    """Body of ``POST /api/overview``: the size of the plot area in pixels, the left and bottom margins asked for (`PlotRequest`) and the local filter."""
 
     width: int
     height: int
     margin_left: int = MARGIN_LEFT
+    margin_bottom: int = MARGIN_BOTTOM
     filters: list[dict] = []
 
 

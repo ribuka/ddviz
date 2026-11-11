@@ -1772,6 +1772,11 @@ button {
   color: var(--error-text);
 }
 
+/* The fields of a categorical axis other than the angle: shown, disabled. */
+.axis-dialog .off {
+  color: var(--text-disabled);
+}
+
 .axis-dialog-lines {
   display: flex;
   flex-direction: column;

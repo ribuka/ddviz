@@ -607,6 +607,7 @@ def aggregate(
         spec.width,
         spec.height,
         spec.margin_left,
+        spec.margin_bottom,
     )
     layout = grid_layout(
         spec.width,
@@ -615,6 +616,7 @@ def aggregate(
         axes.cols,
         WRAP_GAP if spec.wrap else GAP,
         spec.margin_left,
+        spec.margin_bottom,
     )
     grid = BinGrid(
         n_panels=layout.nrow * layout.ncol,

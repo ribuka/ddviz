@@ -286,6 +286,24 @@ def test_plot_wraps_a_column_and_refuses_a_bad_wrap_cols(client: TestClient) -> 
     assert bad.status_code == 400
 
 
+def test_the_margins_asked_for_go_to_the_plot_view_and_overview(
+    client: TestClient,
+) -> None:
+    """``margin_bottom`` (Issue #127) is the figure's bottom margin within the height, as ``margin_left`` is its left one, for a plot, a view and an overview."""
+    encoding = {"x": ["x"], "y": ["y"]}
+    asked = {"margin_left": 70, "margin_bottom": 90}
+    meta = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS, **asked}
+    ).json()["meta"]
+    assert (meta["margin_left"], meta["margin_bottom"]) == (70, 90)
+    body = {**SIZE, "margin_bottom": 120, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
+    view = client.post("/api/view", json=body).json()["meta"]
+    assert (view["margin_left"], view["margin_bottom"]) == (50, 120)
+    high = {**SIZE, "margin_bottom": 10_000}
+    overview = client.post("/api/overview", json=high).json()["meta"]
+    assert overview["margin_bottom"] == 300 - 54 - 17 - 1
+
+
 def test_view_and_overview_need_a_plot(client: TestClient) -> None:
     """Zooming or resizing before a plot is refused."""
     body = {**SIZE, "x_ranges": [[0, 1]], "y_ranges": [[0, 1]]}

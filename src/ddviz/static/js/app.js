@@ -5,9 +5,12 @@ import {
   axisKind,
   decorate,
   decorationUpdate,
+  dialogKind,
   emptySettings,
+  hasAngle,
   isEmpty,
   openAxisDialog,
+  xLabelAt,
   yMarginAt,
 } from "./axisdialog.js";
 import { AxisDirections, ascending, oriented } from "./axisdirection.js";
@@ -23,7 +26,7 @@ import { ElementBar } from "./elements.js";
 import { FilterPane } from "./filters.js";
 import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
-import { fitMargin, MARGIN_LEFT, neededMargin } from "./leftmargin.js";
+import { fitBottom, fitMargin, MARGIN_BOTTOM, MARGIN_LEFT, neededBottom, neededMargin } from "./leftmargin.js";
 import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { levelText } from "./names.js";
@@ -134,7 +137,9 @@ fetch("/api/settings")
     legend.inactiveOpacity = settings.inactive_opacity;
     layers.draw();
   });
-const sticky = new StickyLabels(document.getElementById("scroller"), gd);
+const sticky = new StickyLabels(document.getElementById("scroller"), gd, (meta, role, index) =>
+  angleOn(meta, role, index),
+);
 const builderRoot = document.getElementById("builder");
 const yZone = builderRoot.querySelector(':scope > .zone[data-role="y"]');
 // The elements of the axes' left margin outside the plot (`axisHit`): the
@@ -154,6 +159,8 @@ let shownSize = null;
 // as measured when a plot, a view or the axis settings were last settled;
 // a request asks for it, within the area's width (`stageSize`).
 let leftMargin = MARGIN_LEFT;
+// Bottom margin the x tick labels at an angle set need, as `leftMargin`.
+let bottomMargin = MARGIN_BOTTOM;
 // Conditions of the local filter (`ddviz.server.plan.parse_filters`) that every
 // request carries; a result's meta has those it was aggregated with.
 let filters = [];
@@ -268,7 +275,18 @@ gd.addEventListener("mousedown", () => {
 // in the dialog is a view, as a zoom's: going back to the overview drops it.
 const axisSettings = new Map();
 const settingsOf = (column) => axisSettings.get(column);
-// A double click on the tick labels of an axis with a dialog (`axisKind`) opens it
+// The angle of the major tick labels of each x and y column (`hasAngle`:
+// linear numeric and categorical axes), in degrees, by role and column: a
+// column on both x and y has one of each. Every panel of the role's
+// column draws it; it stays through zooms and graphs until the page
+// reloads. A column without one has plotly's automatic labels.
+const axisAngles = new Map();
+const angleOf = (role, column) => axisAngles.get(`${role}:${column}`) ?? null;
+// The angle drawn on the axis column `index` of `role` of `meta`, or null.
+function angleOn(meta, role, index) {
+  return hasAngle(meta, role, index) ? angleOf(role, meta[`${role}_columns`][index]) : null;
+}
+// A double click on the tick labels of an axis with a dialog (`dialogKind`) opens it
 // instead of plotly's autorange of that axis. plotly counts the presses
 // itself (`doubleClickDelay`, 300ms), so the second press does not reach it.
 // The wait here is longer, so that no press plotly would count as a double
@@ -301,13 +319,13 @@ builderRoot.addEventListener(
   { capture: true },
 );
 
-// Returns the axis column with a dialog (`axisKind`) whose tick labels are under a pointer
+// Returns the axis column with a dialog (`dialogKind`) whose tick labels are under a pointer
 // event, as `{axis, index}`, or null: in the strips of a grid that scrolls
 // (`sticky.js`), which let the pointer through to the panels, or on plotly's
 // own labels.
 function axisUnder(event) {
   const hit = axisHit(event);
-  return hit && axisKind(current, hit.axis, hit.index) ? hit : null;
+  return hit && dialogKind(current, hit.axis, hit.index) ? hit : null;
 }
 
 // Returns the axis column whose tick labels are under a pointer event, of
@@ -327,7 +345,12 @@ function axisHit(event) {
   const from = yZone.getBoundingClientRect().right;
   const strip = sticky.axisAt(clientX, clientY, from);
   if (strip) return { axis: strip.axis, index: strip.axis === "x" ? strip.panel.x : strip.panel.y, strip: true };
-  return axisAt(event, gd, current) ?? (sticky.shown ? null : yMarginAt(clientX, clientY, gd, current, from));
+  if (sticky.shown) return axisAt(event, gd, current);
+  return (
+    axisAt(event, gd, current) ??
+    yMarginAt(clientX, clientY, gd, current, from) ??
+    xLabelAt(clientX, clientY, gd, current)
+  );
 }
 
 // The scale of each x and y column while the input is open (`axisscale.js`).
@@ -419,12 +442,13 @@ function openAxis({ axis, index }) {
   const full = gd._fullLayout[axisKey(current[`${axis}_axes`][index])];
   openAxisDialog({
     title: `${axis.toUpperCase()} 軸: ${column}`,
-    kind: axisKind(current, axis, index),
+    kind: dialogKind(current, axis, index),
     range: ascending(linearRange(full)),
     settings: settingsOf(column) ?? emptySettings(),
     // plotly's interval of the ticks drawn, for the unit of a temporal one.
     drawn: full.dtick,
-    onApply: (settings, picked) => applyAxis(axis, column, settings, picked),
+    angle: angleOf(axis, column),
+    onApply: (settings, picked, angle) => applyAxis(axis, column, settings, picked, angle),
   });
 }
 
@@ -433,12 +457,19 @@ function openAxis({ axis, index }) {
 // again, as after a zoom. The drawn result may have changed since the
 // dialog opened: the range goes to the column's axis, if it still has a
 // dialog (`axisKind`), in linear units (milliseconds on a date axis).
-async function applyAxis(axis, column, settings, picked) {
-  if (isEmpty(settings)) axisSettings.delete(column);
-  else axisSettings.set(column, settings);
+// The angle of the labels (null for plotly's own; undefined from a dialog
+// without one) is the column's in that role. A categorical axis has no
+// settings nor range (null): only its angle changes.
+async function applyAxis(axis, column, settings, picked, angle) {
+  if (settings) {
+    if (isEmpty(settings)) axisSettings.delete(column);
+    else axisSettings.set(column, settings);
+  }
+  if (angle === null) axisAngles.delete(`${axis}:${column}`);
+  else if (angle !== undefined) axisAngles.set(`${axis}:${column}`, angle);
   if (!current || !gd._fullLayout) return;
   const meta = current;
-  const update = decorationUpdate(meta, settingsOf);
+  const update = decorationUpdate(meta, settingsOf, angleOf);
   ownRelayout = update;
   try {
     await Plotly.relayout(gd, update);
@@ -449,7 +480,7 @@ async function applyAxis(axis, column, settings, picked) {
   const index = meta[`${axis}_columns`].indexOf(column);
   const key = index < 0 || !axisKind(meta, axis, index) ? null : axisKey(meta[`${axis}_axes`][index]);
   const full = key && gd._fullLayout[key];
-  if (!full || sameRange(ascending(linearRange(full)), picked)) {
+  if (!full || !picked || sameRange(ascending(linearRange(full)), picked)) {
     // The ticks' labels changed at the same range.
     followMargin(false);
     return;
@@ -603,31 +634,49 @@ async function fetchImages(meta) {
 }
 
 // Returns the size of the plot area, which the figure is aggregated for, and
-// the left margin it is asked for (`leftMargin` within its width); a grid of
-// many panels may be larger and scroll in it.
+// the left and bottom margins it is asked for (`leftMargin` within its
+// width, `bottomMargin` within its height); a grid of many panels may be
+// larger and scroll in it.
 function stageSize() {
   const width = Math.floor(stage.clientWidth);
-  return { width, height: Math.floor(stage.clientHeight), margin_left: fitMargin(leftMargin, width) };
+  const height = Math.floor(stage.clientHeight);
+  return {
+    width,
+    height,
+    margin_left: fitMargin(leftMargin, width),
+    margin_bottom: fitBottom(bottomMargin, height),
+  };
 }
 
 function sameSize(a, b) {
   return (
-    a !== null && b !== null && a.width === b.width && a.height === b.height && a.margin_left === b.margin_left
+    a !== null &&
+    b !== null &&
+    a.width === b.width &&
+    a.height === b.height &&
+    a.margin_left === b.margin_left &&
+    a.margin_bottom === b.margin_bottom
   );
 }
 
-// Measures the left margin the y tick labels of the figure drawn need
-// (`leftmargin.js`) and keeps it as `leftMargin`. A plot, a view or axis
-// settings once settled take it as measured: it grows or shrinks. Within an
-// operation, the result drawn for the margin asked for may need more (its
-// panels and their ticks changed): `grow` keeps only a larger margin, and
-// a smaller one waits for the next operation. Returns whether it changed.
+// Measures the left margin the y tick labels of the figure drawn need, and
+// the bottom margin its x tick labels at an angle set need
+// (`leftmargin.js`), and keeps them as `leftMargin` and `bottomMargin`. A
+// plot, a view or axis settings once settled take them as measured: they
+// grow or shrink. Within an operation, the result drawn for the margins
+// asked for may need more (its panels and their ticks changed): `grow`
+// keeps only a larger margin, and a smaller one waits for the next
+// operation. Returns whether either changed.
 function measureMargin(grow) {
-  const needed = neededMargin(gd, current, sticky);
-  if (needed === null) return false;
-  const next = grow ? Math.max(needed, leftMargin) : needed;
-  if (next === leftMargin) return false;
-  leftMargin = next;
+  const angled = (meta, role, index) => angleOn(meta, role, index) !== null;
+  const left = neededMargin(gd, current, sticky, angled);
+  const bottom = neededBottom(gd, current, sticky, angled);
+  if (left === null || bottom === null) return false;
+  const nextLeft = grow ? Math.max(left, leftMargin) : left;
+  const nextBottom = grow ? Math.max(bottom, bottomMargin) : bottom;
+  if (nextLeft === leftMargin && nextBottom === bottomMargin) return false;
+  leftMargin = nextLeft;
+  bottomMargin = nextBottom;
   return true;
 }
 
@@ -771,7 +820,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     const view = keep && sameAxes(keep, meta) ? keep : null;
     if (view?.box) selection = { box: view.box, base: null, bitmaps: null, fresh: true };
     const ranged = view?.zoomed ? withRanges(figure.layout, meta, view.ranges) : figure.layout;
-    const layout = withBandTicks(orientedLayout(decorate(ranged, meta, settingsOf), meta), meta);
+    const layout = withBandTicks(orientedLayout(decorate(ranged, meta, settingsOf, angleOf), meta), meta);
     drawnKey = figureKey(figure.data, layout);
     Plotly.purge(gd);
     await Plotly.newPlot(gd, figure.data, forPlotly(withSelectionBox(layout, meta)), PLOT_CONFIG);
@@ -1029,7 +1078,7 @@ function withSelectionBox(layout, meta) {
 // ticks and reference lines of the axis settings.
 async function draw(data, plain, meta, bitmaps) {
   const started = performance.now();
-  const layout = withBandTicks(orientedLayout(decorate(plain, meta, settingsOf), meta), meta);
+  const layout = withBandTicks(orientedLayout(decorate(plain, meta, settingsOf, angleOf), meta), meta);
   const key = figureKey(data, layout);
   if (key === drawnKey) {
     const update = rangeUpdate(layout);
