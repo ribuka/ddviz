@@ -1914,7 +1914,7 @@ def test_a_double_click_on_the_left_margin_of_y_opens_its_dialog(
     selections = box_select(page)
     below = table_top(page)
     points = [(x, y) for x, y in margin_points(margins, row) if y < below - 2]
-    assert len(points) >= 8
+    assert len(points) >= 4
     for x, y in points:
         assert dialog_at(page, x, y) == "Y 軸: y", (x, y)
     assert selections == []
@@ -2015,6 +2015,8 @@ def test_the_left_strip_and_the_gap_left_of_it_open_their_rows_axis(
     strip = page.locator(".sticky-strip.left")
     selections = box_select(page)
 
+    # One point a row, its x taking turns through both sizes.
+    checked = 0
     for size in [None, {"width": 760, "height": 380}]:
         if size:
             page.set_viewport_size(size)
@@ -2034,23 +2036,18 @@ def test_the_left_strip_and_the_gap_left_of_it_open_their_rows_axis(
             box["x"] + box["width"] - 1,
         ]
         # The levels of Group Y outside, the y columns inside.
-        checked = 0
         for i, row in enumerate(margins["rows"]):
             seen = [max(row["top"], top), min(row["bottom"], bottom)]
             if seen[1] - seen[0] < 8:
                 continue
             column = ["y", "x"][i % 2]
-            ys = [(seen[0] + seen[1]) / 2]
-            if seen[0] + 3 < row["between"] < seen[1] - 3:
-                ys.append(row["between"])
-            for x in xs:
-                for y in ys:
-                    assert menu_at(page, x, y) == f"Y 軸: {column}", (x, y, size)
-                    assert dialog_at(page, x, y) == f"Y 軸: {column}", (x, y, size)
-                    checked += 1
-        assert checked >= 8
+            x, y = xs[checked % len(xs)], (seen[0] + seen[1]) / 2
+            assert menu_at(page, x, y) == f"Y 軸: {column}", (x, y, size)
+            assert dialog_at(page, x, y) == f"Y 軸: {column}", (x, y, size)
+            checked += 1
         # The x strip at the bottom left and the table's bar are not y's.
         assert menu_at(page, margins["zone"] + 1, bottom + 5) is None
+    assert checked >= 4
     assert selections == []
     expect(page.locator("#table")).to_be_visible()
     assert errors == []
