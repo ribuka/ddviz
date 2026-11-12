@@ -867,6 +867,7 @@ X / Y のカテゴリの軸の水準の上限を Color などの上限から分�
 
 - 単体テスト：上限の直前・ちょうど・直後（X、Y）、共用列（X と Color のどちらの上限でも断る）、非軸の上限 100 と軸の既定 100 万、設定の読込と検証、420 水準の箱ひげ図、100 万水準の帯の範囲（`tests/compute/test_aggregate.py`、`tests/compute/test_boxes.py`、`tests/compute/test_bands.py`、`tests/server/test_settings.py`、`tests/server/test_figure.py`、`tests/server/test_app.py`）。
 - E2E（`tests/e2e/test_axis_levels.py`）：420 水準の X と Y、10,000 水準の X で、目盛りが等間隔に間引かれ、隣と重ならず、X のラベルが水準の名前そのものであること。帯 10〜19 にズームすると 10 本すべてに名前が出ること。420 水準の列を X と Color に置くと Color の上限で断ること。長い水準・空文字列・`<b>` の水準の目盛り。
+  - 2026-11-13（Issue #154）：目盛りの間引き（`bandTicks`）・`fitText`・`levelText`・`plotlyText` は `tests/js/test_bandticks.py` へ移した（Y の 420 水準、10,000 水準、最悪の水準）。E2E には X の 420 水準だけを残す。Color の上限の文言は `tests/server/test_app.py` で確かめる。
 - ブラウザでの描画時間（Chrome、10,000〜100 万水準の点と箱ひげ図）は「カテゴリの軸の水準数」の計測の表。
 
 ### カテゴリの水準の順（2026-11-01 決定。Issue #32）
@@ -1144,6 +1145,7 @@ Color と symbol の列が null（浮動小数点の NaN も同じ）の行を�
 | 左余白 | 目盛り・参照線の変更は再集約しない。Y のラベル幅で左余白が変わるときだけ、数値の軸と同じ `followMargin` のリサイズ処理で集約し直す（ズーム中は `/api/view`） | |
 
 - 確かめたこと（2026-11-11、Chrome（playwright）の E2E、JST のブラウザー。`tests/e2e/test_dates.py`）：4 型 × X・Y で、X の目盛り・Y の左余白のダブルクリックで対象列のダイアログが開き、欄が今の範囲であること、編集せずに適用しても範囲もリクエストも変わらないこと、小数秒付きの Datetime、日中を端にした Date、`-00:01:00`〜`24:01:00` の Time、負の値を含む Duration の範囲が `/api/view` に送られて軸の範囲になり、参照線が意図した軸座標に出て、全体図に戻すと範囲が戻り線が残ること（`test_a_temporal_axis_sets_its_range_and_reference_lines`）。ミリ秒以下のズームを編集せず OK しても範囲が同じでリクエストが無いこと、反転中の範囲の変更で向きが残ること（`test_a_range_left_as_written_keeps_a_deep_zoom_and_a_reversed_axis_its_direction`）。存在しない日付、不正な時刻、タイムゾーン、空欄、最小値 ≥ 最大値、不正な間隔・分割数（1・11・1.5）、不正な参照線、日付の軸を超える Time（309 桁の時間、±100000000000000 時間）が各欄で拒否されること（`test_wrong_fields_of_a_temporal_axis_tell_why_and_change_nothing`）。15 分・3 分割で facet の 2 パネルに 5 分の補助格子が出て、2・10 分割を受け付け、1 週が 7 日で描かれ、目盛り・参照線だけでは集約せず、開き直し・全体図・別のグラフで保持し、単位だけでは自動のまま、消すと自動に戻ること（`test_temporal_ticks_and_their_minor_splits_draw_on_every_panel_and_stay`）。ズームに応じて単位の初期選択が秒・日・月か年（`M` 系）に変わり、Duration の `dtick` を秒として読むこと（`test_the_unit_of_an_automatic_interval_follows_the_ticks_drawn`）。対数表示の Duration ではダイアログを開かず設定を描かず、線形に戻すと描くこと（`test_a_log_duration_hides_its_settings_until_linear_again`）。スクロールした図の固定帯と、2 つの Y 列の各行の余白で対象列のダイアログが開くこと（`test_the_strips_and_the_rows_of_temporal_axes_open_their_columns`。Issue #154 で削除した。帯と行の当たり判定は数値軸の `test_the_strips_of_a_scrolled_grid_open_the_axis_dialog`・`test_each_panel_row_of_the_margin_opens_its_own_column` で確かめる）。参照線だけの変更では集約せず、ミリ秒の目盛りで Y のラベルが広がると左余白が広がり、同じ範囲で集約し直すこと（`test_finer_ticks_of_a_temporal_y_widen_its_margin`）。
+  - 2026-11-13（Issue #154）：値の読み書き（`readAxisValue`・`axisText`・plotly の日付の文字列の往復）は `tests/js/test_temporal.py`、ダイアログの検証・目盛りの属性・単位の選び方・log の duration は `tests/js/test_axisdialog.py` へ移した。E2E には範囲と参照線の at×X と took×Y、反転軸で範囲を打っても反転のまま、全体表示と新しい図でも目盛りと線が残ること、を残す。
 
 #### 暦単位の目盛り間隔（2026-11-11 実装。Issue #128）
 
@@ -1160,6 +1162,7 @@ Color と symbol の列が null（浮動小数点の NaN も同じ）の行を�
 | 反映 | 固定間隔と同じ `decorate`・`decorationUpdate` の経路で、同じ列のパネルすべてに描く。固定帯のラベルは `sticky.js` の主目盛り（`_vals` の補助目盛り以外）。目盛りだけの変更は集約せず、Y のラベル幅で左余白が変わるときだけ既存のリサイズ処理 | 暦単位の設定が日付の軸以外に当たったとき（同名の列が別の型になったなど）は plotly の自動目盛り |
 
 - 確かめたこと（2026-11-11、Chrome（playwright）の E2E、JST のブラウザー。`tests/e2e/test_dates.py`）：Date の X に 5 か月刻みと補助目盛りを適用すると、主目盛りが 1970-01 から 5 か月ごとの 1 日 0 時、主目盛りの間に各月 1 日の補助格子が 4 本ずつで主目盛りと重ならず、2027-02・2027-03・2028-02・2028-03 の各 1 日に目盛りがあり、`/api/view` などの集約が無く、開き直すと設定が出ること（`test_calendar_ticks_of_a_date_x_follow_the_months`）。America/New_York の Datetime の Y（col の facet 2 パネル、800×600 でスクロールする図）に 2 年刻みと補助目盛りを適用すると、両パネルで偶数年の 1 月 1 日 0 時（現地時刻の座標）に主目盛り、奇数年に補助格子が出て、軸反転・2 回の範囲変更・X 列の差し替えの後も同じで、固定帯の Y ラベルが主目盛りのラベルと一致すること（`test_calendar_ticks_of_a_zoned_y_stay_on_its_local_years`）。0・−1・1.5・1e2・9007199254740992 か月・750599937895083 年を拒否して参照線も反映せず、750599937895082 年と前後に空白のある 3 を受け付けること、チェックが 1・空欄で無効になり状態を保って戻ること、週の分割数とチェックが互いに変わらないこと、チェックを外す・1・空欄の適用で補助格子が残らず、1・空欄の適用後はチェックが外れること、12 か月が 12 か月として開き直せ、集約が無いこと（`test_wrong_calendar_intervals_and_the_minor_check`）。自動の `M3`（2 年の範囲）で月、`M12`（6 年）・`M24`（10 年）で年が初期選択され間隔欄が空、単位だけ変えて OK しても自動のままであること（`test_automatic_calendar_ticks_pick_their_unit`）。Time・Duration の単位に月・年が無いこと（`test_times_and_durations_have_no_calendar_units`）。
+  - 2026-11-13（Issue #154）：暦の単位の目盛りの属性・間隔の検証・補助目盛りのチェック・単位の選び方は `tests/js/test_axisdialog.py` へ移した。E2E にはタイムゾーン付きの Y の年の目盛りを残す。
 
 #### 目盛りラベルの角度（2026-11-11 実装。Issue #127）
 
@@ -1179,6 +1182,7 @@ X・Y の線形の数値の軸とカテゴリの軸で、主目盛りのラベ�
 | 開く位置 | 従来の軸のドラッグ領域・Y の左余白・固定帯に加え、回転したラベルが plotly のドラッグ領域や Y の左余白（`yMarginAt`）を越えて伸びた部分（X は下、Y はパネルの上下）も、表示中のラベルの境界の中ならその軸として開く（`labelAt`。プロット領域の中は除く。Y はクロスレビューの指摘で追加）。固定帯ではラベルの境界の中を、そのラベルのパネルの軸として先に判定する | |
 
 - 確かめたこと（2026-11-11、Chrome（playwright）の E2E `tests/e2e/test_axis_tick_angle.py`。合成データ 2,000 行）：カテゴリの X で角度以外がすべて無効、角度の欄にフォーカスし、45° を適用しても範囲が変わらないこと（`test_a_categorical_axis_sets_the_angle_alone`）。−90°・−45°・0°・45°・90° が数値の X・Y の `tickangle` と SVG の `rotate` になり、空欄で属性が消えて下余白が 30px に戻ること（`test_the_angles_draw_as_set`）。−91・91・22.5・`abc`・全角の `４５`・`+-4`・`1e1` は OK・適用・Enter のどれでも欄にエラーが出て、同時に入れた間隔も反映しないこと、` +90 ` は受け付けること（`test_wrong_angles_tell_why_and_change_nothing`）。適用・Enter・OK・キャンセル・Esc・開き直し（`test_apply_ok_enter_cancel_and_esc`）。ズーム中に余白の変わらない角度を X・Y に付けても集約の要求が無く、範囲が変わらないこと（`test_the_angles_draw_as_set` の冒頭。Issue #154 で `test_an_angle_alone_asks_nothing` をまとめた）。同じ列を X と Y に置いて facet と 2 つ目の Y 列を足し、X 30°・Y −20° がその列のパネルだけに付き、ズーム・プロット領域のダブルクリック・置き直しで残ること（`test_x_and_y_of_one_column_keep_their_own_angles`）。対数表示の間は角度を描かずダイアログも開かず、線形に戻すと 45° が戻ること（`test_a_log_axis_hides_its_angle_until_linear`）。1200 × 900 で長い水準の X を 90°、続けて −90° にすると下余白が 100px を超えて `/api/overview` で集約し直し、ラベルが図の下端から 2px 以上内側に収まり、図枠の下端が余白と一致し、画像が描画域の中にあり、回転したラベルの下端付近からダイアログが開き、空欄で 30px に戻ること（`test_long_x_labels_at_90_fit_the_bottom_margin`）。長い数値の Y を 90°・−45° にすると左余白が水平のときより狭くなり、ラベルが左端から 2px 以上内側にあること（`test_a_turned_y_sets_the_left_margin`）。縦横にスクロールした図で、固定帯のラベルが `rotate(60deg)`・`rotate(-30deg)` で回り、下の帯・左の帯の中に収まり、回転した X ラベルの先端付近と Y ラベルからダイアログが開くこと（`test_the_strips_of_a_scrolled_grid_turn_their_labels`）。日時の軸のダイアログに角度の欄が無く、X が空のときの帯ではダイアログを開かないこと（`test_temporal_axes_and_the_one_band_have_no_angle`）。下余白の上限・既定値・スクロール時のパネルの寸法は `tests/shared/test_layout.py`、図と meta は `tests/server/test_figure.py`、要求からの受け渡しは `tests/server/test_app.py`・`tests/server/test_derive.py`。
+  - 2026-11-13（Issue #154）：角度の検証（`readAngle`）と、log・時間軸・一本帯で角度が無いこと（`dialogKind`・`hasAngle`・`decorate`）は `tests/js/test_axisdialog.py` へ移した。E2E の検証は `test_apply_ok_enter_cancel_and_esc` の 1 値だけ。
 - 残る制限：回転したラベルどうしの重なりは解消しない（対象外）。カテゴリのラベルの間引き・省略は水平のときの規則のまま。
 - 未確認：exe（WebView2）での回転したラベルと固定帯の見た目。
 
@@ -1194,6 +1198,7 @@ X・Y の線形の数値の軸とカテゴリの軸で、主目盛りのラベ�
 - 表記は主目盛りのラベルだけ。範囲・間隔・参照線の入力、軸上の位置、ホバー、選択・フィルタ・集約の値は元の単位のまま。スクロールする図の左・下の帯は plotly が作ったラベルの文字（`_vals` の `text`）を出すので同じ表記になる。保持・連動は目盛りと同じ（列の名前ごと、facet・Wrap・X と Y の両方。ズーム・全体図に戻す・図の作り直しで残る。リロードで消える）。
 - 再集約：表記だけの適用は範囲が同じなので `Plotly.relayout` だけで、集約の要求は出さない。ラベルの幅が変わって Y の左余白（Issue #104）が変わると、余白の変更として大きさの変更と同じ経路で 1 回集約し直す（全体図なら `/api/overview`、そうでなければ `/api/view`）。
 - 確かめたこと（2026-11-08。Chrome、playwright の E2E `tests/e2e/test_axis_format.py`。合成データ 2,000 行）：約 94,000〜107,000 の Y が初めは `1e+5`、小数・0 桁・区切りで `100,000` になり、`/api/plot` は呼ばれず、余白が変わらなければ集約の要求もない（変われば 1 回）。X だけの表記の変更（自動・区切りで `1,000`）は要求なし。不正な桁数（`16`・空・`1.5`・`-1`・`a`）では間隔の変更も適用されない。キャンセルと Esc は未適用の変更を捨て、開き直すと適用済みの形式・桁数・チェックが出る。指数・2 桁で `5.00e+3`・`3.50e+4`、パーセント・2 桁で 0.015 が `1.50%` になり、0.015 の位置と参照線の位置は変わらない。同じ列は facet の全パネルと、X に置いたときの X 軸にも付き、他の列には付かない。ズーム・全体図に戻す・スクロールする図の左の帯でも `100,000`。自動・区切りなしに戻すと `tickformat` が消え `1e+5` に戻る。E2E はラベルの文字列と plotly の属性で確かめ、文字幅には依存しない（余白の変化の有無で要求の数の期待を分ける）。
+  - 2026-11-13（Issue #154）：書式ごとに使える欄・桁数の検証・`formatAttributes` は `tests/js/test_axisdialog.py` へ移した。E2E は、適用で 100,000 と出て集約しないこと・余白が追うこと、パーセントで範囲と線の位置が変わらないことを 1 本で確かめる。
 - 対象外：日付・日時・時刻・Duration・カテゴリ・対数の軸、カラーバーとホバーの書式、工学表記、SI 接頭辞、通貨記号、任意の書式文字列。
 
 ### 軸の対数表示（2026-11-05 決定・実装。Issue #90）

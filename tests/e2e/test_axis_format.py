@@ -19,17 +19,16 @@ from tests.e2e.test_left_margin import (
     x_labels,
     y_labels,
 )
-from tests.e2e.test_scatter import SCROLL_AND_SETTLE, SETTLED, place, watch_errors
+from tests.e2e.test_scatter import SCROLL_AND_SETTLE, place, watch_errors
 
 pytestmark = pytest.mark.e2e
 
 ROWS = 2_000
-DIGITS_ERROR = "0〜15 の整数にしてください"
 
 
 @pytest.fixture
 def scatter_path(tmp_path: Path) -> Path:
-    """Write repayments of about 94,000 to 107,000, amounts, rates and facets (overrides the shared data)."""
+    """Write repayments of about 94,000 to 107,000 and facets (overrides the shared data)."""
     rng = np.random.default_rng(107)
     n = np.arange(ROWS)
     path = tmp_path / "loan.parquet"
@@ -37,8 +36,6 @@ def scatter_path(tmp_path: Path) -> Path:
         {
             "n": n,
             "pay": 94_000 + 13_000 * rng.random(ROWS),
-            "amount": 40_000 * rng.random(ROWS),
-            "rate": 0.03 * rng.random(ROWS),
             "facet": [f"f{i % 12:02d}" for i in n],
             "g": [f"g{i % 2}" for i in n],
         }
@@ -91,8 +88,15 @@ def formats(page: Page) -> dict[str, str]:
     )
 
 
+# The place of 100,000 on the page, of the line drawn at it, and the range of y.
+PLACE_OF = f"""() => {{ const ya = {FULL}.yaxis;
+  const line = document.querySelector("#plot .shapelayer path").getBoundingClientRect();
+  return {{ at: ya._offset + ya.l2p(100000), line: line.top + line.height / 2,
+    range: ya.range }}; }}"""
+
+
 def test_the_format_of_y_labels_applies_without_aggregating(app_page: Page) -> None:
-    """Decimal with 0 digits and separators shows 100,000; only the fields of the format are usable, wrong digits and Cancel/Esc apply nothing, and the applied fields come back."""
+    """Decimal with 0 digits and separators shows 100,000 without aggregating, the margin following the labels; percent changes the labels alone, not the range nor a line's place (the fields and formats: `tests/js/test_axisdialog.py`)."""
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
@@ -103,30 +107,12 @@ def test_the_format_of_y_labels_applies_without_aggregating(app_page: Page) -> N
     assert "1e+5" in plotly_y_labels(page)
     assert set(formats(page).values()) == {""}
 
-    dialog = open_dialog(page, "y")
-    form = dialog.locator("select[name=format]")
-    digits = dialog.locator("input[name=digits]")
-    separators = dialog.locator("input[name=separators]")
-    expect(form).to_have_value("auto")
-    expect(digits).to_have_value("2")
-    expect(digits).to_be_disabled()
-    expect(separators).not_to_be_checked()
-    expect(separators).to_be_enabled()
-
-    # Each format enables only its fields; what was typed comes back.
-    pick(dialog, "fixed", "0", True)
-    expect(digits).to_be_enabled()
-    pick(dialog, "exponent")
-    expect(digits).to_be_enabled()
-    expect(separators).to_be_disabled()
-    pick(dialog, "percent")
-    expect(separators).to_be_enabled()
-    expect(separators).to_be_checked()
-    expect(digits).to_have_value("0")
-
     margin = y_labels(page)["margin"]
     urls = record(page)
-    pick(dialog, "fixed")
+    dialog = open_dialog(page, "y")
+    pick(dialog, "fixed", "0", True)
+    dialog.locator("input[name=line]").fill("100000")
+    dialog.get_by_role("button", name="追加").click()
     dialog.get_by_role("button", name="適用").click()
     expect(dialog).to_be_visible()
     page.wait_for_function("() => document.querySelector('#plot .ytick text') !== null")
@@ -141,112 +127,25 @@ def test_the_format_of_y_labels_applies_without_aggregating(app_page: Page) -> N
     assert_whole(y_labels(page))
     assert_aligned(page)
 
-    # Wrong digits apply nothing, not even the other fields.
-    before = formats(page)
-    for wrong in ["16", "", "1.5", "-1", "a"]:
-        pick(dialog, "exponent", wrong)
-        dialog.locator("input[name=dtick]").fill("5000")
-        dialog.get_by_role("button", name="OK").click()
-        expect(dialog).to_be_visible()
-        expect(dialog.locator(".axis-dialog-error").nth(4)).to_have_text(DIGITS_ERROR)
-    assert formats(page) == before
-    assert page.evaluate(f"{FULL}.yaxis.tickmode") == "auto"
-    # A disabled field is not checked.
-    pick(dialog, "auto")
-    expect(dialog.locator(".axis-dialog-error").nth(4)).to_have_text("")
-
-    # Cancel and Esc drop what was not applied.
-    dialog.get_by_role("button", name="キャンセル").click()
-    expect(dialog).to_have_count(0)
-    for close in ["cancel", "esc"]:
-        dialog = open_dialog(page, "y")
-        expect(dialog.locator("select[name=format]")).to_have_value("fixed")
-        expect(dialog.locator("input[name=digits]")).to_have_value("0")
-        expect(dialog.locator("input[name=separators]")).to_be_checked()
-        expect(dialog.locator("input[name=dtick]")).to_have_value("")
-        pick(dialog, "percent", "3", False)
-        if close == "cancel":
-            dialog.get_by_role("button", name="キャンセル").click()
-        else:
-            page.keyboard.press("Escape")
-        expect(dialog).to_have_count(0)
-        assert formats(page)["yaxis"] == ",.0f"
-
-    # Automatic with separators puts them in 4 digits too; the x labels
-    # leave the left margin as it is: nothing is aggregated.
+    # Percent changes the labels alone: the range and the line stay in place.
+    before = page.evaluate(PLACE_OF)
     urls = record(page)
-    dialog = open_dialog(page, "x")
-    pick(dialog, "auto", separators=True)
-    dialog.get_by_role("button", name="OK").click()
-    expect(dialog).to_have_count(0)
-    page.wait_for_timeout(1_000)
-    assert "1,000" in x_labels(page), x_labels(page)
-    assert formats(page)["xaxis"] == ""
-    assert page.evaluate(f"{FULL}.xaxis.separatethousands") is True
-    assert urls == []
-    assert not errors
-
-
-def test_exponent_and_percent_keep_the_values(app_page: Page) -> None:
-    """Exponent with 2 digits shows 5.00e+3 and 3.50e+4; percent with 2 digits shows 1.50% at the place of 0.015, where its line stays."""
-    page = app_page
-    errors = watch_errors(page)
-    page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "amount", "x")
-    place(page, "rate", "y")
-    settle(page)
-
-    dialog = open_dialog(page, "x")
-    dialog.locator("input[name=min]").fill("0")
-    dialog.locator("input[name=max]").fill("40000")
-    dialog.locator("input[name=dtick]").fill("5000")
-    pick(dialog, "exponent", "2")
-    dialog.get_by_role("button", name="OK").click()
-    expect(dialog).to_have_count(0)
-    page.wait_for_function(SETTLED)
-    labels = x_labels(page)
-    assert "5.00e+3" in labels, labels
-    assert "3.50e+4" in labels, labels
-
-    dialog = open_dialog(page, "y")
-    dialog.locator("input[name=dtick]").fill("0.005")
-    dialog.locator("input[name=line]").fill("0.015")
-    dialog.get_by_role("button", name="追加").click()
-    dialog.get_by_role("button", name="OK").click()
-    expect(dialog).to_have_count(0)
-    settle(page)
-    # The place of 0.015 on the page, and of the line drawn at it.
-    place_of = f"""() => {{ const ya = {FULL}.yaxis;
-      const line = document.querySelector("#plot .shapelayer path").getBoundingClientRect();
-      return {{ at: ya._offset + ya.l2p(0.015), line: line.top + line.height / 2,
-        range: ya.range }}; }}"""
-    before = page.evaluate(place_of)
-
-    urls = record(page)
-    dialog = open_dialog(page, "y")
     pick(dialog, "percent", "2", True)
     dialog.get_by_role("button", name="OK").click()
     expect(dialog).to_have_count(0)
     settle(page)
-    assert "1.50%" in plotly_y_labels(page), plotly_y_labels(page)
     assert formats(page)["yaxis"] == ",.2%"
-    after = page.evaluate(place_of)
+    shown = plotly_y_labels(page)
+    assert shown and all(t.endswith("%") for t in shown), shown
+    after = page.evaluate(PLACE_OF)
     assert after["range"] == pytest.approx(before["range"])
     assert after["at"] == pytest.approx(before["at"])
-    assert after["line"] == pytest.approx(before["line"], abs=0.5)
     assert after["line"] == pytest.approx(
         after["at"] + page.locator("#plot").bounding_box()["y"], abs=1
     )
-    assert page.evaluate(f"{FULL}.shapes.map((s) => s.y0)") == [0.015]
-    # Only a new width of the margin (Issue #104) aggregates, for its size.
+    assert page.evaluate(f"{FULL}.shapes.map((s) => s.y0)") == [100000]
     assert not [u for u in urls if "/api/plot" in u], urls
     assert len(urls) <= 1, urls
-    # Reopened, the fields are the applied ones.
-    dialog = open_dialog(page, "y")
-    expect(dialog.locator("select[name=format]")).to_have_value("percent")
-    expect(dialog.locator("input[name=digits]")).to_have_value("2")
-    expect(dialog.locator("input[name=separators]")).to_be_checked()
-    page.keyboard.press("Escape")
     assert not errors
 
 

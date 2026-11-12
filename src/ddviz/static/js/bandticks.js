@@ -56,7 +56,7 @@ export function fitText(text, pixels) {
 }
 
 // plotly reads tick text as its own markup; the levels are the data's.
-function plotlyText(text) {
+export function plotlyText(text) {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 

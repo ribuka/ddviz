@@ -15,60 +15,46 @@ from tests.e2e.test_scatter import place
 pytestmark = pytest.mark.e2e
 
 MONTHS = [f"{y}-{m:02d}" for y in range(1990, 2025) for m in range(1, 13)]
-IDS = 10_000
-LONG_LEVEL = "level_" + "x" * 100
 ROWS = 20_000
 
-# The tick labels drawn on an axis: their text and box, left to right or top to bottom.
-TICKS = """(axis) => [...document.querySelectorAll(`#plot .${axis}tick text`)].map((t) => {
+# The tick labels drawn on the x axis: their text and box, left to right.
+TICKS = """() => [...document.querySelectorAll("#plot .xtick text")].map((t) => {
   const r = t.getBoundingClientRect();
-  return { text: t.textContent, left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+  return { text: t.textContent, left: r.left, right: r.right };
 })"""
 
 
 @pytest.fixture
 def scatter_path(tmp_path: Path) -> Path:
-    """Write a file of 420 months, 10,000 ids and the worst levels, by row (overrides the shared data)."""
+    """Write a file of 420 months, by row (overrides the shared data)."""
     rng = np.random.default_rng(102)
     path = tmp_path / "levels.parquet"
     pl.DataFrame(
         {
             "month": [MONTHS[i % 420] for i in range(ROWS)],
-            "id": [f"L{i % IDS}" for i in range(ROWS)],
-            "w": [[LONG_LEVEL, "", "<b>bold</b>"][i % 3] for i in range(ROWS)],
             "v": rng.normal(size=ROWS),
         }
     ).write_parquet(path)
     return path
 
 
-def ticks(page: Page, axis: str) -> list[dict]:
-    """Return the tick labels drawn on the x or y axis, each with its level's index (``at``)."""
-    drawn = page.evaluate(TICKS, axis)
-    at = page.evaluate(
-        f"() => document.getElementById('plot')._fullLayout.{axis}axis.tickvals"
-    )
+def ticks(page: Page) -> list[dict]:
+    """Return the tick labels drawn on the x axis, each with its level's index (``at``)."""
+    drawn = page.evaluate(TICKS)
+    at = page.evaluate("() => document.getElementById('plot')._fullLayout.xaxis.tickvals")
     assert len(at) == len(drawn)
     return [{**t, "at": i} for t, i in zip(drawn, at, strict=True)]
 
 
-def assert_readable(drawn: list[dict], levels: list[str], axis: str) -> None:
-    """Check that the labels name their levels (an x label whole, a y label maybe cut to the margin), evenly spaced, none over the next."""
+def assert_readable(drawn: list[dict], levels: list[str]) -> None:
+    """Check that the labels name their levels whole, evenly spaced, none over the next (the ticks themselves: `tests/js/test_bandticks.py`)."""
     assert 5 <= len(drawn) <= 100
     for t in drawn:
-        name = levels[t["at"]]
-        if axis == "x":
-            assert t["text"] == name
-        else:
-            assert t["text"] == name or name.startswith(t["text"].removesuffix("…"))
+        assert t["text"] == levels[t["at"]]
     steps = {b["at"] - a["at"] for a, b in pairwise(drawn)}
     assert len(steps) == 1, steps
     for a, b in pairwise(drawn):
-        if axis == "x":
-            assert a["right"] <= b["left"]
-        else:
-            # The y axis's labels go up with the levels.
-            assert b["bottom"] <= a["top"]
+        assert a["right"] <= b["left"]
 
 
 def test_420_levels_on_x_tick_what_reads_and_name_every_band_zoomed_in(
@@ -78,7 +64,7 @@ def test_420_levels_on_x_tick_what_reads_and_name_every_band_zoomed_in(
     page = app_page
     place(page, "v", "y")
     place(page, "month", "x")
-    assert_readable(ticks(page, "x"), MONTHS, "x")
+    assert_readable(ticks(page), MONTHS)
 
     page.evaluate(
         "() => Plotly.relayout(document.getElementById('plot'), {'xaxis.range': [9.5, 19.5]})"
@@ -89,49 +75,4 @@ def test_420_levels_on_x_tick_what_reads_and_name_every_band_zoomed_in(
         arg=MONTHS[10:20],
     )
     expect(page.locator("#status")).to_contain_text("表示範囲に ")
-    assert [t["text"] for t in ticks(page, "x")] == MONTHS[10:20]
-
-
-def test_420_levels_on_y_tick_one_label_a_line(app_page: Page) -> None:
-    """Months on Y draw with thinned labels that do not overlap."""
-    page = app_page
-    place(page, "v", "x")
-    place(page, "month", "y")
-    assert_readable(ticks(page, "y"), MONTHS, "y")
-
-
-def test_10000_levels_draw_with_tens_of_ticks(app_page: Page) -> None:
-    """10,000 levels on X, past the limit of the series roles, draw at once with tens of ticks."""
-    page = app_page
-    place(page, "v", "y")
-    place(page, "id", "x")
-    levels = [f"L{i}" for i in range(IDS)]
-    assert_readable(ticks(page, "x"), levels, "x")
-    expect(page.locator("#status")).to_contain_text(f"{ROWS:,} 行")
-
-
-def test_the_axis_level_limit_holds_for_color(app_page: Page) -> None:
-    """The months on X draw, and on Color too are refused by Color's limit of 100."""
-    page = app_page
-    place(page, "v", "y")
-    place(page, "month", "x")
-    place(page, "month", "color")
-    expect(page.locator("#status")).to_contain_text(
-        "month は 420 個で、Color・Symbol・Group・Wrap の上限は 100 個"
-    )
-
-
-def test_worst_levels_tick_in_their_bands(app_page: Page) -> None:
-    """A long level ends in "…" within its band, an empty one shows its placeholder, and markup is shown as text."""
-    page = app_page
-    place(page, "v", "y")
-    place(page, "w", "x")
-    drawn = ticks(page, "x")
-    texts = [t["text"] for t in drawn]
-    assert len(texts) == 3
-    assert "（空文字列）" in texts
-    assert "<b>bold</b>" in texts
-    (long,) = [t for t in drawn if t["text"].startswith("level_")]
-    assert long["text"].endswith("…")
-    for a, b in pairwise(drawn):
-        assert a["right"] <= b["left"]
+    assert [t["text"] for t in ticks(page)] == MONTHS[10:20]

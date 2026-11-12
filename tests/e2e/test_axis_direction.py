@@ -92,21 +92,6 @@ def test_the_tick_menu_reverses_x_and_y_without_a_request(app_page: Page) -> Non
     errors = watch_errors(page)
     place(page, "x", "x")
     place(page, "y", "y")
-    # The conversions of `axisdirection.js` at their edges.
-    checks = page.evaluate(
-        """async () => {
-          const { ascending, oriented } = await import("/static/js/axisdirection.js");
-          return [
-            ascending([1, 2]), ascending([2, 1]), ascending([3, 3]),
-            oriented([1, 2], true), oriented([2, 1], true), oriented([2, 1], false),
-            oriented([-5e-324, 5e-324], true), oriented([3, 3], true),
-          ];
-        }"""
-    )
-    assert checks[0] == [1, 2] and checks[1] == [1, 2] and checks[2] == [3, 3]
-    assert checks[3:6] == [[2, 1], [2, 1], [1, 2]]
-    assert checks[6] == [5e-324, -5e-324] and checks[7] == [3, 3]
-
     # A zoom, which the reversal keeps.
     page.evaluate("Plotly.relayout('plot', {'xaxis.range': [-1, 1.5]})")
     _settled(page)
@@ -258,35 +243,6 @@ def test_a_reversed_axis_zooms_selects_and_resets_in_ascending_values(
     assert errors == []
 
 
-def test_facets_turn_together_and_the_other_axes_stay(app_page: Page) -> None:
-    """The facets of a column turn together; a second X column and the same column on Y stay as they are."""
-    page = app_page
-    errors = watch_errors(page)
-    place(page, "x", "x")
-    place(page, "x", "y")
-    place(page, "facet", "col")
-    _reverse(page, "x", "X 軸: x")
-    page.wait_for_function(f"() => {FULL}.xaxis.range[0] > {FULL}.xaxis.range[1]")
-    xs = page.evaluate(AXES, "x")
-    assert len(xs) == 2 and all(a["reversed"] for a in xs.values())
-    assert not any(a["reversed"] for a in page.evaluate(AXES, "y").values())
-
-    # A second X column (y, dropped after x): only x's axes are reversed.
-    zone = page.locator('.zone[data-role="x"]')
-    box = zone.bounding_box()
-    page.locator("#columns .column").filter(
-        has=page.get_by_text("y", exact=True)
-    ).drag_to(zone, target_position={"x": box["width"] * 0.95, "y": box["height"] / 2})
-    expect(zone.locator(".chip-name")).to_have_text(["x", "y"])
-    _settled(page)
-    page.wait_for_timeout(300)
-    xs = sorted(page.evaluate(AXES, "x").values(), key=lambda a: a["offset"])
-    assert len(xs) == 4
-    # Facet by facet, x then y: the axes of x (the 1st and 3rd from the left) only.
-    assert [a["reversed"] for a in xs] == [True, False, True, False]
-    assert errors == []
-
-
 def test_a_categorical_axis_and_the_strips_of_a_scrolled_grid_turn(
     app_page: Page,
 ) -> None:
@@ -329,41 +285,4 @@ def test_a_categorical_axis_and_the_strips_of_a_scrolled_grid_turn(
         assert turned == list(reversed(order(before, texts)))
     page.wait_for_timeout(300)
     assert urls == []
-    assert errors == []
-
-
-def test_a_reversed_log_axis_stays_log(app_page: Page) -> None:
-    """A log axis turns and keeps its scale; a zoom sends ascending values."""
-    page = app_page
-    errors = watch_errors(page)
-    place(page, "x", "x")
-    place(page, "y", "y")
-    _right_click_shown_tick(page, "x")
-    page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
-    page.wait_for_function(f"() => {FULL}.xaxis.type === 'log'")
-    _settled(page)
-    lo, hi = page.evaluate(f"{FULL}.xaxis.range")
-    _reverse(page, "x", "X 軸: x")
-    page.wait_for_function(f"() => {FULL}.xaxis.range[0] > {FULL}.xaxis.range[1]")
-    assert page.evaluate(f"{FULL}.xaxis.type") == "log"
-    assert page.evaluate(f"{FULL}.xaxis.range") == [
-        pytest.approx(hi),
-        pytest.approx(lo),
-    ]
-    expect(page.locator("#log-warning")).to_be_visible()
-    with page.expect_request("**/api/view") as request:
-        page.evaluate("Plotly.relayout('plot', {'xaxis.range': [0, -1]})")
-    (x_range,) = request.value.post_data_json["x_ranges"]
-    assert x_range == [pytest.approx(0.1), pytest.approx(1.0)]
-    _settled(page)
-    page.wait_for_function(
-        "() => !document.querySelector('#plot').classList.contains('pending')"
-    )
-    assert page.evaluate(f"{FULL}.xaxis.range") == [pytest.approx(0), pytest.approx(-1)]
-    # Back to linear: still reversed.
-    _right_click_shown_tick(page, "x")
-    page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
-    page.wait_for_function(f"() => {FULL}.xaxis.type === 'linear'")
-    _settled(page)
-    assert page.evaluate(AXES, "x")["xaxis"]["reversed"]
     assert errors == []

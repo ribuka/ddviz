@@ -997,7 +997,9 @@ def test_a_failed_plot_keeps_the_drawn_results_and_selection(client: TestClient)
     many = {**ENCODING, "color": "label"}
     refused = client.post("/api/plot", json={"encoding": many, **SIZE, **HIDE_NULLS})
     assert refused.status_code >= 400
-    assert "上限" in refused.json()["detail"]
+    assert "label は 2,003 個で、Color・Symbol・Group・Wrap の上限は 100 個" in (
+        refused.json()["detail"]
+    )
     # Refused before any task: a bad number of wrapped panels.
     bad = client.post(
         "/api/plot", json={"encoding": ENCODING, **SIZE, **HIDE_NULLS, "wrap_cols": 0}

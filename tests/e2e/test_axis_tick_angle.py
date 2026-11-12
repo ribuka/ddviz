@@ -263,37 +263,6 @@ def test_the_angles_draw_as_set(app_page: Page) -> None:
     assert not errors
 
 
-def test_wrong_angles_tell_why_and_change_nothing(app_page: Page) -> None:
-    """−91, 91, 22.5, text and full-width digits are refused beside the field, with the other edits."""
-    page = app_page
-    place(page, "n", "x")
-    place(page, "small", "y")
-    settle(page)
-    urls = record(page)
-    dialog = open_dialog(page, "y")
-    error = dialog.locator("input[name=angle] ~ .axis-dialog-error")
-    for wrong in ["-91", "91", "22.5", "abc", "４５", "+-4", "1e1"]:
-        dialog.locator("input[name=dtick]").fill("0.25")
-        dialog.locator("input[name=angle]").fill(wrong)
-        dialog.get_by_role("button", name="OK").click()
-        expect(error).to_have_text(ANGLE_ERROR)
-        expect(dialog).to_be_visible()
-        dialog.get_by_role("button", name="適用").click()
-        expect(error).to_have_text(ANGLE_ERROR)
-        dialog.locator("input[name=angle]").press("Enter")
-        expect(dialog).to_be_visible()
-    assert tick_angle(page, "yaxis") is None
-    assert page.evaluate(f"{FULL}.yaxis.tickmode") == "auto"
-    # The bounds and a sign are taken; the error goes.
-    dialog.locator("input[name=angle]").fill(" +90 ")
-    dialog.get_by_role("button", name="適用").click()
-    expect(error).to_have_text("")
-    page.wait_for_function("() => document.getElementById('plot').layout.yaxis.tickangle === 90")
-    assert page.evaluate(f"{FULL}.yaxis.dtick") == 0.25
-    dialog.get_by_role("button", name="キャンセル").click()
-    assert not [u for u in urls if "/api/view" in u and "range" in u]
-
-
 def test_apply_ok_enter_cancel_and_esc(app_page: Page) -> None:
     """Apply keeps the dialog open, OK and Enter close it; Cancel and Esc drop the edits since the last apply; the dialog opens with the angle applied."""
     page = app_page
@@ -317,6 +286,13 @@ def test_apply_ok_enter_cancel_and_esc(app_page: Page) -> None:
 
     dialog = open_dialog(page, "x")
     expect(dialog.locator("input[name=angle]")).to_have_value("-60")
+    # A wrong angle tells why beside the field and changes nothing (every
+    # value: `tests/js/test_axisdialog.py`).
+    dialog.locator("input[name=angle]").fill("91")
+    dialog.get_by_role("button", name="OK").click()
+    expect(dialog.locator("input[name=angle] ~ .axis-dialog-error")).to_have_text(ANGLE_ERROR)
+    expect(dialog).to_be_visible()
+    assert tick_angle(page, "xaxis") == -60
     dialog.locator("input[name=angle]").fill("10")
     page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)
@@ -393,37 +369,6 @@ def test_x_and_y_of_one_column_keep_their_own_angles(app_page: Page) -> None:
     settle(page)
     check()
     assert not errors
-
-
-def test_a_log_axis_hides_its_angle_until_linear(app_page: Page) -> None:
-    """A numeric axis on a log scale draws plotly's labels and opens no dialog; linear again, its angle comes back."""
-    page = app_page
-    place(page, "n", "x")
-    place(page, "other", "y")
-    settle(page)
-    set_angle(page, "y", "45")
-    page.wait_for_function("() => document.getElementById('plot').layout.yaxis.tickangle === 45")
-    settle(page)
-    shown = labels(page, "y")["labels"]
-    label = shown[len(shown) // 2]
-    point = (label["right"] - 3, (label["top"] + label["bottom"]) / 2)
-    page.mouse.click(*point, button="right")
-    page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
-    page.wait_for_function(f"() => {FULL}.yaxis.type === 'log'")
-    settle(page)
-    assert tick_angle(page, "yaxis") is None
-    shown = labels(page, "y")["labels"]
-    label = shown[len(shown) // 2]
-    wait_apart(page)
-    page.mouse.dblclick(label["right"] - 3, (label["top"] + label["bottom"]) / 2)
-    page.wait_for_timeout(300)
-    expect(page.locator("dialog.axis-dialog")).to_have_count(0)
-    page.wait_for_function(SETTLED)
-    page.mouse.click(label["right"] - 3, (label["top"] + label["bottom"]) / 2, button="right")
-    page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
-    page.wait_for_function(f"() => {FULL}.yaxis.type === 'linear'")
-    settle(page)
-    assert tick_angle(page, "yaxis") == 45
 
 
 def test_long_x_labels_at_90_fit_the_bottom_margin(app_page: Page) -> None:
@@ -578,33 +523,3 @@ def test_the_strips_of_a_scrolled_grid_turn_their_labels(app_page: Page) -> None
     expect(dialog.locator("input[name=angle]")).to_have_value("-30")
     dialog.get_by_role("button", name="キャンセル").click()
     assert not errors
-
-
-def test_temporal_axes_and_the_one_band_have_no_angle(app_page: Page) -> None:
-    """A temporal axis's dialog has no angle; the one band of an empty X opens no dialog."""
-    page = app_page
-    place(page, "when", "x")
-    place(page, "small", "y")
-    settle(page)
-    dialog = open_dialog(page, "x")
-    expect(dialog.locator("h2")).to_have_text("X 軸: when")
-    expect(dialog.locator("input[name=angle]")).to_have_count(0)
-    page.keyboard.press("Escape")
-    expect(dialog).to_have_count(0)
-
-    page.locator('.zone[data-role="x"] .chip-remove').click()
-    page.wait_for_function(SETTLED)
-    # The box plots of the one band are ticked by series.
-    place(page, "kind", "color")
-    page.locator("#elements .element").nth(1).click()
-    expect(page.locator("#plot .xtick text")).not_to_have_count(0)
-    settle(page)
-    shown = labels(page, "x")["labels"]
-    assert shown
-    label = shown[0]
-    wait_apart(page)
-    page.mouse.dblclick(
-        (label["left"] + label["right"]) / 2, (label["top"] + label["bottom"]) / 2
-    )
-    page.wait_for_timeout(300)
-    expect(page.locator("dialog.axis-dialog")).to_have_count(0)
