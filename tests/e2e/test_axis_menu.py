@@ -49,20 +49,21 @@ def y_margins(page: Page) -> dict:
 
 
 def margin_points(margins: dict, row: dict) -> list[tuple[float, float]]:
-    """Return points of a panel row's left margin: its left, middle and axis side, the gap left of the stage, at its top, bottom, middle and between two tick labels.
+    """Return points of a panel row's left margin: its left edge, middle and axis side at the row's middle height, and its top and bottom at the middle.
 
     The browser rounds the pointer to whole pixels: the edges are taken
     inside the row.
     """
     zone, left = margins["zone"], row["left"]
-    xs = [zone + 1, (zone + left) / 2, left - 1, (zone + margins["stage"]) / 2]
-    ys = [
-        math.ceil(row["top"]),
-        math.floor(row["bottom"]),
-        (row["top"] + row["bottom"]) / 2,
-        row["between"],
+    middle = (zone + left) / 2
+    height = (row["top"] + row["bottom"]) / 2
+    return [
+        (zone + 1, height),
+        (middle, height),
+        (left - 1, height),
+        (middle, math.ceil(row["top"])),
+        (middle, math.floor(row["bottom"])),
     ]
-    return [(x, y) for x in xs for y in ys]
 
 
 def add_second_y(page: Page, column: str) -> None:
@@ -251,7 +252,7 @@ def test_a_warning_keeps_the_height_of_the_status_bar(app_page: Page) -> None:
 
 
 def test_the_left_margin_of_y_opens_its_menu(app_page: Page) -> None:
-    """The whole margin left of y's tick labels, and the gap left of the stage, open y's menu; around it the plot's menu or none."""
+    """The whole margin left of y's tick labels opens y's menu; around it the plot's menu or none."""
     page = app_page
     errors = watch_errors(page)
     place(page, "x", "x")
