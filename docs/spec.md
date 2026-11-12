@@ -8,7 +8,7 @@
 | --- | --- |
 | 実行形態 | exe 単体。オフライン環境で動作する。exe 1 ファイルでなくてもよく、フォルダ（zip）で配布してよい（2026-10-26 ユーザー回答） |
 | 対象 OS | Windows 11、Windows Server 2016 |
-| Server 2016 の環境 | Edge・WebView2 Runtime は入っておらず、追加のインストールもできない。必要なものはすべて ddviz に同梱する（WebView2 の固定版だけは、2026-11-02 ユーザー判断で同梱をやめ、管理者が置く。「リリースの exe」）。RDP で複数のユーザーが同時にログインする共有サーバーとして使われる。延長サポートが終わる 2027-01 以降も、当面ずっと対応する（いずれも 2026-10-26 ユーザー回答） |
+| Server 2016 の環境 | Edge・WebView2 Runtime が無く、追加のインストールもしない前提。必要なものはすべて ddviz に同梱する（WebView2 の固定版だけは、2026-11-02 ユーザー判断で同梱をやめ、管理者が置く。「リリースの exe」）。RDP で複数のユーザーが同時にログインするオフラインの共有サーバーを想定する。延長サポートが終わる 2027-01 以降も対応する（いずれも 2026-10-26 ユーザー回答） |
 | メモリ | 16GB RAM の PC で問題なく動くこと |
 | 入力 | Parquet ファイル、Parquet を格納したフォルダ、または複数の Parquet ファイルを指定して Load する（フォルダは 2026-10-30 実装。複数のファイルは 2026-11-02 実装（Issue #72）。「入力がフォルダのとき」） |
 | データ置き場 | ローカル SSD。ネットワークドライブは想定しない |
@@ -244,7 +244,7 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 | 窓 | pywebview（WinForms + WebView2）で窓を開き、アドレスバーは無い。WebView2 の既定の右クリックメニュー（再読み込み、開発者ツールなど）は出さない（`SHOW_DEFAULT_MENUS`）。ポートは OS に選ばせる（127.0.0.1 の 0 番に bind）。窓のタイトルは「ddviz - <ファイル名かフォルダ名>」。複数のファイルなら「ddviz - <並び順で最初のファイル名> and <残りの数> more」（2026-11-02。「複数のファイルの入力」）。引数で Parquet のファイルかフォルダを渡さなければ、起動時に窓の中に選択の画面（「ファイルを開く…」（複数選べる。2026-11-02）「フォルダを開く…」、「フォルダのサブフォルダの Parquet も読む」のチェック、「キャンセル」）を出し、選んだほうの OS のダイアログを開く。ダイアログをキャンセルしたら選択の画面に戻り、「キャンセル」で終了する（2026-10-28 ユーザー判断。フォルダは 2026-10-30 ユーザー判断。「入力がフォルダのとき」）。WebView2 のユーザーデータは `%LOCALAPPDATA%\ddviz\webview2` に置き、private mode は使わない。開発でブラウザから使うときは `--port` を付け、窓を開かずにそのポートで待ち受ける | Web アプリではなく、スタンドアローンのアプリに見せる。pywebview の private mode は、終了のたびにユーザーデータのフォルダを消すので、起動のたびに作り直しになる |
 | 窓への依存の閉じ込め（2026-11-07 ユーザー判断） | メインの画面は HTTP（FastAPI の API、SSE、静的ファイル）だけで動かし、普通のブラウザ（開発の `--port`）でも全機能を使えるようにする。メインの画面からは `window.pywebview` の JS API を呼ばない。pywebview・WebView2 に固有の機能（JS API、OS のファイル・フォルダのダイアログ、`webview.settings` などの窓の設定）は `desktop` に閉じ込める。今ある例外は 2 つで、どちらも `desktop` の中にある：起動時の選択の画面（`desktop/window.py` の自前のページ。JS API で OS のダイアログを開く）と、データの保存で OS の保存のダイアログが出ること（`<a download>` を WebView2 が扱い、`ALLOW_DOWNLOADS` を `desktop` で有効にする。ブラウザでは通常のダウンロードになる） | pywebview は保守している人が少なく、pythonnet と .NET Framework にも依存する。保守が止まったり Server 2016 で動かなくなったりしても、窓だけを別のもの（Electron など）に取り替えられるようにする。描画は Chromium（WebView2）なので、窓を替えても画面はそのまま動く。E2E テストは Chrome で回すので、メインの画面が窓に依存すれば落ちる |
 | 認証（2026-10-30） | 起動ごとに `secrets.token_urlsafe(32)` でトークンを作り、トークンを持たないリクエストには、ページ、静的ファイル、API、SSE（`/api/events`）、画像（`/api/images`）のすべてで 403 を返す（`src/ddviz/server/auth.py` の ASGI ミドルウェア `TokenAuth`）。窓は最初に `/?token=<トークン>` を開き、サーバーはトークンを cookie（`ddviz-token`、HttpOnly、SameSite=Strict、セッション cookie）に移して `/` へ 303 で転送する。以降は cookie だけを見る。URL でトークンを受け付けるのは `/` だけ。比較は `secrets.compare_digest` で、時間からトークンを推測させない。開発の `--port` でも同じで、トークン付きの URL を標準出力に表示し、それをブラウザで開く | RDP の共有サーバーでは、同じ機械の他のユーザーも localhost のポートにつなげる。トークンは窓の中の URL でしか渡さず、コマンドラインにもログにも出さない（窓では uvicorn のアクセスログを切っている。`--port` の開発時は、アクセスログに 1 行出る）ので、他のユーザーには見えない。cookie にすると、画面の JS（`fetch`、`EventSource`）も静的ファイルも、相対 URL のまま自動で送るので、画面の側を変えずに済み、`EventSource` のようにヘッダを付けられない要求も守れる。HttpOnly なので画面の JS からも読めない。303 でアドレスからトークンを消すので、再読み込みは cookie で通る。ポートを知られるだけでは何もできないので、ポートは今のまま OS に選ばせる。内蔵ブラウザで `--port` 起動して、トークン無しでは静的ファイルも API も 403、トークン付きの URL を開くと描画（`/api/plot`、`/api/images`、SSE）と再読み込みが通ることを確かめた。Chromium の favicon の要求は cookie を付けずに来るので 403 になるが、以前も 404 で実害はない |
-| 子のメモリ上限 | 同じ Job Object に `JOB_OBJECT_LIMIT_JOB_MEMORY` を付け、子の合計を物理メモリの半分（16GB の PC で 8GB、32GB の共有サーバーで 16GB）に制限する。超えると割り当てが失敗して子が異常終了するので、UI はエラーとして表示する（2026-10-26 ユーザー判断）。上限 512MiB の Job で Python が 1GiB を確保すると `MemoryError` になることを確認した | 集約のピーク（約 2〜4GB）は収まり、暴走で OS ごと固まるのを防ぐ |
+| 子のメモリ上限 | 同じ Job Object に `JOB_OBJECT_LIMIT_JOB_MEMORY` を付け、子の合計を物理メモリの半分（16GB の PC で 8GB、32GB の機械で 16GB）に制限する。超えると割り当てが失敗して子が異常終了するので、UI はエラーとして表示する（2026-10-26 ユーザー判断）。上限 512MiB の Job で Python が 1GiB を確保すると `MemoryError` になることを確認した | 集約のピーク（約 2〜4GB）は収まり、暴走で OS ごと固まるのを防ぐ |
 | ホバー用ファイルの入れ替え | 新しい結果を開いてから、古いタスクの memmap を閉じ、その後で古いディレクトリを消す | Windows では、memmap で開いているファイルは消せない |
 | 同時利用の制限 | 起動時に、マシン全体で共有する名前付き mutex（`Global\ddviz`）を作る。すでに存在する（`ERROR_ALREADY_EXISTS`）か、別のユーザーが作っていて開けない（`ERROR_ACCESS_DENIED`）なら、「他のユーザーが使用中です」と表示して終了する。同じユーザーの二重起動も同じ扱いにする（2026-10-26 ユーザー判断） | `Global\` の名前は RDP のセッションをまたいで見える。プロセスが落ちても OS が mutex を解放するので、ロックが残らない。使用中のユーザー名は出さない |
 
@@ -336,7 +336,7 @@ E2E テスト（2026-10-30 決定）：
 - zip には WebView2 の固定版ランタイムを入れない（2026-11-02 ユーザー判断。Issue #84）。配布でのオフラインの共有サーバー（WebView2 の無い Server 2016）への対応を、必須の要件から外す。理由：固定版の再配布には、下の 4 つの条件が付く。固定版が要るのは WebView2 の無い Server 2016 だけで、Windows 11 と更新の当たった Windows 10 には Evergreen 版が最初から入っている。Server 2016 では、その組織の管理者が Microsoft のページで条件に同意して固定版を取り、exe の横に置けば済む（手順は `docs/shared-install.md`）。ddviz の開発者は Microsoft のランタイムを再配布しない。zip も小さくなる。それまでの案は、初回起動時の同意画面で同意を取ることだった（通知だけでは「同意させる」として弱い）が、同梱をやめたので要らない。
 - `packaging/build.py` は、ネットから何も取らない（Microsoft のダウンロードの URL もリポジトリから無くなった）。PyInstaller の後に、`config\` と次の 2 つのファイルを `ddviz.exe` と同じ階層へバイト列のままコピーする。2 つとも UTF-8（BOM なし）、改行は CRLF（`.gitattributes` の `packaging/*.txt text eol=crlf`）。理由：Server 2016 のメモ帳は LF だけの改行を正しく表示しない（1809 で対応）。`packaging/smoke.py` は、2 つが空でなくあることと、`webview2\` が無いことも確かめる。
   - `LICENSE-WebView2-SDK.txt`：pywebview が exe に入れる WebView2 の SDK の DLL のライセンス。NuGet の `Microsoft.Web.WebView2` 1.0.3856.49 の nupkg の `LICENSE.txt`（BSD 3-Clause）を、改行だけ CRLF にしたもの。BSD はバイナリの配布で条文の同梱を求める。`tests/test_packaging_notice.py` が、改行を LF に戻した SHA-256 で nupkg のものと同じことを確かめる。
-  - `NOTICE.txt`：英語、ASCII の文字だけ。SDK の版と、配布フォルダに実際に入っている DLL の名前（`Microsoft.Web.WebView2.Core.dll`、`Microsoft.Web.WebView2.WinForms.dll`、`WebView2Loader.dll`）、ランタイムは同梱しないこと。pywebview を上げて SDK の版が変わったら、2 つのファイルとテストのハッシュを直す。
+  - `NOTICE.txt`：英語、ASCII の文字だけ。SDK の版と、配布フォルダに実際に入っている DLL の名前（`Microsoft.Web.WebView2.Core.dll`、`Microsoft.Web.WebView2.WinForms.dll`、`WebView2Loader.dll`）、ランタイムは同梱しないこと、同梱の plotly.js の版と MIT の条文（MIT は条文の同梱を求める。min.js の先頭は短い表記だけのため）。pywebview を上げて SDK の版が変わったら、2 つのファイルとテストのハッシュを直す。plotly.js を上げたら版を直す。
 - 起動時のランタイムの選び方（exe のとき。`src/ddviz/desktop/window.py` の `_choose_runtime`。開発環境では何もしない）：
   1. `ddviz.exe` の横に `webview2\` があれば、それを使う（`WEBVIEW2_RUNTIME_PATH`）。権限の確認と付与（「WebView2 の固定版の権限」）も行う。ログに `using the WebView2 Runtime in <フォルダ>` を出す。
   2. 無ければ、PC にインストールされた WebView2 のランタイム（Evergreen 版）を探し、見つかれば `WEBVIEW2_RUNTIME_PATH` を設定せずに進む（pywebview がそれを使う）。ログに `using the installed WebView2 Runtime <版>` を出す。
@@ -359,11 +359,11 @@ WebView2 の固定版の再配布の条件（2026-11-02 確認。同梱をやめ
 #### Python の版と CPU の前提（2026-10-30）
 
 - Python は 3.13 に固定する（2026-10-30 ユーザー判断）。リポジトリの直下の `.python-version` を `3.13` にし、`requires-python` を `>=3.13,<3.14` にする。CI も 3.13。
-- 理由：ddviz を使う共有サーバー（Windows Server 2016、物理マシン）で Python 3.13 が動いている実績がある（2026-10-30 ユーザー回答）。exe を作って動かしたのも 3.13（「最小構成の exe」）。3.14 は保守の期間が 1 年長いが、同梱するもの一式での確認が無い。ddviz は Python を同梱して固定するオフラインの exe なので、保守の期間の差は大きくない。
+- 理由：想定する Server 2016 の共有サーバーで Python 3.13 が動いている実績がある（2026-10-30 ユーザー回答）。exe を作って動かしたのも 3.13（「最小構成の exe」）。3.14 は保守の期間が 1 年長いが、同梱するもの一式での確認が無い。ddviz は Python を同梱して固定するオフラインの exe なので、保守の期間の差は大きくない。
 - polars の標準版が前提にする CPU の命令は、uv のキャッシュにあった 1.0.0〜2.1.0 で比べると次のとおり（`_cpu_check.py` の `_POLARS_FEATURE_FLAGS`、1.34 以降は `_polars_runtime_32/build_feature_flags.py`）。1.x 系に下げても AVX2 の前提は外れない。
   - 1.0.0〜1.1.0：SSE3、SSSE3、SSE4.1、SSE4.2、POPCNT、AVX、AVX2、FMA、BMI1、BMI2、LZCNT、PCLMULQDQ
   - 1.3.0〜2.1.0：上に CMPXCHG16B と MOVBE を足したもの（どの版も同じ）
-- 同じ共有サーバーで、polars の標準版 1.39.3 が動いている実績がある（2026-10-30 ユーザー回答）。1.39.3 の前提は今の 2.1.0 と同じなので、共有サーバーの CPU は AVX2 の前提を満たす。
+- 同じ共有サーバーで、今と同じ前提の命令を求める版の polars の標準版が動いている実績がある（2026-10-30 ユーザー回答）。そのため、共有サーバーの CPU は AVX2 の前提を満たす。
 - polars は import のときに CPU の命令を調べ、足りなければ警告を出して互換版（`polars[rtcompat]`）を勧める（`POLARS_SKIP_CPU_CHECK` で飛ばせる）。ddviz の exe は窓だけでコンソールが無いので、この警告は利用者に見えない。
 - 標準版だけを使い、AVX2 に対応していない CPU には対応しない（2026-10-30 ユーザー判断）。理由：使う環境（共有サーバーと Windows 11 の PC）はどれも AVX2 を持つ。共有サーバーは上の実績で確かめた。Windows 11 が公式に対応する CPU（Intel は第 8 世代以降、AMD は Zen+ 以降）は、どれも AVX2 を持つ。比べた案：互換版（`polars[rtcompat]`）を使う、起動時に CPU を調べて標準版と互換版を切り替える。
 
@@ -1322,7 +1322,7 @@ X・Y の線形の数値の軸とカテゴリの軸で、主目盛りのラベ�
 | 列リスト UI | 10 万列をそのまま一覧に出すと破綻する | サーバー側検索＋上位 N 件、または仮想スクロール | 確実 |
 | オフライン | CDN など外部の URL からは何も読めない | スクリプト、スタイルシート、フォント、アイコン、画像をすべてアプリに同梱し、外部のリソースを一切読まない | 確実 |
 | Windows Server 2016 | WebView2 は無く、追加のインストールもできない。Qt 6 は公式の対象外（1809 以降）。2027-01 にサポートが終わった後も対応が要る | Qt 案を実機で起動確認する。だめなら WebView2 の固定版ランタイムを同梱する。Python・Qt・WebView2 は、Server 2016 で動く版に固定する。Web の経路に決めた後、固定版を同梱した exe を Windows 11 で動かした。固定版は展開後 675MB、配布フォルダの zip は 375MB（「最小構成の exe」）。Windows 10 系では固定版 120 以降に追加の権限の設定が要る（同）。起動時に確かめて付け、付けられなければ管理者向けのコマンドを示して止まる（2026-10-30。「WebView2 の固定版の権限」） | 要確認 |
-| 共有サーバーのメモリ | 共有サーバーの物理メモリは 32GB。RDP で複数のユーザーがログインするため、集約のピーク（約 3.8GB）が人数分、同時に乗り得る | ddviz を同時に使えるのを 1 人に制限する（2026-10-26 ユーザー判断）。名前付き mutex（`Global\ddviz`）で判定し、子のメモリは Job Object で物理メモリの半分に制限する（「UI のサーバーと使い捨てプロセスの通信」） | 決定 |
+| 共有サーバーのメモリ | RDP で複数のユーザーがログインするため、集約のピーク（約 3.8GB）が人数分、同時に乗り得る | ddviz を同時に使えるのを 1 人に制限する（2026-10-26 ユーザー判断）。名前付き mutex（`Global\ddviz`）で判定し、子のメモリは Job Object で物理メモリの半分に制限する（「UI のサーバーと使い捨てプロセスの通信」） | 決定 |
 
 ## 計測結果
 
@@ -1818,7 +1818,7 @@ B の細かい集約（全体図の集約に足す分。代表行の値は含め
 公式のサポート情報（Server 2016 の実機が無いため）：
 
 - WebView2 の対応 OS は Edge と同じで、Microsoft Learn の WebView2 の概要に Windows Server 2016（LTSC）が載っている。いつまで Server 2016 で新しい版が出るかは書かれていない。
-- Python 3.13 は Windows 8.1 以降を対象とする（docs.python.org の Using Python on Windows。PEP 11 により、Microsoft の延長サポートの間だけ対象にする）。Server 2016 は Windows 10 1607 相当なので含まれる。ddviz を使う共有サーバーで 3.13 が動いている実績もある（2026-10-30 ユーザー回答。「Python の版と CPU の前提」）。
+- Python 3.13 は Windows 8.1 以降を対象とする（docs.python.org の Using Python on Windows。PEP 11 により、Microsoft の延長サポートの間だけ対象にする）。Server 2016 は Windows 10 1607 相当なので含まれる。想定する共有サーバーで 3.13 が動いている実績もある（2026-10-30 ユーザー回答。「Python の版と CPU の前提」）。
 - Microsoft の「Distribute your app and the WebView2 Runtime」によれば、Windows 10 では固定版 120 以降、未パッケージの Win32 アプリは、固定版のフォルダに `icacls <固定版のフォルダ> /grant *S-1-15-2-2:(OI)(CI)(RX)` と `*S-1-15-2-1:(OI)(CI)(RX)`（ALL RESTRICTED APPLICATION PACKAGES と ALL APPLICATION PACKAGES の読み取り）を付けないと動かない。描画のプロセスを AppContainer の中で動かすようになったため。Windows 11 は対象外で、今回の確認では要らなかった。Server 2016 は Windows 10 系なので要る見込み。また、固定版はネットワーク上の場所や UNC パスからは動かない。→ 起動時に確かめて付け、付けられなければ管理者向けのコマンドを示して止まることにした（2026-10-30。「UI のサーバーと使い捨てプロセスの通信」の「WebView2 の固定版の権限」）。
 
 固定版の権限の確認と付与（2026-10-30。Windows 11 Pro 26200 で、判定に Server 2016 のビルド番号 14393 を渡して測った。スクリプトは `tmp/`（作業後に削除））：
