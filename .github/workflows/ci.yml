@@ -83,7 +83,7 @@ jobs:
           google-chrome --version
 
       - name: E2E test
-        run: uv run -m pytest -m e2e --tracing retain-on-failure
+        run: uv run -m pytest -m e2e --tracing retain-on-failure --durations=30
 
       - name: Upload Playwright traces
         if: failure()
