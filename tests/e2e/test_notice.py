@@ -142,13 +142,15 @@ MOVES = """async () => {
 }"""
 
 
-@pytest.mark.parametrize(("motion", "moves"), [("no-preference", True), ("reduce", False)])
-def test_a_toast_moves_only_without_reduced_motion(app_page: Page, motion: str, moves: bool) -> None:
+def test_a_toast_moves_only_without_reduced_motion(app_page: Page) -> None:
     """Toasts slide in and out, but only fade when the OS turns animation effects off."""
     page = app_page
-    page.emulate_media(reduced_motion=motion)  # type: ignore[arg-type]
-    entering, leaving = page.evaluate(MOVES)
-    expected = ["opacity", "transform"] if moves else ["opacity"]
-    assert entering == expected
-    assert leaving == expected
-    expect(page.locator("#toasts .toast")).to_have_count(0)
+    for motion, expected in [
+        ("no-preference", ["opacity", "transform"]),
+        ("reduce", ["opacity"]),
+    ]:
+        page.emulate_media(reduced_motion=motion)  # type: ignore[arg-type]
+        entering, leaving = page.evaluate(MOVES)
+        assert entering == expected, motion
+        assert leaving == expected, motion
+        expect(page.locator("#toasts .toast")).to_have_count(0)

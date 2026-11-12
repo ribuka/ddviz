@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -12,6 +13,8 @@ from tests.e2e.test_scatter import SETTLED, drop_at, place, watch_errors
 pytestmark = pytest.mark.e2e
 
 FULL = "document.getElementById('plot')._fullLayout"
+# The requests that aggregate, draw or select: a reversal makes none.
+AGGREGATING = re.compile(r"/api/(plot|view|overview|selection)\b")
 
 
 # The y axes' left margins, in client pixels, from the DOM and plotly's
@@ -164,10 +167,10 @@ def test_the_tick_menu_toggles_a_log_axis(app_page: Page) -> None:
 
 
 def test_the_log_item_of_a_categorical_axis_is_grayed_out(app_page: Page) -> None:
-    """A categorical axis's menu shows the item disabled; Escape closes it."""
+    """A categorical axis's menu, on its tick labels or y's margin, shows the item disabled; Escape closes it."""
     page = app_page
     place(page, "color", "x")
-    place(page, "y", "y")
+    place(page, "color", "y")
     _right_click_tick(page, "x")
     menu = page.locator(".axis-menu")
     expect(menu.get_by_role("button", name="対数表示")).to_be_disabled()
@@ -180,6 +183,16 @@ def test_the_log_item_of_a_categorical_axis_is_grayed_out(app_page: Page) -> Non
     )
     expect(page.locator(".plot-menu")).to_have_count(1)
     expect(page.locator(".axis-menu")).to_have_count(0)
+    page.keyboard.press("Escape")
+    # The margin of a categorical y.
+    margins = y_margins(page)
+    (row,) = margins["rows"]
+    page.mouse.click(margins["zone"] + 1, (row["top"] + row["bottom"]) / 2, button="right")
+    expect(menu.locator(".scale-menu-heading")).to_have_text("Y 軸: color")
+    expect(menu.get_by_role("button", name="対数表示")).to_be_disabled()
+    expect(menu.get_by_role("button", name="向きを反転")).to_be_enabled()
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
 
 
 def test_a_box_dragged_on_a_log_axis_selects_by_its_values(app_page: Page) -> None:
@@ -252,7 +265,7 @@ def test_a_warning_keeps_the_height_of_the_status_bar(app_page: Page) -> None:
 
 
 def test_the_left_margin_of_y_opens_its_menu(app_page: Page) -> None:
-    """The whole margin left of y's tick labels opens y's menu; around it the plot's menu or none."""
+    """The whole margin left of y's tick labels opens y's menu, which reverses y and back asking nothing; around it the plot's menu or none."""
     page = app_page
     errors = watch_errors(page)
     place(page, "x", "x")
@@ -274,6 +287,27 @@ def test_the_left_margin_of_y_opens_its_menu(app_page: Page) -> None:
     expect(page.locator(".plot-menu")).to_have_count(1)
     expect(page.locator(".axis-menu")).to_have_count(0)
     page.keyboard.press("Escape")
+
+    # The menu of the margin reverses y and back, asking nothing.
+    urls: list[str] = []
+    page.on(
+        "request",
+        lambda request: AGGREGATING.search(request.url) and urls.append(request.url),
+    )
+    y_range = f"(() => {{ const a = {FULL}.yaxis; return a.range.map((v) => a.r2l(v)); }})()"
+    low, high = page.evaluate(y_range)
+    menu = page.locator(".axis-menu")
+    for expected, checked in [([high, low], False), ([low, high], True)]:
+        page.mouse.click(margins["zone"] + 1, row["between"], button="right")
+        expect(menu.locator(".scale-menu-heading")).to_have_text("Y 軸: y")
+        item = menu.get_by_role("button", name="向きを反転")
+        if checked:
+            expect(item).to_have_class("scale-menu-item checked")
+        item.click()
+        expect(menu).to_have_count(0)
+        page.wait_for_function(f"() => {{ const r = {y_range}; return (r[0] > r[1]) === {'false' if checked else 'true'}; }}")
+        assert page.evaluate(y_range) == pytest.approx(expected)
+    assert urls == []
     assert errors == []
 
 
@@ -320,18 +354,3 @@ def test_each_panel_row_of_the_margin_opens_its_own_column(app_page: Page) -> No
     expect(page.locator(".axis-menu")).to_have_count(0)
     page.keyboard.press("Escape")
     assert errors == []
-
-
-def test_the_margin_of_a_categorical_y_grays_out_its_log_item(app_page: Page) -> None:
-    """A categorical y's margin opens its menu with the log item disabled."""
-    page = app_page
-    place(page, "x", "x")
-    place(page, "color", "y")
-    margins = y_margins(page)
-    (row,) = margins["rows"]
-    page.mouse.click(margins["zone"] + 1, (row["top"] + row["bottom"]) / 2, button="right")
-    menu = page.locator(".axis-menu")
-    expect(menu.locator(".scale-menu-heading")).to_have_text("Y 軸: color")
-    expect(menu.get_by_role("button", name="対数表示")).to_be_disabled()
-    expect(menu.get_by_role("button", name="向きを反転")).to_be_enabled()
-    page.keyboard.press("Escape")

@@ -87,7 +87,7 @@ def _range(page: Page, key: str) -> list[float]:
 
 
 def test_the_tick_menu_reverses_x_and_y_without_a_request(app_page: Page) -> None:
-    """X, Y and both turn at the shown range, keep the hover on the drawn points, and turn back; no request aggregates."""
+    """X, Y and both turn at the shown range, keep the hover on the drawn points and the CSV of the plot data, and turn back; no request aggregates."""
     page = app_page
     errors = watch_errors(page)
     place(page, "x", "x")
@@ -113,6 +113,15 @@ def test_the_tick_menu_reverses_x_and_y_without_a_request(app_page: Page) -> Non
     page.wait_for_function(
         "() => !document.querySelector('#plot').classList.contains('pending')"
     )
+    button = page.locator('#plot .modebar-btn[data-title^="データを保存"]')
+
+    def saved() -> bytes:
+        button.click()
+        with page.expect_download() as info:
+            page.locator(".data-menu").get_by_role("button", name="CSV").click()
+        return Path(info.value.path()).read_bytes()
+
+    before = saved()
     urls = _record(page)
 
     _reverse(page, "x", "X 軸: x")
@@ -152,6 +161,8 @@ def test_the_tick_menu_reverses_x_and_y_without_a_request(app_page: Page) -> Non
     _reverse(page, "y", "Y 軸: y")
     page.wait_for_function(f"() => {FULL}.yaxis.range[0] > {FULL}.yaxis.range[1]")
     assert page.evaluate(AXES, "x")["xaxis"]["reversed"]
+    # The bins saved do not change with the direction.
+    assert saved() == before
 
     # Back: the same ranges, ascending.
     _reverse(page, "x", "X 軸: x", checked=True)
@@ -160,7 +171,8 @@ def test_the_tick_menu_reverses_x_and_y_without_a_request(app_page: Page) -> Non
     _reverse(page, "y", "Y 軸: y", checked=True)
     page.wait_for_function(f"() => {FULL}.yaxis.range[0] < {FULL}.yaxis.range[1]")
     page.wait_for_timeout(300)
-    assert urls == []
+    # The CSV is fetched from the result kept (`/api/plot-data`), not aggregated.
+    assert [u for u in urls if "/api/plot-data/" not in u] == []
     assert errors == []
 
 
@@ -355,51 +367,3 @@ def test_a_reversed_log_axis_stays_log(app_page: Page) -> None:
     _settled(page)
     assert page.evaluate(AXES, "x")["xaxis"]["reversed"]
     assert errors == []
-
-
-def test_the_saved_bins_do_not_change_with_the_direction(app_page: Page) -> None:
-    """The CSV of the plot data is the same before and after a reversal of X and Y."""
-    page = app_page
-    place(page, "x", "x")
-    place(page, "y", "y")
-    button = page.locator('#plot .modebar-btn[data-title^="データを保存"]')
-
-    def saved() -> bytes:
-        button.click()
-        with page.expect_download() as info:
-            page.locator(".data-menu").get_by_role("button", name="CSV").click()
-        return Path(info.value.path()).read_bytes()
-
-    before = saved()
-    _reverse(page, "x", "X 軸: x")
-    _reverse(page, "y", "Y 軸: y")
-    page.wait_for_function(f"() => {FULL}.yaxis.range[0] > {FULL}.yaxis.range[1]")
-    assert saved() == before
-
-
-def test_the_left_margin_of_y_reverses_y(app_page: Page) -> None:
-    """The menu of y's margin, left of its tick labels, reverses y and back, asking nothing."""
-    from tests.e2e.test_axis_menu import y_margins
-
-    page = app_page
-    place(page, "x", "x")
-    place(page, "y", "y")
-    urls = _record(page)
-    low, high = _range(page, "yaxis")
-    margins = y_margins(page)
-    (row,) = margins["rows"]
-    menu = page.locator(".axis-menu")
-    for expected, checked in [([high, low], False), ([low, high], True)]:
-        page.mouse.click(margins["zone"] + 1, row["between"], button="right")
-        expect(menu.locator(".scale-menu-heading")).to_have_text("Y 軸: y")
-        item = menu.get_by_role("button", name="向きを反転")
-        if checked:
-            expect(item).to_have_class("scale-menu-item checked")
-        item.click()
-        expect(menu).to_have_count(0)
-        page.wait_for_function(
-            f"() => {{ const a = {FULL}.yaxis; const r = a.range.map((v) => a.r2l(v));"
-            f" return (r[0] > r[1]) === {'true' if not checked else 'false'}; }}"
-        )
-        assert _range(page, "yaxis") == pytest.approx(expected)
-    assert urls == []

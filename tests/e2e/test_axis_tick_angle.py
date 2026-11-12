@@ -180,6 +180,7 @@ def test_a_categorical_axis_sets_the_angle_alone(app_page: Page) -> None:
     place(page, "kind", "x")
     place(page, "small", "y")
     settle(page)
+    range_before = page.evaluate(f"{FULL}.xaxis.range")
     dialog = open_dialog(page, "x")
     expect(dialog.locator("h2")).to_have_text("X 軸: kind")
     angle = dialog.locator("input[name=angle]")
@@ -192,8 +193,9 @@ def test_a_categorical_axis_sets_the_angle_alone(app_page: Page) -> None:
     page.keyboard.press("Shift+Tab")
     expect(dialog.locator("input[name=min]")).not_to_be_focused()
 
+    # Opening the dialog keeps the range.
+    assert page.evaluate(f"{FULL}.xaxis.range") == range_before
     urls = record(page)
-    range_before = page.evaluate(f"{FULL}.xaxis.range")
     angle.fill("45")
     dialog.get_by_role("button", name="適用").click()
     expect(dialog).to_be_visible()
@@ -209,33 +211,48 @@ def test_a_categorical_axis_sets_the_angle_alone(app_page: Page) -> None:
     assert not errors
 
 
-@pytest.mark.parametrize("angle", ["-90", "-45", "0", "45", "90"])
-def test_the_angles_draw_as_set(app_page: Page, angle: str) -> None:
-    """−90°, −45°, 0°, 45° and 90° turn the labels of a numeric x and y clockwise as set; an empty field gives plotly's own back."""
+def test_the_angles_draw_as_set(app_page: Page) -> None:
+    """An angle keeping the margins draws without a request; −90°, −45°, 0°, 45° and 90° turn the labels of a numeric x and y clockwise as set; an empty field gives plotly's own back."""
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
     place(page, "n", "x")
     place(page, "small", "y")
     settle(page)
-    for role in ["x", "y"]:
-        set_angle(page, role, angle)
-        page.wait_for_function(
-            f"() => document.getElementById('plot').layout.{role}axis.tickangle === {angle}"
-        )
-        settle(page)
-        assert page.evaluate(f"{FULL}.{role}axis.tickangle") == int(angle)
-        shown = labels(page, role)["labels"]
-        assert shown
-        for label in shown:
-            if angle == "0":
-                assert "rotate" not in label["transform"] or "rotate(0" in label["transform"]
-            else:
-                assert f"rotate({angle}" in label["transform"], label
-    # A label of several digits turned by 90 degrees is higher than wide.
-    if angle in ("-90", "90"):
-        label = max(labels(page, "x")["labels"], key=lambda label: len(label["text"]))
-        assert label["bottom"] - label["top"] > label["right"] - label["left"]
+    # An angle whose labels keep the margins asks nothing and keeps the view.
+    page.evaluate("Plotly.relayout('plot', {'xaxis.range': [100, 900]})")
+    settle(page)
+    shown = page.evaluate(f"[{FULL}.xaxis.range, {FULL}.yaxis.range]")
+    urls = record(page)
+    set_angle(page, "x", "0")
+    page.wait_for_function("() => document.getElementById('plot').layout.xaxis.tickangle === 0")
+    set_angle(page, "y", "-10")
+    page.wait_for_function("() => document.getElementById('plot').layout.yaxis.tickangle === -10")
+    settle(page)
+    assert margins(page)["b"] == 30
+    assert margins(page)["l"] == 50
+    assert urls == []
+    assert page.evaluate(f"[{FULL}.xaxis.range, {FULL}.yaxis.range]") == shown
+
+    for angle in ["-90", "-45", "0", "45", "90"]:
+        for role in ["x", "y"]:
+            set_angle(page, role, angle)
+            page.wait_for_function(
+                f"() => document.getElementById('plot').layout.{role}axis.tickangle === {angle}"
+            )
+            settle(page)
+            assert page.evaluate(f"{FULL}.{role}axis.tickangle") == int(angle)
+            drawn = labels(page, role)["labels"]
+            assert drawn, angle
+            for label in drawn:
+                if angle == "0":
+                    assert "rotate" not in label["transform"] or "rotate(0" in label["transform"]
+                else:
+                    assert f"rotate({angle}" in label["transform"], label
+        # A label of several digits turned by 90 degrees is higher than wide.
+        if angle in ("-90", "90"):
+            label = max(labels(page, "x")["labels"], key=lambda label: len(label["text"]))
+            assert label["bottom"] - label["top"] > label["right"] - label["left"], angle
     for role in ["x", "y"]:
         set_angle(page, role, "  ")
         page.wait_for_function(
@@ -313,30 +330,6 @@ def test_apply_ok_enter_cancel_and_esc(app_page: Page) -> None:
     dialog = open_dialog(page, "x")
     expect(dialog.locator("input[name=angle]")).to_have_value("0")
     page.keyboard.press("Escape")
-
-
-def test_an_angle_alone_asks_nothing(app_page: Page) -> None:
-    """An angle whose labels keep the margins draws without a request, keeping the view, the reversed axis and the selection."""
-    page = app_page
-    errors = watch_errors(page)
-    page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x")
-    place(page, "small", "y")
-    settle(page)
-    page.evaluate("Plotly.relayout('plot', {'xaxis.range': [100, 900]})")
-    settle(page)
-    shown = page.evaluate(f"[{FULL}.xaxis.range, {FULL}.yaxis.range]")
-    urls = record(page)
-    set_angle(page, "x", "0")
-    page.wait_for_function("() => document.getElementById('plot').layout.xaxis.tickangle === 0")
-    set_angle(page, "y", "-10")
-    page.wait_for_function("() => document.getElementById('plot').layout.yaxis.tickangle === -10")
-    settle(page)
-    assert margins(page)["b"] == 30
-    assert margins(page)["l"] == 50
-    assert urls == []
-    assert page.evaluate(f"[{FULL}.xaxis.range, {FULL}.yaxis.range]") == shown
-    assert not errors
 
 
 def test_x_and_y_of_one_column_keep_their_own_angles(app_page: Page) -> None:
@@ -433,9 +426,8 @@ def test_a_log_axis_hides_its_angle_until_linear(app_page: Page) -> None:
     assert tick_angle(page, "yaxis") == 45
 
 
-@pytest.mark.parametrize("angle", ["90", "-90"])
-def test_long_x_labels_at_90_fit_the_bottom_margin(app_page: Page, angle: str) -> None:
-    """Long levels on X at ±90° widen the bottom margin to show them whole; the frame and the images follow, and a turned label opens the dialog again."""
+def test_long_x_labels_at_90_fit_the_bottom_margin(app_page: Page) -> None:
+    """Long levels on X at 90° and then −90° widen the bottom margin to show them whole; the frame and the images follow, a turned label opens the dialog again, and emptied the margin is 30 again."""
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 900})
@@ -444,32 +436,41 @@ def test_long_x_labels_at_90_fit_the_bottom_margin(app_page: Page, angle: str) -
     settle(page)
     assert margins(page)["b"] == 30
     urls = record(page)
-    set_angle(page, "x", angle)
+    set_angle(page, "x", "90")
     page.wait_for_function(f"() => {FULL}.margin.b > 100")
     settle(page)
     assert [u for u in urls if "/api/overview" in u]
-    drawn = margins(page)
-    # The frame of the plot area ends at the margin.
-    assert drawn["bottom"] == drawn["height"] - drawn["b"]
-    shown = labels(page, "x")
-    assert shown["labels"]
-    for label in shown["labels"]:
-        assert label["bottom"] <= shown["edge"]["bottom"] - 2 + 0.5, (label, shown["edge"])
-        assert label["text"].startswith("category_name_")
-    pixel = page.evaluate(PAINTED_PIXEL)
-    assert pixel is not None
-    top = page.locator("#plot").bounding_box()["y"]
-    assert pixel["y"] <= top + drawn["bottom"]
-    # The far end of a turned label is below plotly's drag area of the axis.
-    label = shown["labels"][0]
-    wait_apart(page)
-    page.mouse.dblclick((label["left"] + label["right"]) / 2, label["bottom"] - 4)
-    dialog = page.locator("dialog.axis-dialog")
-    expect(dialog.locator("h2")).to_have_text("X 軸: name")
-    expect(dialog.locator("input[name=angle]")).to_have_value(angle)
+    for angle, then in [("90", "-90"), ("-90", "")]:
+        drawn = margins(page)
+        # The frame of the plot area ends at the margin.
+        assert drawn["bottom"] == drawn["height"] - drawn["b"], angle
+        shown = labels(page, "x")
+        assert shown["labels"]
+        for label in shown["labels"]:
+            assert label["bottom"] <= shown["edge"]["bottom"] - 2 + 0.5, (angle, label, shown["edge"])
+            assert label["text"].startswith("category_name_")
+            assert f"rotate({angle}" in label["transform"], label
+        pixel = page.evaluate(PAINTED_PIXEL)
+        assert pixel is not None
+        top = page.locator("#plot").bounding_box()["y"]
+        assert pixel["y"] <= top + drawn["bottom"]
+        # The far end of a turned label is below plotly's drag area of the axis.
+        label = shown["labels"][0]
+        wait_apart(page)
+        page.mouse.dblclick((label["left"] + label["right"]) / 2, label["bottom"] - 4)
+        dialog = page.locator("dialog.axis-dialog")
+        expect(dialog.locator("h2")).to_have_text("X 軸: name")
+        expect(dialog.locator("input[name=angle]")).to_have_value(angle)
+        dialog.locator("input[name=angle]").fill(then)
+        dialog.get_by_role("button", name="OK").click()
+        expect(dialog).to_have_count(0)
+        if then:
+            page.wait_for_function(
+                f"() => document.getElementById('plot').layout.xaxis.tickangle === {then}"
+            )
+            page.wait_for_function(f"() => {FULL}.margin.b > 100")
+            settle(page)
     # Emptied, the margin is 30 again.
-    dialog.locator("input[name=angle]").fill("")
-    dialog.get_by_role("button", name="OK").click()
     page.wait_for_function(f"() => {FULL}.margin.b === 30")
     settle(page)
     assert not errors
