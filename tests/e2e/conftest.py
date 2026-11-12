@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -19,6 +20,22 @@ TOKEN = "secret-of-the-e2e-run"
 LAST_PRESS = """addEventListener("mousedown", (event) => {
   if (event.target.closest?.("#plot")) window.lastPress = performance.now();
 }, true);"""
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Keep one shard of the E2E tests when `E2E_SHARD` is `<i>/<n>` (CI's matrix).
+
+    The tests are dealt in turn, in the order collected: the slow ones of a
+    file go to different shards.
+    """
+    shard = os.environ.get("E2E_SHARD")
+    if not shard:
+        return
+    index, count = (int(part) for part in shard.split("/"))
+    e2e = [item for item in items if item.get_closest_marker("e2e")]
+    dropped = {item for i, item in enumerate(e2e) if i % count != index - 1}
+    config.hook.pytest_deselected(items=[item for item in items if item in dropped])
+    items[:] = [item for item in items if item not in dropped]
 
 
 @pytest.fixture
