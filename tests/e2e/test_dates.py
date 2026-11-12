@@ -24,6 +24,7 @@ from tests.e2e.test_scatter import (
     SETTLED,
     dialog_at,
     place,
+    wait_apart,
     wait_idle,
     watch_errors,
 )
@@ -330,7 +331,7 @@ def record(page: Page) -> list[str]:
 
 def open_dialog(page: Page, role: str) -> Locator:
     """Double-click the middle tick label of x, or the middle of y's left margin, and return the dialog it opens."""
-    page.wait_for_timeout(400)
+    wait_apart(page)
     if role == "x":
         ticks = page.locator("#plot .xtick text")
         box = ticks.nth(ticks.count() // 2).bounding_box()
@@ -348,7 +349,7 @@ def open_dialog(page: Page, role: str) -> Locator:
 
 def reset_axes(page: Page) -> None:
     """Double-click the plot area: back to the overview."""
-    page.wait_for_timeout(400)
+    wait_apart(page)
     box = page.locator("#plot .nsewdrag").first.bounding_box()
     page.mouse.dblclick(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
     expect(page.locator("#status")).not_to_contain_text("表示範囲に")
@@ -954,7 +955,7 @@ def test_calendar_ticks_of_a_zoned_y_stay_on_its_local_years(
     # Reversed, panned and zoomed, the ticks keep the calendar.
     margins = y_margins(page)
     row = margins["rows"][0]
-    page.wait_for_timeout(400)
+    wait_apart(page)
     page.mouse.click(
         (margins["zone"] + row["left"]) / 2, row["between"], button="right"
     )

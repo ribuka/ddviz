@@ -60,24 +60,38 @@ def new_result(page: Page, task: str) -> None:
 
 
 # Whether nothing is being aggregated: no conversion covers the page, the
-# drawn images are not marked as waiting for a new size (`setPending` in
-# app.js), and the status shows neither "集約中" nor a task's progress
-# (`task N: <stage>`; a result, which may start with its task, an error or
-# nothing is fine).
+# plot area is not busy (`markBusy` in app.js: a plot in flight, or a result
+# of a view or a new size waited for, also before a new size or margin is
+# aggregated), and the status shows neither "集約中" (the selected rows) nor
+# a task's progress (`task N: <stage>`; a result, which may start with its
+# task, an error or nothing is fine).
 IDLE = r"""() => {
   const text = document.querySelector("#status").textContent;
   return document.getElementById("converting").hidden
-    && !document.getElementById("plot").classList.contains("pending")
+    && !document.getElementById("plot").classList.contains("busy")
     && !text.includes("集約中")
     && !/^task \d+: [a-z ]+$/.test(text);
 }"""
-# Longer than the wait of app.js before it aggregates again for a new size or
-# margin (`RESIZE_SETTLE_MS`, 300ms), which a drawn result may start.
-QUIET_MS = 400
+# Waits two frames: a drawn figure may resize the plot area or move the chips
+# (`ResizeObserver`, `plotly_afterplot`), which the next frame tells.
+FRAMES = "() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))"
+
+
+# Longer than plotly's double click (`doubleClickDelay`, 500ms in plotly
+# 4.1.1): the first press of a double click reaches plotly, which would count
+# it with a previous press within that time.
+APART_MS = 600
+
+
+def wait_apart(page: Page) -> None:
+    """Wait until the last mouse press on the plot (`LAST_PRESS` of conftest.py) is `APART_MS` ago."""
+    page.wait_for_function(
+        f"() => performance.now() - (window.lastPress ?? -Infinity) > {APART_MS}"
+    )
 
 
 def wait_idle(page: Page) -> None:
-    """Wait until nothing is aggregated, and still nothing (the same status) after `QUIET_MS`.
+    """Wait until nothing is aggregated, and still nothing (the same status) two frames later.
 
     A drop that makes the graph drawable starts a plot, even of numeric Y
     columns alone (a band), and the result drawn may aggregate again for its margin.
@@ -87,7 +101,7 @@ def wait_idle(page: Page) -> None:
     for _ in range(20):
         page.wait_for_function(IDLE)
         before = status.text_content()
-        page.wait_for_timeout(QUIET_MS)
+        page.evaluate(FRAMES)
         if page.evaluate(IDLE) and status.text_content() == before:
             return
     raise AssertionError("the page did not stop aggregating")
@@ -1838,11 +1852,9 @@ def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(
 def dialog_at(page: Page, x: float, y: float) -> str | None:
     """Double-click a point and return the title of the axis dialog it opens, or None; cancel it.
 
-    It waits first for longer than plotly's double click (300ms): the first
-    press of each double click reaches plotly, which would count it with
-    the previous one.
+    It waits first for the last press to be apart from it (`wait_apart`).
     """
-    page.wait_for_timeout(400)
+    wait_apart(page)
     page.mouse.dblclick(x, y)
     dialog = page.locator("dialog.axis-dialog")
     page.wait_for_timeout(100)

@@ -17,6 +17,7 @@ from tests.e2e.test_scatter import (
     SETTLED,
     drop_at,
     place,
+    wait_idle,
     watch_errors,
 )
 
@@ -26,6 +27,8 @@ ROWS = 2_000
 FULL = "document.getElementById('plot')._fullLayout"
 # The requests that aggregate a result.
 AGGREGATING = re.compile(r"/api/(plot|view|overview)\b")
+# Longer than an axis relayout takes before it measures the margin again.
+SETTLE_MS = 200
 LONG_NAME = "category_name_0_" + "x" * 30
 
 # The y tick labels shown on the left of the figure: plotly's of a grid that
@@ -94,10 +97,13 @@ def assert_whole(shown: dict) -> None:
 def settle(page: Page) -> None:
     """Wait for the results of the margin's requests: the status settled and the margin stays."""
     for _ in range(20):
-        page.wait_for_timeout(600)
+        wait_idle(page)
         page.wait_for_function(SETTLED)
         before = y_labels(page)["margin"]
-        page.wait_for_timeout(600)
+        # An axis setting measures the margin once its relayout is drawn
+        # (`followMargin` in app.js), a little after the edit.
+        page.wait_for_timeout(SETTLE_MS)
+        wait_idle(page)
         page.wait_for_function(SETTLED)
         if y_labels(page)["margin"] == before:
             return
