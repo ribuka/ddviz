@@ -1,1 +1,1 @@
-"""ddviz: a Graph Builder-like viewer for very large Parquet data."""
+"""ddviz: a drag-and-drop graph builder for very large Parquet data."""
