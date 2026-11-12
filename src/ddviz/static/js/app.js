@@ -225,6 +225,14 @@ let wrapAuto = null;
 // Generation of the plot request in flight, or 0. A new size waits for it:
 // a request for the old plot would kill its aggregation (or its conversion).
 let plotting = 0;
+
+// Marks the plot area busy while a plot is in flight or the page waits for
+// a result of a view or a new size (`setPending`), at once and also while a
+// new size or margin waits `RESIZE_SETTLE_MS` before it is aggregated. The
+// E2E tests wait for its end: the status shows no such state as a whole.
+function markBusy() {
+  gd.classList.toggle("busy", waiting || plotting !== 0);
+}
 // Bumped by every plot, view request and return to the overview, so that a
 // late answer to an older request is dropped.
 let generation = 0;
@@ -755,8 +763,10 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   // included: meanwhile no view, size or selection is asked for, which would
   // supersede it or kill its task.
   plotting = mine;
+  markBusy();
   const settled = () => {
     if (plotting === mine) plotting = 0;
+    markBusy();
   };
   const started = performance.now();
   let response = null;
@@ -1136,6 +1146,7 @@ let waiting = false;
 let pendingTimer = 0;
 function setPending(on) {
   waiting = on;
+  markBusy();
   clearTimeout(pendingTimer);
   if (on) {
     // A request that supersedes one already marked keeps the mark.

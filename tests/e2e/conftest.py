@@ -14,6 +14,11 @@ from ddviz.server.app import create_app
 from ddviz.server.settings import Settings
 
 TOKEN = "secret-of-the-e2e-run"
+# Records the time of the last mouse press on the plot, the presses plotly
+# counts for its double click, which `wait_apart` waits from.
+LAST_PRESS = """addEventListener("mousedown", (event) => {
+  if (event.target.closest?.("#plot")) window.lastPress = performance.now();
+}, true);"""
 
 
 @pytest.fixture
@@ -58,6 +63,7 @@ def app_page(page: Page, app_url: str) -> Iterator[Page]:
     The page closes before the server stops, so that its open event stream
     does not hold the server's shutdown.
     """
+    page.add_init_script(LAST_PRESS)
     page.goto(f"{app_url}/?token={TOKEN}")
     yield page
     page.close()

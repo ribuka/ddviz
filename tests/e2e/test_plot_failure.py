@@ -42,6 +42,16 @@ def scatter_path(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def toasts_let_drops_through(app_page: Page) -> None:
+    """Let the pointer through the error toasts (`test_notice.py` tests them).
+
+    Each failure opens one at the top right, over the zones there: a drag
+    onto them would wait for it to close.
+    """
+    app_page.add_style_tag(content="#toasts, #toasts * { pointer-events: none !important; }")
+
+
 LAYOUT = "() => JSON.stringify(document.getElementById('plot').layout)"
 # The element icons: name, pressed, and whether they can be pressed.
 ELEMENTS = """() => [...document.querySelectorAll('#elements .element')].map(
@@ -460,7 +470,8 @@ def test_a_newer_failure_goes_back_to_the_last_committed_graph(app_page: Page) -
     expect(toasts).to_have_text(["エラー: 新しい失敗×"])
     assert placed_names(page) == before
     page.unroute("**/api/plot")
-    toasts.get_by_role("button", name="閉じる").click()
+    # The pointer passes through the toasts (`toasts_let_drops_through`).
+    toasts.get_by_role("button", name="閉じる").dispatch_event("click")
 
     # The older plot succeeds on the server before the newer one fails: the
     # drawn graph is plotted again, and the error stays.

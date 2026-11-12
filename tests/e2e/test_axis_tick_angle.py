@@ -17,6 +17,8 @@ from tests.e2e.test_scatter import (
     SETTLED,
     drop_at,
     place,
+    wait_apart,
+    wait_idle,
     watch_errors,
 )
 
@@ -26,11 +28,9 @@ ROWS = 2_000
 FULL = "document.getElementById('plot')._fullLayout"
 # The requests that aggregate a result.
 AGGREGATING = re.compile(r"/api/(plot|view|overview)\b")
+# Longer than an axis relayout takes before it measures the margin again.
+SETTLE_MS = 200
 ANGLE_ERROR = "−90〜90 の整数にしてください"
-# Wait before a double click, longer than plotly's (`doubleClickDelay`, 500ms
-# in plotly 4.1.1): its first press reaches plotly, which would count it
-# with the previous press.
-APART_MS = 600
 
 # The tick labels of an axis role shown: plotly's of a grid that fits (the
 # text of each ``<role><n>tick`` group), or the strip's of one that scrolls,
@@ -101,10 +101,13 @@ def margins(page: Page) -> dict:
 def settle(page: Page) -> None:
     """Wait for the results of the margins' requests: the status settled and the margins stay."""
     for _ in range(20):
-        page.wait_for_timeout(600)
+        wait_idle(page)
         page.wait_for_function(SETTLED)
         before = margins(page)
-        page.wait_for_timeout(600)
+        # An axis setting measures the margins once its relayout is drawn
+        # (`followMargin` in app.js), a little after the edit.
+        page.wait_for_timeout(SETTLE_MS)
+        wait_idle(page)
         page.wait_for_function(SETTLED)
         if margins(page) == before:
             return
@@ -132,7 +135,7 @@ def open_dialog(page: Page, role: str, first: bool = False) -> Locator:
         and edge["top"] <= (label["top"] + label["bottom"]) / 2 <= edge["bottom"]
     ]
     label = shown[0 if first else len(shown) // 2]
-    page.wait_for_timeout(APART_MS)
+    wait_apart(page)
     page.mouse.dblclick(
         (label["left"] + label["right"]) / 2, (label["top"] + label["bottom"]) / 2
     )
@@ -388,7 +391,7 @@ def test_x_and_y_of_one_column_keep_their_own_angles(app_page: Page) -> None:
     check()
     # Reset axes from the plot area's double click.
     box = page.locator("#plot .nsewdrag").first.bounding_box()
-    page.wait_for_timeout(APART_MS)
+    wait_apart(page)
     page.mouse.dblclick(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
     settle(page)
     check()
@@ -418,7 +421,7 @@ def test_a_log_axis_hides_its_angle_until_linear(app_page: Page) -> None:
     assert tick_angle(page, "yaxis") is None
     shown = labels(page, "y")["labels"]
     label = shown[len(shown) // 2]
-    page.wait_for_timeout(APART_MS)
+    wait_apart(page)
     page.mouse.dblclick(label["right"] - 3, (label["top"] + label["bottom"]) / 2)
     page.wait_for_timeout(300)
     expect(page.locator("dialog.axis-dialog")).to_have_count(0)
@@ -459,7 +462,7 @@ def test_long_x_labels_at_90_fit_the_bottom_margin(app_page: Page, angle: str) -
     assert pixel["y"] <= top + drawn["bottom"]
     # The far end of a turned label is below plotly's drag area of the axis.
     label = shown["labels"][0]
-    page.wait_for_timeout(APART_MS)
+    wait_apart(page)
     page.mouse.dblclick((label["left"] + label["right"]) / 2, label["bottom"] - 4)
     dialog = page.locator("dialog.axis-dialog")
     expect(dialog.locator("h2")).to_have_text("X 軸: name")
@@ -495,7 +498,7 @@ def test_a_turned_y_sets_the_left_margin(app_page: Page) -> None:
     above = [label for label in shown["labels"] if label["top"] < top - 8]
     assert above
     label = above[0]
-    page.wait_for_timeout(APART_MS)
+    wait_apart(page)
     page.mouse.dblclick((label["left"] + label["right"]) / 2, label["top"] + 3)
     dialog = page.locator("dialog.axis-dialog")
     expect(dialog.locator("h2")).to_have_text("Y 軸: interest")
@@ -562,7 +565,7 @@ def test_the_strips_of_a_scrolled_grid_turn_their_labels(app_page: Page) -> None
         if found["edge"]["left"] < label["left"] and label["right"] < found["edge"]["right"]
     ]
     label = shown[len(shown) // 2]
-    page.wait_for_timeout(APART_MS)
+    wait_apart(page)
     page.mouse.dblclick(label["right"] - 4, label["bottom"] - 4)
     dialog = page.locator("dialog.axis-dialog")
     expect(dialog.locator("h2")).to_have_text("X 軸: name")
@@ -598,7 +601,7 @@ def test_temporal_axes_and_the_one_band_have_no_angle(app_page: Page) -> None:
     shown = labels(page, "x")["labels"]
     assert shown
     label = shown[0]
-    page.wait_for_timeout(APART_MS)
+    wait_apart(page)
     page.mouse.dblclick(
         (label["left"] + label["right"]) / 2, (label["top"] + label["bottom"]) / 2
     )
