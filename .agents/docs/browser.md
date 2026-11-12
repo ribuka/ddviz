@@ -28,6 +28,10 @@
   - The default `uv run -m pytest` deselects them.
   - Without Chrome: `uv run -m playwright install chrome`.
 - Keep E2E to the end-to-end flow (load, draw, hover); test the logic in `tests/server` and `tests/compute`.
+- Test the JS logic (axis dialog validation, tick and format attributes, time strings, legend and toast logic) in `tests/js` (marker `js`), not in E2E.
+  - `uv run -m pytest -m js --tb=short -q` calls the static modules in a blank browser page without the app (`tests/js/conftest.py`: `js_page`, and `clock_page` for `page.clock`). The default `uv run -m pytest` deselects them.
+  - An E2E test checks validation with one value only: the error shows beside the field and the plot does not change.
+  - CI runs them in the `E2E (1/3)` job, before its E2E tests.
 - To debug a failure, add `--tracing retain-on-failure --headed` and open the trace with `uv run -m playwright show-trace test-results/<test>/trace.zip`.
 - CI runs the E2E job on ubuntu-latest and uploads `test-results/` as an artifact when it fails.
 

@@ -87,6 +87,11 @@ jobs:
           fi
           google-chrome --version
 
+      # The JS unit tests need Chrome but not the app; one job runs them.
+      - name: JS test
+        if: matrix.shard == 1
+        run: uv run -m pytest -m js --durations=10
+
       - name: E2E test
         env:
           E2E_SHARD: ${{ matrix.shard }}/3

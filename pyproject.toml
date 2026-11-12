@@ -40,9 +40,12 @@ packages = ["src/ddviz"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = [".*", "tmp"]
-# E2E tests run only with `-m e2e` (a later -m replaces this one).
-addopts = ["-m", "not e2e", "--browser-channel", "chrome"]
-markers = ["e2e: drives the UI in a browser (playwright); run with -m e2e"]
+# E2E and JS tests run only with `-m e2e` or `-m js` (a later -m replaces this one).
+addopts = ["-m", "not e2e and not js", "--browser-channel", "chrome"]
+markers = [
+    "e2e: drives the UI in a browser (playwright); run with -m e2e",
+    "js: calls the static JS modules in a browser page without the app; run with -m js",
+]
 
 [tool.ruff.lint]
 extend-select = ["I", "UP", "B", "D", "ANN"]
