@@ -1324,15 +1324,25 @@ def test_the_pending_mark_shows_only_on_a_slow_result(app_page: Page) -> None:
     plot = page.locator("#plot")
     notice = page.locator("#pending")
 
-    # A result that comes at once is drawn without the mark.
+    # A result that comes at once is drawn without the mark. The server
+    # answers a zoom to its view again with that view, without a worker: a
+    # worker may take longer than the delay, as when the standby is still
+    # importing polars after the plot (over 1s on Windows).
+    zoom = "Plotly.relayout('plot', {'xaxis.range': [0.2, 0.8]})"
+    page.evaluate(zoom)
+    expect(page.locator("#status")).to_contain_text("表示範囲")
+    page.wait_for_function(SETTLED)
+    page.evaluate("Plotly.relayout('plot', {'xaxis.autorange': true})")
+    expect(page.locator("#status")).not_to_contain_text("表示範囲")
+    page.wait_for_function(SETTLED)
     page.evaluate(WATCH_PENDING)
-    page.route("**/api/view", lambda route: route.continue_())
-    page.evaluate("Plotly.relayout('plot', {'xaxis.range': [0.2, 0.8]})")
+    with page.expect_response("**/api/view") as answer:
+        page.evaluate(zoom)
+    assert answer.value.json()["meta"]["task_seconds"] == 0
     expect(page.locator("#status")).to_contain_text("表示範囲")
     page.wait_for_function(SETTLED)
     assert not page.evaluate("window.pendingShown")
     expect(plot).not_to_have_class(re.compile(r"\bpending\b"))
-    page.unroute("**/api/view")
 
     # A result held back is marked once the delay passes, and unmarked when drawn.
     held: list[Route] = []
