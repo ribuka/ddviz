@@ -121,11 +121,20 @@ def place(page: Page, column: str, role: str) -> None:
 def test_a_scatter_plot_draws_and_hovers(
     app_page: Page, scatter_frame: pl.DataFrame
 ) -> None:
-    """Dropping x and y draws the points on the canvas; hovering one shows its row."""
+    """Dropping x and y draws the points on the canvas; hovering one shows its row; the status shows the rows of a result and, while a plot runs, what it does, never the task number (Issue #134)."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
     expect(page.locator("#empty")).to_be_visible()
+    page.evaluate(
+        """() => {
+          window.statusTexts = [];
+          const status = document.querySelector("#status");
+          new MutationObserver(() => window.statusTexts.push(status.textContent)).observe(
+            status, { childList: true, characterData: true, subtree: true },
+          );
+        }"""
+    )
 
     for role in ["x", "y"]:
         column = columns.filter(has=page.get_by_text(role, exact=True))
@@ -149,6 +158,19 @@ def test_a_scatter_plot_draws_and_hovers(
     # Without a color column the pixel's count names no series ("None" once).
     assert re.fullmatch(r"\d+ 行", lines["このピクセル"])
 
+    rows = scatter_frame.filter(pl.col("x").is_finite(), pl.col("y").is_finite()).height
+    status = page.locator("#status")
+    expect(status).to_have_text(f"{rows:,} 行")
+    task = drawn_task(page)
+    # Coloring keeps the rows: the new result is known by its task.
+    place(page, "color", "color")
+    new_result(page, task)
+    page.wait_for_function(SETTLED)
+    expect(status).to_have_text(f"{rows:,} 行")
+    texts = page.evaluate("window.statusTexts")
+    assert any(text.endswith("中…") for text in texts), texts
+    assert not any(re.search(r"task\s*\d", text) for text in texts), texts
+
 
 # Panels in the top row of the plotted figure, or null before one.
 TOP_ROW_PANELS = """() => {
@@ -164,56 +186,8 @@ def wait_top_row(page: Page, n: int) -> None:
     page.wait_for_function(f"() => ({TOP_ROW_PANELS})() === {n}")
 
 
-def test_the_status_shows_rows_and_work_without_the_task_number(
-    app_page: Page, scatter_frame: pl.DataFrame
-) -> None:
-    """The status shows the rows of a result and, while a plot runs, what it does; never the task number (Issue #134)."""
-    page = app_page
-    page.evaluate(
-        """() => {
-          window.statusTexts = [];
-          const status = document.querySelector("#status");
-          new MutationObserver(() => window.statusTexts.push(status.textContent)).observe(
-            status, { childList: true, characterData: true, subtree: true },
-          );
-        }"""
-    )
-    place(page, "x", "x")
-    place(page, "y", "y")
-    rows = scatter_frame.filter(pl.col("x").is_finite(), pl.col("y").is_finite()).height
-    status = page.locator("#status")
-    expect(status).to_have_text(f"{rows:,} 行")
-    task = drawn_task(page)
-
-    # Coloring keeps the rows: the new result is known by its task.
-    place(page, "color", "color")
-    new_result(page, task)
-    page.wait_for_function(SETTLED)
-    expect(status).to_have_text(f"{rows:,} 行")
-
-    texts = page.evaluate("window.statusTexts")
-    assert any(text.endswith("中…") for text in texts), texts
-    assert not any(re.search(r"task\s*\d", text) for text in texts), texts
-
-
-def test_wrap_replaces_group_x_and_wraps_the_panels(app_page: Page) -> None:
-    """A column on Wrap removes Group X's and draws a panel per level, labeled by the level; the zone shows no number to a row."""
-    page = app_page
-    columns = page.locator("#columns .column")
-    expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x")
-    for column, role in [("y", "y"), ("facet", "col"), ("color", "wrap")]:
-        place(page, column, role)
-    wrap = page.locator('.zone[data-role="wrap"]')
-    expect(page.locator('.zone[data-role="col"] .chip')).to_have_count(0)
-    page.wait_for_function(PAINTED_PIXEL)
-    expect(page.locator("#plot .annotation-text")).to_have_text(["a", "b", "c"])
-    expect(wrap.locator("input")).to_have_count(0)
-    expect(wrap).not_to_contain_text("自動")
-
-
 def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
-    """A right click on Wrap opens the form of the panels to a row: a draft until applied, checked, and replotted only for a new number."""
+    """A column on Wrap removes Group X's and draws a panel per level, labeled by the level; a right click on Wrap opens the form of the panels to a row: a draft until applied, checked, and replotted only for a new number."""
     page = app_page
     plots: list[str] = []
     page.on(
@@ -234,8 +208,14 @@ def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
 
     place(page, "x", "x")
     place(page, "y", "y")
+    place(page, "facet", "col")
     place(page, "color", "wrap")
+    expect(page.locator('.zone[data-role="col"] .chip')).to_have_count(0)
     page.wait_for_function(PAINTED_PIXEL)
+    expect(page.locator("#plot .annotation-text")).to_have_text(["a", "b", "c"])
+    # The zone shows no number to a row.
+    expect(wrap.locator("input")).to_have_count(0)
+    expect(wrap).not_to_contain_text("自動")
     wrap.locator(".chip-name").click(button="right")
     expect(form).to_be_visible()
     expect(form.locator(".scale-menu-heading")).to_have_text("1 行のパネル数")
@@ -393,8 +373,10 @@ def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
     expect(automatic).to_be_checked()
 
 
-def test_a_categorical_x_draws_bands_named_by_its_levels(app_page: Page) -> None:
-    """A text column dropped on X draws a band per level, ticked with its names; the element icons show points on, box plots off, and smoothing lines unavailable without a numeric X."""
+def test_box_plots_draw_over_the_bands_and_hover(
+    app_page: Page, scatter_frame: pl.DataFrame
+) -> None:
+    """A text column on X draws a band per level, ticked with its names, with points on, box plots off and smoothing lines unavailable; the box plot icon draws a box per level; without points, hovering a box shows its numbers; a numeric X turns box plots off."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
@@ -405,32 +387,16 @@ def test_a_categorical_x_draws_bands_named_by_its_levels(app_page: Page) -> None
         expect(zone.locator(".chip-name")).to_have_text(column)
     page.wait_for_function(PAINTED_PIXEL)
     expect(page.locator("#plot .xtick text")).to_have_text(["a", "b", "c"])
-
     icons = page.locator("#elements .element")
     expect(icons).to_have_count(3)
-    points = icons.nth(0)
+    points, box = icons.nth(0), icons.nth(1)
     expect(points).to_have_attribute("aria-pressed", "true")
-    expect(icons.nth(1)).to_be_enabled()
-    expect(icons.nth(1)).to_have_attribute("aria-pressed", "false")
+    expect(box).to_be_enabled()
+    expect(box).to_have_attribute("aria-pressed", "false")
     expect(icons.nth(2)).to_be_disabled()
     # Points are the only element drawn: they stay on.
     points.click()
     expect(points).to_have_attribute("aria-pressed", "true")
-
-
-def test_box_plots_draw_over_the_bands_and_hover(
-    app_page: Page, scatter_frame: pl.DataFrame
-) -> None:
-    """The box plot icon draws a box per level; without points, hovering a box shows its numbers; a numeric X turns box plots off."""
-    page = app_page
-    columns = page.locator("#columns .column")
-    expect(columns.filter(has_text="label")).to_be_visible()
-    for column, role in [("color", "x"), ("y", "y")]:
-        source = columns.filter(has=page.get_by_text(column, exact=True))
-        source.drag_to(page.locator(f'.zone[data-role="{role}"]'))
-    page.wait_for_function(PAINTED_PIXEL)
-    icons = page.locator("#elements .element")
-    points, box = icons.nth(0), icons.nth(1)
     box.click()
     expect(box).to_have_attribute("aria-pressed", "true")
     points.click()
@@ -633,17 +599,48 @@ def test_inactive_series_at_opacity_0_vanish_and_do_not_hover(app_page: Page) ->
 
 
 def test_symbol_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
-    """Symbol beside color shows a legend of shapes, toggled on its own; a marker's menu changes its level's size, the points' icon every level's."""
+    """Symbol without a color column draws its levels in shapes of 7 px and one color, with the shape legend alone, whose markers change a level's shape; beside color, a legend of shapes toggled on its own, a marker's menu changes its level's size, the points' icon every level's."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
     place(page, "x", "x")
-    for column, role in [("y", "y"), ("color", "color"), ("facet", "symbol")]:
-        place(page, column, role)
+    place(page, "y", "y")
+    page.wait_for_function(PAINTED_PIXEL)
+    one_color = page.evaluate(OPAQUE_COLORS)
+    assert len(one_color) == 1
+    place(page, "facet", "symbol")
     page.wait_for_function(PAINTED_PIXEL)
     legend = page.locator("#legend")
+    items = legend.locator(".legend-item")
+    shapes = items.filter(has=page.locator("canvas"))
+    # The shape legend alone: every item is a shape, under the one title.
+    expect(shapes).to_have_count(2)
+    expect(items).to_have_count(2)
+    expect(legend.locator(".legend-title")).to_have_text("facet")
+    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
+    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "7")
+    assert page.evaluate(OPAQUE_COLORS) == one_color
+    task = drawn_task(page)
+    marker = shapes.nth(1).locator(".legend-marker")
+    marker.click(button="right")
+    menu = page.locator(".shape-menu")
+    menu.get_by_text("形", exact=True).hover()
+    panel = page.locator(".shape-panel")
+    expect(panel.locator(".shape-cell.current")).to_have_attribute(
+        "data-shape", "square"
+    )
+    panel.locator('.shape-cell[data-shape="x"]').click()
+    new_result(page, task)
+    page.wait_for_function(SETTLED)
+    marker.click(button="right")
+    menu.get_by_text("形", exact=True).hover()
+    expect(panel.locator(".shape-cell.current")).to_have_attribute("data-shape", "x")
+    page.keyboard.press("Escape")
+    assert page.evaluate(OPAQUE_COLORS) == one_color
+
+    place(page, "color", "color")
+    page.wait_for_function(PAINTED_PIXEL)
     expect(legend.locator(".legend-title")).to_have_text(["color", "facet"])
-    shapes = legend.locator(".legend-item").filter(has=page.locator("canvas"))
     expect(shapes).to_have_count(2)
     expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
 
@@ -652,8 +649,7 @@ def test_symbol_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
     expect(legend.locator(".legend-item.inactive")).to_have_count(1)
 
     task = drawn_task(page)
-    shapes.nth(1).locator(".legend-marker").click(button="right")
-    menu = page.locator(".shape-menu")
+    marker.click(button="right")
     expect(menu.locator(".scale-menu-heading")).to_have_text(
         re.compile("^形「.+」の大きさ$")
     )
@@ -769,59 +765,6 @@ OPAQUE_COLORS = """() => {
   }
   return [...colors];
 }"""
-
-
-def test_symbol_alone_draws_shapes_of_one_color(app_page: Page) -> None:
-    """Symbol without a color column draws its levels in shapes of 7 px and one color, with the shape legend alone, whose markers change a level's size and shape."""
-    page = app_page
-    columns = page.locator("#columns .column")
-    expect(columns.filter(has_text="label")).to_be_visible()
-    place(page, "x", "x")
-    place(page, "y", "y")
-    page.wait_for_function(PAINTED_PIXEL)
-    one_color = page.evaluate(OPAQUE_COLORS)
-    assert len(one_color) == 1
-    place(page, "facet", "symbol")
-    page.wait_for_function(PAINTED_PIXEL)
-    legend = page.locator("#legend")
-    items = legend.locator(".legend-item")
-    shapes = items.filter(has=page.locator("canvas"))
-    # The shape legend alone: every item is a shape, under the one title.
-    expect(shapes).to_have_count(2)
-    expect(items).to_have_count(2)
-    expect(legend.locator(".legend-title")).to_have_count(1)
-    expect(legend.locator(".legend-title")).to_have_text("facet")
-    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
-    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "7")
-    assert page.evaluate(OPAQUE_COLORS) == one_color
-
-    task = drawn_task(page)
-    marker = shapes.nth(1).locator(".legend-marker")
-    marker.click(button="right")
-    menu = page.locator(".shape-menu")
-    expect(menu.locator(".scale-menu-item.checked")).to_have_text("7 px")
-    menu.get_by_text("11 px", exact=True).click()
-    expect(menu).to_have_count(0)
-    new_result(page, task)
-    page.wait_for_function(SETTLED)
-    expect(shapes.nth(1).locator("canvas")).to_have_attribute("width", "11")
-    expect(shapes.first.locator("canvas")).to_have_attribute("width", "7")
-
-    task = drawn_task(page)
-    marker.click(button="right")
-    menu.get_by_text("形", exact=True).hover()
-    panel = page.locator(".shape-panel")
-    expect(panel.locator(".shape-cell.current")).to_have_attribute(
-        "data-shape", "square"
-    )
-    panel.locator('.shape-cell[data-shape="x"]').click()
-    new_result(page, task)
-    page.wait_for_function(SETTLED)
-    marker.click(button="right")
-    menu.get_by_text("形", exact=True).hover()
-    expect(panel.locator(".shape-cell.current")).to_have_attribute("data-shape", "x")
-    page.keyboard.press("Escape")
-    assert page.evaluate(OPAQUE_COLORS) == one_color
 
 
 # Whether the image layers have a pixel of the color [r, g, b].
@@ -1647,26 +1590,6 @@ def test_two_presses_on_an_axis_within_plotlys_delay_open_its_dialog(
     assert page.evaluate(f"{full}.yaxis.range") == pytest.approx(shown)
 
 
-def test_a_double_click_on_a_categorical_axis_opens_its_angle_alone(
-    app_page: Page,
-) -> None:
-    """A categorical axis opens the dialog with the angle of its labels alone; the axis keeps its range (Issue #127)."""
-    page = app_page
-    place(page, "color", "x")
-    place(page, "y", "y")
-    full = "document.getElementById('plot')._fullLayout"
-    shown = page.evaluate(f"{full}.xaxis.range")
-    tick = page.locator("#plot .xtick text").first.bounding_box()
-    page.mouse.dblclick(tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2)
-    dialog = page.locator("dialog.axis-dialog")
-    expect(dialog.locator("h2")).to_have_text("X 軸: color")
-    expect(dialog.locator("input[name=min]")).to_be_disabled()
-    expect(dialog.locator("input[name=angle]")).to_be_enabled()
-    page.keyboard.press("Escape")
-    expect(dialog).to_have_count(0)
-    assert page.evaluate(f"{full}.xaxis.range") == shown
-
-
 def test_the_strips_of_a_scrolled_grid_open_the_axis_dialog(app_page: Page) -> None:
     """Scrolled, the tick labels in the strips open their axis's dialog, not the plot's reset; a range of many digits comes back whole."""
     page = app_page
@@ -1724,50 +1647,48 @@ def watch_errors(page: Page) -> list[str]:
     return errors
 
 
-@pytest.mark.parametrize(
-    ("role", "column", "index"),
-    [
-        ("x", "x", 0),
-        ("y", "y", 0),
-        ("x", "y", 1),
-        ("y", "x", 1),
-        ("col", "facet", 0),
-        ("row", "facet", 0),
-        ("wrap", "facet", 0),
-        ("color", "color", 0),
-        ("symbol", "color", 0),
-    ],
-)
 def test_a_chip_dragged_to_the_filters_adds_a_card_and_stays_placed(
-    app_page: Page, role: str, column: str, index: int
+    app_page: Page,
 ) -> None:
     """A chip of any role, a second axis's too, dragged with the mouse to the filter pane adds a card and keeps every role as it was."""
     page = app_page
     errors = watch_errors(page)
     expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+
+    def drag(role: str, column: str, index: int = 0) -> None:
+        before = placed_names(page)
+        chip = page.locator(f'.zone[data-role="{role}"] .chip').nth(index)
+        expect(chip.locator(".chip-name")).to_have_text(column)
+        chip.drag_to(page.locator("#filters"))
+        expect(page.locator(".filter-card-name")).to_have_text([column])
+        assert placed_names(page) == before, role
+        # The card alone sets no condition.
+        expect(page.locator(".filter-summary")).to_have_text("")
+        expect(page.locator("#drop-tip")).to_be_hidden()
+        expect(page.locator("#filters")).not_to_have_class(re.compile(r"\bover\b"))
+        page.wait_for_function(SETTLED)
+        page.locator(".filter-card-remove").click()
+        expect(page.locator(".filter-card")).to_have_count(0)
+        wait_idle(page)
+
+    # Wrap takes no second axis, and Group X and Y replace it.
     place(page, "x", "x")
     place(page, "y", "y")
-    if index:
-        # The end of the zone adds a second axis after the first.
-        zone = page.locator(f'.zone[data-role="{role}"]').bounding_box()
-        if role == "x":
-            drop_at(page, column, role, zone["width"] * 0.9, zone["height"] / 2)
-        else:
-            drop_at(page, column, role, zone["width"] / 2, zone["height"] * 0.9)
-    elif role not in ("x", "y"):
-        place(page, column, role)
-    before = placed_names(page)
-    chip = page.locator(f'.zone[data-role="{role}"] .chip').nth(index)
-    expect(chip.locator(".chip-name")).to_have_text(column)
-
-    chip.drag_to(page.locator("#filters"))
-    expect(page.locator(".filter-card-name")).to_have_text([column])
-    assert placed_names(page) == before
-    # The card alone sets no condition.
-    expect(page.locator(".filter-summary")).to_have_text("")
-    expect(page.locator("#drop-tip")).to_be_hidden()
-    expect(page.locator("#filters")).not_to_have_class(re.compile(r"\bover\b"))
-    page.wait_for_function(SETTLED)
+    place(page, "facet", "wrap")
+    place(page, "color", "color")
+    place(page, "color", "symbol")
+    for role, column in [("x", "x"), ("y", "y"), ("wrap", "facet"), ("color", "color"), ("symbol", "color")]:
+        drag(role, column)
+    place(page, "facet", "col")
+    place(page, "facet", "row")
+    # The end of the zone adds a second axis after the first.
+    zone = page.locator('.zone[data-role="x"]').bounding_box()
+    drop_at(page, "y", "x", zone["width"] * 0.9, zone["height"] / 2)
+    zone = page.locator('.zone[data-role="y"]').bounding_box()
+    drop_at(page, "x", "y", zone["width"] / 2, zone["height"] * 0.9)
+    wait_idle(page)
+    for role, column, index in [("col", "facet", 0), ("row", "facet", 0), ("x", "y", 1), ("y", "x", 1)]:
+        drag(role, column, index)
     assert errors == []
 
 

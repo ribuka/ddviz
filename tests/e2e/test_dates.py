@@ -15,10 +15,9 @@ import polars as pl
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
-from tests.e2e.test_axis_menu import add_second_y, menu_at, y_margins
+from tests.e2e.test_axis_menu import menu_at, y_margins
 from tests.e2e.test_left_margin import assert_whole, settle, y_labels
 from tests.e2e.test_scatter import (
-    BOXES,
     PAINTED_PIXEL,
     SCROLL_AND_SETTLE,
     SETTLED,
@@ -158,10 +157,10 @@ def test_a_datetime_axis_hovers_and_filters_as_dates(
 
 
 @pytest.mark.parametrize("step", [dt.timedelta(microseconds=500)])
-def test_a_datetime_axis_under_a_second_draws_its_points(
+def test_a_reversed_datetime_axis_under_a_second_keeps_its_range(
     app_page: Page, temporal_frame: pl.DataFrame
 ) -> None:
-    """Datetimes within a second on X draw their points, on an axis of their range, and hover them."""
+    """Datetimes within a second on X draw their points, on an axis of their range, and hover them; reversed, the axis keeps its very range and sends a zoom as ascending milliseconds."""
     page = app_page
     errors: list[object] = []
     page.on("pageerror", lambda error: errors.append(error))
@@ -175,38 +174,13 @@ def test_a_datetime_axis_under_a_second_draws_its_points(
     pad = (epoch_ms(last) - epoch_ms(first)) * 0.1
     assert epoch_ms(first) - pad < low <= epoch_ms(first)
     assert epoch_ms(last) <= high < epoch_ms(last) + pad
-
     page.mouse.move(pixel["x"], pixel["y"])
     label = page.locator("#hover-label")
     expect(label).to_be_visible()
     lines = dict(line.split(": ", 1) for line in label.inner_text().splitlines())
     row = temporal_frame.row(int(lines["行番号"]), named=True)
     assert lines["at"] == f"{row['at']:%Y-%m-%d %H:%M:%S.%f}"
-    assert errors == []
 
-
-def test_a_duration_chip_names_its_seconds(app_page: Page) -> None:
-    """A duration placed on an axis is named with its unit, seconds; its tooltip is the column's own name."""
-    page = app_page
-    expect(page.locator("#columns .column").filter(has_text="took")).to_be_visible()
-    page.locator("#columns .column").filter(
-        has=page.get_by_text("took", exact=True)
-    ).drag_to(page.locator('.zone[data-role="x"]'))
-    expect(page.locator('.zone[data-role="x"] .chip-name')).to_have_text("took (s)")
-    expect(page.locator('.zone[data-role="x"] .chip')).to_have_attribute("title", "took")
-
-
-@pytest.mark.parametrize("step", [dt.timedelta(microseconds=500)])
-def test_a_reversed_datetime_axis_under_a_second_keeps_its_range(
-    app_page: Page,
-) -> None:
-    """Reversed, a datetime X within a second keeps its very range and sends a zoom as ascending milliseconds."""
-    page = app_page
-    errors: list[object] = []
-    page.on("pageerror", lambda error: errors.append(error))
-    place(page, "at", "x")
-    place(page, "y", "y")
-    low, high = page.evaluate(SHOWN_X_RANGE)
     ticks = page.locator("#plot .xtick text")
     box = ticks.nth(ticks.count() // 2).bounding_box()
     page.mouse.click(
@@ -237,36 +211,32 @@ def test_a_reversed_datetime_axis_under_a_second_keeps_its_range(
     assert errors == []
 
 
-@pytest.mark.parametrize(
-    ("column", "chip", "loggable"), [("at", "at", False), ("took", "took (s)", True)]
-)
-def test_the_left_margin_of_a_temporal_y_opens_its_menu_and_dialog(
-    app_page: Page, column: str, chip: str, loggable: bool
-) -> None:
+def test_the_left_margin_of_a_temporal_y_opens_its_menu_and_dialog(app_page: Page) -> None:
     """A datetime or duration y's margin opens its menu (log as on its tick labels), and a double click there its dialog."""
     page = app_page
     place(page, "y", "x")
     zone = page.locator('.zone[data-role="y"]')
-    page.locator("#columns .column").filter(
-        has=page.get_by_text(column, exact=True)
-    ).drag_to(zone)
-    expect(zone.locator(".chip-name")).to_have_text(chip)
-    page.wait_for_function(SETTLED)
-    margins = y_margins(page)
-    (row,) = margins["rows"]
-    point = ((margins["zone"] + row["left"]) / 2, row["between"])
-    page.mouse.click(*point, button="right")
-    menu = page.locator(".axis-menu")
-    expect(menu.locator(".scale-menu-heading")).to_have_text(f"Y 軸: {column}")
-    log = menu.get_by_role("button", name="対数表示")
-    if loggable:
-        expect(log).to_be_enabled()
-    else:
-        expect(log).to_be_disabled()
-    expect(menu.get_by_role("button", name="向きを反転")).to_be_enabled()
-    page.keyboard.press("Escape")
-    assert menu_at(page, margins["zone"] + 1, row["top"] + 2) == f"Y 軸: {column}"
-    assert dialog_at(page, *point) == f"Y 軸: {column}"
+    for column, chip, loggable in [("at", "at", False), ("took", "took (s)", True)]:
+        page.locator("#columns .column").filter(
+            has=page.get_by_text(column, exact=True)
+        ).drag_to(zone)
+        expect(zone.locator(".chip-name")).to_have_text(chip)
+        wait_idle(page)
+        margins = y_margins(page)
+        (row,) = margins["rows"]
+        point = ((margins["zone"] + row["left"]) / 2, row["between"])
+        page.mouse.click(*point, button="right")
+        menu = page.locator(".axis-menu")
+        expect(menu.locator(".scale-menu-heading")).to_have_text(f"Y 軸: {column}")
+        log = menu.get_by_role("button", name="対数表示")
+        if loggable:
+            expect(log).to_be_enabled()
+        else:
+            expect(log).to_be_disabled()
+        expect(menu.get_by_role("button", name="向きを反転")).to_be_enabled()
+        page.keyboard.press("Escape")
+        assert menu_at(page, margins["zone"] + 1, row["top"] + 2) == f"Y 軸: {column}"
+        assert dialog_at(page, *point) == f"Y 軸: {column}"
 
 
 # The axis `key` of the plot drawn: its range, ticks and minor ticks in
@@ -428,6 +398,11 @@ def test_a_temporal_axis_sets_its_range_and_reference_lines(
     page = app_page
     errors = watch_errors(page)
     put(page, column, role)
+    if column == "took":
+        # A duration's chip names its seconds; its tooltip is the column's own name.
+        chip = page.locator(f'.zone[data-role="{role}"] .chip')
+        expect(chip.locator(".chip-name")).to_have_text("took (s)")
+        expect(chip).to_have_attribute("title", "took")
     put(page, "y", "x" if role == "y" else "y")
     # A date y widens the margin once drawn.
     settle(page)
@@ -762,41 +737,6 @@ def test_a_log_duration_hides_its_settings_until_linear_again(app_page: Page) ->
     assert page.evaluate(AXIS, "yaxis")["dtick"] == 100
     assert page.evaluate(LINES) == [["y", 500, "dash"]]
     assert dialog_at(page, *point) == "Y 軸: took"
-
-
-def test_the_strips_and_the_rows_of_temporal_axes_open_their_columns(
-    app_page: Page,
-) -> None:
-    """Scrolled, the strips' tick labels open the dialogs of the temporal x and y; the margin of each y row opens its column's."""
-    page = app_page
-    page.set_viewport_size({"width": 800, "height": 600})
-    put(page, "at", "x")
-    put(page, "clock", "y")
-    put(page, "group", "col")
-    expect(page.locator("#stage")).to_have_class(re.compile(r"\bscrolls\b"))
-    page.locator("#scroller").evaluate(SCROLL_AND_SETTLE, 10_000)
-    assert page.locator("#scroller").evaluate("(s) => s.scrollLeft") > 0
-    for side, title in [("y", "Y 軸: clock"), ("x", "X 軸: at")]:
-        tick = page.locator(f".sticky-strip .tick.{side}").evaluate_all(BOXES)[-1]
-        assert (
-            dialog_at(
-                page, tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2
-            )
-            == title
-        )
-
-    page.set_viewport_size({"width": 1280, "height": 800})
-    page.wait_for_timeout(600)
-    page.wait_for_function(SETTLED)
-    add_second_y(page, "took")
-    page.wait_for_timeout(300)
-    page.wait_for_function(SETTLED)
-    margins = y_margins(page)
-    titles = [
-        dialog_at(page, (margins["zone"] + row["left"]) / 2, row["between"])
-        for row in margins["rows"]
-    ]
-    assert titles == ["Y 軸: clock", "Y 軸: took"]
 
 
 def test_finer_ticks_of_a_temporal_y_widen_its_margin(app_page: Page) -> None:

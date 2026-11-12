@@ -150,7 +150,7 @@ def assert_aligned(page: Page, painted: bool = True) -> None:
 
 
 def test_long_y_labels_of_two_rows_show_whole(app_page: Page) -> None:
-    """Amounts of 1.06e+5 and long negatives on two Y rows show from their first character, in a wider margin."""
+    """Amounts of 1.06e+5 and long negatives on two Y rows show from their first character, in a wider margin; so do labels of milliseconds and of a log axis."""
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1200, "height": 800})
@@ -165,6 +165,31 @@ def test_long_y_labels_of_two_rows_show_whole(app_page: Page) -> None:
     assert any(t.startswith("−") and len(t) > 10 for t in texts), texts
     assert_whole(shown)
     assert_aligned(page)
+
+    # One Y again, of times: labels of milliseconds.
+    page.locator('.zone[data-role="y"] .chip-remove').last.click()
+    expect(page.locator('.zone[data-role="y"] .chip')).to_have_count(1)
+    settle(page)
+    place(page, "when", "y")
+    settle(page)
+    shown = y_labels(page)
+    assert any(":" in label["text"] for label in shown["labels"])
+    assert_whole(shown)
+
+    # A log axis.
+    place(page, "fine", "y")
+    settle(page)
+    ticks = page.locator("#plot .ytick text")
+    box = ticks.nth(ticks.count() // 2).bounding_box()
+    page.mouse.click(
+        box["x"] + box["width"] - 6, box["y"] + box["height"] / 2, button="right"
+    )
+    page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
+    page.wait_for_function(f"() => {FULL}.yaxis.type === 'log'")
+    settle(page)
+    shown = y_labels(page)
+    assert shown["margin"] > 50
+    assert_whole(shown)
     assert not errors
 
 
@@ -251,34 +276,6 @@ def test_a_scrolled_grid_keeps_the_labels_in_its_strip(app_page: Page) -> None:
     menu = page.locator(".axis-menu")
     expect(menu.locator(".scale-menu-heading")).to_have_text("Y 軸: fine")
     page.keyboard.press("Escape")
-    assert not errors
-
-
-def test_times_and_a_log_axis_show_whole(app_page: Page) -> None:
-    """Labels of milliseconds and of a log axis show whole."""
-    page = app_page
-    errors = watch_errors(page)
-    page.set_viewport_size({"width": 1200, "height": 800})
-    place(page, "n", "x")
-    place(page, "when", "y")
-    settle(page)
-    shown = y_labels(page)
-    assert any(":" in label["text"] for label in shown["labels"])
-    assert_whole(shown)
-
-    place(page, "fine", "y")
-    settle(page)
-    ticks = page.locator("#plot .ytick text")
-    box = ticks.nth(ticks.count() // 2).bounding_box()
-    page.mouse.click(
-        box["x"] + box["width"] - 6, box["y"] + box["height"] / 2, button="right"
-    )
-    page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
-    page.wait_for_function(f"() => {FULL}.yaxis.type === 'log'")
-    settle(page)
-    shown = y_labels(page)
-    assert shown["margin"] > 50
-    assert_whole(shown)
     assert not errors
 
 
