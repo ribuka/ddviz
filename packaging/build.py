@@ -23,6 +23,35 @@ DIST = ROOT / "dist" / "ddviz"
 NOTICES = ("LICENSE-WebView2-SDK.txt", "NOTICE.txt")
 
 
+def busy_files(folder: Path) -> list[Path]:
+    """List the files in ``folder`` that cannot be opened for writing.
+
+    A running ``ddviz.exe`` keeps its exe and DLLs open, and PyInstaller's
+    ``--clean`` fails to delete them only after the whole build. Renaming the
+    folder is no test: Windows allows it while the exe runs.
+
+    Parameters
+    ----------
+    folder : Path
+        The folder to check. A missing folder has no busy files.
+
+    Returns
+    -------
+    list[Path]
+        The busy files.
+    """
+    busy = []
+    for path in sorted(folder.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            with path.open("r+b"):
+                pass
+        except PermissionError:
+            busy.append(path)
+    return busy
+
+
 def main() -> int:
     r"""Build ``dist\ddviz``.
 
@@ -31,6 +60,15 @@ def main() -> int:
     int
         Exit code.
     """
+    busy = busy_files(DIST)
+    if busy:
+        print(
+            f"error: {DIST} is in use; close ddviz.exe and build again. "
+            f"In use: {busy[0]}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
     subprocess.run(
         [
             sys.executable,
