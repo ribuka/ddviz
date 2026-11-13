@@ -292,3 +292,42 @@ def test_a_replaced_file_moving_a_name_reuses_no_part(tmp_path: Path) -> None:
         values = _values(table)
         assert values["source"] == [None, None, "mine", "yours"]
         assert values["source_2"] == [str(first)] * 2 + [str(second)] * 2
+
+
+def _alias(real: Path, how: str) -> Path:
+    """Return another spelling of a folder: a junction to it, or a path through ``..``."""
+    if how == "dotdot":
+        (real.parent / "x").mkdir()
+        return real.parent / "x" / ".." / real.name
+    _winapi = pytest.importorskip("_winapi")
+    alias = real.parent / "alias"
+    _winapi.CreateJunction(str(real), str(alias))
+    return alias
+
+
+@pytest.mark.parametrize("how", ["junction", "dotdot"])
+def test_another_spelling_of_the_input_has_its_own_paths(
+    tmp_path: Path, how: str
+) -> None:
+    """The same folder opened by another path, sharing the cache, shows that path.
+
+    The cache knows the input by its resolved path, and the parts of the
+    added columns made for one spelling are not read for the other.
+    """
+    real = tmp_path / "real"
+    first = _write(real / "a.parquet", _frame([0, 1]))
+    second = _write(real / "b.parquet", _frame([2]))
+    with _serve(tmp_path, [real], False) as client:
+        summary = client.get("/api/summary", params={"column": "source"}).json()
+        assert dict(map(tuple, summary["levels"])) == {str(first): 2, str(second): 1}
+    alias = _alias(real, how)
+    expected = [str((alias / "a.parquet").absolute())] * 2
+    expected.append(str((alias / "b.parquet").absolute()))
+    assert expected[0] != str(first)
+    with _serve(tmp_path, [alias], False) as client:
+        assert len(list((tmp_path / "cache").glob("*/source.json"))) == 1
+        meta = _plot(client, XY)["meta"]
+        assert _values(_table(client, meta["task"]))["source"] == expected
+        filters = [{"column": "source", "levels": [expected[2]]}]
+        meta = _plot(client, XY, filters=filters)["meta"]
+        assert _values(_table(client, meta["task"]))["source"] == expected[2:]

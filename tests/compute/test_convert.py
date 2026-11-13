@@ -35,7 +35,7 @@ def _convert(source: Path, tmp_path: Path, columns: list[str]) -> dict[str, list
         c["name"]: c["dtype"] for c in manifest["columns"] if c["name"] in columns
     }
     generated = {c: k for c, k in manifest["generated"].items() if c in columns}
-    keys = {c: part_key(dtypes[c], generated.get(c)) for c in columns}
+    keys = {c: part_key(dtypes[c], generated.get(c), [str(source)]) for c in columns}
     cache = ColumnCache(tmp_path / "cache", [source], files)
     parts = {c: [str(p) for p in cache.parts(c, keys[c])] for c in columns}
     task = ConvertTask(

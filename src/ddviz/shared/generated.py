@@ -73,11 +73,14 @@ def generated_value(kind: str, path: str) -> str:
     raise ValueError(f"unknown added column: {kind}")
 
 
-def part_key(dtype: str, kind: str | None) -> str:
+def part_key(dtype: str, kind: str | None, paths: list[str]) -> str:
     """Return what names a column's parts in the column cache, besides its name.
 
     An added column's parts are told apart from those of a file's column of
     the same name and type: replacing a file can give a name to the other.
+    They are also named by the input's paths as given: the cache knows an
+    input by its resolved paths, so a junction or ``..`` opens the same
+    cache, while the values hold the paths unresolved.
 
     Parameters
     ----------
@@ -85,10 +88,16 @@ def part_key(dtype: str, kind: str | None) -> str:
         The input's type of the column.
     kind : str or None
         The kind of an added column; None for a column of the files.
+    paths : list of str
+        The input's paths as given (`ddviz.shared.inputs.unique`), which
+        with a file's path relative to them make its value.
 
     Returns
     -------
     str
         The key (`ddviz.shared.cache.ColumnCache.parts`).
     """
-    return dtype if kind is None else f"{dtype}\0added:{kind}"
+    if kind is None:
+        return dtype
+    given = "\0".join(str(Path(p).absolute()) for p in paths)
+    return f"{dtype}\0added:{kind}\0{given}"

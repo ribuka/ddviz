@@ -176,7 +176,7 @@ class Source:
 
     def _key(self, column: str) -> str:
         """Return what names the column's parts besides its name (`ddviz.shared.generated.part_key`)."""
-        return part_key(self._dtypes[column], self._generated.get(column))
+        return part_key(self._dtypes[column], self._generated.get(column), self.paths)
 
     def parts(self, column: str) -> list[str]:
         """Return the column's parts in the cache, one per source file."""

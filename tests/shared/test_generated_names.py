@@ -44,6 +44,15 @@ def test_the_values_are_the_absolute_path_and_the_stem(
 
 def test_added_columns_key_their_parts_apart() -> None:
     """A file's column and an added one of the same name and type have other parts."""
-    assert part_key("String", None) == "String"
-    assert part_key("String", "source") != part_key("String", None)
-    assert part_key("String", "source") != part_key("String", "filename")
+    paths = ["C:/data"]
+    assert part_key("String", None, paths) == "String"
+    assert part_key("String", "source", paths) != part_key("String", None, paths)
+    assert part_key("String", "source", paths) != part_key("String", "filename", paths)
+
+
+def test_added_columns_key_their_parts_by_the_paths_given() -> None:
+    """Another spelling of the same input, such as through a junction, has other parts."""
+    assert part_key("String", "source", ["C:/data"]) != part_key(
+        "String", "source", ["C:/alias"]
+    )
+    assert part_key("Int64", None, ["C:/data"]) == part_key("Int64", None, ["C:/b"])
