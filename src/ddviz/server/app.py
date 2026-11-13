@@ -81,7 +81,9 @@ def create_app(
         The application.
     """
     broker = TaskBroker(root)
-    source = Source(data_paths, recursive, cache_root, settings, broker)
+    source = Source(
+        data_paths, recursive, cache_root, root / "level-index", settings, broker
+    )
     results = Results()
     meter = MemoryMeter(frontend_pids)
     history = SearchHistory(

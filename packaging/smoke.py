@@ -5,8 +5,10 @@ Run from the repository root with ``uv run packaging/smoke.py`` after
 elsewhere (an unzipped release). It checks that the notices of the WebView2
 SDK are next to the exe and that no WebView2 Runtime is. It then writes a small Parquet file, starts
 ``ddviz.exe --worker`` and has it count the non-null values (polars and
-pyarrow, inside the exe), then checks the counts. The window is not opened:
-a CI runner has no desktop to show it on.
+pyarrow, inside the exe), then checks the counts. It also has workers write
+the index of a column's levels and search it (the filter card's candidates,
+`ddviz.compute.levelindex`), and checks what they found. The window is not
+opened: a CI runner has no desktop to show it on.
 """
 
 from __future__ import annotations
@@ -54,6 +56,55 @@ def run_worker(exe: Path, task: dict) -> list[dict]:
     return [json.loads(line) for line in proc.stdout.splitlines() if line]
 
 
+def run_task(exe: Path, task: dict, out: Path) -> dict:
+    """Run one task in ``exe --worker`` and return its manifest.
+
+    Parameters
+    ----------
+    exe : pathlib.Path
+        The ddviz exe.
+    task : dict
+        The task with its ``"kind"``.
+    out : pathlib.Path
+        Directory the task writes into.
+
+    Returns
+    -------
+    dict
+        The manifest the task wrote.
+    """
+    messages = run_worker(exe, {**task, "out": str(out)})
+    kinds = [m["type"] for m in messages]
+    if kinds[0] != "ready" or kinds[-1] != "done":
+        raise RuntimeError(f"unexpected messages: {messages}")
+    return json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+
+
+def check_levels(exe: Path, tmp: Path) -> None:
+    """Fail unless workers write the index of a column's levels and find the levels of a search.
+
+    Parameters
+    ----------
+    exe : pathlib.Path
+        The ddviz exe.
+    tmp : pathlib.Path
+        An empty directory to write into.
+    """
+    data = tmp / "levels.parquet"
+    values = ["ID10", "ID2", "abc", "ABC-1", "ID2", None, "ID10", "ID10"]
+    pq.write_table(pa.table({"g": values}), data)
+    index = tmp / "index.parquet"
+    task = {"kind": "level_index", "parts": [str(data)], "column": "g", "index": str(index)}
+    built = run_task(exe, task, tmp / "index")
+    if built["index"] != str(index) or built["n_levels"] != 4 or not index.is_file():
+        raise RuntimeError(f"unexpected index: {built}")
+    task = {"kind": "level_search", "index": str(index), "query": "id", "order": "count"}
+    found = run_task(exe, task, tmp / "search")
+    expected = {"levels": [["ID10", 3], ["ID2", 2]], "truncated": False, "n_levels": 4}
+    if {k: found[k] for k in expected} != expected:
+        raise RuntimeError(f"unexpected search: {found}")
+
+
 def check_layout(folder: Path) -> None:
     """Fail unless the folder has the notices and no bundled WebView2 Runtime.
 
@@ -88,21 +139,17 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="ddviz-smoke-") as tmp:
         data = Path(tmp) / "data.parquet"
         pq.write_table(pa.table({"x": [1.0, None, 3.0], "g": ["a", "b", None]}), data)
-        out = Path(tmp) / "out"
         task = {
             "kind": "nonnull",
             "paths": [str(data)],
             "names": ["x", "g"],
             "generated": [],
         }
-        messages = run_worker(exe, {**task, "out": str(out)})
-        kinds = [m["type"] for m in messages]
-        if kinds[0] != "ready" or kinds[-1] != "done":
-            raise RuntimeError(f"unexpected messages: {messages}")
-        manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
-    if manifest["rows"] != 3 or manifest["counts"] != [2, 2]:
-        raise RuntimeError(f"unexpected result: {manifest}")
-    print(f"ok: {exe} ran a nonnull task", flush=True)
+        manifest = run_task(exe, task, Path(tmp) / "out")
+        if manifest["rows"] != 3 or manifest["counts"] != [2, 2]:
+            raise RuntimeError(f"unexpected result: {manifest}")
+        check_levels(exe, Path(tmp))
+    print(f"ok: {exe} ran a nonnull task and the tasks of the levels", flush=True)
     return 0
 
 

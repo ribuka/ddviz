@@ -7,12 +7,14 @@ read one after another as one table, and so are several files
 uses for the first time are converted into the column cache before the plot
 task, and the plot reads them from there. The share of non-null values of
 each column is measured once after Load and kept in the cache; the filter
-pane's summary of a column is computed once per column.
+pane's summary of a column is computed once per column, and so is the index
+of a column's levels that a filter card searches.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -29,6 +31,8 @@ from ddviz.shared.inputs import parquet_files, unique
 from ddviz.shared.scatter import Filter
 from ddviz.shared.tasks import (
     ConvertTask,
+    LevelIndexTask,
+    LevelSearchTask,
     NonnullTask,
     SchemaTask,
     SourceFiles,
@@ -41,6 +45,8 @@ from ddviz.shared.tasks import (
 # discards them when a source file is added, removed or changed.
 SCHEMA_JSON = "schema.json"
 NONNULL = "nonnull.json"
+# Orders of a filter card's levels (`ddviz.compute.levelindex.ORDERS`).
+LEVEL_ORDERS = ("name", "count")
 
 
 class Source:
@@ -55,6 +61,9 @@ class Source:
         For a folder, also read the files in its subfolders.
     cache_root : pathlib.Path
         Directory of the column cache; kept across runs.
+    index_dir : pathlib.Path
+        Directory of the indexes of the levels a filter card searches, under
+        the run's directory, which the server removes when it stops.
     settings : Settings
         Limits of the column cache.
     broker : TaskBroker
@@ -66,12 +75,14 @@ class Source:
         paths: list[str],
         recursive: bool,
         cache_root: Path,
+        index_dir: Path,
         settings: Settings,
         broker: TaskBroker,
     ) -> None:
         self.paths = [str(p) for p in unique([Path(p) for p in paths])]
         self.recursive = recursive
         self._cache_root = cache_root
+        self._index_dir = index_dir
         self._settings = settings
         self._broker = broker
         self._schema: list[dict] | None = None
@@ -101,6 +112,12 @@ class Source:
         self._summaries: dict[str, dict] = {}
         # One summary pool task at a time: a new task kills the running one.
         self._summary_lock = asyncio.Lock()
+        # The index of each column's levels a filter card searched: its path,
+        # or None for a column with too many levels, with its levels
+        # (`ddviz.compute.levelindex.build_index`).
+        self._indexes: dict[str, dict] = {}
+        # One levels pool task at a time, as for the summary pool.
+        self._levels_lock = asyncio.Lock()
 
     async def schema(self) -> list[dict]:
         """Return the columns of the input, reading them on the first call.
@@ -329,6 +346,73 @@ class Source:
                 ensure_done(end)
                 self._summaries[column] = end.take()
         return self._summaries[column]
+
+    async def filter_levels(self, column: str, query: str, order: str) -> dict:
+        """Return the levels of a categorical column that match a search, for a filter card.
+
+        The first search of a column converts it if needed and writes the
+        index of its levels (`ddviz.compute.levelindex`); later searches read
+        only the index. A column with too many levels is known as such
+        from then on. A failed index is written again on the next search.
+
+        Parameters
+        ----------
+        column : str
+            A categorical column.
+        query : str
+            The search input; blank keeps every level.
+        order : {"name", "count"}
+            The order of the levels.
+
+        Returns
+        -------
+        dict
+            ``levels`` (``[value, count]`` pairs, at most 100; None for a
+            column with too many levels), ``truncated`` and ``n_levels``.
+        """
+        numeric = await self.numeric()
+        if column not in numeric:
+            raise HTTPException(400, f"unknown column: {column}")
+        if numeric[column]:
+            raise HTTPException(400, f"not a categorical column: {column}")
+        if order not in LEVEL_ORDERS:
+            raise HTTPException(400, f"unknown order: {order}")
+        async with self._levels_lock:
+            index = self._indexes.get(column)
+            if index is None:
+                index = await self._build_index(column)
+                self._indexes[column] = index
+            if index["index"] is None:
+                return {
+                    "levels": None,
+                    "truncated": False,
+                    "n_levels": index["n_levels"],
+                }
+            end = await self._broker.run(
+                LevelSearchTask(index["index"], query, order), "levels"
+            )
+            ensure_done(end)
+            found = end.take()
+        return {k: found[k] for k in ("levels", "truncated", "n_levels")}
+
+    async def _build_index(self, column: str) -> dict:
+        """Convert a column if needed and write the index of its levels, in the levels pool.
+
+        The index is named by a hash of the column's parts, which tell its
+        type, an added column's kind and the input's paths besides its name.
+        """
+        await self.convert([column], "levels")
+        parts = self.parts(column)
+        name = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:32]
+        path = self._index_dir / f"{name}.parquet"
+        await asyncio.to_thread(self._index_dir.mkdir, parents=True, exist_ok=True)
+        end = await self._broker.run(LevelIndexTask(parts, column, str(path)), "levels")
+        if end.type != "done":
+            # A killed task may leave its file half written.
+            path.with_name(path.name + ".partial").unlink(missing_ok=True)
+        ensure_done(end)
+        found = end.take()
+        return {"index": found["index"], "n_levels": found["n_levels"]}
 
 
 def _write_json(path: Path, value: object) -> None:

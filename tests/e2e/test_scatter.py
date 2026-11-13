@@ -548,7 +548,7 @@ def keyword_frame() -> pl.DataFrame:
 def test_a_column_with_too_many_levels_filters_by_contained_text(
     app_page: Page, scatter_frame: pl.DataFrame
 ) -> None:
-    """The label column, one level per row, gets a text box; the plot then draws only the rows whose label holds every keyword, in any case and order; a blank box keeps every row."""
+    """The label column, one level per row, switched to its text box (部分一致); the plot then draws only the rows whose label holds every keyword, in any case and order; a blank box keeps every row."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
@@ -557,7 +557,9 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
     source = columns.filter(has=page.get_by_text("label", exact=True))
     source.drag_to(page.locator("#filters"))
     card = page.locator(".filter-card")
-    expect(card).to_contain_text("部分一致で絞る")
+    # Its 2000 levels are few enough to search: the card starts with them.
+    card.locator('.filter-mode [data-mode="contains"]').click()
+    expect(card).to_contain_text("2,000 水準から部分一致で絞る")
     status = page.locator("#status")
     task = drawn_task(page)
     box = card.locator(".filter-contains input")
