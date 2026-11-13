@@ -225,7 +225,9 @@ def test_a_reversed_datetime_axis_under_a_second_keeps_its_range(
     assert errors == []
 
 
-def test_the_left_margin_of_a_temporal_y_opens_its_menu_and_dialog(app_page: Page) -> None:
+def test_the_left_margin_of_a_temporal_y_opens_its_menu_and_dialog(
+    app_page: Page,
+) -> None:
     """A datetime or duration y's margin opens its menu (log as on its tick labels), and a double click there its dialog."""
     page = app_page
     place(page, "y", "x")
@@ -591,4 +593,30 @@ def test_calendar_ticks_of_a_zoned_y_stay_on_its_local_years(
     texts = page.evaluate(TICKS, "yaxis")["text"]
     strip = page.locator(".sticky-labels:not([hidden]) .sticky-strip .tick.y")
     assert strip.all_text_contents() == texts
+    assert errors == []
+
+
+def test_a_zoomed_datetime_axis_keeps_its_range_over_an_edit(app_page: Page) -> None:
+    """A datetime x zoomed keeps its milliseconds when a color column is added, and asks the view at them."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "at", "x")
+    place(page, "y", "y")
+    low, high = page.evaluate(SHOWN_X_RANGE)
+    third = (high - low) / 3
+    zoomed = [low + third, high - third]
+    with page.expect_request("**/api/view"):
+        page.evaluate(
+            """([a, b]) => import("/static/js/temporal.js").then((m) =>
+              Plotly.relayout("plot", {"xaxis.range": [m.dateText(a), m.dateText(b)]}))""",
+            zoomed,
+        )
+    page.wait_for_function(SETTLED)
+    wait_idle(page)
+    with page.expect_request("**/api/view") as request:
+        place(page, "group", "color")
+    (x_range,) = request.value.post_data_json["x_ranges"]
+    assert x_range == [pytest.approx(v, abs=1e-3) for v in zoomed]
+    assert page.evaluate(f"{FULL}.xaxis.type") == "date"
+    assert page.evaluate(SHOWN_X_RANGE) == pytest.approx(zoomed, abs=1e-3)
     assert errors == []

@@ -8,9 +8,10 @@ from collections.abc import Callable
 import pytest
 from playwright.sync_api import Page, Route, expect
 
+from tests.e2e.test_axis_chips import spans, wait_aligned
 from tests.e2e.test_axis_format import open_dialog
 from tests.e2e.test_axis_menu import _right_click_tick, add_second_y
-from tests.e2e.test_scatter import SETTLED, place, wait_idle, watch_errors
+from tests.e2e.test_scatter import SETTLED, drop_at, place, wait_idle, watch_errors
 
 pytestmark = pytest.mark.e2e
 
@@ -83,6 +84,12 @@ def test_edits_of_the_figure_keep_the_zoomed_ranges(app_page: Page) -> None:
         page.locator(".scale-menu").get_by_text("lowess", exact=True).click()
 
     keeps(lowess)
+
+    def frac() -> None:
+        smooth.click(button="right")
+        page.locator(".scale-menu").get_by_text("0.3", exact=True).click()
+
+    keeps(frac)
     keeps(points.click)
     keeps(points.click)
     if line.is_enabled():
@@ -238,4 +245,88 @@ def test_a_pan_while_an_edit_is_aggregated_wins(app_page: Page) -> None:
     expect(page.locator('#elements .element[data-element="smooth"]')).to_have_attribute(
         "aria-pressed", "false"
     )
+    assert errors == []
+
+
+def x_drop(page: Page, edit: Callable[[], None], names: list[str]) -> dict:
+    """Run an edit of X that plots again at a view, check X's columns, and return the view asked for."""
+    with page.expect_request(VIEW) as request:
+        edit()
+    expect(page.locator('.zone[data-role="x"] .chip-name')).to_have_text(names)
+    settle(page)
+    return request.value.post_data_json
+
+
+def test_reordered_replaced_and_added_again_axes_keep_their_own_ranges(
+    app_page: Page,
+) -> None:
+    """Two x axes zoomed apart keep their ranges by column when reordered; a column put in by a replacement, or removed and added again, is whole."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "x", "x")
+    place(page, "y", "y")
+    x_zone = page.locator('.zone[data-role="x"]')
+    zone = x_zone.bounding_box()
+    drop_at(page, "y", "x", zone["width"] - 5, zone["height"] / 2)
+    expect(x_zone.locator(".chip-name")).to_have_text(["x", "y"])
+    settle(page)
+    zoom(page, {"xaxis.range": X_ZOOM, "xaxis2.range": Y_ZOOM})
+    whole_y = shown(page, "yaxis")
+
+    # y dragged before x: each column keeps its own range.
+    def reorder() -> None:
+        x_zone.locator(".chip").nth(1).drag_to(
+            x_zone, target_position={"x": 3, "y": zone["height"] / 2}
+        )
+
+    body = x_drop(page, reorder, ["y", "x"])
+    assert body["x_ranges"] == [pytest.approx(Y_ZOOM), pytest.approx(X_ZOOM)]
+    assert shown(page, "xaxis") == pytest.approx(Y_ZOOM)
+    assert shown(page, "xaxis2") == pytest.approx(X_ZOOM)
+    assert shown(page, "yaxis") == pytest.approx(whole_y)
+
+    # facet replaces x: y keeps its range, facet is whole.
+    wait_aligned(page, "x", 2)
+    axes = spans(page, "x", 2)["axes"]
+    middle = (axes[1][0] + axes[1][1]) / 2 - zone["x"]
+    body = x_drop(
+        page,
+        lambda: drop_at(page, "facet", "x", middle, zone["height"] / 2),
+        ["y", "facet"],
+    )
+    assert body["x_ranges"][0] == pytest.approx(Y_ZOOM)
+    assert shown(page, "xaxis") == pytest.approx(Y_ZOOM)
+    facet = page.evaluate(f"{FULL}.xaxis2.range")
+    assert facet[0] < 0 and facet[1] > 1
+
+    # x, removed above, comes back whole.
+    body = x_drop(
+        page,
+        lambda: drop_at(page, "x", "x", zone["width"] - 5, zone["height"] / 2),
+        ["y", "facet", "x"],
+    )
+    assert body["x_ranges"][0] == pytest.approx(Y_ZOOM)
+    lo, hi = shown(page, "xaxis3")
+    assert lo < -2 and hi > 2
+    assert errors == []
+
+
+def test_a_zoomed_log_axis_keeps_its_range(app_page: Page) -> None:
+    """A log x zoomed keeps its exponents over an edit, and asks the view in values."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "x", "x")
+    place(page, "y", "y")
+    _right_click_tick(page, "x")
+    page.locator(".axis-menu").get_by_role("button", name="対数表示").click()
+    page.wait_for_function(f"() => {FULL}.xaxis.type === 'log'")
+    settle(page)
+    zoom(page, {"xaxis.range": [-1, 0]})
+    with page.expect_request(VIEW) as request:
+        page.locator('#elements .element[data-element="smooth"]').click()
+    (x_range,) = request.value.post_data_json["x_ranges"]
+    assert x_range == [pytest.approx(0.1), pytest.approx(1.0)]
+    settle(page)
+    assert page.evaluate(f"{FULL}.xaxis.type") == "log"
+    assert shown(page, "xaxis") == pytest.approx([-1, 0])
     assert errors == []
