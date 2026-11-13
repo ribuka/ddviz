@@ -37,7 +37,8 @@ def test_the_values_are_the_absolute_path_and_the_stem(
     assert generated_value("source", "run.01.parquet") == str(
         tmp_path / "run.01.parquet"
     )
-    assert generated_value("filename", r"C:\data\run.01.parquet") == "run.01"
+    nested = str(tmp_path / "data" / "run.01.parquet")
+    assert generated_value("filename", nested) == "run.01"
     with pytest.raises(ValueError):
         generated_value("other", "a.parquet")
 
