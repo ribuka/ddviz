@@ -339,3 +339,25 @@ def test_box_plots_without_points_keep_the_image_of_their_outliers(
     out.mkdir()
     run_plot(spec, out, lambda _: None)
     assert PlotManifest.read(out).images[0] is not None
+
+
+@pytest.mark.parametrize("ys", [[20.0, 30.0], [-30.0, -20.0]])
+def test_segments_of_one_column_outside_the_view_draw_nothing(
+    tmp_path: Path, ys: list[float]
+) -> None:
+    """Rows of one pixel column wholly above (or below) the view leave no pixel at its edge."""
+    frame = pl.DataFrame({"x": [0.5, 0.5, 0.2, 0.8], "y": [*ys, 5.0, 5.0]})
+    spec = _spec(tmp_path, frame)
+    overview = aggregate(spec)
+    view = View(
+        x_ranges=[[0.0, 1.0]], y_ranges=[[0.0, 10.0]], levels=overview.all_levels
+    )
+    agg = aggregate(ScatterSpec(**{**spec.__dict__, "view": view}))
+    # The rows at y 5 make no segment of one column: (0.2, 5) to (0.5, ys[0])
+    # and on cross the view; the segment between the rows at x 0.5 does not.
+    (x0, x1), w = agg.x_ranges[0], agg.grid.width
+    column = int((0.5 - x0) / (x1 - x0) * w)
+    rows = agg.lines.pixel // w
+    edge = 0 if ys[0] < 0 else agg.grid.height - 1
+    at_edge = agg.lines.pixel[(rows == edge)] % w
+    assert column not in set(at_edge.tolist())

@@ -213,8 +213,10 @@ def _spans(
     r1 = np.where(below, np.floor(lo) - 1, r1)
     r0 = np.where(above, np.floor(hi) + 1, r0)
     r1 = np.where(above, np.floor(a), r1)
-    r0 = np.clip(r0, 0, height - 1).astype(np.int64)
-    r1 = np.clip(r1, -1, height - 1).astype(np.int64)
+    # The rows of the panel among them: a part wholly above or below it
+    # shows nothing, rather than a row at its edge.
+    r0 = np.maximum(r0, 0).astype(np.int64)
+    r1 = np.minimum(r1, height - 1).astype(np.int64)
     col = column[starts]
     show = (r1 >= r0) & (col >= 0) & (col < width)
     if not show.any():
