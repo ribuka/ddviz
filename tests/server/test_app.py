@@ -460,7 +460,7 @@ def test_a_folder_plots_selects_and_lists_as_one_table(
         {"name": "n", "dtypes": ["Int32", "Int64"], "dtype": "Int64"}
     ]
     schema = client.get("/api/schema").json()
-    assert [c["name"] for c in schema] == folder_frame.columns
+    assert [c["name"] for c in schema] == [*folder_frame.columns, "source", "filename"]
     meta = _plot(client)["meta"]
     assert (
         meta["rows"]
@@ -473,7 +473,7 @@ def test_a_folder_plots_selects_and_lists_as_one_table(
     table = client.get("/api/table").json()
     assert table["rows"] == selected["rows"]
     names = [c["name"] for c in table["columns"]]
-    assert names == ["x", "y", "color", "facet", "label", "n"]
+    assert names == ["x", "y", "color", "facet", "label", "n", "source", "filename"]
     rows = folder_frame[table["index"]]
     columns = {c["name"]: c["values"] for c in table["columns"]}
     assert columns["label"] == rows["label"].to_list()

@@ -9,6 +9,7 @@ import polars as pl
 
 from ddviz.compute.progress import Emit
 from ddviz.shared.cache import PARTIAL
+from ddviz.shared.generated import generated_value
 from ddviz.shared.tasks import ConvertTask
 
 
@@ -69,7 +70,8 @@ def convert_columns(task: ConvertTask, emit: Emit) -> None:
     into one file peaked at about 5.4GB, against about 0.3GB for one column.
     A file lacking a column gets a part of nulls in the input's type, made
     without reading the file (100M rows in 0.04s). A part appears under its
-    name only once complete.
+    name only once complete. An added column (`ddviz.shared.generated`) gets
+    its file's value in every row, also made without reading the file.
 
     Parameters
     ----------
@@ -97,12 +99,22 @@ def convert_columns(task: ConvertTask, emit: Emit) -> None:
                 }
             )
             done += 1
+            partial = Path(file + PARTIAL)
+            partial.parent.mkdir(parents=True, exist_ok=True)
+            kind = task.generated.get(column)
+            if kind is not None:
+                if rows is None:
+                    rows = scan.select(pl.len()).collect().item()
+                value = generated_value(kind, source)
+                pl.LazyFrame().select(
+                    pl.repeat(value, rows, dtype=pl.String).alias(column)
+                ).sink_parquet(partial)
+                os.replace(partial, file)
+                continue
             dtype = task.dtypes[column]
             if (column not in present or str(present[column]) != dtype) and not target:
                 target = input_dtypes(task.schema, task.dtypes)
             expr = column_expr(column, dtype, present, target)
-            partial = Path(file + PARTIAL)
-            partial.parent.mkdir(parents=True, exist_ok=True)
             if expr is not None:
                 scan.select(expr).sink_parquet(partial)
             else:
