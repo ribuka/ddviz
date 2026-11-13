@@ -228,6 +228,7 @@ def test_parse_filters_takes_a_range_or_levels_by_column_type() -> None:
         [{"column": "g", "levels": ["p"], "other": 1}],
         [{"column": "a", "contains": "1"}],
         [{"column": "g", "contains": ""}],
+        [{"column": "g", "contains": " 	　"}],
         [{"column": "g", "contains": 1}],
         [{"column": "g", "contains": "p", "levels": ["p"]}],
         [{"column": "g", "levels": ["p"]}, {"column": "g", "levels": ["q"]}],

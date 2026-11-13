@@ -1,4 +1,4 @@
-"""JS: filters.js writes the numbers of a filter card short."""
+"""JS: filters.js writes the numbers of a filter card short and sorts its levels."""
 
 from __future__ import annotations
 
@@ -28,3 +28,39 @@ def test_huge_numbers_stay_short(js_page: Page) -> None:
         list(cases),
     )
     assert result == list(cases.values())
+
+
+def _sort(page: Page, levels: list, *orders: str) -> list:
+    """Return the levels after sorting them by each of `orders` in turn."""
+    return page.evaluate(
+        """async ([levels, orders]) => {
+          const { sortLevels } = await import("/static/js/filters.js");
+          let out = levels;
+          for (const order of orders) out = sortLevels(out, order);
+          return out;
+        }""",
+        [levels, list(orders)],
+    )
+
+
+def test_name_keeps_the_order_of_the_summary(js_page: Page) -> None:
+    """Name leaves the levels in the natural order the summary gives."""
+    levels = [["ID2", 1], ["ID10", 7], ["a", 3], [None, 9]]
+    assert _sort(js_page, levels, "name") == levels
+
+
+def test_count_puts_the_most_rows_first_and_ties_by_name(js_page: Page) -> None:
+    """Count sorts by count, descending; equal counts keep the order of Name."""
+    levels = [["ID2", 5], ["ID10", 5], ["a", 9]]
+    assert [level for level, _ in _sort(js_page, levels, "count")] == [
+        "a",
+        "ID2",
+        "ID10",
+    ]
+
+
+def test_picking_the_same_order_again_changes_nothing(js_page: Page) -> None:
+    """Sorting twice by the same order gives the same list as once."""
+    levels = [["ID2", 5], ["ID10", 5], ["a", 9], ["b", 1]]
+    for order in ("name", "count"):
+        assert _sort(js_page, levels, order, order) == _sort(js_page, levels, order)

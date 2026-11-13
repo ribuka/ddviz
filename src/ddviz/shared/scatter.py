@@ -208,9 +208,10 @@ class Filter:
     levels : list of str or None
         Levels kept, for a categorical column.
     contains : str or None
-        Text the kept values contain, matched literally and case-sensitively,
-        for a categorical column with too many levels to tick
-        (`ddviz.compute.summary.MAX_FILTER_LEVELS`).
+        Keywords the kept values all contain, in any order, matched literally
+        and case-insensitively (`ddviz.shared.keywords`), for a categorical
+        column with too many levels to tick
+        (`ddviz.compute.summary.MAX_FILTER_LEVELS`); never blank.
     """
 
     column: str

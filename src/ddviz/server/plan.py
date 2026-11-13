@@ -199,7 +199,7 @@ def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
     ----------
     raw : list of dict
         ``{"column", "range"}`` for a numeric column, ``{"column",
-        "levels"}`` or ``{"column", "contains"}`` (a non-empty text) for a
+        "levels"}`` or ``{"column", "contains"}`` (a text that is not blank) for a
         categorical one; one per column.
     numeric : dict of str to bool
         Whether each column of the data is numeric.
@@ -244,10 +244,10 @@ def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
                 bounds is None
                 and levels is None
                 and isinstance(contains, str)
-                and contains
+                and contains.strip()
             )
             if not ok:
-                raise ValueError(f"{column} needs a non-empty text to contain")
+                raise ValueError(f"{column} needs a text that is not blank to contain")
             filters.append(Filter(column, contains=contains))
         else:
             ok = (

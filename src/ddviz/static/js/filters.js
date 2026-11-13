@@ -9,6 +9,10 @@
 // A condition goes to the plot when a slider is let go, a box (or the text
 // box) is left or Enter is pressed in it, or 0.4s after the last tick, so that a few ticks in
 // a row aggregate once.
+//
+// The "…" button of a card with its levels listed opens "Sort by": Name keeps
+// the order of the summary (natural), Count puts the most rows first. The
+// order belongs to the card and only moves the rows of the list.
 import { draggedColumn } from "./builder.js";
 import { levelText } from "./names.js";
 import { formatTemporal, isDateKind, parseTemporal } from "./temporal.js";
@@ -30,6 +34,71 @@ const TITLES = {
 // Bounds of a dragged height: the pane's own, and what it leaves the column list.
 const MIN_HEIGHT = 80;
 const MIN_COLUMNS_HEIGHT = 160;
+
+// Orders of the levels a card lists, by the "Sort by" menu.
+const LEVEL_ORDERS = [
+  ["name", "Name", "水準の名前の順（数字は値の順）"],
+  ["count", "Count", "行数の多い順（同じ行数は名前の順）"],
+];
+
+// Returns the `[level, count]` pairs of a summary in `order`: "name" keeps
+// them as given (the summary's natural order), "count" puts the larger
+// counts first, keeping that order among equal counts.
+export function sortLevels(levels, order) {
+  const sorted = [...levels];
+  if (order === "count") sorted.sort((a, b) => b[1] - a[1]);
+  return sorted;
+}
+
+// The open "Sort by" menu of a card, or null.
+let levelMenu = null;
+
+// Closes the "Sort by" menu of a card; tells whether it was open.
+function closeLevelMenu() {
+  const wasOpen = levelMenu !== null;
+  levelMenu?.remove();
+  levelMenu = null;
+  return wasOpen;
+}
+
+window.addEventListener("pointerdown", (event) => {
+  if (levelMenu && !levelMenu.contains(event.target) && !event.target.closest?.(".filter-card-sort")) {
+    closeLevelMenu();
+  }
+});
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeLevelMenu();
+});
+
+// Opens the "Sort by" menu of a card under `button`; `pick` gets the key.
+function openLevelMenu(button, order, pick) {
+  const menu = document.createElement("div");
+  menu.className = "scale-menu sort-menu filter-sort-menu";
+  const heading = document.createElement("div");
+  heading.className = "scale-menu-heading";
+  heading.textContent = "Sort by";
+  menu.append(heading);
+  for (const [key, text, title] of LEVEL_ORDERS) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "scale-menu-item";
+    row.dataset.order = key;
+    row.classList.toggle("checked", order === key);
+    row.textContent = text;
+    row.title = title;
+    row.addEventListener("click", () => {
+      closeLevelMenu();
+      pick(key);
+    });
+    menu.append(row);
+  }
+  document.body.append(menu);
+  const rect = button.getBoundingClientRect();
+  const width = menu.getBoundingClientRect().width;
+  menu.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - width - 4))}px`;
+  menu.style.top = `${rect.bottom + 2}px`;
+  levelMenu = menu;
+}
 
 // Returns a number short enough for the pane.
 export function formatNumber(value) {
@@ -178,7 +247,7 @@ export class FilterPane {
 
   add({ name, numeric }) {
     if (this.cards.some((c) => c.name === name)) return;
-    const card = { name, numeric, summary: null, range: null, levels: new Set(), contains: "", element: null };
+    const card = { name, numeric, summary: null, range: null, levels: new Set(), contains: "", order: "name", element: null };
     this.cards.push(card);
     // A folded pane opens to show the card; a maximized one stays so.
     if (this.state === "collapsed") this.setState("open");
@@ -295,7 +364,24 @@ export class FilterPane {
     close.textContent = "×";
     close.title = "このフィルタを外す";
     close.addEventListener("click", () => this.remove(card));
-    head.append(type, name, close);
+    head.append(type, name);
+    if (!card.numeric && card.summary && card.summary.levels !== null) {
+      const sort = document.createElement("button");
+      sort.type = "button";
+      sort.className = "filter-card-sort";
+      sort.textContent = "…";
+      sort.title = "水準の並べ替え";
+      sort.setAttribute("aria-label", "Sort by");
+      sort.addEventListener("click", () => {
+        if (closeLevelMenu()) return;
+        openLevelMenu(sort, card.order, (picked) => {
+          card.order = picked;
+          card.arrange?.();
+        });
+      });
+      head.append(sort);
+    }
+    head.append(close);
     element.append(head);
     const body = document.createElement("div");
     body.className = "filter-card-body";
@@ -438,6 +524,7 @@ export class FilterPane {
     bar.append(counter, clear);
     const list = document.createElement("div");
     list.className = "filter-levels";
+    const labels = new Map();
     const boxes = levels.map(([level, n]) => {
       const label = document.createElement("label");
       label.className = "filter-level";
@@ -458,9 +545,12 @@ export class FilterPane {
       num.className = "filter-level-count";
       num.textContent = n.toLocaleString();
       label.append(box, text, num);
-      list.append(label);
+      labels.set(level, label);
       return box;
     });
+    // Puts the rows in the card's order; the ticks stay as they are.
+    card.arrange = () => list.replaceChildren(...sortLevels(levels, card.order).map(([level]) => labels.get(level)));
+    card.arrange();
     const update = () => {
       const picked = card.levels.size;
       counter.textContent = picked ? `${picked} / ${levels.length} 水準を選択` : `${levels.length} 水準（選ぶと絞る）`;
@@ -478,7 +568,8 @@ export class FilterPane {
   }
 
   // A column with too many levels to list is filtered by the text its kept
-  // values contain (literally, case-sensitively); an empty box keeps every row.
+  // values contain: every word of it, in any order, literally and ignoring
+  // case (`ddviz.shared.keywords`); a blank box keeps every row.
   containsBody(card, body) {
     const { n_levels: count, nulls } = card.summary;
     const note = document.createElement("div");
@@ -491,9 +582,9 @@ export class FilterPane {
     input.type = "text";
     input.value = card.contains;
     input.placeholder = "含む文字列";
-    input.title = "この文字列を含む行だけを残す（大文字と小文字を区別する。空なら絞らない）";
+    input.title = "空白で区切った語をすべて含む行だけを残す（順不同。大文字と小文字を区別しない。空なら絞らない）";
     input.addEventListener("change", () => {
-      card.contains = input.value;
+      card.contains = input.value.trim();
       this.commit();
     });
     input.addEventListener("keydown", (event) => {
