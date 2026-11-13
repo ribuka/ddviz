@@ -28,9 +28,13 @@ ITEMS = [
 ]
 
 
+# Two names longer than the window is wide, told apart by their ends.
+LONG = ["a" * 150 + "_first", "a" * 150 + "_second"]
+
+
 @pytest.fixture
 def scatter_path(tmp_path: Path) -> Path:
-    """Write four numeric columns and three categorical ones of few levels."""
+    """Write four numeric columns, three categorical ones of few levels, and two of long names."""
     rng = np.random.default_rng(0)
     n = 600
     frame = pl.DataFrame(
@@ -39,6 +43,7 @@ def scatter_path(tmp_path: Path) -> Path:
             "kind": rng.choice(["a", "b", "c"], n),
             "site": rng.choice(["s", "t"], n),
             "grp": rng.choice(["g", "h"], n),
+            **{name: rng.normal(0, 1, n) for name in LONG},
         }
     )
     path = tmp_path / "menu.parquet"
@@ -161,6 +166,29 @@ def test_the_menu_fits_a_small_window(app_page: Page) -> None:
     assert menu.evaluate("(m) => m.scrollHeight > m.clientHeight")
     item(page, "Add to Wrap").click()
     expect(page.locator('.zone[data-role="wrap"] .chip-name')).to_have_text(["p1"])
+
+
+def test_the_axes_submenu_wraps_long_names_in_the_window(app_page: Page) -> None:
+    """The submenu of axes with long names stays in the window, their ends in sight, and replaces the one picked."""
+    page = app_page
+    expect(page.locator("#columns .column").filter(has_text="grp")).to_be_visible()
+    page.set_viewport_size({"width": WIDTH, "height": 600})
+    for name in LONG:
+        pick(page, name, "Add to Xaxis (Append)")
+    open_menu(page, "p1")
+    item(page, "Add to Xaxis (Overwrite)").hover()
+    submenu = page.locator(".column-submenu")
+    expect(submenu.locator(".scale-menu-item")).to_have_text([f"1. {LONG[0]}", f"2. {LONG[1]}"])
+    rect = submenu.bounding_box()
+    assert rect is not None
+    assert rect["x"] >= 0
+    assert rect["x"] + rect["width"] <= WIDTH
+    # Nothing is cut off: each name wraps within its item.
+    assert submenu.evaluate(
+        "(m) => [...m.children].every((b) => b.scrollWidth <= b.clientWidth)"
+    )
+    submenu.locator(".scale-menu-item").nth(1).click()
+    assert placed_names(page)["x"] == [LONG[0], "p1"]
 
 
 def test_local_filter_opens_the_pane_and_refuses_a_second_card(app_page: Page) -> None:

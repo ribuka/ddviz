@@ -24,6 +24,9 @@ const ITEMS = [
   ["wrap", "set", "Add to Wrap"],
 ];
 const PLACED = "既に配置済み";
+// The narrowest a submenu of long names is cut to beside the menu; with
+// less room on both sides, it takes the window's width over the menu.
+const SUBMENU_MIN_WIDTH = 120;
 
 // The open menu and its submenu, and the name of its column; null when closed.
 let open = null;
@@ -138,11 +141,28 @@ function axisMenu(row, role, names, pick) {
   });
   document.body.append(menu);
   const box = row.getBoundingClientRect();
-  const rect = menu.getBoundingClientRect();
   const { innerWidth, innerHeight } = window;
-  // Beside the menu on the right, or on the left without room.
-  const left = box.right + rect.width + 4 <= innerWidth ? box.right : box.left - rect.width;
+  const width = menu.getBoundingClientRect().width;
+  // The room beside the menu on the right and on the left.
+  const right = innerWidth - box.right - 4;
+  const leftRoom = box.left - 4;
+  let left;
+  if (width <= right) {
+    left = box.right;
+  } else if (width <= leftRoom) {
+    left = box.left - width;
+  } else {
+    // Long names: the submenu takes the wider side and wraps them; with
+    // little room on both sides, the window's width, over the menu.
+    const room = Math.max(right, leftRoom);
+    const cap = room >= SUBMENU_MIN_WIDTH ? room : innerWidth - 8;
+    menu.style.maxWidth = `${cap}px`;
+    menu.style.minWidth = `${Math.min(cap, SUBMENU_MIN_WIDTH)}px`;
+    const capped = menu.getBoundingClientRect().width;
+    left = room < SUBMENU_MIN_WIDTH ? 4 : right >= leftRoom ? box.right : box.left - capped;
+  }
+  const height = menu.getBoundingClientRect().height;
   menu.style.left = `${Math.max(4, left)}px`;
-  menu.style.top = `${Math.max(4, Math.min(box.top - 4, innerHeight - rect.height - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(box.top - 4, innerHeight - height - 4))}px`;
   return menu;
 }
