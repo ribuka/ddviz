@@ -43,7 +43,10 @@ _POLL_SECONDS = 0.2
 
 _ERROR_ALREADY_EXISTS = 183
 _ERROR_ACCESS_DENIED = 5
-_SW_RESTORE = 9
+_WM_SYSCOMMAND = 0x0112
+_SC_RESTORE = 0xF120
+_SMTO_ABORTIFHUNG = 0x0002
+_RESTORE_TIMEOUT_MS = 2000
 
 
 class Win32(Protocol):
@@ -238,8 +241,16 @@ class _RealWin32:
             ctypes.POINTER(wintypes.DWORD),
         ]
         u.GetWindowThreadProcessId.restype = wintypes.DWORD
-        u.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        u.ShowWindow.restype = wintypes.BOOL
+        u.SendMessageTimeoutW.argtypes = [
+            ctypes.c_void_p,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+            wintypes.UINT,
+            wintypes.UINT,
+            ctypes.c_void_p,
+        ]
+        u.SendMessageTimeoutW.restype = wintypes.LPARAM
         u.SetForegroundWindow.argtypes = [ctypes.c_void_p]
         u.SetForegroundWindow.restype = wintypes.BOOL
         self._dword = wintypes.DWORD
@@ -276,8 +287,21 @@ class _RealWin32:
         return self._kernel32.GetCurrentProcessId()
 
     def bring_to_front(self, hwnd: int) -> None:
-        """Restore the window when minimized, then ``SetForegroundWindow`` (`Win32.bring_to_front`)."""
+        """Restore the window when minimized, then ``SetForegroundWindow`` (`Win32.bring_to_front`).
+
+        The window restores itself on ``SC_RESTORE``, as when the user clicks
+        it in the taskbar. ``ShowWindow(SW_RESTORE)`` from this process leaves
+        WebView2 blank (white) after the user minimized the window.
+        """
         if self._user32.IsIconic(hwnd):
-            self._user32.ShowWindow(hwnd, _SW_RESTORE)
+            self._user32.SendMessageTimeoutW(
+                hwnd,
+                _WM_SYSCOMMAND,
+                _SC_RESTORE,
+                0,
+                _SMTO_ABORTIFHUNG,
+                _RESTORE_TIMEOUT_MS,
+                None,
+            )
         if not self._user32.SetForegroundWindow(hwnd):
             _log.warning("cannot bring the window to the front")
