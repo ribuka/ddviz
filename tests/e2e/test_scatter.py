@@ -386,12 +386,17 @@ def test_box_plots_draw_over_the_bands_and_hover(
     page.wait_for_function(PAINTED_PIXEL)
     expect(page.locator("#plot .xtick text")).to_have_text(["a", "b", "c"])
     icons = page.locator("#elements .element")
-    expect(icons).to_have_count(3)
-    points, box = icons.nth(0), icons.nth(1)
+    expect(icons).to_have_count(4)
+    points, box = (
+        page.locator('#elements .element[data-element="points"]'),
+        page.locator('#elements .element[data-element="box"]'),
+    )
     expect(points).to_have_attribute("aria-pressed", "true")
     expect(box).to_be_enabled()
     expect(box).to_have_attribute("aria-pressed", "false")
-    expect(icons.nth(2)).to_be_disabled()
+    # A categorical x has neither smoothing lines nor lines.
+    expect(page.locator('#elements .element[data-element="smooth"]')).to_be_disabled()
+    expect(page.locator('#elements .element[data-element="line"]')).to_be_disabled()
     # Points are the only element drawn: they stay on.
     points.click()
     expect(points).to_have_attribute("aria-pressed", "true")
@@ -447,10 +452,12 @@ def test_box_plots_without_x_lie_in_one_band(
     place(page, "color", "color")
     page.wait_for_function(PAINTED_PIXEL)
     expect(page.locator("#plot .xtick text")).to_have_count(0)
-    icons = page.locator("#elements .element")
-    points, box = icons.nth(0), icons.nth(1)
+    points, box = (
+        page.locator('#elements .element[data-element="points"]'),
+        page.locator('#elements .element[data-element="box"]'),
+    )
     expect(box).to_be_enabled()
-    expect(icons.nth(2)).to_be_disabled()
+    expect(page.locator('#elements .element[data-element="smooth"]')).to_be_disabled()
     box.click()
     # The row of a null color is a series of its own (Show null rows).
     expect(page.locator("#plot .xtick text")).to_have_text(["a", "b", "c", "(null)"])
@@ -494,8 +501,10 @@ def test_smoothing_lines_draw_alone_and_change_their_method(app_page: Page) -> N
     for column, role in [("y", "y"), ("color", "color")]:
         place(page, column, role)
     page.wait_for_function(PAINTED_PIXEL)
-    icons = page.locator("#elements .element")
-    points, smooth = icons.nth(0), icons.nth(2)
+    points, smooth = (
+        page.locator('#elements .element[data-element="points"]'),
+        page.locator('#elements .element[data-element="smooth"]'),
+    )
     expect(smooth).to_be_enabled()
     expect(smooth).to_have_attribute("title", re.compile("GCV"))
     smooth.click()
@@ -570,7 +579,7 @@ def test_inactive_series_at_opacity_0_vanish_and_do_not_hover(app_page: Page) ->
     place(page, "x", "x")
     for column, role in [("y", "y"), ("color", "color")]:
         place(page, column, role)
-    page.locator("#elements .element").nth(2).click()
+    page.locator('#elements .element[data-element="smooth"]').click()
     page.wait_for_function(SETTLED)
     pixel = page.wait_for_function(PAINTED_PIXEL).json_value()
     page.mouse.move(pixel["x"], pixel["y"])

@@ -21,6 +21,9 @@ MAX_AXIS_LEVELS = 1_000_000
 # a symbol.
 SHAPE_SIZE = 7
 POINT_SIZE = 5
+# Default width in pixels of the lines joining the points
+# (`ScatterSpec.line_width`).
+LINE_WIDTH = 2
 # The x column of a graph whose X is empty: a categorical column of one
 # level, so that every row lies in one band. It is no column of the data;
 # the scan makes it (`ddviz.compute.scan.scan_columns`).
@@ -297,6 +300,12 @@ class ScatterSpec:
         How the panels of a numeric x and a numeric y fit smoothing lines
         (`smooth_pairs`), or None for none; without points, such a panel
         draws only the lines.
+    line_width : int or None
+        Width in pixels of the lines joining the points of each series in
+        the panels of a numeric x and a numeric y (`line_pairs`,
+        `ddviz.compute.lines`), or None for no lines. Without points, such
+        a panel draws only the lines, though its rows still have their bins
+        for the hover and the selection.
     symbol : str or None
         Column whose levels draw the points in marker shapes
         (`ddviz.shared.shapes`), or None for filled circles. The series are
@@ -365,6 +374,7 @@ class ScatterSpec:
     points: bool = True
     box: bool = False
     smooth: Smoothing | None = None
+    line_width: int | None = None
     symbol: str | None = None
     shape_size: int = POINT_SIZE
     shape_sizes: dict[str, int] = field(default_factory=dict)
@@ -414,6 +424,25 @@ class ScatterSpec:
             if x not in categorical and y not in categorical
         }
 
+    def line_pairs(self) -> set[tuple[str, str]]:
+        """Return the pairs of axis columns whose panels join their points with lines.
+
+        Returns
+        -------
+        set of tuple of str
+            Each ``(x, y)`` with a numeric x and a numeric y, when the spec
+            draws lines; none otherwise.
+        """
+        if self.line_width is None:
+            return set()
+        categorical = set(self.categorical)
+        return {
+            (x, y)
+            for x in self.x
+            for y in self.y
+            if x not in categorical and y not in categorical
+        }
+
     def draws_points(self, x: str, y: str) -> bool:
         """Return whether the panels of a pair draw the points of every row, not only the outliers or none.
 
@@ -425,10 +454,12 @@ class ScatterSpec:
         Returns
         -------
         bool
-            True with the points element, or for a pair with neither box
-            plots nor smoothing lines.
+            True with the points element, or for a pair with no box plots,
+            smoothing lines or lines.
         """
-        return self.points or (x, y) not in self.box_pairs() | self.smooth_pairs()
+        return self.points or (x, y) not in (
+            self.box_pairs() | self.smooth_pairs() | self.line_pairs()
+        )
 
     def marker_sizes(self, symbol_levels: list) -> list[int]:
         """Return the size of the markers of each symbol level.

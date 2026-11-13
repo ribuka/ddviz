@@ -12,6 +12,7 @@ from ddviz.server.plan import (
     has_box_pair,
     parse_filters,
     parse_level_shapes,
+    parse_line_width,
     parse_shape_size,
     parse_shape_sizes,
     parse_smoothing,
@@ -20,6 +21,7 @@ from ddviz.server.plan import (
     undrawn,
 )
 from ddviz.shared.scatter import (
+    LINE_WIDTH,
     ONE_BAND,
     POINT_SIZE,
     SHAPE_SIZE,
@@ -122,6 +124,46 @@ def test_parse_shape_size() -> None:
     for bad in (4, 0, True, "7", 7.5):
         with pytest.raises(ValueError, match="shape_size"):
             parse_shape_size(bad)
+
+
+def test_parse_line_width() -> None:
+    """The width is an integer from 1 to 5, or null for the default."""
+    assert parse_line_width(None) is None
+    assert parse_line_width(1) == 1
+    assert parse_line_width(5) == 5
+    for bad in (0, 6, True, "2", 2.0, 2.5):
+        with pytest.raises(ValueError, match="line_width"):
+            parse_line_width(bad)
+
+
+def test_lines_need_a_numeric_x_and_a_numeric_y() -> None:
+    """Lines join the points with a numeric (or temporal) x and a numeric y; otherwise they are undrawn and the points stay."""
+    files = {c: [f"{c}.parquet"] for c in ("g", "a", "b")}
+    numeric = {"g": False, "a": True, "b": True}
+    line = Encoding(x=("a",), y=("b",), elements=("line",))
+    assert undrawn(line, numeric) == []
+    spec = scatter_spec(line, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.line_width == LINE_WIDTH
+    assert spec.line_pairs() == {("a", "b")}
+    assert not spec.draws_points("a", "b")
+    spec = scatter_spec(
+        line, files, 400, 300, ["#000000"], numeric=numeric, line_width=4
+    )
+    assert spec.line_width == 4
+    both = Encoding(x=("a",), y=("b",), elements=("points", "line"))
+    spec = scatter_spec(both, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.draws_points("a", "b")
+    assert spec.line_width == LINE_WIDTH
+    banded = Encoding(x=("g",), y=("b",), elements=("line",))
+    assert undrawn(banded, numeric) == ["line"]
+    spec = scatter_spec(banded, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.line_width is None
+    assert spec.draws_points("g", "b")
+    nth = Encoding(x=("g", "a"), y=("b",), elements=("line",))
+    spec = scatter_spec(nth, files, 400, 300, ["#000000"], numeric=numeric)
+    assert spec.line_pairs() == {("a", "b")}
+    assert spec.draws_points("g", "b")
+    assert not spec.draws_points("a", "b")
 
 
 def test_the_default_marker_size_is_larger_for_the_symbol_shapes() -> None:

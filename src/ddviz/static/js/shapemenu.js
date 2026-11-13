@@ -13,6 +13,10 @@ import { shapeCanvas, shapePanel } from "./shapepanel.js";
 
 export const SIZES = [3, 5, 7, 9, 11, 15];
 export const SIZE_HEADING = "点の大きさ（全系列）";
+// Widths of the lines joining the points (`ddviz.server.plan.LINE_WIDTHS`),
+// in the menu of the lines' element icon, which this menu also is.
+export const LINE_WIDTHS = [1, 2, 3, 4, 5];
+export const LINE_HEADING = "線の太さ（全系列）";
 
 // Heading of the menu of a symbol level's shapes.
 export function levelHeading(level) {
@@ -48,7 +52,9 @@ window.addEventListener("keydown", (event) => {
 // ({current, choices, onPick}: the level's shape, the shapes it can take as
 // `meta.symbol.choices` and what gets the shape picked, or null for the
 // shape of the level's place), the item that opens the shape panel.
-export function openShapeMenu(event, heading, size, onPick, { color = null, shape = null } = {}) {
+// `sizes` lists the sizes to pick from: the widths of the lines
+// (`LINE_WIDTHS`) in the menu of the lines' icon.
+export function openShapeMenu(event, heading, size, onPick, { color = null, shape = null, sizes = SIZES } = {}) {
   close();
   const menu = document.createElement("div");
   menu.className = "scale-menu shape-menu";
@@ -58,7 +64,7 @@ export function openShapeMenu(event, heading, size, onPick, { color = null, shap
   head.className = "scale-menu-heading";
   head.textContent = heading;
   menu.append(head);
-  for (const pick of SIZES) {
+  for (const pick of sizes) {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "scale-menu-item";

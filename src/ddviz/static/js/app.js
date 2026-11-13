@@ -35,7 +35,7 @@ import { StatusLine, Toasts, errorText } from "./notice.js";
 import { attachNullMenu } from "./nullmenu.js";
 import { openPlotMenu } from "./plotmenu.js";
 import { openScaleMenu } from "./scalemenu.js";
-import { levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
+import { LINE_HEADING, LINE_WIDTHS, levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
 import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
@@ -97,6 +97,7 @@ const STAGES = {
   facets: "パネルの水準を調べ中…",
   boxes: "箱ひげを計算中…",
   smooth: "平滑化を計算中…",
+  lines: "点を結ぶ線を計算中…",
   bins: "点を集約中…",
   rows: "ホバー用のデータを読み込み中…",
   selection: "選んだ行を集約中…",
@@ -200,6 +201,10 @@ let smoothing = DEFAULT_SMOOTHING;
 // for the default: larger for the symbol's shapes than for the circles of
 // the points.
 let shapeSize = null;
+// Width in pixels of the lines joining the points of every series
+// (`ddviz.server.plan.parse_line_width`), picked in the menu of the lines'
+// element icon; kept for every graph, with the lines on or off.
+let lineWidth = 2;
 // Sizes of the shapes of single symbol levels, by symbol column and level
 // name (`ddviz.server.plan.parse_shape_sizes`), picked in the menu of the
 // symbol legend's markers; kept for every graph, dropped when the size of
@@ -563,6 +568,7 @@ function setCurrent(meta) {
   current = meta;
   legend.setEmpty(meta);
   elementBar.setPointsText(markerSizeText(meta));
+  elementBar.setLineText(meta.line_width === null ? null : `${meta.line_width} px`);
   stage.classList.toggle("scrolls", meta.scroll);
   wrapAuto = meta.wrap_auto_cols;
   setWrapAuto(wrapAuto);
@@ -750,6 +756,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     wrap_cols: wrapCols,
     smooth: smoothing,
     shape_size: shapeSize,
+    line_width: lineWidth,
     shape_sizes: levelSizes.get(encoding.symbol) || null,
     level_shapes: shapes,
     show_null_rows: { ...showNullRows },
@@ -1588,6 +1595,7 @@ function clearPlot() {
   wrapAuto = null;
   setWrapAuto(null);
   elementBar.setPointsText(null);
+  elementBar.setLineText(null);
   stage.classList.remove("scrolls");
   sticky.set(null);
   builder.layout();
@@ -1627,8 +1635,10 @@ function hasBoxPair(encoding) {
   );
 }
 
-// Whether a pair of the graph's axis columns can have smoothing lines: a
-// numeric x and a numeric y (`ddviz.server.plan.has_smooth_pair`).
+// Whether a pair of the graph's axis columns can have smoothing lines, or
+// lines joining the points: a numeric x and a numeric y (a temporal column
+// is numeric; `ddviz.server.plan.has_smooth_pair`,
+// `ddviz.server.plan.has_line_pair`).
 function hasSmoothPair(encoding) {
   const numeric = (name) => builder.numeric.get(name) !== false;
   return encoding.x.some(numeric) && encoding.y.some(numeric);
@@ -1686,6 +1696,13 @@ function markerSizeText(meta) {
   const lo = Math.min(...sizes);
   const hi = Math.max(...sizes);
   return lo === hi ? `${lo} px` : `${lo}〜${hi} px`;
+}
+
+// Draws the lines of every series in another width: a graph with them is
+// plotted again.
+function setLineWidth(width) {
+  lineWidth = width;
+  if (plottedEncoding?.elements.includes("line")) plot(plottedEncoding);
 }
 
 // Fits the smoothing lines another way: a graph with them is plotted again.
@@ -1764,7 +1781,8 @@ const builder = new Builder(
   document.getElementById("columns"),
   (encoding) => {
     // Elements no longer possible are turned off; that edit comes back here.
-    if (elementBar?.allow({ box: hasBoxPair(encoding), smooth: hasSmoothPair(encoding) })) return;
+    const smooth = hasSmoothPair(encoding);
+    if (elementBar?.allow({ line: smooth, box: hasBoxPair(encoding), smooth })) return;
     const key = drawnRoles(encoding);
     if (key === drawnRolesKey) return;
     const drawn = JSON.parse(drawnRolesKey);
@@ -1825,6 +1843,9 @@ elementBar = new ElementBar(
   (event) => openSmoothMenu(event, smoothing, setSmoothing),
   (event) => {
     if (current) openShapeMenu(event, SIZE_HEADING, sharedSize(), setShapeSize);
+  },
+  (event) => {
+    if (current) openShapeMenu(event, LINE_HEADING, current.line_width, setLineWidth, { sizes: LINE_WIDTHS });
   },
 );
 elementBar.setSmoothText(smoothingText(smoothing));

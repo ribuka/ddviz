@@ -88,7 +88,7 @@ def test_the_line_shows_its_white_edge_over_dense_points_and_a_selection(
     page.wait_for_function(PAINTED_PIXEL)
     # Without the line no pixel is white: the points are blue, the rest clear.
     assert all(kind != "white" for kind, _, _ in page.evaluate(COLUMN))
-    page.locator("#elements .element").nth(2).click()
+    page.locator('#elements .element[data-element="smooth"]').click()
     page.wait_for_function(SETTLED)
     wait_line(page, (31, 119, 180))
 

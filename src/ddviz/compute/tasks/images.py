@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from ddviz.compute.lines import LinePixels, stroke
 from ddviz.compute.png import encode_levels, encode_mask
 from ddviz.compute.raster import atlas, by_series, pixels, series_layer
 from ddviz.compute.shapes import spread, spread_top
@@ -175,3 +176,72 @@ def write_gradient(
             images[s] = [offset, len(png)]
             offset += len(png)
     return images
+
+
+def write_lines(
+    out: Path,
+    lines: LinePixels,
+    grid: BinGrid,
+    ncol: int,
+    n_layers: int,
+    line_width: int,
+    colors: dict[int, str],
+    grays: np.ndarray | None = None,
+) -> list[list[int] | None]:
+    """Append the PNGs of the lines to the images file, one per color level; return where each lies.
+
+    Parameters
+    ----------
+    out : pathlib.Path
+        Directory of the task, whose images file the points' images were
+        written into (`write_images`, `write_gradient`).
+    lines : LinePixels
+        The pixels the lines cover, one pixel wide (`ddviz.compute.lines`).
+    grid : BinGrid
+        Key space of the bins: the panels and their pixels.
+    ncol : int
+        Panels to a row of tiles.
+    n_layers : int
+        The color levels.
+    line_width : int
+        Width of the lines in pixels (`ddviz.compute.lines.stroke`).
+    colors : dict of int to str
+        Color of the lines of each color level drawn as a mask.
+    grays : numpy.ndarray, optional
+        For a gradient, the gray from 1 to 255 of the row of each rank
+        (item ``r - 1``), as `write_gradient` writes them; the color levels
+        not in `colors` are drawn in these grays, the color of the last
+        segment on top where several cover a pixel.
+
+    Returns
+    -------
+    list
+        ``[offset, length]`` of each color level's PNG, or None for one
+        without lines.
+    """
+    shape = (grid.n_panels, grid.height, grid.width)
+    pen = stroke(line_width)
+    found: list[list[int] | None] = [None] * n_layers
+    with open(out / IMAGES, "ab") as file:
+        offset = file.tell()
+        for layer in np.unique(lines.layer):
+            at = lines.layer == layer
+            pixel = lines.pixel[at]
+            if int(layer) in colors or grays is None:
+                dense = np.zeros(int(np.prod(shape)), dtype=bool)
+                dense[pixel] = True
+                mask = spread(dense.reshape(shape), pen)
+                png = encode_mask(atlas(mask, ncol), colors[int(layer)])
+            else:
+                rank = lines.rank[at]
+                order = np.argsort(rank, kind="stable")
+                top = np.zeros(int(np.prod(shape)), dtype=np.int64)
+                # The last assignment to a pixel stays: the largest rank.
+                top[pixel[order]] = rank[order]
+                top = spread(top.reshape(shape), pen)
+                lookup = np.concatenate([np.zeros(1, dtype=np.uint8), grays])
+                png = encode_levels(atlas(lookup[top], ncol))
+            file.write(png)
+            found[int(layer)] = [offset, len(png)]
+            offset += len(png)
+    return found

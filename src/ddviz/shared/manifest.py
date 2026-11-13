@@ -107,6 +107,11 @@ class PlotManifest:
     images : list
         ``[offset, length]`` of each series' PNG in the images file
         (`IMAGES`), or None for a series without bins.
+    line_images : list
+        ``[offset, length]`` of the PNG of the lines of each color level in
+        the images file, after those of the series
+        (`ddviz.compute.tasks.images.write_lines`), or None for a level
+        without lines; empty without lines.
     rows : int
         Number of rows drawn.
     hover_files : bool
@@ -162,6 +167,7 @@ class PlotManifest:
     columns: list[HoverColumn]
     images: list[list[int] | None]
     rows: int
+    line_images: list[list[int] | None] = field(default_factory=list)
     hover_files: bool = True
     hover_dropped: list[str] = field(default_factory=list)
     hover_bytes: int = 0
@@ -207,6 +213,7 @@ class PlotManifest:
             colors=data["colors"],
             columns=[HoverColumn(**c) for c in data["columns"]],
             images=data["images"],
+            line_images=data["line_images"],
             rows=data["rows"],
             hover_files=data["hover_files"],
             hover_dropped=data["hover_dropped"],

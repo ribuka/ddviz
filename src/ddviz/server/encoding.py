@@ -11,8 +11,8 @@ AXES = ("x", "y")
 SINGLES = ("color", "symbol", "row", "col", "wrap")
 ROLES = AXES + SINGLES
 # Elements of a graph, which the icons above the figure toggle: points,
-# box plots and smoothing lines.
-ELEMENTS = ("points", "box", "smooth")
+# lines joining them, box plots and smoothing lines.
+ELEMENTS = ("points", "line", "box", "smooth")
 
 
 @dataclass(frozen=True)
