@@ -9,7 +9,7 @@ import polars as pl
 import pytest
 
 from ddviz.compute.aggregate import Aggregation, aggregate
-from ddviz.compute.lines import stroke
+from ddviz.compute.lines import GROUP, LAYER, X, Y, line_pixels, stroke
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import Filter, ScatterSpec, View
@@ -361,3 +361,17 @@ def test_segments_of_one_column_outside_the_view_draw_nothing(
     edge = 0 if ys[0] < 0 else agg.grid.height - 1
     at_edge = agg.lines.pixel[(rows == edge)] % w
     assert column not in set(at_edge.tolist())
+
+
+@pytest.mark.parametrize("xs", [[0.51, 0.59], [0.41, 0.59]])
+def test_a_segment_at_the_top_of_the_view_is_drawn_in_its_top_row(
+    xs: list[float],
+) -> None:
+    """A level segment at the top of the y range lies in the top row, within one pixel column or across two."""
+    frame = pl.DataFrame(
+        {GROUP: [0, 0], X: xs, Y: [10.0, 10.0], LAYER: [0, 0]},
+        schema={GROUP: pl.Int32, X: pl.Float64, Y: pl.Float64, LAYER: pl.Int16},
+    )
+    found = line_pixels(frame, False, False, (0.0, 1.0), (0.0, 10.0), 10, 10, 1)
+    assert len(found.pixel) > 0
+    assert set((found.pixel // 10).tolist()) == {9}

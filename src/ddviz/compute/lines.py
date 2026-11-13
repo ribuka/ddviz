@@ -190,6 +190,9 @@ def _spans(
     """
     # Just outside the panel is as far as any row needs to be.
     clipped = np.clip(y, -1.0, height + 1.0)
+    # The top of the range is in the top row, as a point there is in the top
+    # bin (`ddviz.compute.aggregate._bin_expr`); above it is out.
+    clipped[clipped == height] = height - 0.5
     cell = np.cumsum(new)
     # The least and largest y of the rows from each row to the end of its
     # cell: running in reverse, each cell lifted (or lowered) past the
