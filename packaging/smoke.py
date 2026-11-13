@@ -89,7 +89,12 @@ def main(argv: list[str]) -> int:
         data = Path(tmp) / "data.parquet"
         pq.write_table(pa.table({"x": [1.0, None, 3.0], "g": ["a", "b", None]}), data)
         out = Path(tmp) / "out"
-        task = {"kind": "nonnull", "paths": [str(data)], "names": ["x", "g"]}
+        task = {
+            "kind": "nonnull",
+            "paths": [str(data)],
+            "names": ["x", "g"],
+            "generated": [],
+        }
         messages = run_worker(exe, {**task, "out": str(out)})
         kinds = [m["type"] for m in messages]
         if kinds[0] != "ready" or kinds[-1] != "done":
