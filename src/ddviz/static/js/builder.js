@@ -244,7 +244,7 @@ export class Builder {
   action(zone, event) {
     const role = zone.dataset.role;
     const column = dragged;
-    if (role === "wrap" && AXES.some((axis) => this.placed(axis).length - (column.from === axis ? 1 : 0) > 1)) {
+    if (role === "wrap" && this.exclusion(role, false, column.from) === "axes") {
       return { refused: "第 n 軸があると Wrap に置けない" };
     }
     const placed = this.placed(role);
@@ -254,7 +254,7 @@ export class Builder {
     if (AXES.includes(role) && placed.length > 0) {
       ({ index, insert } = this.position(zone, event));
     }
-    if (insert && this.encoding.wrap !== null && column.from !== "wrap" && column.from !== role) {
+    if (this.exclusion(role, insert, column.from) === "wrap") {
       return { refused: "Wrap に列があると第 n 軸を置けない" };
     }
     if (insert) {
@@ -280,6 +280,53 @@ export class Builder {
       text = `${label} の ${target} を置き換える`;
     }
     return { index, insert, text: text + this.replacedNote(role, column.from) };
+  }
+
+  // Returns what Wrap and the n-th axes, which exclude each other, refuse
+  // of a column placed on `role` (going in beside the columns there when
+  // `insert`): "axes" for Wrap while X or Y has an n-th axis, "wrap" for an
+  // n-th axis while Wrap has a column, or null. `from` is the role of a
+  // chip moved, which leaves its place.
+  exclusion(role, insert, from = null) {
+    if (role === "wrap" && AXES.some((axis) => this.placed(axis).length - (from === axis ? 1 : 0) > 1)) {
+      return "axes";
+    }
+    if (AXES.includes(role) && insert && this.encoding.wrap !== null && from !== "wrap" && from !== role) {
+      return "wrap";
+    }
+    return null;
+  }
+
+  // Returns why the column list's menu (columnmenu.js) cannot place the
+  // column `name` on `role` by `mode` ("overwrite" or "append" on X and Y,
+  // "set" on the others): the reasons, none when it can. A column already
+  // in the role cannot go there again; Overwrite needs an axis to replace;
+  // Append beside an axis makes an n-th axis, which Wrap refuses; Wrap is
+  // refused while there is an n-th axis.
+  menuRefusals(role, mode, name) {
+    const placed = this.placed(role);
+    const reasons = [];
+    if (placed.includes(name)) reasons.push("既に配置済み");
+    if (mode === "overwrite" && placed.length === 0) reasons.push("置き換える軸がない");
+    const exclusion = this.exclusion(role, mode === "append" && placed.length > 0);
+    if (exclusion === "wrap") reasons.push("Wrap が配置されている");
+    if (exclusion === "axes") reasons.push("第2軸以降がある");
+    return reasons;
+  }
+
+  // Places a listed `column` (`{name, numeric, temporal, placed}`) on `role`
+  // by `mode`, as the column list's menu asks: Overwrite replaces the axis at
+  // `index`, Append goes in after the last axis, and the others replace the
+  // role's column. Checked again against the graph now; returns whether it
+  // was placed, and calls `placed()` when it was.
+  menuPlace(role, mode, column, index) {
+    if (this.menuRefusals(role, mode, column.name).length) return false;
+    const count = this.placed(role).length;
+    if (mode === "overwrite" && index >= count) return false;
+    const action = mode === "append" ? { index: count, insert: count > 0 } : { index: mode === "overwrite" ? index : 0, insert: false };
+    this.place(role, { name: column.name, numeric: column.numeric, temporal: column.temporal }, action);
+    column.placed?.();
+    return true;
   }
 
   // Returns what a drop at the pointer on an axis zone does (`locate` over

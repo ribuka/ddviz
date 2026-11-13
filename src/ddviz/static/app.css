@@ -1587,6 +1587,12 @@ button {
   color: var(--text-hint);
 }
 
+/* The axes of the column list's menu (columnmenu.js): a long name wraps
+   within the room beside the menu, so that its end stays in sight. */
+.column-submenu .scale-menu-item {
+  overflow-wrap: anywhere;
+}
+
 /* The level's color, in place of a check mark. */
 .color-item-swatch {
   position: absolute;

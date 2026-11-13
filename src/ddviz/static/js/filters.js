@@ -171,6 +171,11 @@ export class FilterPane {
     this.tip.hidden = !text;
   }
 
+  // Whether the pane has a card of the column `name`.
+  has(name) {
+    return this.cards.some((c) => c.name === name);
+  }
+
   add({ name, numeric }) {
     if (this.cards.some((c) => c.name === name)) return;
     const card = { name, numeric, summary: null, range: null, levels: new Set(), contains: "", element: null };

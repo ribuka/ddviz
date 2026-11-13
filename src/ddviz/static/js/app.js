@@ -20,6 +20,7 @@ import { AxisScales, isLogAxis, toPosition, toValues } from "./axisscale.js";
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
 import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } from "./colorscale.js";
+import { openColumnMenu } from "./columnmenu.js";
 import { attachColumnList } from "./columns.js";
 import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
@@ -1566,7 +1567,7 @@ function applyFilters() {
 }
 
 const leftPane = new LeftPane(document.getElementById("left"));
-new FilterPane(
+const filterPane = new FilterPane(
   document.getElementById("filters"),
   (conditions) => {
     filters = conditions;
@@ -1856,5 +1857,9 @@ builder.setAxes(drawnAxes);
 const axisZones = builderRoot.querySelectorAll(':scope > .zone[data-role="x"], :scope > .zone[data-role="y"]');
 const zoneObserver = new ResizeObserver(() => builder.layout());
 for (const zone of axisZones) zoneObserver.observe(zone);
-await attachColumnList(document.getElementById("columns"));
+// A right click on a listed column opens its menu of the roles and the
+// filter pane to place it on.
+await attachColumnList(document.getElementById("columns"), (event, column) =>
+  openColumnMenu(event, column, builder, filterPane),
+);
 showCasts(document.getElementById("casts"));

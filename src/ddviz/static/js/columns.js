@@ -13,13 +13,19 @@
 // `dragstart` makes Chrome drop the drag.
 // The search box keeps a history of keywords (`searchhistory.js`); placing a
 // listed column on a role or the filter pane puts the keyword in it.
+// A right click on a listed column's row opens its menu (`onMenu`,
+// columnmenu.js), which places it without dragging; a search that no longer
+// lists the column closes the menu.
 import { beginDrag } from "./builder.js";
+import { closeColumnMenuIfGone } from "./columnmenu.js";
 import { attachSearchHistory } from "./searchhistory.js";
 
 const SEARCH_DELAY_MS = 150;
 const PENDING_RETRY_MS = 1000;
 
-export function attachColumnList(root) {
+// `onMenu(event, column)` opens the menu of a listed column (`{name,
+// numeric, temporal, placed}`) at a right click on its row.
+export function attachColumnList(root, onMenu) {
   const input = root.querySelector(".column-search");
   const kinds = root.querySelectorAll("[data-kind]");
   const hideEmpty = root.querySelector(".column-hide-empty");
@@ -58,7 +64,8 @@ export function attachColumnList(root) {
     for (const control of [hideEmpty, minShare]) control.disabled = !sharesDone;
     const countItem = sortMenu?.querySelector('[data-order="count"]');
     if (countItem) countItem.disabled = !sharesDone;
-    showColumns(list, found, remember);
+    showColumns(list, found, remember, onMenu);
+    closeColumnMenuIfGone(found.columns.map((column) => column.name));
     if (found.shares === "pending") timer = setTimeout(search, PENDING_RETRY_MS);
   }
 
@@ -156,19 +163,20 @@ function compactCount(count, rows) {
 
 // Show the answer's columns, keeping the items when they are the same columns
 // in the same order (the answers while the shares are counted).
-// `placed` is called when one of them is placed (`beginDrag`).
-function showColumns(list, found, placed) {
+// `placed` is called when one of them is placed (`beginDrag`); `onMenu`
+// opens the menu of one at a right click.
+function showColumns(list, found, placed, onMenu) {
   const items = [...list.children];
   const same =
     items.length === found.columns.length &&
     items.every((item, i) => item.dataset.name === found.columns[i].name);
   if (!same) {
-    list.replaceChildren(...found.columns.map((column) => columnItem(column, placed)));
+    list.replaceChildren(...found.columns.map((column) => columnItem(column, placed, onMenu)));
   }
   found.columns.forEach((column, i) => showShare(list.children[i], column, found.shares, found.rows));
 }
 
-function columnItem(column, placed) {
+function columnItem(column, placed, onMenu) {
   const item = document.createElement("div");
   item.className = "column";
   item.draggable = true;
@@ -187,6 +195,10 @@ function columnItem(column, placed) {
     beginDrag({ name: column.name, numeric: column.numeric, temporal: column.temporal, placed });
     event.dataTransfer.setData("text/plain", column.name);
     event.dataTransfer.effectAllowed = "copyMove";
+  });
+  item.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    onMenu(event, { name: column.name, numeric: column.numeric, temporal: column.temporal, placed });
   });
   return item;
 }
