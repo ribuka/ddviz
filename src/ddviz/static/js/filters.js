@@ -418,10 +418,12 @@ export class FilterPane {
     else this.showCandidates(card);
   }
 
-  // Shows the candidates of a card, its fetching or its failure.
+  // Shows the candidates of a card, its fetching or its failure. A card in
+  // the text box mode shows them when it switches back, so that the box
+  // being typed in stays.
   showCandidates(card) {
     if (card.refresh) card.refresh();
-    else this.renderCard(card);
+    else if (!(card.candidates && card.mode === "contains")) this.renderCard(card);
   }
 
   // Draws one card again, keeping the others (and their boxes' focus).
