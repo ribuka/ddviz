@@ -10,6 +10,7 @@ address bar, so the user sees an app, not a web page.
 from __future__ import annotations
 
 import ctypes
+import json
 import logging
 import secrets
 import socket
@@ -20,6 +21,7 @@ from pathlib import Path
 
 import uvicorn
 import webview
+from webview.dom import DOMEventHandler
 
 from ddviz.desktop.runlog import RunLog, app_data_dir
 from ddviz.desktop.single_instance import IN_USE_MESSAGE, Outcome, claim, record_window
@@ -40,24 +42,35 @@ justify-content:center;font-family:sans-serif;color:#555}</style></head>
 
 # Shown when no input was given: the OS has no dialog that picks a file or a
 # folder, so the user first picks which (several files may be picked); a folder's subfolders are read only
-# when ticked. The buttons call `_Chooser` through pywebview's JS API.
+# when ticked. The buttons call `_Chooser` through pywebview's JS API. Parquet
+# files dropped from Explorer anywhere on the page open too: the page only
+# highlights while files are dragged and keeps WebView2 from navigating to
+# what is dropped; `_App.drop` receives the drop through pywebview's DOM
+# events, which alone carry the files' full paths.
 _CHOOSER = """<!doctype html><html lang="ja"><head><meta charset="utf-8">
 <style>body{margin:0;height:100vh;display:flex;align-items:center;
-justify-content:center;font-family:sans-serif;color:#333;background:#f6f6f6}
+justify-content:center;font-family:sans-serif;color:#333;background:#f6f6f6;
+box-sizing:border-box;border:3px solid transparent}
+body.dragging{background:#e8f0fe;border:3px dashed #1a73e8}
 main{display:flex;flex-direction:column;gap:14px;padding:28px 36px;
 background:#fff;border:1px solid #ddd;border-radius:6px;min-width:320px}
 h1{font-size:16px;margin:0 0 4px}button{font-size:14px;padding:8px 14px}
-.row{display:flex;gap:10px}label,p{font-size:13px}p{margin:0;color:#666}</style></head>
+.row{display:flex;gap:10px}label,p{font-size:13px}p{margin:0;color:#666}
+#error{color:#c5221f}#error:empty{display:none}</style></head>
 <body><main><h1>開く Parquet を選んでください</h1>
 <div class="row"><button type="button" id="file">ファイルを開く…</button>
 <button type="button" id="folder">フォルダを開く…</button></div>
 <p>ファイルは複数選べます。選んだファイルを縦につなげて 1 つの表にします。</p>
+<p>Parquet ファイルをこの画面にドラッグ＆ドロップできます。</p>
 <label><input type="checkbox" id="recursive"> フォルダのサブフォルダの Parquet も読む</label>
+<p id="error" role="alert"></p>
 <div class="row"><button type="button" id="cancel">キャンセル</button></div></main>
 <script>
 const recursive = document.getElementById("recursive");
+const error = document.getElementById("error");
 const buttons = document.querySelectorAll("button");
 async function call(name, ...args) {
+  error.textContent = "";
   for (const b of buttons) b.disabled = true;
   try { await window.pywebview.api[name](...args); }
   finally { for (const b of buttons) b.disabled = false; }
@@ -65,7 +78,79 @@ async function call(name, ...args) {
 document.getElementById("file").onclick = () => call("choose", "file", false);
 document.getElementById("folder").onclick = () => call("choose", "folder", recursive.checked);
 document.getElementById("cancel").onclick = () => call("cancel");
+window.ddvizDropError = (text) => { error.textContent = text; };
+// Entering a child fires dragenter before the parent's dragleave, so a
+// count of the elements entered stays above 0 until the drag leaves the
+// page, is cancelled, or drops: the highlight does not flicker.
+let entered = 0;
+const files = (e) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+function idle() { entered = 0; document.body.classList.remove("dragging"); }
+document.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  if (!files(e)) return;
+  if (entered++ === 0) { error.textContent = ""; document.body.classList.add("dragging"); }
+});
+document.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = files(e) ? "copy" : "none";
+});
+document.addEventListener("dragleave", (e) => {
+  if (files(e) && entered > 0 && --entered === 0) idle();
+});
+document.addEventListener("drop", (e) => { e.preventDefault(); idle(); });
+window.addEventListener("blur", idle);
 </script></body></html>"""
+
+#: Shown on the chooser when a drop has a folder or another kind of file.
+DROP_NOT_PARQUET = ".parquet ファイルだけをドロップしてください。"
+#: Shown on the chooser when a dropped file's path is unknown or the file is gone.
+DROP_UNREADABLE = "ドロップしたファイルを確認できませんでした。ファイルを確認して、もう一度試してください。"
+
+
+def dropped_paths(event: dict) -> tuple[list[str], str | None]:
+    """Check the files of a drop on the chooser; all must be existing Parquet files.
+
+    Parameters
+    ----------
+    event : dict
+        The ``drop`` event as pywebview's DOM events hand it over: each item
+        of ``dataTransfer.files`` has its ``name`` and, on WebView2, the full
+        path as ``pywebviewFullPath``.
+
+    Returns
+    -------
+    paths : list of str
+        The files' paths in the order dropped, or empty when the drop is to
+        be refused or carried no files (a link or text, which is ignored).
+    error : str or None
+        Why the whole drop is refused: `DROP_NOT_PARQUET` when any item is a
+        folder (even one named ``*.parquet``) or does not end in ``.parquet``
+        (in any case), else `DROP_UNREADABLE` when any item's absolute path is
+        unknown or no file is there any more; None otherwise.
+    """
+    items = (event.get("dataTransfer") or {}).get("files") or []
+    paths: list[str] = []
+    wrong = unknown = False
+    for item in items:
+        full = item.get("pywebviewFullPath") or ""
+        path = Path(full) if full else None
+        name = path.name if path is not None else str(item.get("name") or "")
+        if not name.lower().endswith(".parquet"):
+            wrong = True
+        elif path is None or not path.is_absolute():
+            unknown = True
+        elif path.is_dir():
+            wrong = True
+        elif not path.is_file():
+            unknown = True
+        else:
+            paths.append(full)
+    if wrong:
+        return [], DROP_NOT_PARQUET
+    if unknown:
+        return [], DROP_UNREADABLE
+    return paths, None
+
 
 _MB_ICONWARNING = 0x30
 
@@ -126,6 +211,9 @@ class _App:
         self._thread: threading.Thread | None = None
         self._closing = False
         self._opened = threading.Lock()
+        # One input at a time from the chooser: a dialog, a drop.
+        self._choosing = threading.Lock()
+        self._watching = False
         self.failed = False
 
     def start(self) -> None:
@@ -147,20 +235,61 @@ class _App:
         recursive : bool
             For a folder, also read the files in its subfolders.
         """
-        if kind == "folder":
-            chosen = self._window.create_file_dialog(webview.FileDialog.FOLDER)
-        else:
-            chosen = self._window.create_file_dialog(
-                webview.FileDialog.OPEN,
-                allow_multiple=True,
-                file_types=("Parquet (*.parquet)", "すべてのファイル (*.*)"),
-            )
-        if not chosen:
+        if not self._choosing.acquire(blocking=False):
             return
-        if kind == "folder":
-            self._open([chosen[0]], recursive)
-        else:
-            self._open(list(chosen), False)
+        try:
+            if kind == "folder":
+                chosen = self._window.create_file_dialog(webview.FileDialog.FOLDER)
+            else:
+                chosen = self._window.create_file_dialog(
+                    webview.FileDialog.OPEN,
+                    allow_multiple=True,
+                    file_types=("Parquet (*.parquet)", "すべてのファイル (*.*)"),
+                )
+            if not chosen:
+                return
+            if kind == "folder":
+                self._open([chosen[0]], recursive)
+            else:
+                self._open(list(chosen), False)
+        finally:
+            self._choosing.release()
+
+    def drop(self, event: dict) -> None:
+        """Open the Parquet files dropped on the chooser, as files picked in the dialog are.
+
+        A drop with anything else opens nothing and tells why on the page; a
+        drop without files (a link or text) is ignored, and so is one made
+        while a dialog is open or an input is being opened.
+
+        Parameters
+        ----------
+        event : dict
+            The ``drop`` event from pywebview's DOM events (`dropped_paths`).
+        """
+        if not self._choosing.acquire(blocking=False):
+            return
+        try:
+            paths, error = dropped_paths(event)
+            if error is not None:
+                self._window.run_js(f"window.ddvizDropError({json.dumps(error)})")
+            elif paths:
+                self._open(paths, False)
+        finally:
+            self._choosing.release()
+
+    def watch_drops(self) -> None:
+        """Receive drops on the chooser; pywebview calls this when a page has loaded.
+
+        Only the chooser's load subscribes, once: with an input given, or once
+        the input is open, the page is the UI server's.
+        """
+        if self._watching or self._paths or self._opened.locked():
+            return
+        self._watching = True
+        self._window.dom.document.events.drop += DOMEventHandler(
+            self.drop, prevent_default=True
+        )
 
     def cancel(self) -> None:
         """Close the window without an input; the run ends normally."""
@@ -371,6 +500,7 @@ def _run(
         label,
     )
     chooser.app = app
+    window.events.loaded += app.watch_drops
     # Not private: private mode deletes the WebView2 user data on every exit.
     webview.start(
         app.start,
