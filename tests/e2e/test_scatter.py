@@ -231,17 +231,15 @@ def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
     width = page.viewport_size["width"]
     assert box is not None and box["x"] >= 0 and box["x"] + box["width"] <= width
 
-    # Bad numbers show the error and keep the plot; blank is not automatic.
+    # A bad number shows the error and keeps the plot (the numbers taken:
+    # `tests/js/test_wrapmenu.py`).
     manual.check()
     expect(field).to_be_enabled()
     count = len(plots)
-    for bad in ["", "0", "-1", "+2", "1.5", "1e2", "２", "9007199254740992"]:
-        field.fill(bad)
-        field.press("Enter")
-        expect(error).to_have_text(
-            "1 以上 9007199254740991 以下の整数を入力してください"
-        )
-        expect(form).to_be_visible()
+    field.fill("0")
+    field.press("Enter")
+    expect(error).to_have_text("1 以上 9007199254740991 以下の整数を入力してください")
+    expect(form).to_be_visible()
     page.wait_for_timeout(300)
     assert len(plots) == count
     wait_top_row(page, auto)
@@ -1510,25 +1508,21 @@ def test_a_double_click_on_a_numeric_axis_sets_its_range_ticks_and_lines(
         shown[0]
     )
 
-    # Wrong fields tell why beside them and change nothing.
+    # A wrong field tells why beside it and changes nothing (each field's
+    # reasons: `tests/js/test_axisdialog.py`).
     dialog.locator("input[name=min]").fill("3")
     dialog.locator("input[name=max]").fill("2")
-    dialog.locator("input[name=dtick]").fill("-1")
-    dialog.locator("input[name=minor]").fill("5")
     dialog.get_by_role("button", name="OK").click()
     expect(dialog).to_be_visible()
-    errors = dialog.locator(".axis-dialog-error")
-    expect(errors).to_have_text(
-        ["", "最小値より大きくしてください", "0 より大きくしてください", "", "", "", ""]
+    expect(dialog.locator(".axis-dialog-error").nth(1)).to_have_text(
+        "最小値より大きくしてください"
     )
-    dialog.locator("input[name=line]").fill("a")
-    dialog.get_by_role("button", name="追加").click()
-    expect(errors.nth(6)).to_have_text("数値を入れてください")
     assert views == []
 
     dialog.locator("input[name=min]").fill("-1")
     dialog.locator("input[name=max]").fill("1")
     dialog.locator("input[name=dtick]").fill("0.5")
+    dialog.locator("input[name=minor]").fill("5")
     dialog.locator("input[name=line]").fill("0.25")
     dialog.get_by_role("button", name="追加").click()
     expect(dialog.locator(".axis-dialog-line")).to_have_count(1)

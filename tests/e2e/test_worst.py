@@ -1,4 +1,4 @@
-"""E2E: the worst data (long names, empty levels, huge numbers, no rows) keeps the page in shape."""
+"""E2E: the worst data (long names, empty levels, no rows) keeps the page in shape."""
 
 from __future__ import annotations
 
@@ -33,7 +33,6 @@ def scatter_path(tmp_path: Path) -> Path:
             "y": [float(i % 7) for i in range(n)],
             LONG: [float(i % 5) for i in range(n)],
             "g": [[LONG_LEVEL, "", "b"][i % 3] for i in range(n)],
-            "huge": [[1e300, -1e300, 2e299][i % 3] for i in range(n)],
             "w": [[WIDE_LEVEL, "b", "c"][i % 3] for i in range(n)],
         }
     ).write_parquet(path)
@@ -86,8 +85,8 @@ def test_long_names_end_in_an_ellipsis_inside_their_boxes(app_page: Page) -> Non
     assert inside(long_item, page.locator("#side"))
 
 
-def test_huge_numbers_stay_short_and_no_rows_are_told(app_page: Page) -> None:
-    """A filter card writes 1e300 in a few digits; a filter that leaves no rows says so over the empty plot."""
+def test_a_filter_that_leaves_no_rows_is_told(app_page: Page) -> None:
+    """A filter that leaves no rows says so over the empty plot (huge numbers on a card: `tests/js/test_filters.py`)."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.first).to_be_visible()
@@ -97,13 +96,8 @@ def test_huge_numbers_stay_short_and_no_rows_are_told(app_page: Page) -> None:
     expect(no_rows).to_be_hidden()
 
     filters = page.locator("#filters")
-    columns.filter(has=page.get_by_text("huge", exact=True)).drag_to(filters)
-    note = page.locator(".filter-card .filter-note").first
-    expect(note).to_contain_text("最大 1.000e+300")
-    assert not overflows(note)
-
     columns.filter(has=page.get_by_text("x", exact=True)).drag_to(filters)
-    card = page.locator(".filter-card").nth(1)
+    card = page.locator(".filter-card").first
     expect(card.locator(".filter-range input")).to_have_count(2)
     status = page.locator("#status")
     task = drawn_task(page)

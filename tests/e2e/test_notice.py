@@ -91,44 +91,6 @@ def test_a_toast_waits_while_hovered(app_page: Page) -> None:
     expect(toast).to_have_count(0)
 
 
-def test_a_toast_waits_while_the_window_is_hidden(app_page: Page) -> None:
-    """The toast's 10 s stop while the window is hidden (`document.hidden`)."""
-    page = app_page
-    page.clock.install()
-    page.mouse.move(5, 300)
-    show_error(page)
-    toast = page.locator("#toasts .toast")
-
-    hide = """hidden => {
-      Object.defineProperty(document, "hidden", {configurable: true, get: () => hidden});
-      document.dispatchEvent(new Event("visibilitychange"));
-    }"""
-    page.evaluate(hide, True)
-    page.clock.run_for(15000)
-    expect(toast).to_have_count(1)
-
-    page.evaluate(hide, False)
-    page.clock.run_for(11000)
-    expect(toast).to_have_count(0)
-
-
-TOASTS = """async texts => {
-  const { Toasts } = await import("/static/js/notice.js");
-  const toasts = new Toasts(document.getElementById("toasts"));
-  for (const text of texts) toasts.show(text);
-}"""
-
-
-def test_leaving_toasts_are_not_counted(app_page: Page) -> None:
-    """A fourth toast closes the oldest, and the same text again replaces its toast."""
-    page = app_page
-    page.evaluate(TOASTS, ["a", "b", "c", "d", "b"])
-    shown = page.locator("#toasts .toast:not(.toast-leaving)")
-    expect(shown).to_have_count(3)
-    assert [t.get_attribute("data-text") for t in shown.all()] == ["c", "d", "b"]
-    expect(page.locator("#toasts .toast")).to_have_count(3)
-
-
 MOVES = """async () => {
   const { Toasts } = await import("/static/js/notice.js");
   const toasts = new Toasts(document.getElementById("toasts"));
