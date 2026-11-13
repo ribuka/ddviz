@@ -347,6 +347,15 @@ def test_filter_narrows_the_rows(client: TestClient) -> None:
         json={"encoding": ENCODING, **SIZE, "filters": [{"column": "nope"}]},
     )
     assert bad.status_code == 400
+    blank = client.post(
+        "/api/plot",
+        json={
+            "encoding": ENCODING,
+            **SIZE,
+            "filters": [{"column": "color", "contains": "  "}],
+        },
+    )
+    assert blank.status_code == 400
 
 
 def test_selection_and_table(client: TestClient) -> None:

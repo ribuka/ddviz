@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ddviz.shared.keywords import keywords, matches
 from ddviz.shared.natural import natural_key
 
 KINDS = ("numeric", "categorical")
@@ -52,7 +53,7 @@ def search_columns(
     """Return the columns whose names hold every word of a query.
 
     Words are separated by white space and matched case-insensitively, in any
-    order. The page shows only the first `limit` matches, with their count.
+    order (`ddviz.shared.keywords`). The page shows only the first `limit` matches, with their count.
     Filters and order use the share of non-null values: every column shares
     the rows of the whole input, so it ranks and bounds the columns as their
     counts do. A column whose count is unknown passes `min_share` and comes
@@ -97,7 +98,7 @@ def search_columns(
         raise ValueError(f"unknown kind: {kind}")
     if order not in ORDERS:
         raise ValueError(f"unknown order: {order}")
-    words = query.casefold().split()
+    words = keywords(query)
     if nonnull is None:
         counts = [None] * len(columns)
     else:
@@ -108,8 +109,7 @@ def search_columns(
     for i, column in enumerate(columns):
         if kind is not None and column["numeric"] != (kind == "numeric"):
             continue
-        name = column["name"].casefold()
-        if not all(w in name for w in words):
+        if not matches(column["name"], words):
             continue
         share = shares[i]
         if (

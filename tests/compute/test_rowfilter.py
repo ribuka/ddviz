@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 
 from ddviz.compute.aggregate import COUNT, INDEX, KEY, aggregate
+from ddviz.compute.rowfilter import filter_conditions
 from ddviz.compute.summary import MAX_FILTER_LEVELS, summarize_column
 from ddviz.compute.tasks.table import run_table
 from ddviz.shared.manifest import read_manifest
@@ -86,6 +87,23 @@ def test_filter_by_contained_text_keeps_the_rows_whose_value_holds_it(
         replace(scatter_spec, filters=[Filter("label", contains="r1.")])
     )
     assert literal.bins.height == 0
+
+
+@pytest.mark.parametrize(
+    ("contains", "kept"),
+    [
+        ("abc 123", ["ABC-123", "123-abc"]),
+        ("a.c", []),
+        ("  ABC  ", ["ABC-123", "123-abc", "ABC", "abc-12"]),
+    ],
+)
+def test_contained_keywords_all_match_in_any_case_and_order(
+    contains: str, kept: list[str]
+) -> None:
+    """Every keyword must be in the value, ignoring case and order and literally; a null value never passes."""
+    frame = pl.DataFrame({"id": ["ABC-123", "123-abc", "ABC", "abc-12", None, "a-c"]})
+    condition = filter_conditions([Filter("id", contains=contains)])
+    assert frame.filter(condition)["id"].to_list() == kept
 
 
 def test_filter_without_rows_keeps_every_panel(scatter_spec: ScatterSpec) -> None:

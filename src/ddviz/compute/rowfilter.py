@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from ddviz.shared.keywords import keywords
 from ddviz.shared.scatter import Filter
 
 
@@ -26,8 +27,11 @@ def filter_conditions(filters: list[Filter]) -> list[pl.Expr]:
         if f.range is not None:
             conditions.append(column.cast(pl.Float64).is_between(*f.range))
         elif f.contains is not None:
+            text = column.cast(pl.String).str.to_lowercase()
             conditions.append(
-                column.cast(pl.String).str.contains(f.contains, literal=True)
+                pl.all_horizontal(
+                    text.str.contains(w, literal=True) for w in keywords(f.contains)
+                )
             )
         else:
             conditions.append(column.cast(pl.String).is_in(f.levels))

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 
+import numpy as np
 import polars as pl
 import pytest
 from playwright.sync_api import ConsoleMessage, Locator, Page, Route, expect
@@ -529,10 +530,25 @@ def test_smoothing_lines_draw_alone_and_change_their_method(app_page: Page) -> N
     page.wait_for_function(PAINTED_PIXEL)
 
 
+def keyword_frame() -> pl.DataFrame:
+    """Return 2000 rows of x, y and a label of one level per row, a few of which hold the keywords abc and 123."""
+    rng = np.random.default_rng(0)
+    n = 2000
+    labels = ["ABC-123", "123-abc", "ABC", "abc-12"]
+    return pl.DataFrame(
+        {
+            "x": rng.normal(0, 1, n),
+            "y": rng.normal(0, 1, n),
+            "label": labels + [f"r{i}" for i in range(len(labels), n)],
+        }
+    )
+
+
+@pytest.mark.parametrize("scatter_frame", [keyword_frame()])
 def test_a_column_with_too_many_levels_filters_by_contained_text(
     app_page: Page, scatter_frame: pl.DataFrame
 ) -> None:
-    """The label column, one level per row, gets a text box; the plot then draws only the rows whose label contains the text."""
+    """The label column, one level per row, gets a text box; the plot then draws only the rows whose label holds every keyword, in any case and order; a blank box keeps every row."""
     page = app_page
     columns = page.locator("#columns .column")
     expect(columns.filter(has_text="label")).to_be_visible()
@@ -564,7 +580,140 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
         pl.col("y").is_finite(),
     ).height
     expect(status).to_have_text(f"{kept:,} 行（フィルタ後）")
-    expect(page.locator(".filter-summary")).to_have_text("（1）label: 「r12」を含む")
+    summary = page.locator(".filter-summary")
+    expect(summary).to_have_text("（1）label: 「r12」を含む")
+
+    # Every keyword, in any case and order: ABC-123 and 123-abc stay.
+    task = drawn_task(page)
+    box.fill("  abc 123 ")
+    box.press("Enter")
+    new_result(page, task)
+    page.wait_for_function(SETTLED)
+    expect(status).to_have_text("2 行（フィルタ後）")
+    expect(summary).to_have_text("（1）label: 「abc 123」を含む")
+
+    # A blank box sends no condition.
+    task = drawn_task(page)
+    box.fill("   ")
+    box.press("Enter")
+    new_result(page, task)
+    page.wait_for_function(SETTLED)
+    expect(status).to_have_text(f"{scatter_frame.height:,} 行")
+    expect(summary).to_have_text("")
+    expect(card.get_by_role("button", name="Sort by")).to_have_count(0)
+
+
+# Requests that aggregate a plot.
+AGGREGATING = ("/api/plot", "/api/overview", "/api/view")
+
+
+def test_the_levels_of_a_card_sort_by_name_or_count(app_page: Page) -> None:
+    """"Sort by" puts the levels in the order of their counts and back, keeping the ticks and aggregating nothing; Escape and a click outside close it; a numeric card has no button."""
+    page = app_page
+    columns = page.locator("#columns .column")
+    expect(columns.filter(has_text="label")).to_be_visible()
+    place(page, "x", "x")
+    place(page, "y", "y")
+    filters = page.locator("#filters")
+    columns.filter(has=page.get_by_text("x", exact=True)).drag_to(filters)
+    columns.filter(has=page.get_by_text("color", exact=True)).drag_to(filters)
+    cards = page.locator(".filter-card")
+    expect(cards).to_have_count(2)
+    card = cards.nth(1)
+    names = card.locator(".filter-level-name")
+    expect(names).to_have_text(["a", "b", "c"])
+    expect(cards.nth(0).get_by_role("button", name="Sort by")).to_have_count(0)
+    status = page.locator("#status")
+    task = drawn_task(page)
+    card.locator(".filter-level").filter(
+        has=page.get_by_text("b", exact=True)
+    ).locator("input").check()
+    new_result(page, task)
+    page.wait_for_function(SETTLED)
+    summary = page.locator(".filter-summary")
+    expect(summary).to_have_text("（1）color: 1/3")
+    task = drawn_task(page)
+    counts = dict(
+        zip(
+            names.all_inner_texts(),
+            (
+                int(t.replace(",", ""))
+                for t in card.locator(".filter-level-count").all_inner_texts()
+            ),
+            strict=True,
+        )
+    )
+    by_count = sorted(counts, key=lambda name: -counts[name])
+    assert by_count != ["a", "b", "c"]
+
+    requests: list[str] = []
+    page.on(
+        "request",
+        lambda r: requests.append(r.url) if r.url.endswith(AGGREGATING) else None,
+    )
+    button = card.get_by_role("button", name="Sort by")
+    button.click()
+    menu = page.locator(".filter-sort-menu")
+    expect(menu.locator(".scale-menu-heading")).to_have_text("Sort by")
+    expect(menu.locator(".scale-menu-item")).to_have_text(["Name", "Count"])
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("Name")
+    menu.get_by_text("Count", exact=True).click()
+    expect(menu).to_have_count(0)
+    expect(names).to_have_text(by_count)
+    checked = card.locator(".filter-level").filter(has=page.locator("input:checked"))
+    expect(checked.locator(".filter-level-name")).to_have_text(["b"])
+    button.click()
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("Count")
+    # Count again changes nothing.
+    menu.get_by_text("Count", exact=True).click()
+    expect(names).to_have_text(by_count)
+
+    button.click()
+    expect(menu).to_have_count(1)
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
+    button.click()
+    expect(menu).to_have_count(1)
+    page.locator("#status").click()
+    expect(menu).to_have_count(0)
+    button.click()
+    menu.get_by_text("Name", exact=True).click()
+    expect(names).to_have_text(["a", "b", "c"])
+    page.wait_for_timeout(600)
+    assert requests == []
+    expect(status).to_have_attribute("data-task", task)
+    expect(summary).to_have_text("（1）color: 1/3")
+
+    # A button at the bottom of the window opens the menu above it, within the window.
+    height = page.viewport_size["height"]
+    button.evaluate(
+        "(b, h) => Object.assign(b.style, { position: 'fixed', top: `${h - 22}px`, left: '40px' })",
+        height,
+    )
+    button.click()
+    box = menu.bounding_box()
+    assert box["y"] >= 0 and box["y"] + box["height"] <= height
+    menu.get_by_text("Count", exact=True).click()
+    expect(names).to_have_text(by_count)
+    button.evaluate("(b) => b.removeAttribute('style')")
+
+    # Another card's button switches to its own menu; its own button closes it.
+    columns.filter(has=page.get_by_text("facet", exact=True)).drag_to(filters)
+    expect(cards).to_have_count(3)
+    other = cards.nth(2).get_by_role("button", name="Sort by")
+    expect(cards.nth(2).locator(".filter-level-name")).to_have_text(["p", "q"])
+    button.click()
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("Count")
+    other.click()
+    expect(menu).to_have_count(1)
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("Name")
+    other.click()
+    expect(menu).to_have_count(0)
+
+    # A card placed again starts by name.
+    card.locator(".filter-card-remove").click()
+    columns.filter(has=page.get_by_text("color", exact=True)).drag_to(filters)
+    expect(cards.nth(2).locator(".filter-level-name")).to_have_text(["a", "b", "c"])
 
 
 @pytest.mark.parametrize(
