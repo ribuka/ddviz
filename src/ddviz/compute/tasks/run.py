@@ -7,11 +7,14 @@ from pathlib import Path
 from ddviz.compute.convert import convert_columns
 from ddviz.compute.progress import Emit
 from ddviz.compute.tasks.columns import run_nonnull, run_schema, run_summary
+from ddviz.compute.tasks.levels import run_level_index, run_level_search
 from ddviz.compute.tasks.plot import run_plot, run_selection
 from ddviz.compute.tasks.plotdata import run_plot_data
 from ddviz.compute.tasks.table import run_table
 from ddviz.shared.tasks import (
     ConvertTask,
+    LevelIndexTask,
+    LevelSearchTask,
     NonnullTask,
     PlotDataTask,
     PlotTask,
@@ -57,5 +60,9 @@ def run_task(data: dict, emit: Emit) -> None:
             run_table(task, out, emit)
         case SummaryTask(parts=parts, column=column):
             run_summary(parts, column, out, emit)
+        case LevelIndexTask(parts=parts, column=column, index=index):
+            run_level_index(parts, column, index, out, emit)
+        case LevelSearchTask(index=index, query=query, order=order):
+            run_level_search(index, query, order, out, emit)
         case PlotDataTask(result=result, file_format=file_format):
             run_plot_data(Path(result), file_format, out, emit)

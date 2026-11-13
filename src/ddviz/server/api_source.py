@@ -1,4 +1,4 @@
-"""Routes of the file's columns: the schema, the column search and the filter pane's summaries."""
+"""Routes of the file's columns: the schema, the column search, the filter pane's summaries and the search of a column's levels."""
 
 from __future__ import annotations
 
@@ -77,5 +77,14 @@ def source_router(source: Source, max_listed: int) -> APIRouter:
     async def summary(column: str) -> dict:
         """Return what the filter pane shows of a column (`ddviz.compute.summary`), over every row."""
         return await source.summary(column)
+
+    @router.get("/api/filter-levels")
+    async def filter_levels(column: str, q: str = "", order: str = "name") -> dict:
+        """Return the first 100 levels of a categorical column that hold every word of `q`, by name or count (`ddviz.compute.levelindex`).
+
+        ``"levels"`` is None for a column with too many levels to search;
+        ``"n_levels"`` is then exact or an estimate.
+        """
+        return await source.filter_levels(column, q, order)
 
     return router

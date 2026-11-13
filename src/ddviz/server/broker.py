@@ -1,9 +1,10 @@
 """Runs tasks in the server's worker pools and awaits their ends from the event loop.
 
-The server has three pools, so that one kind of task never kills another:
+The server has four pools, so that one kind of task never kills another:
 ``"plot"`` (schema, conversion, plots and selections), ``"table"`` (pages of
-the selection table, and the plot's data to save) and ``"summary"`` (the
-filter pane's summaries and the share of non-null values). Submitting a task
+the selection table, and the plot's data to save), ``"summary"`` (the
+filter pane's summaries and the share of non-null values) and ``"levels"``
+(the index and the searches of a filter card's levels). Submitting a task
 to a pool kills the task running in it.
 """
 
@@ -21,9 +22,14 @@ from ddviz.shared.tasks import Task, task_to_dict
 from ddviz.workers.jobs import WorkerJob
 from ddviz.workers.runner import WorkerPool
 
-Pool = Literal["plot", "table", "summary"]
+Pool = Literal["plot", "table", "summary", "levels"]
 # Directory of each pool's task outputs under the server's root.
-DIRS: dict[Pool, str] = {"plot": "tasks", "table": "table", "summary": "summary"}
+DIRS: dict[Pool, str] = {
+    "plot": "tasks",
+    "table": "table",
+    "summary": "summary",
+    "levels": "levels",
+}
 ENDS = ("done", "error", "cancelled")
 
 
@@ -150,7 +156,7 @@ class TaskBroker:
         ----------
         task : Task
             The task (`ddviz.shared.tasks`).
-        pool : {"plot", "table", "summary"}
+        pool : {"plot", "table", "summary", "levels"}
             The pool to run it in.
 
         Returns

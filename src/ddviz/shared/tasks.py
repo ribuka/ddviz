@@ -173,6 +173,46 @@ class SummaryTask:
 
 
 @dataclass(frozen=True)
+class LevelIndexTask:
+    """Write the index of a column's levels for the filter card's search (`ddviz.compute.levelindex`).
+
+    Parameters
+    ----------
+    parts : list of str
+        The parts of the column in the column cache.
+    column : str
+        The column.
+    index : str
+        Where the index goes.
+    """
+
+    KIND: ClassVar[str] = "level_index"
+    parts: list[str]
+    column: str
+    index: str
+
+
+@dataclass(frozen=True)
+class LevelSearchTask:
+    """Search the index of a column's levels (`ddviz.compute.levelindex.search_index`).
+
+    Parameters
+    ----------
+    index : str
+        The index.
+    query : str
+        The search input.
+    order : str
+        ``"name"`` or ``"count"``.
+    """
+
+    KIND: ClassVar[str] = "level_search"
+    index: str
+    query: str
+    order: str
+
+
+@dataclass(frozen=True)
 class PlotDataTask:
     """Write the bins of a plot's result as a file to save (`ddviz.compute.tasks.plotdata`).
 
@@ -197,6 +237,8 @@ Task = (
     | SelectionTask
     | TableTask
     | SummaryTask
+    | LevelIndexTask
+    | LevelSearchTask
     | PlotDataTask
 )
 TASKS: dict[str, type[Task]] = {
@@ -209,6 +251,8 @@ TASKS: dict[str, type[Task]] = {
         SelectionTask,
         TableTask,
         SummaryTask,
+        LevelIndexTask,
+        LevelSearchTask,
         PlotDataTask,
     )
 }
