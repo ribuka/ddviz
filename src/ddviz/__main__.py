@@ -26,6 +26,7 @@ def make_app(
     recursive: bool,
     token: str,
     frontend_pids: Callable[[], list[int] | None] | None = None,
+    desktop: bool = False,
 ) -> FastAPI:
     """Build the UI server for a Parquet file, a folder of them or several files.
 
@@ -41,6 +42,8 @@ def make_app(
     frontend_pids : callable or None
         Returns the ids of the window's WebView2 processes, for the memory in
         the footer; None in a browser.
+    desktop : bool
+        Serving the desktop window, whose page draws its title bar.
 
     Returns
     -------
@@ -62,6 +65,7 @@ def make_app(
         load_settings(),
         token,
         frontend_pids,
+        desktop,
     )
 
 

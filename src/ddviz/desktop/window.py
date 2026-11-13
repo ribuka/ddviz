@@ -10,6 +10,7 @@ address bar, so the user sees an app, not a web page.
 from __future__ import annotations
 
 import ctypes
+import importlib.metadata
 import json
 import logging
 import secrets
@@ -25,6 +26,7 @@ from webview.dom import DOMEventHandler
 
 from ddviz.desktop.runlog import RunLog, app_data_dir
 from ddviz.desktop.single_instance import IN_USE_MESSAGE, Outcome, claim, record_window
+from ddviz.desktop.titlebar import TitleBar
 from ddviz.desktop.webview2_access import (
     denied_message,
     ensure_access,
@@ -35,40 +37,84 @@ from ddviz.desktop.webview2_processes import FrontendProcesses
 
 _log = logging.getLogger(__name__)
 
-_LOADING = """<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<style>body{margin:0;height:100vh;display:flex;align-items:center;
-justify-content:center;font-family:sans-serif;color:#555}</style></head>
-<body>起動しています…</body></html>"""
+#: The window's title before an input is open; with one, ``ddviz - <input>``.
+TITLE = "ddviz"
 
-# Shown when no input was given: the OS has no dialog that picks a file or a
-# folder, so the user first picks which (several files may be picked); a folder's subfolders are read only
-# when ticked. The buttons call `_Chooser` through pywebview's JS API. Parquet
-# files dropped from Explorer anywhere on the page open too: the page only
-# highlights while files are dragged and keeps WebView2 from navigating to
-# what is dropped; `_App.drop` receives the drop through pywebview's DOM
-# events, which alone carry the files' full paths.
-_CHOOSER = """<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<style>body{margin:0;height:100vh;display:flex;align-items:center;
-justify-content:center;font-family:sans-serif;color:#333;background:#f6f6f6;
-box-sizing:border-box;border:3px solid transparent}
-body.dragging{background:#e8f0fe;border:3px dashed #1a73e8}
+# The title bar of the UI server's page, which the window's own pages embed:
+# the server does not serve them, and file URLs are not allowed.
+_STATIC = Path(__file__).parents[1] / "static"
+_TITLEBAR_CSS = (_STATIC / "titlebar.css").read_text(encoding="utf-8")
+_TITLEBAR_JS = (_STATIC / "js" / "titlebar.js").read_text(encoding="utf-8")
+
+
+def _page(screen: str, style: str, body: str) -> str:
+    """Return one of the window's own pages, with the title bar above `body`.
+
+    Parameters
+    ----------
+    screen : str
+        ``<html data-screen>``: which screen it is, for the title bar's menu
+        (`New` is enabled on the UI server's "graph" only).
+    style : str
+        The page's CSS.
+    body : str
+        The page's content below the title bar.
+
+    Returns
+    -------
+    str
+        The HTML.
+    """
+    return (
+        f'<!doctype html><html lang="ja" class="desktop" data-screen="{screen}">'
+        f'<head><meta charset="utf-8"><title>{TITLE}</title>'
+        f"<style>{_TITLEBAR_CSS}{style}</style></head>"
+        f"<body><script>{_TITLEBAR_JS}</script>{body}</body></html>"
+    )
+
+
+_MESSAGE_STYLE = """html,body{height:100%}body{margin:0;display:flex;
+flex-direction:column;font-family:sans-serif;color:#555}
+main{flex:1;display:flex;align-items:center;justify-content:center}"""
+
+_LOADING = _page("loading", _MESSAGE_STYLE, "<main>起動しています…</main>")
+
+# Shown while `New` stops the open input's server, before the chooser.
+_CLOSING = _page("loading", _MESSAGE_STYLE, "<main>前のデータを閉じています…</main>")
+
+# Shown when no input was given, and after `New`: the OS has no dialog that
+# picks a file or a folder, so the user first picks which (several files may
+# be picked); a folder's subfolders are read only when ticked. The buttons
+# call `_Api` through pywebview's JS API. Parquet files dropped from Explorer
+# anywhere below the title bar (`#drop`) open too: the page only highlights
+# while files are dragged there and keeps WebView2 from navigating to what is
+# dropped anywhere; `_App.drop` receives the drop on `#drop` through
+# pywebview's DOM events, which alone carry the files' full paths.
+_CHOOSER = _page(
+    "chooser",
+    """html,body{height:100%}body{margin:0;display:flex;flex-direction:column;
+font-family:sans-serif;color:#333}
+#drop{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
+background:#f6f6f6;box-sizing:border-box;border:3px solid transparent}
+#drop.dragging{background:#e8f0fe;border:3px dashed #1a73e8}
 main{display:flex;flex-direction:column;gap:14px;padding:28px 36px;
 background:#fff;border:1px solid #ddd;border-radius:6px;min-width:320px}
-h1{font-size:16px;margin:0 0 4px}button{font-size:14px;padding:8px 14px}
+h1{font-size:16px;margin:0 0 4px}main button{font-size:14px;padding:8px 14px}
 .row{display:flex;gap:10px}label,p{font-size:13px}p{margin:0;color:#666}
-#error{color:#c5221f}#error:empty{display:none}</style></head>
-<body><main><h1>開く Parquet を選んでください</h1>
+#error{color:#c5221f}#error:empty{display:none}""",
+    """<div id="drop"><main><h1>開く Parquet を選んでください</h1>
 <div class="row"><button type="button" id="file">ファイルを開く…</button>
 <button type="button" id="folder">フォルダを開く…</button></div>
 <p>ファイルは複数選べます。選んだファイルを縦につなげて 1 つの表にします。</p>
 <p>Parquet ファイルをこの画面にドラッグ＆ドロップできます。</p>
 <label><input type="checkbox" id="recursive"> フォルダのサブフォルダの Parquet も読む</label>
 <p id="error" role="alert"></p>
-<div class="row"><button type="button" id="cancel">キャンセル</button></div></main>
+<div class="row"><button type="button" id="cancel">キャンセル</button></div></main></div>
 <script>
+const drop = document.getElementById("drop");
 const recursive = document.getElementById("recursive");
 const error = document.getElementById("error");
-const buttons = document.querySelectorAll("button");
+const buttons = drop.querySelectorAll("button");
 async function call(name, ...args) {
   error.textContent = "";
   for (const b of buttons) b.disabled = true;
@@ -81,25 +127,26 @@ document.getElementById("cancel").onclick = () => call("cancel");
 window.ddvizDropError = (text) => { error.textContent = text; };
 // Entering a child fires dragenter before the parent's dragleave, so a
 // count of the elements entered stays above 0 until the drag leaves the
-// page, is cancelled, or drops: the highlight does not flicker.
+// area, is cancelled, or drops: the highlight does not flicker.
 let entered = 0;
 const files = (e) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
-function idle() { entered = 0; document.body.classList.remove("dragging"); }
-document.addEventListener("dragenter", (e) => {
-  e.preventDefault();
+function idle() { entered = 0; drop.classList.remove("dragging"); }
+drop.addEventListener("dragenter", (e) => {
   if (!files(e)) return;
-  if (entered++ === 0) { error.textContent = ""; document.body.classList.add("dragging"); }
+  if (entered++ === 0) { error.textContent = ""; drop.classList.add("dragging"); }
 });
+drop.addEventListener("dragleave", (e) => {
+  if (files(e) && entered > 0 && --entered === 0) idle();
+});
+document.addEventListener("dragenter", (e) => e.preventDefault());
 document.addEventListener("dragover", (e) => {
   e.preventDefault();
-  e.dataTransfer.dropEffect = files(e) ? "copy" : "none";
-});
-document.addEventListener("dragleave", (e) => {
-  if (files(e) && entered > 0 && --entered === 0) idle();
+  e.dataTransfer.dropEffect = files(e) && drop.contains(e.target) ? "copy" : "none";
 });
 document.addEventListener("drop", (e) => { e.preventDefault(); idle(); });
 window.addEventListener("blur", idle);
-</script></body></html>"""
+</script>""",
+)
 
 #: Shown on the chooser when a drop has a folder or another kind of file.
 DROP_NOT_PARQUET = ".parquet ファイルだけをドロップしてください。"
@@ -192,7 +239,11 @@ def show_warning(text: str) -> None:
 
 
 class _App:
-    """Runs the UI server in a thread and points the window at it."""
+    """Runs the UI server in a thread and points the window at it.
+
+    `New` (`new`) stops the server of the open input and shows the chooser
+    again in the same window, for another input.
+    """
 
     def __init__(
         self,
@@ -210,10 +261,18 @@ class _App:
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._closing = False
+        # Held from opening an input until `New` lets the chooser open another.
         self._opened = threading.Lock()
         # One input at a time from the chooser: a dialog, a drop.
         self._choosing = threading.Lock()
-        self._watching = False
+        # One `New` at a time.
+        self._renewing = threading.Lock()
+        # Whether the window shows the open input's page, which `New` leaves.
+        self._serving = False
+        # How many times the chooser was loaded, and the load whose drops are
+        # received: each load subscribes once.
+        self._chooser_loads = 0 if paths else 1
+        self._watched = 0
         self.failed = False
 
     def start(self) -> None:
@@ -281,20 +340,68 @@ class _App:
     def watch_drops(self) -> None:
         """Receive drops on the chooser; pywebview calls this when a page has loaded.
 
-        Only the chooser's load subscribes, once: with an input given, or once
-        the input is open, the page is the UI server's.
+        Each load of the chooser subscribes once, to the area below the title
+        bar (``#drop``): at the start without an input, and after `New`. The
+        other pages (loading, the UI server's) subscribe to nothing.
         """
-        if self._watching or self._paths or self._opened.locked():
+        load = self._chooser_loads
+        if load == self._watched or self._opened.locked():
             return
-        self._watching = True
-        self._window.dom.document.events.drop += DOMEventHandler(
-            self.drop, prevent_default=True
-        )
+        area = self._window.dom.get_element("#drop")
+        if area is None:  # another page is still loaded
+            return
+        self._watched = load
+        area.events.drop += DOMEventHandler(self.drop, prevent_default=True)
 
     def cancel(self) -> None:
-        """Close the window without an input; the run ends normally."""
+        """Close the window; the run ends normally, as with the close button."""
         self._closing = True
         self._window.destroy()
+
+    def quit(self) -> None:
+        """Close the window from the app menu's `Quit` (`cancel`)."""
+        self.cancel()
+
+    def version(self) -> str:
+        """Return ddviz's version for the app menu's `Version`.
+
+        Returns
+        -------
+        str
+            The installed package's version, which is the ``VERSION`` of the
+            source it was built from (the exe carries the package's metadata).
+        """
+        return importlib.metadata.version("ddviz")
+
+    def new(self) -> None:
+        """Stop the open input's server and show the chooser again, in the same window.
+
+        The app menu's `New`, after the user confirmed it. Does nothing while
+        no input's page is shown (the chooser, starting) or another `New` is
+        under way. The server's shutdown stops its workers and removes its
+        task outputs; the window keeps its place, size and maximized state.
+        """
+        if not self._renewing.acquire(blocking=False):
+            return
+        try:
+            if not self._serving:
+                return
+            self._serving = False
+            self._window.load_html(_CLOSING)
+            server, thread = self._server, self._thread
+            self._server = None
+            server.should_exit = True
+            thread.join()
+            if self._closing:
+                return
+            self._thread = None
+            self._paths = None
+            self._window.title = TITLE
+            self._chooser_loads += 1
+            self._opened.release()
+            self._window.load_html(_CHOOSER)
+        finally:
+            self._renewing.release()
 
     def _open(self, paths: list[str], recursive: bool) -> None:
         """Start the server for an input and show it in the window; only the first call does."""
@@ -312,29 +419,31 @@ class _App:
                 log_config=None,
                 access_log=False,
             )
-            self._server = uvicorn.Server(config)
-            self._thread = threading.Thread(
-                target=self._serve, args=(sock,), name="server", daemon=True
+            server = uvicorn.Server(config)
+            thread = threading.Thread(
+                target=self._serve, args=(server, sock), name="server", daemon=True
             )
-            self._thread.start()
-            while not self._server.started and self._thread.is_alive():
-                self._thread.join(0.02)
-            if self._server.started:
+            self._server, self._thread = server, thread
+            thread.start()
+            while not server.started and thread.is_alive():
+                thread.join(0.02)
+            if server.started:
                 _log.info("serving on port %d", port)
+                self._serving = True
                 self._window.load_url(f"http://127.0.0.1:{port}/?token={token}")
         except Exception:  # noqa: BLE001 - logged; the run fails and the window closes
             _log.exception("failed to start")
             self.failed = True
             self._window.destroy()
 
-    def _serve(self, sock: socket.socket) -> None:
-        """Run the server; when it ends without the window closing, close the window."""
+    def _serve(self, server: uvicorn.Server, sock: socket.socket) -> None:
+        """Run the server; when it ends without the window closing or `New`, close the window."""
         try:
-            self._server.run(sockets=[sock])
+            server.run(sockets=[sock])
         except BaseException:  # noqa: BLE001 - logged; the window closes below
             _log.exception("the server failed")
         finally:
-            if not self._closing:
+            if not self._closing and server is self._server:
                 _log.error("the server stopped by itself")
                 self.failed = True
                 self._window.destroy()
@@ -349,8 +458,11 @@ class _App:
 
 
 #: Builds the UI server's app for an input, whether to read its subfolders,
-#: the token, and what returns the ids of the window's WebView2 processes.
-MakeApp = Callable[[list[str], bool, str, Callable[[], list[int] | None]], object]
+#: the token, what returns the ids of the window's WebView2 processes, and
+#: whether the page is the desktop window's (with its title bar).
+MakeApp = Callable[
+    [list[str], bool, str, Callable[[], list[int] | None], bool], object
+]
 
 
 def run_window(
@@ -453,8 +565,12 @@ def _record(window: webview.Window) -> None:
         _log.exception("cannot record the window")
 
 
-class _Chooser:
-    """What the chooser page may call through pywebview's JS API, and nothing else of `_App`."""
+class _Api:
+    """What the window's pages may call through pywebview's JS API, and nothing else of `_App`.
+
+    The chooser calls `choose` and `cancel`; the title bar's app menu
+    (`static/js/titlebar.js`) calls `new`, `quit` and `version`, on every page.
+    """
 
     def __init__(self) -> None:
         self.app: _App | None = None
@@ -466,6 +582,30 @@ class _Chooser:
     def cancel(self) -> None:
         """Close the window (`_App.cancel`)."""
         self.app.cancel()
+
+    def new(self) -> None:
+        """Go back to the chooser for another input (`_App.new`), once this call is answered.
+
+        pywebview runs this in a thread of its own and then, in the same
+        thread, hands the result to the page that called: `_App.new` starts
+        only after that thread has ended, while the graph's page is still
+        there to receive it.
+        """
+        caller = threading.current_thread()
+
+        def renew() -> None:
+            caller.join()
+            self.app.new()
+
+        threading.Thread(target=renew, name="new", daemon=True).start()
+
+    def quit(self) -> None:
+        """Close the window (`_App.quit`)."""
+        self.app.quit()
+
+    def version(self) -> str:
+        """Return ddviz's version (`_App.version`)."""
+        return self.app.version()
 
 
 def _run(
@@ -480,11 +620,11 @@ def _run(
     # The plot's data is saved as a download; pywebview cancels downloads
     # unless allowed, and asks where to save them with the OS dialog.
     webview.settings["ALLOW_DOWNLOADS"] = True
-    chooser = _Chooser()
+    api = _Api()
     window = webview.create_window(
-        "ddviz",
+        TITLE,
         html=_CHOOSER if paths is None else _LOADING,
-        js_api=chooser,
+        js_api=api,
         width=1280,
         height=860,
         min_size=(800, 600),
@@ -492,14 +632,15 @@ def _run(
     frontend = FrontendProcesses()
     frontend.attach(window)
     window.events.shown += lambda: _record(window)
+    TitleBar().attach(window)
     app = _App(
         window,
         paths,
         recursive,
-        lambda p, r, t: make_app(p, r, t, frontend.pids),
+        lambda p, r, t: make_app(p, r, t, frontend.pids, True),
         label,
     )
-    chooser.app = app
+    api.app = app
     window.events.loaded += app.watch_drops
     # Not private: private mode deletes the WebView2 user data on every exit.
     webview.start(

@@ -1,0 +1,138 @@
+/* The desktop window's title bar (js/titlebar.js). Self-contained: the
+   desktop embeds it in its own pages, which do not load app.css. The window
+   sets --caption-buttons-width and --caption-row (ddviz.desktop.titlebar). */
+
+/* Until js/titlebar.js has the window's geometry, the page is not drawn:
+   drawn with the defaults, it would move when the geometry comes. */
+html.desktop:not(.caption-known) body {
+  visibility: hidden;
+}
+#titlebar {
+  flex: none;
+  box-sizing: border-box;
+  height: var(--caption-row, 30px);
+  padding-right: var(--caption-buttons-width, 138px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #f3f3f3;
+  color: #222;
+  font: 12px "Segoe UI", sans-serif;
+  /* WebView2 hands this to the OS as the caption: drag, double-click, the
+     system menu, snapping. */
+  app-region: drag;
+  user-select: none;
+}
+
+#titlebar .titlebar-menu {
+  app-region: no-drag;
+  flex: none;
+  height: 100%;
+  min-width: 40px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+}
+
+#titlebar .titlebar-menu:hover,
+#titlebar .titlebar-menu[aria-expanded="true"] {
+  background: rgb(0 0 0 / 8%);
+}
+
+#titlebar .titlebar-menu:focus-visible {
+  outline: 2px solid #2a6fdb;
+  outline-offset: -2px;
+}
+
+#titlebar .titlebar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.titlebar-popup {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  box-sizing: border-box;
+  padding: 4px 0;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 15%);
+  font: 13px "Segoe UI", sans-serif;
+}
+
+.titlebar-item {
+  position: relative;
+  padding: 4px 28px 4px 16px;
+  border: none;
+  background: none;
+  color: #222;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.titlebar-item:hover:not(:disabled),
+.titlebar-item:focus-visible,
+.titlebar-item[aria-expanded="true"] {
+  background: #eef3fb;
+  outline: none;
+}
+
+.titlebar-item:disabled {
+  color: #bbb;
+  cursor: default;
+}
+
+.titlebar-item.has-submenu::after {
+  content: "›";
+  position: absolute;
+  right: 10px;
+}
+
+.titlebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 25%);
+}
+
+.titlebar-dialog {
+  max-width: 420px;
+  padding: 20px 24px 16px;
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+  color: #222;
+  font: 13px "Segoe UI", sans-serif;
+}
+
+.titlebar-dialog p {
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+
+.titlebar-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.titlebar-dialog-buttons button {
+  min-width: 80px;
+  padding: 5px 12px;
+  font: inherit;
+}

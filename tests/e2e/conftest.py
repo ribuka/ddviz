@@ -45,7 +45,15 @@ def settings() -> Settings:
 
 
 @pytest.fixture
-def app_url(tmp_path: Path, scatter_path: Path, settings: Settings) -> Iterator[str]:
+def desktop() -> bool:
+    """Return whether the served page is the desktop window's, with its title bar; a test overrides it."""
+    return False
+
+
+@pytest.fixture
+def app_url(
+    tmp_path: Path, scatter_path: Path, settings: Settings, desktop: bool
+) -> Iterator[str]:
     """Serve `scatter_path` in a thread on a free port and return its URL."""
     root = tmp_path / "run"
     root.mkdir()
@@ -57,6 +65,7 @@ def app_url(tmp_path: Path, scatter_path: Path, settings: Settings) -> Iterator[
         tmp_path / "history",
         settings,
         TOKEN,
+        desktop=desktop,
     )
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
