@@ -43,4 +43,5 @@ def test_the_footer_shows_both_sides_and_explains_them(opened: Page, app_url: st
     expect(page.locator("#memory")).to_contain_text("メモリ")
     title = page.locator("#memory").get_attribute("title")
     assert "ワーキングセット" in title
-    assert "同じプロファイル" in title
+    assert "WebView2 のプロセス" in title
+    assert "同じプロファイル" not in title

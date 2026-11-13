@@ -22,6 +22,7 @@ import uvicorn
 import webview
 
 from ddviz.desktop.runlog import RunLog, app_data_dir
+from ddviz.desktop.single_instance import IN_USE_MESSAGE, Outcome, claim, record_window
 from ddviz.desktop.webview2_access import (
     denied_message,
     ensure_access,
@@ -251,8 +252,18 @@ def run_window(
     Returns
     -------
     int
-        Exit code: 0 when the run ended normally.
+        Exit code: 0 when the run ended normally, or when the window of
+        another run in this Windows session was brought to the front (the
+        input given here is ignored).
     """
+    # Before the window and the server: a second run opens neither. The
+    # claim keeps the mutex for the whole process.
+    instance = claim()
+    if instance.outcome is Outcome.FRONT:
+        return 0
+    if instance.outcome is Outcome.IN_USE:
+        show_warning(IN_USE_MESSAGE)
+        return 1
     # Before the run log: a run that stops here did not end abnormally.
     runtime = _choose_runtime()
     if runtime is None:
@@ -302,6 +313,17 @@ def _choose_runtime() -> str | None:
     return f"the installed WebView2 Runtime {version}"
 
 
+def _record(window: webview.Window) -> None:
+    """Write the handle of the shown window for a second run; pywebview calls this in a thread of its own."""
+    try:
+        from System import Func, Int64
+
+        form = window.native
+        record_window(int(form.Invoke(Func[Int64](lambda: form.Handle.ToInt64()))))
+    except Exception:  # noqa: BLE001 - logged; a second run then reports the app in use
+        _log.exception("cannot record the window")
+
+
 class _Chooser:
     """What the chooser page may call through pywebview's JS API, and nothing else of `_App`."""
 
@@ -340,6 +362,7 @@ def _run(
     )
     frontend = FrontendProcesses()
     frontend.attach(window)
+    window.events.shown += lambda: _record(window)
     app = _App(
         window,
         paths,
