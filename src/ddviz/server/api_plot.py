@@ -51,8 +51,18 @@ from ddviz.server.source import Source
 from ddviz.shared.axisscale import NoPositiveValuesError, axis_positions
 from ddviz.shared.manifest import IMAGES, read_manifest
 from ddviz.shared.palette import DEFAULT_COLORS
-from ddviz.shared.scatter import ScatterSpec
+from ddviz.shared.scatter import FilteredColorLevelsError, ScatterSpec
 from ddviz.shared.tasks import PlotDataTask, PlotTask
+
+
+class _ColorLevelsRefused(Exception):
+    """A plot task refused for too many color levels among the rows of the filter (`ddviz.compute.aggregate.FilteredColorLevelsError`)."""
+
+    def response(self) -> JSONResponse:
+        """Return the 400 that tells the page so, by its ``error``."""
+        return JSONResponse(
+            {"detail": str(self), "error": "filtered_color_levels"}, status_code=400
+        )
 
 
 def plot_router(
@@ -107,6 +117,11 @@ def plot_router(
         if end.type == "error" and (end.error or "").startswith(refused):
             # A log axis without a positive value: the page keeps its plot.
             raise HTTPException(400, end.error.removeprefix(refused))
+        too_many = f"{FilteredColorLevelsError.__name__}: "
+        if end.type == "error" and (end.error or "").startswith(too_many):
+            # Too many color levels among the rows of the filter: the page
+            # keeps its plot and goes back to the filter it was drawn with.
+            raise _ColorLevelsRefused(end.error.removeprefix(too_many))
         ensure_done(end)
         timing = {"task_seconds": time.perf_counter() - started}
         await asyncio.to_thread(source.touch, spec.hover)
@@ -149,6 +164,9 @@ def plot_router(
         filters = await source.filters(request.filters)
         await source.convert([f.column for f in filters])
         manifest = results.overview.manifest
+        # The color levels of the filter, from the view drawn with it while
+        # zoomed (`resized_spec`).
+        known = results.view.manifest if results.view is not None else None
         try:
             return resized_spec(
                 manifest,
@@ -160,6 +178,7 @@ def plot_router(
                 manifest.y_ranges if y_ranges is None else y_ranges,
                 margin_left=request.margin_left,
                 margin_bottom=request.margin_bottom,
+                known=known,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -223,10 +242,14 @@ def plot_router(
                 request.margin_left,
                 request.margin_bottom,
                 line_width,
+                request.keep_unfiltered_color_levels,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        index, timing = await run_plot(spec)
+        try:
+            index, timing = await run_plot(spec)
+        except _ColorLevelsRefused as error:
+            return error.response()
         if index is not None and mine != latest:
             drop(index)
             index = None
@@ -263,7 +286,10 @@ def plot_router(
             # A task for another size must not replace the result drawn now.
             await broker.cancel()
             return figure(results.view, {"task_seconds": 0.0})
-        index, timing = await run_again(spec)
+        try:
+            index, timing = await run_again(spec)
+        except _ColorLevelsRefused as error:
+            return error.response()
         if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
         results.set_view(index)
@@ -277,7 +303,10 @@ def plot_router(
         if unchanged(results.overview.manifest, spec):
             await broker.cancel()
             return figure(results.overview, {"task_seconds": 0.0})
-        index, timing = await run_again(spec)
+        try:
+            index, timing = await run_again(spec)
+        except _ColorLevelsRefused as error:
+            return error.response()
         if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
         results.set_overview(index)

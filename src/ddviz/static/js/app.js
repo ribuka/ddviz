@@ -24,7 +24,7 @@ import { openColumnMenu } from "./columnmenu.js";
 import { attachColumnList } from "./columns.js";
 import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
-import { FilterPane } from "./filters.js";
+import { FilterPane, RestorePoint } from "./filters.js";
 import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { fitBottom, fitMargin, MARGIN_BOTTOM, MARGIN_LEFT, neededBottom, neededMargin } from "./leftmargin.js";
@@ -33,7 +33,6 @@ import { Legend } from "./legend.js";
 import { levelText } from "./names.js";
 import { MemoryMeter } from "./memory.js";
 import { StatusLine, Toasts, errorText } from "./notice.js";
-import { attachNullMenu } from "./nullmenu.js";
 import { openPlotMenu } from "./plotmenu.js";
 import { openScaleMenu } from "./scalemenu.js";
 import { LINE_HEADING, LINE_WIDTHS, levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
@@ -42,6 +41,7 @@ import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
 import { forPlotly, linearRange, plotlyRange } from "./temporal.js";
 import { closeWrapMenu, openWrapMenu, setWrapAuto } from "./wrapmenu.js";
+import { attachZoneMenu } from "./zonemenu.js";
 
 const statusLine = new StatusLine(document.getElementById("status"), new Toasts(document.getElementById("toasts")));
 // The memory in use, fetched as soon as the page shows and then about every second.
@@ -95,6 +95,7 @@ function showConverting(message) {
 const STAGES = {
   schema: "列を読み込み中…",
   levels: "範囲と水準を調べ中…",
+  colors: "フィルタ後の Color の水準を調べ中…",
   facets: "パネルの水準を調べ中…",
   boxes: "箱ひげを計算中…",
   smooth: "平滑化を計算中…",
@@ -219,8 +220,14 @@ const levelSizes = new Map();
 const levelShapes = { column: undefined, shapes: Object.create(null) };
 // Whether the Color and the Symbol zone draw the rows of a null or NaN
 // value (`ddviz.server.models.ShowNullRows`), set in the zones' menu
-// (nullmenu.js); kept whatever column the zone holds, true after a reload.
+// (zonemenu.js); kept whatever column the zone holds, true after a reload.
 const showNullRows = { color: true, symbol: true };
+// Whether a categorical color column keeps its levels over every row, those
+// the filter leaves without rows staying in the legend
+// (`ddviz.server.models.PlotRequest.keep_unfiltered_color_levels`), set in
+// the Color zone's menu (zonemenu.js); kept whatever column the zone holds,
+// off after a reload. Off, the levels are those of the filter's rows.
+let keepColorLevels = false;
 // Wrapped panels to a row, or null to make them closest to square
 // (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
 // The user sets it in the Wrap zone's form (wrapmenu.js).
@@ -542,10 +549,13 @@ const PLOT_CONFIG = {
 
 // Sets the meta of the result whose images are drawn. Only a grid laid out
 // to scroll scrolls: the larger figure drawn while a new size is aggregated
-// would otherwise leave scroll bars over a grid that fits.
-function setCurrent(meta) {
+// would otherwise leave scroll bars over a grid that fits. The legend shows
+// its levels (`Legend.set`: other series than the legend's start with every
+// level active), unless `legend` is false: the legend then stays as it is,
+// for a result that only stands in until another comes.
+function setCurrent(meta, { legend: withLegend = true } = {}) {
   current = meta;
-  legend.setEmpty(meta);
+  if (withLegend) legend.set(meta);
   elementBar.setPointsText(markerSizeText(meta));
   elementBar.setLineText(meta.line_width === null ? null : `${meta.line_width} px`);
   stage.classList.toggle("scrolls", meta.scroll);
@@ -740,7 +750,11 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     level_shapes: shapes,
     show_null_rows: { ...showNullRows },
     axis_scales: axisScales.request(encoding),
+    keep_unfiltered_color_levels: keepColorLevels,
   };
+  // The filter pane's state of these conditions, which the pane goes back to
+  // once the result is drawn (`RestorePoint`).
+  const filterCandidate = restorePoint.propose(filterPane.sent);
   const askedSize = requestedSize;
   requestedSize = size;
   statusLine.show("集約中…");
@@ -827,7 +841,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     movedWhilePlotting = false;
     setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
     requested = { x: [], y: [] };
-    setCurrent(meta);
+    // The legend changes below, once the figure is drawn.
+    setCurrent(meta, { legend: false });
     shownSize = size;
     setPending(false);
     empty.hidden = true;
@@ -868,6 +883,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     if (view?.box) layers.setSelection({ box: view.box });
     // The figure drawn is this graph's: a later failure comes back to it.
     builder.commit(candidate);
+    restorePoint.confirm(filterCandidate);
     serverAhead = false;
     settled();
     showRows(meta);
@@ -1353,10 +1369,13 @@ async function showOverview() {
   requested = { x: [], y: [] };
   const { meta, size, bitmaps } = overview;
   const figure = structuredClone(overview.figure);
-  setCurrent(meta);
   // The overview has its own margin, which its labels are measured at below.
   const area = stageSize();
-  if (size.width !== area.width || size.height !== area.height || filtersKey(meta.filters) !== filtersKey(filters)) {
+  const otherFilter = filtersKey(meta.filters) !== filtersKey(filters);
+  // The overview of an old filter stands in with the legend of the result
+  // shown, until the overview of the filter comes.
+  setCurrent(meta, { legend: !otherFilter });
+  if (size.width !== area.width || size.height !== area.height || otherFilter) {
     // The overview of the old size or filter stands in, stretched to the drawn figure.
     setPending(true);
     const { width, height } = gd._fullLayout;
@@ -1396,6 +1415,7 @@ async function requestOverview() {
   requested = { x: [], y: [] };
   statusLine.show("大きさに合わせて集約中…");
   setPending(true);
+  const filterCandidate = restorePoint.propose(filterPane.sent);
   const started = performance.now();
   const response = await fetch("/api/overview", {
     method: "POST",
@@ -1404,8 +1424,7 @@ async function requestOverview() {
   });
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
-    setPending(false);
-    statusLine.error(errorText(await response.text()));
+    viewFailed(await response.text());
     return;
   }
   const { figure, meta } = await response.json();
@@ -1426,6 +1445,7 @@ async function requestOverview() {
   shownSize = size;
   hideHover();
   if (!drawn) await draw(figure.data, figure.layout, meta, bitmaps);
+  restorePoint.confirm(filterCandidate);
   if (mine === generation) setPending(false);
   showRows(meta);
   setInfo();
@@ -1449,6 +1469,7 @@ async function requestView({ x: xRanges, y: yRanges }) {
     x: xRanges.map((range, i) => toValues(logs.x_log[i], range)),
     y: yRanges.map((range, i) => toValues(logs.y_log[i], range)),
   };
+  const filterCandidate = restorePoint.propose(filterPane.sent);
   const started = performance.now();
   const response = await fetch("/api/view", {
     method: "POST",
@@ -1457,8 +1478,7 @@ async function requestView({ x: xRanges, y: yRanges }) {
   });
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
-    setPending(false);
-    statusLine.error(errorText(await response.text()));
+    viewFailed(await response.text());
     return;
   }
   const { figure, meta } = await response.json();
@@ -1480,10 +1500,41 @@ async function requestView({ x: xRanges, y: yRanges }) {
   hideHover();
   // The images and the panels' placement change; the axes stay where the user put them.
   if (!drawn) await draw(figure.data, withShownRanges(figure.layout, meta), meta, bitmaps);
+  restorePoint.confirm(filterCandidate);
   if (mine === generation) setPending(false);
   showRows(meta, "表示範囲に ");
   setInfo();
   if (mine === generation) followMargin(true);
+}
+
+// Tells of a failed view or overview (the latest request), whose answer is
+// `text`. One that the color levels of its filter refused
+// (`ddviz.compute.aggregate.FilteredColorLevelsError`) leaves the figure, the
+// legend and the selection drawn, and puts the filter pane back to the
+// conditions of the result drawn last (`RestorePoint`), without asking for
+// anything; but when the axes were moved meanwhile, their ranges stay and
+// their view of those conditions is asked for. The error stays shown until
+// the next edit (`StatusLine.hold`).
+function viewFailed(text) {
+  setPending(false);
+  statusLine.error(errorText(text));
+  let refused = false;
+  try {
+    refused = JSON.parse(text).error === "filtered_color_levels";
+  } catch {
+    // Not the server's JSON: no filter to go back from.
+  }
+  if (!refused || !current) return;
+  statusLine.hold();
+  filterPane.restore(restorePoint.point());
+  filters = filterPane.conditions();
+  const whole = current === overview.meta;
+  requested = whole ? { x: [], y: [] } : { x: current.x_ranges, y: current.y_ranges };
+  const shown = shownRanges(current);
+  if (sameRanges(shown.x, current.x_ranges) && sameRanges(shown.y, current.y_ranges)) return;
+  hideHover();
+  if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) showOverview();
+  else requestView(shown);
 }
 
 // The panels of one x or y column share its axis (`matches`), so the view is
@@ -1592,6 +1643,9 @@ function applyFilters() {
 }
 
 const leftPane = new LeftPane(document.getElementById("left"));
+// The state of the filter pane that the result drawn last was aggregated
+// with: a filter whose color levels are refused goes back to it (`viewFailed`).
+const restorePoint = new RestorePoint();
 const filterPane = new FilterPane(
   document.getElementById("filters"),
   (conditions) => {
@@ -1832,9 +1886,16 @@ const builder = new Builder(
   {
     // The state derived from the graph, which a failed plot rolls back with
     // it. The wrap's number to a row with none set is the drawn result's.
-    save: () => ({ drawnRolesKey, colorBins, wrapCols, plottedEncoding, elements: elementBar?.state() ?? null }),
+    save: () => ({
+      drawnRolesKey,
+      colorBins,
+      wrapCols,
+      plottedEncoding,
+      keepColorLevels,
+      elements: elementBar?.state() ?? null,
+    }),
     load: (state) => {
-      ({ drawnRolesKey, colorBins, wrapCols, plottedEncoding } = state);
+      ({ drawnRolesKey, colorBins, wrapCols, plottedEncoding, keepColorLevels } = state);
       if (state.elements) elementBar.restore(state.elements);
       wrapAuto = current?.wrap_auto_cols ?? null;
       setWrapAuto(wrapAuto);
@@ -1854,15 +1915,32 @@ document.querySelector('#builder .zone[data-role="wrap"]').addEventListener("con
     if (plottedEncoding?.wrap) plot(plottedEncoding);
   });
 });
-// A changed "Show null rows" plots the graph again: its levels change.
-attachNullMenu(
-  builderRoot,
-  (role) => builder.placed(role).length > 0,
+// A changed "Show null rows", or keeping the levels the filter leaves out,
+// plots the graph again: its levels change. A plot that fails turns the
+// setting back (`plotFailed` keeps the drawn figure); without a graph to
+// plot, the next plot takes it.
+attachZoneMenu(builderRoot, {
+  hasColumn: (role) => builder.placed(role).length > 0,
   showNullRows,
-  () => {
+  onNullRows: () => {
     if (plottedEncoding) plot(plottedEncoding);
   },
-);
+  categoricalColor: () => {
+    const [column] = builder.placed("color");
+    return column !== undefined && !builder.numeric.get(column);
+  },
+  keepLevels: () => keepColorLevels,
+  onKeepLevels: async () => {
+    const before = keepColorLevels;
+    keepColorLevels = !before;
+    if (!plottedEncoding) {
+      builder.commit();
+      return;
+    }
+    const toggled = keepColorLevels;
+    if ((await plot(plottedEncoding)) === "refused" && keepColorLevels === toggled) keepColorLevels = before;
+  },
+});
 elementBar = new ElementBar(
   document.getElementById("elements"),
   (elements) => builder.setElements(elements),

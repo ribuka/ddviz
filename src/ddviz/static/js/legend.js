@@ -3,8 +3,10 @@
 // a click toggles a level; a right click makes only that level active, or
 // every level again when only it already is. The image layers (layers.js)
 // and the hover follow its state. A level without rows in the drawn result
-// (left out by the filter, or outside the view) stays, marked as empty, so
-// that the colors of the others do not move.
+// (outside the view, or left out by the filter when the color levels are
+// those of every row: zonemenu.js) stays, marked as empty, so that the colors
+// of the others do not move. A result of other levels (another filter) starts
+// with every level active (`set`).
 //
 // With a symbol beside the color (`meta.symbol`), the color levels and
 // the symbol levels (marker shapes) are two legends, each toggled on its

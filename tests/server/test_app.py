@@ -1004,7 +1004,15 @@ def test_a_failed_plot_keeps_the_drawn_results_and_selection(client: TestClient)
 
     # Too many levels: the worker refuses the label column (one per row) on color.
     many = {**ENCODING, "color": "label"}
-    refused = client.post("/api/plot", json={"encoding": many, **SIZE, **HIDE_NULLS})
+    refused = client.post(
+        "/api/plot",
+        json={
+            "encoding": many,
+            **SIZE,
+            **HIDE_NULLS,
+            "keep_unfiltered_color_levels": True,
+        },
+    )
     assert refused.status_code >= 400
     assert "label は 2,003 個で、Color・Symbol・Group・Wrap の上限は 100 個" in (
         refused.json()["detail"]
@@ -1063,3 +1071,124 @@ def test_a_superseded_plot_does_not_replace_the_results(
     assert answers == [409]
     overview = client.post("/api/overview", json=SIZE).json()["meta"]
     assert overview["task"] == meta["task"]
+
+
+def _labels(*names: str) -> list[dict]:
+    """Return the filter keeping the rows of the labels `names`."""
+    return [{"column": "label", "levels": list(names)}]
+
+
+LABELED = {**ENCODING, "color": "label"}
+
+
+def test_keep_unfiltered_color_levels_is_off_unless_asked_and_checked(
+    client: TestClient,
+) -> None:
+    """By default the color levels are those of the filter; kept over every row, the label column's 2,003 are refused; a setting that is no boolean is refused."""
+    body = {"encoding": LABELED, **SIZE, **HIDE_NULLS, "filters": _labels("r10", "r2")}
+    plotted = client.post("/api/plot", json=body)
+    assert plotted.status_code == 200, plotted.text
+    assert plotted.json()["meta"]["series"] == ["r2", "r10"]
+    kept = client.post("/api/plot", json={**body, "keep_unfiltered_color_levels": True})
+    assert kept.status_code >= 400
+    assert "label は 2,003 個で" in kept.json()["detail"]
+    for bad in ("yes", 1, None, [True]):
+        response = client.post(
+            "/api/plot", json={**body, "keep_unfiltered_color_levels": bad}
+        )
+        assert response.status_code == 422, bad
+
+
+def test_a_kept_setting_goes_with_the_derived_results(client: TestClient) -> None:
+    """Kept over every row, the overview and a view of another filter keep the three color levels."""
+    body = {"encoding": ENCODING, **SIZE, **HIDE_NULLS, "keep_unfiltered_color_levels": True}
+    plotted = client.post("/api/plot", json=body).json()["meta"]
+    assert plotted["series"] == ["a", "b", "c"]
+    only_a = [{"column": "color", "levels": ["a"]}]
+    overview = client.post("/api/overview", json={**SIZE, "filters": only_a}).json()
+    assert overview["meta"]["series"] == ["a", "b", "c"]
+    zoom = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
+    view = client.post("/api/view", json={**zoom, "filters": only_a}).json()
+    assert view["meta"]["series"] == ["a", "b", "c"]
+    # Off, the same filter keeps a alone.
+    client.post("/api/plot", json={**body, "keep_unfiltered_color_levels": False})
+    overview = client.post("/api/overview", json={**SIZE, "filters": only_a}).json()
+    assert overview["meta"]["series"] == ["a"]
+
+
+def test_another_filter_finds_the_color_levels_again(client: TestClient) -> None:
+    """The overview and a view of another filter find its color levels; a zoom or pan of the same filter keeps them, and so does the overview of the filter a view was drawn with."""
+    body = {"encoding": LABELED, **SIZE, **HIDE_NULLS, "filters": _labels("r1", "r2")}
+    assert client.post("/api/plot", json=body).json()["meta"]["series"] == ["r1", "r2"]
+    zoom = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
+    view = client.post("/api/view", json={**zoom, "filters": _labels("r1", "r2")})
+    assert view.json()["meta"]["series"] == ["r1", "r2"]
+    overview = client.post("/api/overview", json={**SIZE, "filters": _labels("r5", "r3")})
+    assert overview.json()["meta"]["series"] == ["r3", "r5"]
+    # Zoomed, another filter: its view finds them.
+    view = client.post("/api/view", json={**zoom, "filters": _labels("r7", "r40")})
+    assert view.json()["meta"]["series"] == ["r7", "r40"]
+    # The next view of that filter, and its overview, take them from it.
+    panned = {**SIZE, "x_ranges": [[-2, 0]], "y_ranges": [[-2, 0]]}
+    view = client.post("/api/view", json={**panned, "filters": _labels("r7", "r40")})
+    assert view.json()["meta"]["series"] == ["r7", "r40"]
+    overview = client.post("/api/overview", json={**SIZE, "filters": _labels("r7", "r40")})
+    assert overview.json()["meta"]["series"] == ["r7", "r40"]
+
+
+def test_a_view_of_the_same_filter_does_not_find_the_color_levels(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The spec of a zoom of the drawn filter carries its color levels; that of another filter asks the worker to find them."""
+    body = {"encoding": LABELED, **SIZE, **HIDE_NULLS, "filters": _labels("r1", "r2")}
+    client.post("/api/plot", json=body)
+    specs = []
+    run = TaskBroker.run
+
+    async def kept_run(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        if isinstance(task, PlotTask):
+            specs.append(task.spec)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", kept_run)
+    zoom = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
+    client.post("/api/view", json={**zoom, "filters": _labels("r1", "r2")})
+    client.post("/api/overview", json={**SIZE, "filters": _labels("r3")})
+    assert [s.view.find_color for s in specs] == [False, True]
+    assert specs[0].view.levels["color"] == ["r1", "r2"]
+    assert not specs[0].keep_unfiltered_color_levels
+
+
+def test_too_many_color_levels_of_a_filter_keep_the_drawn_results(
+    client: TestClient,
+) -> None:
+    """A filter whose color levels pass the limit answers 400 with its error; the overview, the view and the selection stay."""
+    body = {"encoding": LABELED, **SIZE, **HIDE_NULLS, "filters": _labels("r1", "r2")}
+    meta = client.post("/api/plot", json=body).json()["meta"]
+    zoom = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]], "filters": _labels("r1", "r2")}
+    view = client.post("/api/view", json=zoom).json()["meta"]
+    box = {"task": view["task"], "panel": 0, "x_range": [-1, 1], "y_range": [-1, 1]}
+    selected = client.post("/api/selection", json=box).json()
+
+    every = [{"column": "label", "contains": "r"}]
+    message = (
+        "Color の水準がフィルタの後も上限の 100 個を超えるため描けない（label）。"
+        "フィルタで水準を絞るか、別の列を使う"
+    )
+    for path, request in (
+        ("/api/overview", {**SIZE, "filters": every}),
+        ("/api/view", {**zoom, "filters": every}),
+    ):
+        refused = client.post(path, json=request)
+        assert refused.status_code == 400
+        assert refused.json() == {"detail": message, "error": "filtered_color_levels"}
+
+    again = client.post("/api/view", json=zoom).json()["meta"]
+    assert again["task"] == view["task"]
+    assert again["task_seconds"] == 0.0
+    overview = client.post("/api/overview", json={**SIZE, "filters": _labels("r1", "r2")})
+    assert overview.json()["meta"]["task"] == meta["task"]
+    assert client.get(f"/api/images/{meta['task']}").status_code == 200
+    held = client.post("/api/selection", json={"task": view["task"]}).json()
+    assert held["rows"] == selected["rows"]
+    assert client.get("/api/table").json()["rows"] == selected["rows"]

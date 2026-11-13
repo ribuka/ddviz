@@ -233,7 +233,7 @@ def test_box_plots_of_420_levels_draw_past_the_series_limit(tmp_path: Path) -> N
 
 
 def test_the_box_column_on_color_too_meets_the_series_limit(tmp_path: Path) -> None:
-    """The same 420 levels on x and color are refused by color's limit of 100."""
-    spec = replace(_months(tmp_path), color="month")
+    """The same 420 levels on x and color are refused by color's limit of 100, kept over every row."""
+    spec = replace(_months(tmp_path), color="month", keep_unfiltered_color_levels=True)
     with pytest.raises(ValueError, match="month は 420 個で、Color・Symbol・Group・Wrap の上限は 100 個"):
         aggregate(spec)

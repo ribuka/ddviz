@@ -50,7 +50,14 @@ from ddviz.shared.layout import (
 )
 from ddviz.shared.missing import MISSING
 from ddviz.shared.natural import natural_key
-from ddviz.shared.scatter import ONE_BAND, Boxes, ScatterSpec, Smooths
+from ddviz.shared.scatter import (
+    ONE_BAND,
+    Boxes,
+    FilteredColorLevelsError,
+    ScatterSpec,
+    Smooths,
+    filtered_color_message,
+)
 
 KEY = "__key"
 COUNT = "__n"
@@ -71,6 +78,10 @@ MAX_PILES = 100_000
 # about the same time (2.2s and 1.9s on 200M rows). 10M rows at a time
 # peaked a little lower (1.50GB on 200M) but reads the files in more passes.
 ROWS_PER_PASS = 25_000_000
+# Rows the color levels of the local filter are found from at a time
+# (`_filtered_color_levels`): the levels of each slice are merged into those
+# found so far, and the reading stops once they pass the limit.
+COLOR_ROWS_PER_PASS = 25_000_000
 
 
 @dataclass(frozen=True)
@@ -119,7 +130,9 @@ class Aggregation:
         the single level None.
     all_levels : dict
         Levels of the roles over every row, the local filter aside
-        (`ddviz.shared.scatter.View.levels`).
+        (`ddviz.shared.scatter.View.levels`); those of a color column that
+        `ddviz.shared.scatter.ScatterSpec.filters_color` are of the rows of
+        the filter.
     cuts : dict
         Cuts of each role in the spec's ``binned`` (`ddviz.compute.cuts`).
     color_range : tuple of float or None
@@ -437,10 +450,7 @@ def _overview(
     # The missing level's name is no text of the data.
     taken = [c for c in column_levels if MISSING in column_levels[c]]
     if taken:
-        raise ValueError(
-            f"列 {'、'.join(taken)} の値に欠損の水準の内部名（{MISSING!r}）と同じ"
-            "文字列があるため描けない"
-        )
+        raise ValueError(_missing_name_message(taken))
     if ONE_BAND in spec.categorical:
         column_levels[ONE_BAND] = [""]
     axis_levels = {c: column_levels[c] for c in spec.categorical}
@@ -471,6 +481,64 @@ def _overview(
             empty = role == "color" and spec.gradient and no_values
             levels[role] = [MISSING] if empty else [*levels[role], MISSING]
     return _Overview(x_ranges, y_ranges, levels, cuts, color_range, axis_levels)
+
+
+def _color_values(spec: ScatterSpec, start: int, length: int) -> pl.Series:
+    """Return the color values, as text, of the rows ``start`` to ``start + length`` that pass the local filter, once each; a null among them if any."""
+    column = spec.color
+    return (
+        _scan(spec, [column, *filter_columns(spec.filters)])
+        .slice(start, length)
+        .filter(*filter_conditions(spec.filters))
+        .select(pl.col(column).cast(pl.String))
+        .unique()
+        .collect(engine="streaming")[column]
+    )
+
+
+def _filtered_color_levels(spec: ScatterSpec) -> list:
+    """Return the levels of a categorical color column among the rows of the local filter (`ScatterSpec.filters_color`).
+
+    Reads only the color column and the filter's columns, in a pass of its
+    own: a row filter on the overview's pass made it peak far higher
+    (`_overview`). The rows are read `COLOR_ROWS_PER_PASS` at a time, the
+    levels of each slice merged into those found so far, and the reading
+    stops as soon as they pass `ScatterSpec.max_levels`, so that a column of
+    a level per row (an ID) never holds them all. The levels are text, as
+    those of the other categorical roles, in natural order, the empty text
+    one of them; with the color in ``null_roles``, a null value among the
+    rows adds the missing level (`ddviz.shared.missing.MISSING`) last, which
+    counts against the limit.
+
+    Raises
+    ------
+    FilteredColorLevelsError
+        When the levels pass the limit (`filtered_color_message`).
+    ValueError
+        When a value is the missing level's name.
+    """
+    rows = _scan(spec, [spec.color]).select(pl.len()).collect().item()
+    draws_missing = "color" in spec.null_roles
+    found: set[str] = set()
+    has_null = False
+    for start in range(0, max(rows, 1), COLOR_ROWS_PER_PASS):
+        part = _color_values(spec, start, COLOR_ROWS_PER_PASS)
+        has_null = has_null or part.null_count() > 0
+        found.update(part.drop_nulls().to_list())
+        if len(found) + (draws_missing and has_null) > spec.max_levels:
+            raise FilteredColorLevelsError(filtered_color_message(spec))
+    if MISSING in found:
+        raise ValueError(_missing_name_message([spec.color]))
+    levels = sorted(found, key=natural_key)
+    return [*levels, MISSING] if draws_missing and has_null else levels
+
+
+def _missing_name_message(columns: list[str]) -> str:
+    """Return the error of columns with a value that is the missing level's name."""
+    return (
+        f"列 {'、'.join(columns)} の値に欠損の水準の内部名（{MISSING!r}）と同じ"
+        "文字列があるため描けない"
+    )
 
 
 def _facet_levels(
@@ -535,7 +603,12 @@ def aggregate(
     symbol, row or col, and rows the local filter leaves out (`ddviz.compute.rowfilter`).
     The overview finds the levels and the data ranges first, over every
     row, so that the filter changes neither the series nor the axes; a view
-    takes them from the spec. With a filter, the facet levels left without
+    takes them from the spec. A categorical color column is the exception,
+    unless the spec keeps its levels over every row
+    (`ddviz.shared.scatter.ScatterSpec.filters_color`): its levels are those
+    of the rows of the filter (`_filtered_color_levels`), found once the
+    levels over every row are within their limits and before any bin, by
+    the overview and by a view of another filter (`View.find_color`). With a filter, the facet levels left without
     rows are then dropped, with their panels (`_facet_levels`), unless the
     view already knows the facet levels of its filter.
 
@@ -562,7 +635,8 @@ def aggregate(
     ------
     ValueError
         When a column has more levels than a role it is on allows
-        (`_check_levels`).
+        (`_check_levels`); `FilteredColorLevelsError` for a color column
+        past its limit among the rows of the filter.
     """
     roles = {
         "color": spec.color,
@@ -597,12 +671,19 @@ def aggregate(
         known_smooths = spec.view.smooths
     else:
         progress("levels")
-        found = _overview(spec, roles, logs)
+        # The color levels of the local filter are found on their own,
+        # after the limits of the levels over every row.
+        found = _overview(
+            spec, {**roles, "color": None} if spec.filters_color() else roles, logs
+        )
         x_ranges, y_ranges = found.x_ranges, found.y_ranges
         all_levels, cuts, color_range = found.levels, found.cuts, found.color_range
         axis_levels = found.axis_levels
         known_boxes = []
         known_smooths = []
+    if spec.filters_color() and (spec.view is None or spec.view.find_color):
+        progress("colors")
+        all_levels = {**all_levels, "color": _filtered_color_levels(spec)}
     if spec.view is not None and spec.view.facets is not None:
         levels = {**all_levels, **spec.view.facets}
     else:

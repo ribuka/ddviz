@@ -22,7 +22,9 @@ class PlotRequest(BaseModel):
     ``margin_left`` is the left margin the page asks for, for the y tick
     labels it measured (`ddviz.shared.layout.left_margin`), and
     ``margin_bottom`` the bottom margin, for the x tick labels at an angle
-    set (`ddviz.shared.layout.bottom_margin`).
+    set (`ddviz.shared.layout.bottom_margin`). ``keep_unfiltered_color_levels``
+    keeps the levels of a categorical color column over every row
+    (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_color_levels`).
     """
 
     encoding: dict
@@ -40,6 +42,7 @@ class PlotRequest(BaseModel):
     level_shapes: dict[str, object] | None = None
     show_null_rows: ShowNullRows = ShowNullRows()
     axis_scales: object = None
+    keep_unfiltered_color_levels: StrictBool = False
 
 
 class SizeRequest(BaseModel):

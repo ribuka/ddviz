@@ -57,20 +57,20 @@ def test_show_null_rows_toggles_per_zone_and_the_missing_level_is_colored(
 
     # Without a column the zone has no menu.
     open_zone_menu(page, "symbol")
-    expect(page.locator(".null-menu")).to_have_count(0)
+    expect(page.locator(".zone-menu")).to_have_count(0)
     open_zone_menu(page, "color")
-    item = page.locator(".null-menu .scale-menu-item")
+    item = page.locator('.zone-menu [data-item="null-rows"]')
     expect(item).to_have_text("Show null rows")
     expect(item).to_have_class("scale-menu-item checked")
     item.click()
-    expect(page.locator(".null-menu")).to_have_count(0)
+    expect(page.locator(".zone-menu")).to_have_count(0)
     expect(items).to_have_count(3)
     page.wait_for_function(SETTLED)
     page.wait_for_function(f"() => !({HAS_COLOR})([128, 128, 128])")
     page.locator('.zone[data-role="color"] .chip').click(button="right")
     expect(item).to_have_class("scale-menu-item")
     page.keyboard.press("Escape")
-    expect(page.locator(".null-menu")).to_have_count(0)
+    expect(page.locator(".zone-menu")).to_have_count(0)
 
     # Moved to Symbol alone, k draws its shapes by the Symbol's setting.
     page.locator('.zone[data-role="color"] .chip').drag_to(
@@ -78,7 +78,7 @@ def test_show_null_rows_toggles_per_zone_and_the_missing_level_is_colored(
     )
     expect(items).to_have_count(4)
     open_zone_menu(page, "color")
-    expect(page.locator(".null-menu")).to_have_count(0)
+    expect(page.locator(".zone-menu")).to_have_count(0)
     open_zone_menu(page, "symbol")
     expect(item).to_have_class("scale-menu-item checked")
     page.keyboard.press("Escape")
@@ -138,6 +138,6 @@ def test_a_gradient_has_its_missing_level_under_the_bar(app_page: Page) -> None:
     page.wait_for_function(HAS_COLOR, arg=[0, 0, 0])
     # Off, the gradient has its bar alone.
     open_zone_menu(page, "color")
-    page.locator(".null-menu .scale-menu-item").click()
+    page.locator('.zone-menu [data-item="null-rows"]').click()
     expect(items).to_have_count(0)
     expect(legend.locator(".colorbar")).to_be_visible()
