@@ -50,19 +50,23 @@ export function sortLevels(levels, order) {
   return sorted;
 }
 
-// The open "Sort by" menu of a card, or null.
+// The open "Sort by" menu of a card and the button that opened it, or null.
 let levelMenu = null;
+let levelMenuButton = null;
 
-// Closes the "Sort by" menu of a card; tells whether it was open.
+// Closes the "Sort by" menu of a card; returns the button that opened it, or null.
 function closeLevelMenu() {
-  const wasOpen = levelMenu !== null;
+  const button = levelMenuButton;
   levelMenu?.remove();
   levelMenu = null;
-  return wasOpen;
+  levelMenuButton = null;
+  return button;
 }
 
+// A press outside the menu closes it, except on the button that opened it,
+// whose click closes it; another card's button switches to its own menu.
 window.addEventListener("pointerdown", (event) => {
-  if (levelMenu && !levelMenu.contains(event.target) && !event.target.closest?.(".filter-card-sort")) {
+  if (levelMenu && !levelMenu.contains(event.target) && !levelMenuButton.contains(event.target)) {
     closeLevelMenu();
   }
 });
@@ -70,7 +74,8 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeLevelMenu();
 });
 
-// Opens the "Sort by" menu of a card under `button`; `pick` gets the key.
+// Opens the "Sort by" menu of a card under `button`, or above it when the
+// window has no room below; `pick` gets the key.
 function openLevelMenu(button, order, pick) {
   const menu = document.createElement("div");
   menu.className = "scale-menu sort-menu filter-sort-menu";
@@ -94,10 +99,13 @@ function openLevelMenu(button, order, pick) {
   }
   document.body.append(menu);
   const rect = button.getBoundingClientRect();
-  const width = menu.getBoundingClientRect().width;
+  const { width, height } = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - width - 4))}px`;
-  menu.style.top = `${rect.bottom + 2}px`;
+  const below = rect.bottom + 2;
+  const top = below + height <= window.innerHeight - 4 ? below : rect.top - 2 - height;
+  menu.style.top = `${Math.max(4, Math.min(top, window.innerHeight - height - 4))}px`;
   levelMenu = menu;
+  levelMenuButton = button;
 }
 
 // Returns a number short enough for the pane.
@@ -373,7 +381,7 @@ export class FilterPane {
       sort.title = "水準の並べ替え";
       sort.setAttribute("aria-label", "Sort by");
       sort.addEventListener("click", () => {
-        if (closeLevelMenu()) return;
+        if (closeLevelMenu() === sort) return;
         openLevelMenu(sort, card.order, (picked) => {
           card.order = picked;
           card.arrange?.();

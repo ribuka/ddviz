@@ -684,13 +684,36 @@ def test_the_levels_of_a_card_sort_by_name_or_count(app_page: Page) -> None:
     expect(status).to_have_attribute("data-task", task)
     expect(summary).to_have_text("（1）color: 1/3")
 
-    # A card placed again starts by name.
+    # A button at the bottom of the window opens the menu above it, within the window.
+    height = page.viewport_size["height"]
+    button.evaluate(
+        "(b, h) => Object.assign(b.style, { position: 'fixed', top: `${h - 22}px`, left: '40px' })",
+        height,
+    )
     button.click()
-    page.locator(".filter-sort-menu").get_by_text("Count", exact=True).click()
+    box = menu.bounding_box()
+    assert box["y"] >= 0 and box["y"] + box["height"] <= height
+    menu.get_by_text("Count", exact=True).click()
     expect(names).to_have_text(by_count)
+    button.evaluate("(b) => b.removeAttribute('style')")
+
+    # Another card's button switches to its own menu; its own button closes it.
+    columns.filter(has=page.get_by_text("facet", exact=True)).drag_to(filters)
+    expect(cards).to_have_count(3)
+    other = cards.nth(2).get_by_role("button", name="Sort by")
+    expect(cards.nth(2).locator(".filter-level-name")).to_have_text(["p", "q"])
+    button.click()
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("Count")
+    other.click()
+    expect(menu).to_have_count(1)
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text("Name")
+    other.click()
+    expect(menu).to_have_count(0)
+
+    # A card placed again starts by name.
     card.locator(".filter-card-remove").click()
     columns.filter(has=page.get_by_text("color", exact=True)).drag_to(filters)
-    expect(cards.nth(1).locator(".filter-level-name")).to_have_text(["a", "b", "c"])
+    expect(cards.nth(2).locator(".filter-level-name")).to_have_text(["a", "b", "c"])
 
 
 @pytest.mark.parametrize(
