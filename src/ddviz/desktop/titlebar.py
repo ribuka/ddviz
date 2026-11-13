@@ -30,6 +30,10 @@ WM_DPICHANGED = 0x02E0
 HTCLIENT, HTCAPTION, HTTOP, HTTOPLEFT, HTTOPRIGHT = 1, 2, 12, 13, 14
 SM_CYFRAME, SM_CYCAPTION, SM_CXPADDEDBORDER = 33, 4, 92
 DWMWA_CAPTION_BUTTON_BOUNDS = 5
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_CAPTION_COLOR = 35
+#: The title bar row's color (``titlebar.css``), as a COLORREF (0x00BBGGRR).
+ROW_COLOR = 0x00F3F3F3
 RGN_DIFF = 4
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE = 0x1, 0x2, 0x4, 0x10
 SWP_FRAMECHANGED = 0x0020
@@ -106,6 +110,12 @@ if sys.platform == "win32":
     _dwmapi.DwmExtendFrameIntoClientArea.argtypes = [
         wintypes.HWND,
         ctypes.POINTER(MARGINS),
+    ]
+    _dwmapi.DwmSetWindowAttribute.argtypes = [
+        wintypes.HWND,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
     ]
     _dwmapi.DwmGetWindowAttribute.argtypes = [
         wintypes.HWND,
@@ -312,6 +322,7 @@ class TitleBar:
         self._control = form.browser.webview
         self._proc = SUBCLASSPROC(self._wndproc)
         _comctl32.SetWindowSubclass(self._hwnd, self._proc, SUBCLASS_ID, 0)
+        self._paint_frame()
         self._extend()
         _user32.SetWindowPos(
             self._hwnd,
@@ -323,6 +334,25 @@ class TitleBar:
             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         )
         self._clip()
+
+    def _paint_frame(self) -> None:
+        """Draw the caption buttons and the top resize edge in the row's colors.
+
+        Light buttons whatever the OS's theme, on the row's background, so
+        that they and the page's row look like one bar. Windows before 11
+        (Server 2016) ignore the caption color and keep their own frame.
+        """
+        light = ctypes.c_int(0)
+        _dwmapi.DwmSetWindowAttribute(
+            self._hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            ctypes.byref(light),
+            ctypes.sizeof(light),
+        )
+        color = wintypes.DWORD(ROW_COLOR)
+        _dwmapi.DwmSetWindowAttribute(
+            self._hwnd, DWMWA_CAPTION_COLOR, ctypes.byref(color), ctypes.sizeof(color)
+        )
 
     def _extend(self) -> None:
         """Extend the DWM frame over the caption, where DWM draws the buttons."""

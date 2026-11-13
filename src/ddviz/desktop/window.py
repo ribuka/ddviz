@@ -584,8 +584,13 @@ class _Api:
         self.app.cancel()
 
     def new(self) -> None:
-        """Go back to the chooser for another input (`_App.new`)."""
-        self.app.new()
+        """Go back to the chooser for another input (`_App.new`), in a thread of its own.
+
+        Returns at once, while the graph's page is still loaded: pywebview
+        answers the page's call when this returns, and the page that called
+        is gone once `_App.new` has shown another.
+        """
+        threading.Thread(target=self.app.new, name="new", daemon=True).start()
 
     def quit(self) -> None:
         """Close the window (`_App.quit`)."""
