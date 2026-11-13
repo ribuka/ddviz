@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ddviz.server.api_history import history_router
@@ -27,9 +27,11 @@ from ddviz.server.auth import TokenAuth
 from ddviz.server.broker import TaskBroker
 from ddviz.server.history import SearchHistory, history_file
 from ddviz.server.memory import FrontendPids, MemoryMeter
+from ddviz.server.page import index_page
 from ddviz.server.results import Results
 from ddviz.server.settings import Settings
 from ddviz.server.source import Source
+from ddviz.shared.inputs import input_label
 from ddviz.workers.jobs import WorkerJob, physical_memory
 
 STATIC = Path(__file__).parents[1] / "static"
@@ -44,6 +46,7 @@ def create_app(
     settings: Settings,
     token: str,
     frontend_pids: FrontendPids | None = None,
+    desktop: bool = False,
 ) -> FastAPI:
     """Create the UI server for a Parquet file, a folder of them or several files.
 
@@ -68,6 +71,9 @@ def create_app(
     frontend_pids : callable or None
         Returns the ids of the window's WebView2 processes for the memory in
         the footer (`ddviz.server.memory`); None in a browser.
+    desktop : bool
+        Serving the desktop window: the page draws its title bar
+        (`ddviz.server.page.index_page`).
 
     Returns
     -------
@@ -105,9 +111,11 @@ def create_app(
     app.add_middleware(TokenAuth, token=token)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
+    title = f"ddviz - {input_label(data_paths)}" if desktop else None
+
     @app.get("/")
-    async def index() -> FileResponse:
-        return FileResponse(STATIC / "index.html")
+    async def index() -> HTMLResponse:
+        return HTMLResponse(index_page(STATIC / "index.html", title))
 
     @app.get("/api/settings")
     async def page_settings() -> dict:

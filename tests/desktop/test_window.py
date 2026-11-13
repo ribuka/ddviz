@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
+import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Self
 
@@ -12,7 +15,15 @@ import pytest
 import webview
 from fastapi import FastAPI
 
-from ddviz.desktop.window import DROP_NOT_PARQUET, DROP_UNREADABLE, _App, dropped_paths
+from ddviz.desktop.window import (
+    _CHOOSER,
+    _CLOSING,
+    DROP_NOT_PARQUET,
+    DROP_UNREADABLE,
+    TITLE,
+    _App,
+    dropped_paths,
+)
 from ddviz.shared.inputs import input_label
 
 
@@ -25,6 +36,8 @@ class _FakeWindow:
         self.destroyed = False
         self.dialogs: list[object] = []
         self.scripts: list[str] = []
+        # What the window was told to show, in order, with what the servers did.
+        self.log: list[tuple] = []
         self._chosen = chosen
 
     def create_file_dialog(
@@ -38,6 +51,10 @@ class _FakeWindow:
 
     def load_url(self, url: str) -> None:
         self.url = url
+        self.log.append(("url", url))
+
+    def load_html(self, content: str) -> None:
+        self.log.append(("html", content))
 
     def destroy(self) -> None:
         self.destroyed = True
@@ -301,28 +318,200 @@ class _Events:
         self.drop = _Handlers()
 
 
-class _Document:
+class _Element:
     def __init__(self) -> None:
         self.events = _Events()
 
 
 class _Dom:
-    def __init__(self) -> None:
-        self.document = _Document()
+    """Answers `get_element` with one area, present or not (another page)."""
+
+    def __init__(self, area: bool = True) -> None:
+        self.area = _Element()
+        self.has_area = area
+        self.selectors: list[str] = []
+
+    def get_element(self, selector: str) -> _Element | None:
+        self.selectors.append(selector)
+        return self.area if self.has_area else None
 
 
 def test_only_the_choosers_load_subscribes_to_drops(tmp_path: Path) -> None:
-    """The chooser subscribes once; with an input given, or once it is open, nothing subscribes."""
+    """The chooser subscribes once, below the title bar; with an input given, nothing subscribes."""
     window = _FakeWindow()
     window.dom = _Dom()
     app = _App(window, None, False, _hello, input_label)
     app.watch_drops()
     app.watch_drops()
-    (handler,) = window.dom.document.events.drop
+    assert window.dom.selectors == ["#drop"]
+    (handler,) = window.dom.area.events.drop
     assert handler.callback == app.drop
     assert handler.prevent_default
 
     given = _FakeWindow()
     given.dom = _Dom()
     _App(given, [str(tmp_path)], False, _hello, input_label).watch_drops()
-    assert given.dom.document.events.drop == []
+    assert given.dom.selectors == []
+    assert given.dom.area.events.drop == []
+
+
+def test_a_page_without_the_drop_area_subscribes_later() -> None:
+    """A load whose page is not the chooser yet leaves the subscription to the chooser's load."""
+    window = _FakeWindow()
+    window.dom = _Dom(area=False)
+    app = _App(window, None, False, _hello, input_label)
+    app.watch_drops()
+    window.dom.has_area = True
+    app.watch_drops()
+    assert len(window.dom.area.events.drop) == 1
+
+
+def _recording(log: list[tuple]) -> Callable[[list[str], bool, str], FastAPI]:
+    """Return a factory of `_hello` apps that log their shutdown into `log`."""
+
+    def make(paths: list[str], recursive: bool, token: str) -> FastAPI:
+        @asynccontextmanager
+        async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+            yield
+            log.append(("shutdown", paths))
+
+        app = _hello(paths, recursive, token)
+        app.router.lifespan_context = lifespan
+        return app
+
+    return make
+
+
+def _get(url: str) -> list:
+    """Return the JSON a `_hello` app answers at `url`."""
+    with urllib.request.urlopen(url) as response:
+        return json.load(response)
+
+
+def test_new_stops_the_server_and_shows_the_chooser_in_the_same_window(
+    tmp_path: Path,
+) -> None:
+    """`New` shows the closing page, stops the server, then loads the chooser; the window stays."""
+    window = _FakeWindow()
+    app = _App(window, [str(tmp_path)], False, _recording(window.log), input_label)
+    app.start()
+    first = window.url
+    assert _get(first)[0] == [str(tmp_path)]
+    app.new()
+    try:
+        assert window.log == [
+            ("url", first),
+            ("html", _CLOSING),
+            ("shutdown", [str(tmp_path)]),
+            ("html", _CHOOSER),
+        ]
+        assert window.title == TITLE
+        with pytest.raises(urllib.error.URLError):
+            urllib.request.urlopen(first, timeout=5)
+    finally:
+        app.stop()
+    assert not window.destroyed
+    assert not app.failed
+
+
+def test_after_new_another_input_opens_on_a_new_server(tmp_path: Path) -> None:
+    """The chooser shown by `New` opens another input with a new port and token."""
+    first_input, other = tmp_path / "a", tmp_path / "other"
+    first_input.mkdir()
+    other.mkdir()
+    window = _FakeWindow(chosen=[str(other)])
+    app = _App(window, [str(first_input)], False, _hello, input_label)
+    app.start()
+    first = window.url
+    _, _, first_token = _get(first)
+    app.new()
+    app.choose("folder", False)
+    try:
+        assert window.url != first
+        paths, _, token = _get(window.url)
+        assert paths == [str(other)]
+        assert token != first_token
+        assert window.title == "ddviz - other"
+    finally:
+        app.stop()
+    assert not window.destroyed
+    assert not app.failed
+
+
+def test_new_runs_once_and_only_with_an_input_shown(tmp_path: Path) -> None:
+    """`New` before an input, twice in a row, or during another `New` stops and loads once."""
+    idle = _FakeWindow()
+    _App(idle, None, False, _hello, input_label).new()
+    assert idle.log == []
+
+    class _Renewing(_FakeWindow):
+        def load_html(self, content: str) -> None:
+            super().load_html(content)
+            app.new()  # again, while the first is under way
+
+    window = _Renewing()
+    app = _App(window, [str(tmp_path)], False, _recording(window.log), input_label)
+    app.start()
+    app.new()
+    app.new()
+    app.stop()
+    assert [entry[0] for entry in window.log] == ["url", "html", "shutdown", "html"]
+    assert not window.destroyed
+    assert not app.failed
+
+
+def test_cancelling_the_dialog_after_new_keeps_the_chooser(tmp_path: Path) -> None:
+    """After `New`, a cancelled OS dialog starts no server."""
+    window = _FakeWindow(chosen=None)
+    app = _App(window, [str(tmp_path)], False, _hello, input_label)
+    app.start()
+    first = window.url
+    app.new()
+    app.choose("file", False)
+    app.stop()
+    assert window.url == first
+    assert window.log[-1] == ("html", _CHOOSER)
+    assert window.title == TITLE
+    assert not window.destroyed
+    assert not app.failed
+
+
+def test_files_dropped_on_the_chooser_after_new_open(tmp_path: Path) -> None:
+    """Started with an input, the chooser that `New` shows subscribes to drops, which open."""
+    (good,) = _files(tmp_path, "data.parquet")
+    window = _FakeWindow()
+    window.dom = _Dom()
+    app = _App(window, [str(tmp_path)], False, _hello, input_label)
+    app.start()
+    app.watch_drops()
+    assert window.dom.area.events.drop == []
+    first = window.url
+    app.new()
+    app.watch_drops()
+    (handler,) = window.dom.area.events.drop
+    handler.callback(_drop(good))
+    try:
+        assert window.url != first
+        assert _get(window.url)[0] == [str(good)]
+        assert window.title == "ddviz - data.parquet"
+    finally:
+        app.stop()
+    assert not app.failed
+
+
+def test_quit_closes_the_window_as_the_close_button_does(tmp_path: Path) -> None:
+    """`Quit` closes the window; stopping afterwards is no failure."""
+    window = _FakeWindow()
+    app = _App(window, [str(tmp_path)], False, _hello, input_label)
+    app.start()
+    app.quit()
+    app.stop()
+    assert window.destroyed
+    assert not app.failed
+
+
+def test_version_is_the_packages_from_the_version_file() -> None:
+    """`Version` is the installed package's version, which is the repository's VERSION."""
+    app = _App(_FakeWindow(), None, False, _hello, input_label)
+    version = (Path(__file__).parents[2] / "VERSION").read_text(encoding="utf-8")
+    assert app.version() == importlib.metadata.version("ddviz") == version.strip()
