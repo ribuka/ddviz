@@ -8,6 +8,7 @@ from ddviz.server.encoding import Encoding
 from ddviz.shared.axisscale import parse_axis_scales
 from ddviz.shared.layout import MARGIN_BOTTOM, MARGIN_LEFT, bottom_margin, left_margin
 from ddviz.shared.scatter import (
+    LINE_WIDTH,
     MAX_AXIS_LEVELS,
     MAX_LEVELS,
     ONE_BAND,
@@ -31,6 +32,8 @@ SMOOTH_METHODS = ("gcv", "csaps", "lowess")
 # Sizes in pixels the markers can take: the shapes of the symbol levels, or
 # the circles without a symbol.
 SHAPE_SIZES = (3, 5, 7, 9, 11, 15)
+# Widths in pixels the lines joining the points can take.
+LINE_WIDTHS = (1, 2, 3, 4, 5)
 
 
 def one_band(encoding: Encoding, numeric: dict[str, bool]) -> bool:
@@ -115,6 +118,27 @@ def has_smooth_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
     )
 
 
+def has_line_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
+    """Return whether a pair of the graph's axis columns can join its points with lines: a numeric x and a numeric y.
+
+    A temporal column is numeric. The pairs are those of the smoothing
+    lines (`has_smooth_pair`).
+
+    Parameters
+    ----------
+    encoding : Encoding
+        The graph.
+    numeric : dict of str to bool
+        Whether each column is numeric; a missing one is numeric.
+
+    Returns
+    -------
+    bool
+        Whether such a pair exists.
+    """
+    return has_smooth_pair(encoding, numeric)
+
+
 def undrawn(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
     """Return the roles and elements that are placed but cannot be drawn.
 
@@ -129,14 +153,16 @@ def undrawn(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
     -------
     list of str
         ``"box"`` without a pair of a categorical x and a numeric y
-        (`has_box_pair`), and ``"smooth"`` without a pair of a numeric x
-        and a numeric y (`has_smooth_pair`).
+        (`has_box_pair`), ``"smooth"`` without a pair of a numeric x
+        and a numeric y (`has_smooth_pair`), and ``"line"`` without such a
+        pair either (`has_line_pair`).
     """
     return [
         e
         for e in encoding.elements
         if (e == "box" and not has_box_pair(encoding, numeric))
         or (e == "smooth" and not has_smooth_pair(encoding, numeric))
+        or (e == "line" and not has_line_pair(encoding, numeric))
     ]
 
 
@@ -260,6 +286,7 @@ def scatter_spec(
     axis_scales: object = None,
     margin_left: int = MARGIN_LEFT,
     margin_bottom: int = MARGIN_BOTTOM,
+    line_width: int | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -335,6 +362,11 @@ def scatter_spec(
     margin_bottom : int, optional
         Bottom margin the page asks for, in pixels; kept within the height
         (`ddviz.shared.layout.bottom_margin`).
+    line_width : int, optional
+        Width of the lines joining the points in pixels
+        (`parse_line_width`); None for the default, `LINE_WIDTH`. The lines
+        are drawn with the ``"line"`` element, in the panels of a numeric x
+        and a numeric y (`ScatterSpec.line_width`).
 
     Returns
     -------
@@ -407,6 +439,9 @@ def scatter_spec(
         box="box" in encoding.elements and has_box_pair(encoding, numeric),
         smooth=(smoothing or Smoothing())
         if "smooth" in encoding.elements and has_smooth_pair(encoding, numeric)
+        else None,
+        line_width=(line_width or LINE_WIDTH)
+        if "line" in encoding.elements and has_line_pair(encoding, numeric)
         else None,
         symbol=symbol,
         shape_size=shape_size or (POINT_SIZE if symbol is None else SHAPE_SIZE),
@@ -518,6 +553,31 @@ def parse_shape_size(raw: object) -> int | None:
     if isinstance(raw, bool) or raw not in SHAPE_SIZES:
         raise ValueError(f"shape_size is one of {SHAPE_SIZES} or null: {raw}")
     return int(raw)
+
+
+def parse_line_width(raw: object) -> int | None:
+    """Return the width of the lines the page asks for, checked.
+
+    Parameters
+    ----------
+    raw : object
+        One of `LINE_WIDTHS`, or None for the default.
+
+    Returns
+    -------
+    int or None
+        The width in pixels, or None for the default (`scatter_spec`).
+
+    Raises
+    ------
+    ValueError
+        For anything else.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw not in LINE_WIDTHS:
+        raise ValueError(f"line_width is one of {LINE_WIDTHS} or null: {raw}")
+    return raw
 
 
 def parse_shape_sizes(raw: dict[str, object] | None) -> dict[str, int]:

@@ -20,16 +20,26 @@ function axisKey(id) {
 // `source.task`, sliced by `source.images`) and decodes them in the colors of
 // result `meta` (colorscale.js), again when the colors change meanwhile;
 // returns per series an ImageBitmap whose tiles are the panels, or null.
+// The lines of a result's color levels (`source.line_images`) come as
+// `lines` of the array, each at its color level's first series, so that
+// they take the series' colors.
 export async function loadImages(source, meta = source) {
   const response = await fetch(`/api/images/${source.task}`);
   if (!response.ok) throw new Error(`images of task ${source.task}: ${response.status}`);
   const buffer = await response.arrayBuffer();
-  const blobs = source.images.map((span) =>
-    span ? new Blob([new Uint8Array(buffer, span[0], span[1])], { type: "image/png" }) : null,
-  );
+  const blob = (span) =>
+    span ? new Blob([new Uint8Array(buffer, span[0], span[1])], { type: "image/png" }) : null;
+  const blobs = source.images.map(blob);
+  const shapes = meta.color?.shapes ?? 1;
+  const lineBlobs = source.line_images?.some((span) => span)
+    ? Array.from({ length: meta.grid.n_series }, (_, s) =>
+        s % shapes === 0 ? blob(source.line_images[s / shapes]) : null,
+      )
+    : null;
   for (;;) {
     const version = colorsNow();
     const bitmaps = await decode(blobs, meta);
+    if (lineBlobs) bitmaps.lines = await decode(lineBlobs, meta);
     if (version === colorsNow()) return bitmaps;
     closeImages(bitmaps);
   }
@@ -38,6 +48,7 @@ export async function loadImages(source, meta = source) {
 // Frees the decoded images of a result.
 export function closeImages(bitmaps) {
   bitmaps?.forEach((bitmap) => bitmap?.close());
+  bitmaps?.lines?.forEach((bitmap) => bitmap?.close());
 }
 
 // The canvas sits between plotly's two SVG layers: above the panels' grid and
@@ -117,6 +128,14 @@ export class ImageLayers {
     // With a selection every row fades, and the selected rows are drawn
     // again on top, in every panel.
     const dim = selection ? SELECTION_DIM : 1;
+    // The lines joining the points lie under them, and like the smoothing
+    // lines stay at full opacity over a selection. Only the color legend
+    // fades them: the symbol levels do not split them.
+    if (bitmaps.lines) {
+      const shapes = meta.color.shapes;
+      const lineAlpha = (s) => this.legend.colorOpacity(Math.floor(s / shapes));
+      this.drawLayer(ctx, full, dpr, meta, bitmaps.lines, lineAlpha);
+    }
     // The points under box plots fade, so that the boxes stand out.
     this.drawLayer(ctx, full, dpr, meta, bitmaps, (s) => alpha(s) * dim, null, true);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

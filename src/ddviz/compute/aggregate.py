@@ -18,6 +18,8 @@ from ddviz.compute.boxes import (
     outlier_position,
 )
 from ddviz.compute.cuts import cut_index, cut_labels, find_cuts
+from ddviz.compute.lines import VALUE as LINE_VALUE
+from ddviz.compute.lines import LinePixels, line_frame, line_pixels
 from ddviz.compute.missing import (
     drawn_conditions,
     is_missing,
@@ -140,6 +142,14 @@ class Aggregation:
     smooths : list of Smooths
         Smoothing lines of each pair of
         `ddviz.shared.scatter.ScatterSpec.smooth_pairs`.
+    lines : LinePixels
+        The pixels the lines of each pair of
+        `ddviz.shared.scatter.ScatterSpec.line_pairs` cover, one pixel wide
+        (`ddviz.compute.lines`); the ranks run on over the pairs. None
+        when only the selection was aggregated.
+    line_values : polars.Series or None
+        For a gradient's lines, the color of each row of every pair's lines
+        by rank: item ``r - 1`` colors the pixels of rank ``r``.
     bins : polars.DataFrame or None
         One row per non-empty bin, sorted by `KEY`: the key, the number of
         rows in the bin (`COUNT`), the representative row's index (`INDEX`,
@@ -179,6 +189,8 @@ class Aggregation:
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
     nonpositive: list[tuple[str, str]] = field(default_factory=list)
+    lines: LinePixels | None = None
+    line_values: pl.Series | None = None
 
 
 def _padded(lo: float | None, hi: float | None) -> tuple[float, float]:
@@ -714,21 +726,41 @@ def aggregate(
                 )
             )
 
+    lines = line_values = None
+    pairs_with_lines = spec.line_pairs()
+    if not selection_only:
+        lines, line_values = _lines(
+            spec,
+            pairs_with_lines,
+            used,
+            valid,
+            lambda xi, yj: axes.panel(row, col, xi, yj),
+            index("color"),
+            len(levels["color"]),
+            x_ranges,
+            y_ranges,
+            grid,
+            progress,
+        )
+
     def pair(
         xi: int, yj: int, extra: list[pl.Expr], extra_columns: list[str]
     ) -> pl.DataFrame:
         """Return the bins of the panels of one pair of axis columns, of the rows `extra` keeps."""
         x_col, y_col = spec.x[xi], spec.y[yj]
         outlier = pl.lit(True)
-        if (x_col, y_col) in pairs_with_smooths and not spec.draws_points(x_col, y_col):
+        if (x_col, y_col) in pairs_with_lines or spec.draws_points(x_col, y_col):
+            # Two numeric axes: the stacks place the points of a categorical
+            # one. A pair of lines without points keeps the bins of its rows
+            # for the hover and the selection; its images leave them out
+            # (`ddviz.compute.tasks.plot`).
+            x = pl.col(x_col).cast(pl.Float64)
+            y = pl.col(y_col).cast(pl.Float64)
+        elif (x_col, y_col) in pairs_with_smooths:
             # Only the smoothing lines: no row is drawn as a point.
             x = pl.col(x_col).cast(pl.Float64)
             y = pl.col(y_col).cast(pl.Float64)
             outlier = pl.lit(False)
-        elif spec.draws_points(x_col, y_col):
-            # Two numeric axes: the stacks place the points of a categorical one.
-            x = pl.col(x_col).cast(pl.Float64)
-            y = pl.col(y_col).cast(pl.Float64)
         else:
             # Only the outliers, spread in the slot of their series' box.
             y = pl.col(y_col).cast(pl.Float64)
@@ -945,12 +977,76 @@ def aggregate(
         boxes=boxes,
         smooths=smooths,
         nonpositive=logs.nonpositive,
+        lines=lines,
+        line_values=line_values,
     )
 
 
 def _overview_range(spec: ScatterSpec, column: str) -> tuple[float, float]:
     """Return the padded finite range of a numeric column over every row, as the overview's axis has it."""
     return _padded(*_range_query(spec, column).collect(engine="streaming").row(0))
+
+
+def _lines(
+    spec: ScatterSpec,
+    pairs: set[tuple[str, str]],
+    used: list[str],
+    valid: list[pl.Expr],
+    panel: Callable[[int, int], pl.Expr],
+    color: pl.Expr,
+    n_colors: int,
+    x_ranges: list[tuple[float, float]],
+    y_ranges: list[tuple[float, float]],
+    grid: BinGrid,
+    progress: Callable[[str], None],
+) -> tuple[LinePixels, pl.Series | None]:
+    """Return the pixels of the lines of each pair, over the drawn rows that pass the local filter (`ddviz.compute.lines`).
+
+    A pair's series are its facet cells by color level; a gradient's color
+    splits none, and the color of each row is kept instead.
+    """
+    if not pairs:
+        return LinePixels.empty(), None
+    progress("lines")
+    # A gradient's lines are one series a panel; the others', one a color level.
+    n_series = 1 if spec.gradient else n_colors
+    parts, values = [], []
+    offset = 0
+    for yj, y_col in enumerate(spec.y):
+        for xi, x_col in enumerate(spec.x):
+            if (x_col, y_col) not in pairs:
+                continue
+            rows = _scan(
+                spec, [x_col, y_col, *used, *filter_columns(spec.filters)], INDEX
+            ).filter(*valid, *filter_conditions(spec.filters))
+            frame = line_frame(
+                rows,
+                x_col,
+                y_col,
+                panel(xi, yj),
+                pl.lit(0) if spec.gradient else color,
+                n_series,
+                color,
+                INDEX,
+                pl.col(spec.color) if spec.gradient else None,
+                # Not streaming: its sort peaked at 1.34GB on 10M rows,
+                # against 0.90GB in memory (`docs/spec.md`, "点を結ぶ線").
+            ).collect()
+            found = line_pixels(
+                frame,
+                x_col in spec.log_x,
+                y_col in spec.log_y,
+                x_ranges[xi],
+                y_ranges[yj],
+                grid.width,
+                grid.height,
+                n_series,
+            )
+            parts.append(LinePixels(found.pixel, found.layer, found.rank + offset))
+            if spec.gradient:
+                values.append(frame[LINE_VALUE])
+            offset += frame.height
+    return LinePixels.concat(parts), pl.concat(values) if values else None
 
 
 def _smooths(

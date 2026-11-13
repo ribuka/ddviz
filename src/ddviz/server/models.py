@@ -35,6 +35,7 @@ class PlotRequest(BaseModel):
     wrap_cols: int | None = None
     smooth: dict | None = None
     shape_size: int | None = None
+    line_width: object = None
     shape_sizes: dict[str, object] | None = None
     level_shapes: dict[str, object] | None = None
     show_null_rows: ShowNullRows = ShowNullRows()

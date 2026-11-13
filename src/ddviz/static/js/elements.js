@@ -1,15 +1,19 @@
 // Icons above the figure that choose the elements of the graph
-// (`ddviz.server.encoding.ELEMENTS`): points, box plots and smoothing lines.
+// (`ddviz.server.encoding.ELEMENTS`): points, lines joining them, box plots
+// and smoothing lines.
 // Each icon toggles its element, and several are drawn one over another.
 // An element that cannot be drawn yet shows its icon, which cannot be
 // pressed; nor can the last element that can be drawn be turned off. Box
 // plots need a categorical X column and a numeric Y column, or numeric Y
-// columns alone (`ddviz.server.plan.has_box_pair`), smoothing lines a numeric X column and
-// a numeric Y column (`ddviz.server.plan.has_smooth_pair`): without them,
-// their icon cannot be pressed either. A right click on the smoothing
-// lines' icon opens their menu (smoothmenu.js), and one on the points' icon
-// the menu of the size of the markers (shapemenu.js) while a scatter plot
-// is drawn; otherwise, nothing opens.
+// columns alone (`ddviz.server.plan.has_box_pair`), smoothing lines and the
+// lines joining the points a numeric X column (a date or a datetime too) and
+// a numeric Y column (`ddviz.server.plan.has_smooth_pair`,
+// `ddviz.server.plan.has_line_pair`): without them, their icon cannot be
+// pressed either. A right click on the smoothing lines' icon opens their
+// menu (smoothmenu.js), one on the points' icon the menu of the size of the
+// markers (shapemenu.js) while a scatter plot is drawn, and one on the
+// lines' icon the menu of their width (shapemenu.js) while lines are drawn;
+// otherwise, nothing opens.
 
 const ELEMENTS = [
   {
@@ -17,6 +21,13 @@ const ELEMENTS = [
     label: "点",
     drawn: true,
     svg: '<circle cx="5" cy="12" r="2"/><circle cx="10" cy="6" r="2"/><circle cx="14" cy="13" r="2"/><circle cx="18" cy="5" r="2"/>',
+  },
+  {
+    name: "line",
+    label: "線",
+    drawn: true,
+    needs: "X に数値・日付・日時の列、Y に数値の列を置くと描ける",
+    svg: '<path d="M2 17L7 9l5 6 4-10 4 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   },
   {
     name: "box",
@@ -36,13 +47,17 @@ const ELEMENTS = [
 
 export class ElementBar {
   // `root` takes the icons; `onChange` gets the chosen elements, in the
-  // order of `ELEMENTS`, after each toggle; `onSmoothMenu` and
-  // `onPointsMenu` the right click's event on the smoothing lines' icon and
-  // on the points' icon.
-  constructor(root, onChange, onSmoothMenu, onPointsMenu) {
+  // order of `ELEMENTS`, after each toggle; `onSmoothMenu`, `onPointsMenu`
+  // and `onLineMenu` the right click's event on the smoothing lines' icon,
+  // on the points' icon and on the lines' icon.
+  constructor(root, onChange, onSmoothMenu, onPointsMenu, onLineMenu) {
     this.chosen = new Set(["points"]);
     // Elements the graph cannot have now, though they can be drawn.
-    this.blocked = new Set(["box", "smooth"]);
+    this.blocked = new Set(["line", "box", "smooth"]);
+    // Width of the lines of the graph drawn, shown in the lines' icon's
+    // title; null while no graph with lines is drawn, when the icon has no
+    // menu.
+    this.lineText = null;
     // How the smoothing lines are fitted, shown in their icon's title.
     this.smoothText = "";
     // Size of the markers of the graph drawn, shown in the points' icon's
@@ -67,6 +82,12 @@ export class ElementBar {
         button.addEventListener("contextmenu", (event) => {
           event.preventDefault();
           if (this.pointsMenu()) onPointsMenu(event);
+        });
+      }
+      if (element.name === "line") {
+        button.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          if (this.lineMenu()) onLineMenu(event);
         });
       }
       root.append(button);
@@ -117,6 +138,19 @@ export class ElementBar {
     return this.pointsText !== null && this.chosen.has("points");
   }
 
+  // Whether the lines' icon opens the menu of their width: while a graph
+  // with the lines is drawn.
+  lineMenu() {
+    return this.lineText !== null && this.chosen.has("line") && !this.blocked.has("line");
+  }
+
+  // Shows the width of the lines drawn in the lines' icon's title, or null
+  // when no graph with lines is drawn.
+  setLineText(text) {
+    this.lineText = text;
+    this.render();
+  }
+
   // Shows the size of the markers drawn in the points' icon's title, or
   // null when no graph is drawn.
   setPointsText(text) {
@@ -159,14 +193,23 @@ export class ElementBar {
       button.setAttribute("aria-pressed", String(on));
       button.disabled = !this.usable(element);
       const points = element.name === "points" && this.pointsMenu();
+      const line = element.name === "line" && this.lineMenu();
       const label =
         element.name === "smooth" && this.smoothText
           ? `${element.label}（${this.smoothText}）`
           : points
             ? `${element.label}（${this.pointsText}）`
-            : element.label;
+            : line
+              ? `${element.label}（${this.lineText}）`
+              : element.label;
       const menu =
-        element.name === "smooth" ? "。右クリックで方式を選ぶ" : points ? "。右クリックで大きさを変える" : "";
+        element.name === "smooth"
+          ? "。右クリックで方式を選ぶ"
+          : points
+            ? "。右クリックで大きさを変える"
+            : line
+              ? "。右クリックで太さを変える"
+              : "";
       button.title = !element.drawn
         ? `${label}（まだ描けない）`
         : this.blocked.has(element.name)

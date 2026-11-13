@@ -64,6 +64,12 @@ export class Legend {
     return this.inactive.has(s) ? this.inactiveOpacity : 1;
   }
 
+  // Returns the opacity the lines of color level `c` are drawn at: the
+  // symbol levels do not split the lines, so only the color legend fades them.
+  colorOpacity(c) {
+    return this.off.color.has(c) ? this.inactiveOpacity : 1;
+  }
+
   // Returns the series drawn invisible (inactive at opacity 0), which the
   // hover does not find.
   hidden() {
@@ -90,9 +96,14 @@ export class Legend {
   }
 
   // Marks the levels of a result (its meta) that draw nothing: no series of
-  // theirs has an image, a box plot or a smoothing line. They have no rows.
+  // theirs has an image, a box plot or a smoothing line, and they have no
+  // lines. They have no rows.
   setEmpty(meta) {
     const drawn = new Set(meta.images.flatMap((image, i) => (image === null ? [] : [i])));
+    // The lines of color level `c` (`meta.line_images`) are of its first series.
+    (meta.line_images ?? []).forEach((image, c) => {
+      if (image !== null) drawn.add(c * meta.color.shapes);
+    });
     for (const panel of meta.panels) {
       for (const box of panel.boxes) drawn.add(box[1]);
       for (const line of panel.smooths) drawn.add(line[0]);

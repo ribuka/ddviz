@@ -7,12 +7,19 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from ddviz.compute.aggregate import COUNT, INDEX, KEY, aggregate
+from ddviz.compute.aggregate import COUNT, INDEX, KEY, Aggregation, aggregate
 from ddviz.compute.hoverfit import NPY_HEADER, fit_hover
 from ddviz.compute.progress import Emit
 from ddviz.compute.raster import occupancy
-from ddviz.compute.tasks.images import write_gradient, write_images
+from ddviz.compute.tasks.images import (
+    gradient_grays,
+    write_gradient,
+    write_images,
+    write_lines,
+)
 from ddviz.compute.tasks.piles import selected_pixels, write_piles
+from ddviz.shared.keys import BinGrid
+from ddviz.shared.layout import AxisGrid
 from ddviz.shared.manifest import HoverColumn, PlotManifest, SelectionManifest
 from ddviz.shared.missing import MISSING, MISSING_COLOR
 from ddviz.shared.palette import series_color
@@ -67,6 +74,53 @@ def _solid(spec: ScatterSpec, colors: list[str], levels: dict[str, list]) -> dic
     }
 
 
+def _shown(
+    spec: ScatterSpec, axes: AxisGrid, grid: BinGrid, keys: np.ndarray
+) -> np.ndarray:
+    """Return which bins are drawn as points: not those of the panels of lines without points.
+
+    Such a panel keeps the bins of its rows for the hover and the selection
+    (`ddviz.compute.aggregate.aggregate`).
+    """
+    hidden = []
+    for p in range(axes.panels):
+        xi, yj = axes.axes(p)
+        if not spec.draws_points(spec.x[xi], spec.y[yj]):
+            hidden.append(p)
+    if not hidden or len(keys) == 0:
+        return np.ones(len(keys), dtype=bool)
+    panel, _, _, _ = grid.unpack(keys)
+    return ~np.isin(panel, hidden)
+
+
+def _line_images(
+    spec: ScatterSpec, agg: Aggregation, out: Path, colors: list[str]
+) -> list:
+    """Append the images of the lines to the images file (`write_lines`); return where each lies."""
+    if spec.line_width is None or agg.lines is None:
+        return []
+    shapes = max(_shapes(spec, agg.levels), 1)
+    n_colors = len(agg.levels["color"])
+    solid = {
+        c: colors[c * shapes]
+        for c in range(n_colors)
+        if not spec.gradient or agg.levels["color"][c] == MISSING
+    }
+    grays = None
+    if spec.gradient and agg.line_values is not None:
+        grays = gradient_grays(agg.line_values, agg.color_range)
+    return write_lines(
+        out,
+        agg.lines,
+        agg.grid,
+        agg.layout.ncol,
+        n_colors,
+        spec.line_width,
+        solid,
+        grays,
+    )
+
+
 def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     """Aggregate a scatter plot and write its series images and hover files.
 
@@ -103,12 +157,13 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     colors = _colors(spec, agg.grid.n_series, agg.levels)
     shapes = spec.marker_shapes(agg.levels["symbol"])
     sizes = spec.marker_sizes(agg.levels["symbol"])
+    shown = _shown(spec, agg.axes, agg.grid, keys)
     if spec.gradient:
         images = write_gradient(
             out,
-            keys,
-            bins[spec.color],
-            bins[INDEX].to_numpy(),
+            keys[shown],
+            bins[spec.color].filter(shown),
+            bins[INDEX].to_numpy()[shown],
             agg.grid,
             agg.layout.ncol,
             agg.color_range,
@@ -118,8 +173,9 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         )
     else:
         images = write_images(
-            out, keys, agg.grid, agg.layout.ncol, colors, shapes, sizes
+            out, keys[shown], agg.grid, agg.layout.ncol, colors, shapes, sizes
         )
+    line_images = _line_images(spec, agg, out, colors)
 
     emit({"type": "progress", "stage": "write"})
     hover = list(dict.fromkeys(spec.hover))
@@ -161,6 +217,7 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         colors=colors,
         columns=columns,
         images=images,
+        line_images=line_images,
         rows=int(bins[COUNT].sum()) + int(pile_bins[COUNT].sum()),
         hover_files=kept is not None,
         hover_dropped=[c for c in hover if kept is None or c not in kept],
@@ -194,7 +251,10 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         selection_only=True,
     )
     emit({"type": "progress", "stage": "raster"})
-    keys = agg.selected[KEY].to_numpy()
+    selected = agg.selected.filter(
+        _shown(spec, agg.axes, agg.grid, agg.selected[KEY].to_numpy())
+    )
+    keys = selected[KEY].to_numpy()
     shapes = spec.marker_shapes(agg.levels["symbol"])
     sizes = spec.marker_sizes(agg.levels["symbol"])
     colors = _colors(spec, agg.grid.n_series, agg.levels)
@@ -202,8 +262,8 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         images = write_gradient(
             out,
             keys,
-            agg.selected[spec.color],
-            agg.selected[INDEX].to_numpy(),
+            selected[spec.color],
+            selected[INDEX].to_numpy(),
             agg.grid,
             agg.layout.ncol,
             agg.color_range,

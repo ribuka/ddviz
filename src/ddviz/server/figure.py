@@ -522,6 +522,11 @@ def build_figure(manifest: PlotManifest) -> dict:
         # (`ddviz.shared.shapes.marker`); a symbol level may have its own
         # (`symbol.sizes`).
         "marker_size": spec.shape_size,
+        # Width in pixels of the lines joining the points, or None without
+        # them; where the PNG of each color level's lines lies in the
+        # images file (none for a level without lines), as ``images``.
+        "line_width": spec.line_width,
+        "line_images": manifest.line_images,
         "colors": manifest.colors,
         "images": manifest.images,
         "ncol": layout.ncol,
