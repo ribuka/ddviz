@@ -320,6 +320,11 @@ E2E テスト（2026-10-30 決定）：
 - 余白が落ち着くのを待つ helper（`test_axis_tick_angle.py`・`test_left_margin.py` の `settle`）は、`wait_idle` の後に余白を測り、`SETTLE_MS`（200ms）後にもう一度 `wait_idle` して同じなら抜ける（2026-11-12）。軸の設定は `Plotly.relayout` を待ってから余白を測り直す（`followMargin`）ので、その間を 200ms で見る。以前は 600ms を 2 回待っていた。
 - ダブルクリックの前は、図（`#plot`）の上の最後の押下から `APART_MS`（600ms、plotly 4.1.1 の `doubleClickDelay` の 500ms より長い）たつまで待つ（`test_scatter.py` の `wait_apart`。押下の時刻は `conftest.py` の `LAST_PRESS` が `app_page` の init script で記録する。2026-11-12）。以前はダブルクリックのたびに 400〜600ms を固定で待っていた。plotly は図の上の押下だけを数えるので、ダイアログのボタンなどの押下からは数えない。
 - `test_plot_failure.py` は、エラーのトースト（`#toasts`）にポインタを通す（`pointer-events: none` の style を足す fixture。2026-11-12）。失敗のたびに右上に出るトーストが右上の欄（Color など）に重なり、playwright の `drag_to` がトーストが閉じるまで再試行していた（`test_a_failed_drop_on_any_role_comes_back_whole` で 45.7 秒、うち `drag_to` が 43 秒）。トーストそのものは `test_notice.py` で確かめる。
+- フィルタ欄へ続けて落とすときは、ドロップのたびに、カードが 1 枚増え、どのカードも要約を描いた（「集計中…」が消えた）ところまで待つ（`test_scatter.py` の `drop_on_filters`。2026-11-13）。
+  - 理由（原因）：カードは先に「集計中…」で足し、要約（`/api/summary`）が届いてから描き直す（`filters.js` の `loadSummary`）。そのたびにフィルタ欄が高くなり、列リストが縮む。列リストの末尾の列は、欄の上端（高さを変えるハンドル `.filter-resize`）の下へ動く。playwright の `drag_to` が列をスクロールして押すまでの間に欄が伸びると、押下はハンドルに当たる。playwright は押下を止めて（`intercepts pointer events`）押し直すが、ボタンを離さずにもう一度 `mouse.down` を送る。Chrome はこの押し直しからはドラッグを始めず、ドロップは起きない。製品の不具合ではない（人の操作では、押した位置の要素がそのままドラッグされる）。
+  - 確かめたこと（trace）：PR #160 の CI（run 43333854168 の最初の試行、`E2E (1/3)`）の `test_the_maximized_filter_pane_scrolls_to_its_end_and_keeps_its_state_on_a_drop` で、x と y のチップを待たずに続けて落とし、3 本目の `facet`（列リストの末尾）の押下が `.filter-resize` に遮られ、押し直した後のドロップでカードが増えなかった（2 枚のまま）。
+  - 再現（手元の Windows 11）：最初の押下の位置だけに 30ms で消える覆いを置くと、同じログ（`intercepts pointer events` → `retrying move and down action`）が出て、2 回ともカードが増えなかった。覆いが無ければ通る。y の要約の応答を 0〜225ms 遅らせるだけでは、16 通りとも再現しなかった（欄が伸びる時刻と押下が重なる幅が狭い）。
+  - 修正後、手元で対象のテストを続けて 10 回動かし、すべて通った。
 - E2E の時間（2026-11-12、手元の Windows 11、全 161 件）：固定の待ちを上のように変える前は 1025 秒（テストの本体 847 秒のうち `wait_for_timeout` が 444 秒。`wait_idle` の 400ms が 528 回で 211 秒、`settle` が 110 秒、ダブルクリックの前が約 75 秒）。変えた後は 673〜678 秒（2 回とも全件成功）。CI（ubuntu-latest）では変える前が 1178〜1336 秒だった。
 
 #### 版（2026-10-30 決定）

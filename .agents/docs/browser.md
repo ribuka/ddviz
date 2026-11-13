@@ -35,6 +35,12 @@
 - To debug a failure, add `--tracing retain-on-failure --headed` and open the trace with `uv run -m playwright show-trace test-results/<test>/trace.zip`.
 - CI runs the E2E job on ubuntu-latest and uploads `test-results/` as an artifact when it fails.
 
+### Wait for the layout to settle before the next drag
+
+- After a drop, wait until what it starts has finished (drawing, a filter card's summary) before the next drag: `place` waits with `wait_idle`, and `drop_on_filters` waits for the card and its summary.
+- When a drag's press lands on another element that moved there (`... intercepts pointer events` in the trace, then `retrying move and down action`), Playwright presses again without releasing the button, and Chrome starts no drag from that press: the drop is lost and the test fails later on a count.
+  - Past failure: PR #160 (`docs/spec.md`, the E2E section, `drop_on_filters`): a filter card's summary made the pane taller while the next column was being grabbed, and the press hit the pane's resize handle.
+
 ### Do not depend on font metrics
 
 CI runs on Linux, where the fonts differ from Windows (no Segoe UI; Japanese text and line heights differ). A size measured locally does not hold there.

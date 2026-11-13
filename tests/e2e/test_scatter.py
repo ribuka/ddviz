@@ -1989,6 +1989,18 @@ def drag_filter_edge(page: Page, dy: float) -> None:
     page.mouse.up()
 
 
+def drop_on_filters(page: Page, source: Locator, cards: int) -> None:
+    """Drag `source` to the filter pane and wait for `cards` cards, every one drawn with its summary.
+
+    A card's summary comes later and makes the pane taller. A drag started
+    meanwhile can press on what moves under the pointer; Playwright then
+    presses again without releasing the button, which starts no drag.
+    """
+    source.drag_to(page.locator("#filters"))
+    expect(page.locator(".filter-card")).to_have_count(cards)
+    expect(page.locator(".filter-card-body").filter(has_text="集計中")).to_have_count(0)
+
+
 def pane_height(locator: Locator) -> float:
     """Return the height of an element in CSS pixels."""
     return locator.evaluate("e => e.getBoundingClientRect().height")
@@ -2173,18 +2185,20 @@ def test_the_maximized_filter_pane_scrolls_to_its_end_and_keeps_its_state_on_a_d
     place(page, "y", "y")
     place(page, "color", "color")
     filters = page.locator("#filters")
-    for role in ["x", "y"]:
-        page.locator(f'.zone[data-role="{role}"] .chip').drag_to(filters)
-    page.locator("#columns .column").filter(
-        has=page.get_by_text("facet", exact=True)
-    ).drag_to(filters)
-    expect(page.locator(".filter-card")).to_have_count(3)
+    # Each drop waits for its card: the cards make the column list shorter,
+    # and facet, last in it, moves under the pane's top edge.
+    for count, role in enumerate(["x", "y"], 1):
+        drop_on_filters(page, page.locator(f'.zone[data-role="{role}"] .chip'), count)
+    drop_on_filters(
+        page,
+        page.locator("#columns .column").filter(has=page.get_by_text("facet", exact=True)),
+        3,
+    )
     expect(page.locator(".filter-level")).not_to_have_count(0)
 
     page.locator(".filter-up").click()
     expect(filters).to_have_class(re.compile(r"\bmaximized\b"))
-    page.locator('.zone[data-role="color"] .chip').drag_to(filters)
-    expect(page.locator(".filter-card")).to_have_count(4)
+    drop_on_filters(page, page.locator('.zone[data-role="color"] .chip'), 4)
     expect(filters).to_have_class(re.compile(r"\bmaximized\b"))
     expect(page.locator(".filter-card").nth(3).locator(".filter-level")).not_to_have_count(0)
     # A short window makes the overflow certain whatever the font metrics of the platform.
