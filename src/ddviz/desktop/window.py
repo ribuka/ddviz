@@ -584,13 +584,20 @@ class _Api:
         self.app.cancel()
 
     def new(self) -> None:
-        """Go back to the chooser for another input (`_App.new`), in a thread of its own.
+        """Go back to the chooser for another input (`_App.new`), once this call is answered.
 
-        Returns at once, while the graph's page is still loaded: pywebview
-        answers the page's call when this returns, and the page that called
-        is gone once `_App.new` has shown another.
+        pywebview runs this in a thread of its own and then, in the same
+        thread, hands the result to the page that called: `_App.new` starts
+        only after that thread has ended, while the graph's page is still
+        there to receive it.
         """
-        threading.Thread(target=self.app.new, name="new", daemon=True).start()
+        caller = threading.current_thread()
+
+        def renew() -> None:
+            caller.join()
+            self.app.new()
+
+        threading.Thread(target=renew, name="new", daemon=True).start()
 
     def quit(self) -> None:
         """Close the window (`_App.quit`)."""
