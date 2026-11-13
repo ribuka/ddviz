@@ -579,13 +579,13 @@ def test_a_refusal_while_an_old_overview_stands_in_draws_the_last_filter(
     assert errors == []
 
 
-# Holds the text of the next answer of /api/overview until
-# `window.releaseText()`; its headers come at once.
-HOLD_TEXT = """() => {
+# Holds the text of the next answer of the path given (`/api/overview` or
+# `/api/view`) until `window.releaseText()`; its headers come at once.
+HOLD_TEXT = """(path) => {
   const original = window.fetch;
   window.fetch = async (url, options) => {
     const response = await original(url, options);
-    if (!String(url).endsWith("/api/overview") || window.releaseText) return response;
+    if (!String(url).endsWith(path) || window.releaseText) return response;
     const hold = new Promise((resolve) => { window.releaseText = resolve; });
     const text = response.text();
     return {
@@ -598,19 +598,24 @@ HOLD_TEXT = """() => {
 }"""
 
 
-def test_a_refusal_read_after_a_newer_request_changes_nothing(app_page: Page) -> None:
-    """A refusal whose text is read after a newer filter was sent leaves the pane at the newer filter, which is then drawn."""
+@pytest.mark.parametrize("path", ["/api/overview", "/api/view"])
+def test_a_refusal_read_after_a_newer_request_changes_nothing(
+    app_page: Page, path: str
+) -> None:
+    """A refusal of the overview or of a zoomed view whose text is read after a newer filter was sent leaves the pane, the pending figure and the status to the newer filter, which is then drawn."""
     page = app_page
     errors = watch_errors(page)
     lo_drawn(page)
-    page.evaluate(HOLD_TEXT)
-    with page.expect_response("**/api/overview") as refused:
+    if path == "/api/view":
+        zoom(page, 200, 1500)
+    page.evaluate(HOLD_TEXT, path)
+    with page.expect_response(f"**{path}") as refused:
         box(page, "half", "hi").check()
     assert refused.value.status == 400
     page.wait_for_function("() => Boolean(window.releaseText)")
     # The newer filter is held while the old text is read.
     newer: list[Route] = []
-    page.route("**/api/overview", lambda route: newer.append(route))
+    page.route(f"**{path}", lambda route: newer.append(route))
     box(page, "half", "lo").uncheck()
     wait_until(page, lambda: bool(newer))
     page.evaluate("() => window.releaseText()")
@@ -618,8 +623,11 @@ def test_a_refusal_read_after_a_newer_request_changes_nothing(app_page: Page) ->
     expect(box(page, "half", "hi")).to_be_checked()
     expect(box(page, "half", "lo")).not_to_be_checked()
     expect(page.locator("#status")).not_to_have_class(re.compile("notice-error"))
+    expect(page.locator("#toasts .toast")).to_have_count(0)
+    # The newer request still waits.
+    expect(page.locator("#plot")).to_have_class(re.compile(r"\bbusy\b"))
     newer[0].continue_()
-    page.unroute("**/api/overview")
+    page.unroute(f"**{path}")
     page.wait_for_function(
         "() => document.querySelectorAll('#legend .legend-item').length === 70"
     )
