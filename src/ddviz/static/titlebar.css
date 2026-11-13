@@ -1,6 +1,12 @@
 /* The desktop window's title bar (js/titlebar.js). Self-contained: the
    desktop embeds it in its own pages, which do not load app.css. The window
    sets --caption-buttons-width and --caption-row (ddviz.desktop.titlebar). */
+
+/* Until js/titlebar.js has the window's geometry, the page is not drawn:
+   drawn with the defaults, it would move when the geometry comes. */
+html.desktop:not(.caption-known) body {
+  visibility: hidden;
+}
 #titlebar {
   flex: none;
   box-sizing: border-box;

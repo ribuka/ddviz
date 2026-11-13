@@ -232,14 +232,14 @@ def geometry_script(buttons_width: int, row_height: int) -> str:
     Returns
     -------
     str
-        Sets ``--caption-buttons-width`` and ``--caption-row`` in CSS pixels
-        on the root element (`titlebar.css` reads them).
+        Sets ``window.ddvizCaption`` and lets `js/titlebar.js` apply it
+        (``ddvizCaptionChanged``) when the page has it already. Run when a
+        document is created, before the page's scripts, `titlebar.js`
+        applies it as it starts, before the first paint.
     """
     return (
-        "document.documentElement.style.setProperty('--caption-buttons-width',"
-        f"({buttons_width} / devicePixelRatio) + 'px');"
-        "document.documentElement.style.setProperty('--caption-row',"
-        f"({row_height} / devicePixelRatio) + 'px');"
+        f"window.ddvizCaption = [{int(buttons_width)}, {int(row_height)}];"
+        "window.ddvizCaptionChanged?.();"
     )
 
 
@@ -257,6 +257,11 @@ class TitleBar:
         self._control = None
         self._buttons_width = 0
         self._row_height = 0
+        # Registers `geometry_script` for the documents to come
+        # (``AddScriptToExecuteOnDocumentCreatedAsync``; its result is the
+        # script's id), and the geometry it gives.
+        self._script = None
+        self._script_geometry: tuple[int, int] | None = None
         # Whether the window was neither maximized nor minimized at the last
         # WM_WINDOWPOSCHANGED, and the size to keep while WinForms restores.
         self._normal = True
@@ -392,10 +397,25 @@ class TitleBar:
         self._tell_page()
 
     def _tell_page(self) -> None:
-        """Hand the caption's geometry to the page; on the UI thread, without waiting."""
+        """Hand the caption's geometry to the page and the pages to come; on the UI thread, without waiting.
+
+        The documents created from now on get it before their first paint;
+        the page loaded now gets it as soon as the script runs (its first
+        paint waited for it when it was loaded before `_install`, see
+        `titlebar.css`).
+        """
         core = self._control.CoreWebView2 if self._control is not None else None
-        if core is not None:
-            core.ExecuteScriptAsync(geometry_script(self._buttons_width, self._row_height))
+        if core is None or self._row_height <= 0:
+            return
+        geometry = (self._buttons_width, self._row_height)
+        script = geometry_script(*geometry)
+        if geometry != self._script_geometry:
+            previous = self._script
+            if previous is not None and previous.IsCompleted:
+                core.RemoveScriptToExecuteOnDocumentCreated(previous.Result)
+            self._script = core.AddScriptToExecuteOnDocumentCreatedAsync(script)
+            self._script_geometry = geometry
+        core.ExecuteScriptAsync(script)
 
     def _wndproc(
         self, hwnd: int, msg: int, wparam: int, lparam: int, _id: int, _data: int

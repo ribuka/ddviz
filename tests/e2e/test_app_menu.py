@@ -1,10 +1,11 @@
 """E2E: the desktop window's title bar and its app menu (Issue #125).
 
-The server is started as the window starts it (`desktop=True`), and an init
-script stands in for pywebview's JS API: it records the commands the menu
-calls. This checks the page alone: not pywebview's calls into the window,
-nor where the OS draws its caption buttons beside the row (the row keeps the
-default width for them, as no window tells the page theirs).
+The server is started as the window starts it (`desktop=True`), and init
+scripts stand in for the window: one gives the caption's geometry as the
+window does when a document is created (`ddviz.desktop.titlebar.geometry_script`),
+another replaces pywebview's JS API and records the commands the menu calls.
+This checks the page alone: not pywebview's calls into the window, nor where
+the OS draws its caption buttons beside the row.
 """
 
 from __future__ import annotations
@@ -32,8 +33,24 @@ for (const name of ["new", "quit", "version"]) {
   };
 }
 """
-# titlebar.css's width for the caption buttons when the window has not told it.
-DEFAULT_BUTTONS = 138
+# The caption's geometry in physical pixels, as the window measured it at
+# 150 % (Issue #172); Chromium here has a devicePixelRatio of 1.
+BUTTONS, ROW = 219, 33
+GEOMETRY = f"window.ddvizCaption = [{BUTTONS}, {ROW}];"
+# Records the row's height and the top of the page below it at the first
+# frame the page is drawn (not hidden by titlebar.css).
+FIRST_FRAME = """
+const look = () => {
+  const app = document.getElementById("app");
+  const bar = document.getElementById("titlebar");
+  if (app && bar && getComputedStyle(document.body).visibility === "visible") {
+    window.firstFrame = [bar.getBoundingClientRect().height, app.getBoundingClientRect().top];
+  } else {
+    requestAnimationFrame(look);
+  }
+};
+requestAnimationFrame(look);
+"""
 
 
 @pytest.fixture
@@ -52,6 +69,7 @@ def scatter_path(scatter_path: Path) -> Path:
 @pytest.fixture
 def menu_page(page: Page, app_page: Page) -> Page:
     """Return the page with the window's API replaced, loaded again so that it applies."""
+    page.add_init_script(GEOMETRY)
     page.add_init_script(FAKE_API)
     page.reload()
     expect(page.locator("#titlebar")).to_be_visible()
@@ -101,9 +119,35 @@ def test_the_title_bar_shows_the_title_and_leaves_the_buttons_room(menu_page: Pa
     menu = page.locator("#titlebar .titlebar-menu").bounding_box()
     box = title.bounding_box()
     assert menu["x"] + menu["width"] <= box["x"]
-    assert box["x"] + box["width"] <= 800 - DEFAULT_BUTTONS
+    assert box["x"] + box["width"] <= 800 - BUTTONS
     assert title.evaluate("(e) => e.scrollWidth > e.clientWidth")
     assert title.evaluate("(e) => getComputedStyle(e).textOverflow") == "ellipsis"
+
+
+def test_the_page_is_first_drawn_with_the_windows_geometry(page: Page, app_page: Page) -> None:
+    """Given the geometry when the document is created, the first frame drawn has the row's height, and the page does not move after (review of #173)."""
+    page.add_init_script(GEOMETRY)
+    page.add_init_script(FIRST_FRAME)
+    page.reload()
+    page.wait_for_function("window.firstFrame !== undefined")
+    expect(page.locator("#columns .column").first).to_be_visible()
+    page.wait_for_timeout(1200)
+    first = page.evaluate("window.firstFrame")
+    now = page.evaluate(
+        "[document.getElementById('titlebar').getBoundingClientRect().height,"
+        " document.getElementById('app').getBoundingClientRect().top]"
+    )
+    assert first == [ROW, ROW]
+    assert now == first
+
+
+def test_without_the_geometry_the_page_shows_with_the_defaults(page: Page, app_page: Page) -> None:
+    """A window that never tells the geometry gets the page drawn with the defaults after a second."""
+    page.reload()
+    body = page.locator("body")
+    assert body.evaluate("(e) => getComputedStyle(e).visibility") == "hidden"
+    page.wait_for_function("getComputedStyle(document.body).visibility === 'visible'")
+    assert page.locator("#titlebar").evaluate("(e) => e.getBoundingClientRect().height") == 30
 
 
 def test_the_menu_works_with_the_mouse(menu_page: Page) -> None:

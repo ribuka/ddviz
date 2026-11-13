@@ -16,6 +16,23 @@
   const root = document.documentElement;
   if (!root.classList.contains("desktop")) return;
 
+  // The caption's geometry from the window (`ddviz.desktop.titlebar`):
+  // `window.ddvizCaption` is [buttons' width, row's height] in physical
+  // pixels, set when the document was created, or later for a page loaded
+  // before the window knew it. titlebar.css hides the page until it is
+  // applied, so the row does not change height under the page; a window
+  // that never tells it (off Windows) shows the defaults after a second.
+  function applyCaption() {
+    const caption = window.ddvizCaption;
+    if (!caption) return;
+    root.style.setProperty("--caption-buttons-width", `${caption[0] / devicePixelRatio}px`);
+    root.style.setProperty("--caption-row", `${caption[1] / devicePixelRatio}px`);
+    root.classList.add("caption-known");
+  }
+  window.ddvizCaptionChanged = applyCaption;
+  applyCaption();
+  setTimeout(() => root.classList.add("caption-known"), 1000);
+
   const MENU = [
     {
       label: "File",
