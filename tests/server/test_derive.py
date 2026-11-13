@@ -197,3 +197,47 @@ def test_boxes_are_kept_for_the_same_filter_only(manifest: PlotManifest) -> None
     assert other.view.boxes == []
     box = box_selection(boxed, 0, (0.5, 1.5), (0, 1))
     assert selection_spec(boxed, box).view.boxes == [boxes]
+
+
+def test_another_filter_finds_the_color_levels_unless_known(
+    manifest: PlotManifest,
+) -> None:
+    """Another filter asks the worker for the color levels of its rows, unless a result of that filter gives them; the same filter keeps them."""
+    filters = [Filter(column="label", levels=["r1"])]
+    files = {"label": ["label.parquet"]}
+    same = resized_spec(manifest, 400, 300, [], {}, [[0, 1]], [[0, 1]])
+    assert not same.view.find_color
+    other = resized_spec(manifest, 400, 300, filters, files, [[0, 1]], [[0, 1]])
+    assert other.view.find_color
+    assert not other.keep_unfiltered_color_levels
+    known = replace(
+        manifest,
+        spec=replace(manifest.spec, filters=filters),
+        all_levels={**manifest.all_levels, "color": ["b"]},
+    )
+    taken = resized_spec(
+        manifest, 400, 300, filters, files, [[0, 1]], [[0, 1]], known=known
+    )
+    assert not taken.view.find_color
+    assert taken.view.levels["color"] == ["b"]
+    # A result of another filter gives nothing.
+    elsewhere = resized_spec(
+        manifest, 400, 300, [], {}, [[0, 1]], [[0, 1]], known=known
+    )
+    assert elsewhere.view.levels["color"] == ["a", "b", "c"]
+
+
+def test_kept_color_levels_stay_with_another_filter(manifest: PlotManifest) -> None:
+    """Kept over every row, another filter keeps the color levels, and the setting goes with the spec."""
+    kept = replace(
+        manifest, spec=replace(manifest.spec, keep_unfiltered_color_levels=True)
+    )
+    filters = [Filter(column="label", levels=["r1"])]
+    spec = resized_spec(
+        kept, 400, 300, filters, {"label": ["l.parquet"]}, [[0, 1]], [[0, 1]]
+    )
+    assert spec.keep_unfiltered_color_levels
+    assert not spec.view.find_color
+    assert spec.view.levels["color"] == ["a", "b", "c"]
+    selected = selection_spec(kept, box_selection(kept, 0, (0.0, 1.0), (0.0, 1.0)))
+    assert selected.keep_unfiltered_color_levels

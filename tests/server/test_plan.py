@@ -476,3 +476,26 @@ def test_symbol_levels_take_their_own_shapes() -> None:
     spec = scatter_spec(circles, files, 400, 300, ["#000000"], level_shapes={"q": "x"})
     assert spec.level_shapes == {}
     assert spec.marker_shapes(["q"]) == [None]
+
+
+def test_keep_unfiltered_color_levels_goes_to_the_spec() -> None:
+    """Off unless asked; the spec finds the color levels of the filter only for a categorical color column."""
+    encoding = Encoding(x=("a",), y=("b",), color="g")
+    files = {c: [f"{c}.parquet"] for c in encoding.columns()}
+    spec = scatter_spec(encoding, files, 400, 300, [])
+    assert not spec.keep_unfiltered_color_levels
+    assert spec.filters_color()
+    kept = scatter_spec(
+        encoding, files, 400, 300, [], keep_unfiltered_color_levels=True
+    )
+    assert kept.keep_unfiltered_color_levels
+    assert not kept.filters_color()
+    numeric = {"a": True, "b": True, "g": True}
+    gradient = scatter_spec(encoding, files, 400, 300, [], numeric=numeric)
+    assert not gradient.filters_color()
+    cut = scatter_spec(
+        encoding, files, 400, 300, [], numeric=numeric, color_bins=Binning(5)
+    )
+    assert not cut.filters_color()
+    bare = scatter_spec(Encoding(x=("a",), y=("b",)), files, 400, 300, [])
+    assert not bare.filters_color()

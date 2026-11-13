@@ -30,6 +30,30 @@ LINE_WIDTH = 2
 ONE_BAND = "\x00one band"
 
 
+class FilteredColorLevelsError(ValueError):
+    """A categorical color column has more levels than allowed among the rows of the local filter (`ScatterSpec.filters_color`)."""
+
+
+def filtered_color_message(spec: ScatterSpec) -> str:
+    """Return the error of a color column past `ScatterSpec.max_levels` among the rows of the local filter.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The spec refused.
+
+    Returns
+    -------
+    str
+        The message. The levels are not all counted, so their number is
+        not told.
+    """
+    return (
+        f"Color の水準がフィルタの後も上限の {spec.max_levels:,} 個を超えるため"
+        f"描けない（{spec.color}）。フィルタで水準を絞るか、別の列を使う"
+    )
+
+
 @dataclass(frozen=True)
 class Binning:
     """How a numeric column on the color, symbol, row or col role becomes levels of intervals (`ddviz.compute.cuts`).
@@ -131,7 +155,9 @@ class View:
     levels : dict
         Levels of the overview over every row
         (`ddviz.compute.aggregate.Aggregation.all_levels`), so that the series stay
-        those of the overview and the levels need no pass over the data.
+        those of the overview and the levels need no pass over the data;
+        the color levels of the filter when they are of the filter's rows
+        (`ScatterSpec.filters_color`).
     facets : dict or None
         Levels of the ``"row"`` and ``"col"`` roles drawn as panels
         (`ddviz.compute.aggregate.Aggregation.levels`), known from a result with the
@@ -150,6 +176,10 @@ class View:
     smooths : list of Smooths
         Smoothing lines of each pair, from a result with the same local
         filter; a pair without them has them fitted again.
+    find_color : bool
+        Whether the worker finds the color levels again over the rows of
+        the local filter (`ScatterSpec.filters_color`) in place of those of
+        ``levels``, which are of another filter.
     """
 
     x_ranges: list[list[float]]
@@ -161,6 +191,7 @@ class View:
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
+    find_color: bool = False
 
 
 @dataclass(frozen=True)
@@ -274,7 +305,8 @@ class ScatterSpec:
     filters : list of Filter
         Conditions of the local filter, all of which a row must meet to be
         drawn, hovered, selected or listed. They leave the series and the
-        overview's ranges as they are without them, and drop the facet
+        overview's ranges as they are without them, but for the levels of a
+        categorical color column (`filters_color`), and drop the facet
         panels left without rows (`ddviz.compute.aggregate.aggregate`).
     max_levels : int
         Most levels a color, symbol, row or col column may have; more are refused
@@ -349,6 +381,11 @@ class ScatterSpec:
         Bottom margin of the figure in pixels, for the x tick labels the
         page measured at an angle set (`ddviz.shared.layout.bottom_margin`):
         the panels have the height left of `height`.
+    keep_unfiltered_color_levels : bool
+        Whether a categorical color column keeps its levels over every row,
+        the local filter aside, with those left without rows in the legend;
+        otherwise its levels are those of the rows of the local filter
+        (`filters_color`).
     """
 
     files: dict[str, list[str]]
@@ -386,6 +423,25 @@ class ScatterSpec:
     log_y: list[str] = field(default_factory=list)
     margin_left: int = MARGIN_LEFT
     margin_bottom: int = MARGIN_BOTTOM
+    keep_unfiltered_color_levels: bool = False
+
+    def filters_color(self) -> bool:
+        """Return whether the color levels are found over the rows of the local filter.
+
+        Returns
+        -------
+        bool
+            True for a categorical color column (neither a gradient nor
+            cut into intervals) without `keep_unfiltered_color_levels`: its
+            levels and their limit `max_levels` are those of the rows the
+            filter keeps (`ddviz.compute.aggregate`).
+        """
+        return (
+            self.color is not None
+            and not self.keep_unfiltered_color_levels
+            and not self.gradient
+            and "color" not in self.binned
+        )
 
     def box_pairs(self) -> set[tuple[str, str]]:
         """Return the pairs of axis columns whose panels have box plots.

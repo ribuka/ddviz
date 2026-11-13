@@ -64,3 +64,168 @@ def test_picking_the_same_order_again_changes_nothing(js_page: Page) -> None:
     levels = [["ID2", 5], ["ID10", 5], ["a", 9], ["b", 1]]
     for order in ("name", "count"):
         assert _sort(js_page, levels, order, order) == _sort(js_page, levels, order)
+
+
+# A filter pane of three cards: a numeric one (n), one of levels (g) and one
+# of text (id), whose summaries come from a stub of `fetch`. `onChange`
+# counts its calls in `window.changes`.
+PANE = """async () => {
+  const summaries = {
+    n: { numeric: true, min: 0, max: 10, nulls: 0, integer: true, temporal: null },
+    g: { numeric: false, levels: [["a", 5], ["b", 3], ["c", 1]], n_levels: 3, nulls: 0 },
+    id: { numeric: false, levels: null, n_levels: 5000, nulls: 0 },
+  };
+  window.fetch = async (url) => {
+    const column = new URL(url, location.href).searchParams.get("column");
+    return new Response(JSON.stringify(summaries[column]));
+  };
+  document.body.innerHTML = `
+    <div id="filters"><div class="filter-head"><span class="filter-summary"></span>
+    <button class="filter-up"></button><button class="filter-down"></button></div>
+    <div class="filter-resize"></div><div class="filter-list"></div></div>
+    <div id="drop-tip"></div>`;
+  const { FilterPane, RestorePoint } = await import("/static/js/filters.js");
+  window.changes = 0;
+  window.summary = "";
+  const pane = new FilterPane(
+    document.getElementById("filters"),
+    () => window.changes++,
+    (count, text) => (window.summary = text),
+  );
+  for (const [name, numeric] of [["n", true], ["g", false], ["id", false]]) pane.add({ name, numeric });
+  while (pane.cards.some((c) => !c.summary)) await new Promise((r) => setTimeout(r, 10));
+  window.pane = pane;
+  window.RestorePoint = RestorePoint;
+}"""
+
+
+def test_restore_puts_back_the_conditions_without_sending(clock_page: Page) -> None:
+    """After ticks, a range, a text and a removed card, `restore` gives back the conditions and the cards of the snapshot, sends nothing and stops the ticks waiting."""
+    page = clock_page
+    page.evaluate(PANE)
+    result = page.evaluate(
+        """async () => {
+          const pane = window.pane;
+          const [n, g, id] = pane.cards;
+          g.levels.add("a");
+          n.range = [2, 8];
+          id.contains = "x1";
+          pane.commit();
+          const before = { conditions: pane.conditions(), names: pane.cards.map((c) => c.name) };
+          const snapshot = pane.snapshot();
+          const sent = window.changes;
+          g.order = "count";
+          g.levels.add("b");
+          n.range = [3, 4];
+          id.contains = "zz";
+          pane.remove(n);
+          // A tick waiting to be sent.
+          g.levels.add("c");
+          pane.commitSoon();
+          pane.restore(snapshot);
+          await new Promise((r) => setTimeout(r, 600));
+          return {
+            before,
+            conditions: pane.conditions(),
+            names: pane.cards.map((c) => c.name),
+            changes: window.changes - sent,
+            order: g.order,
+            summary: window.summary,
+            checked: [...pane.root.querySelectorAll(".filter-level input")].map((b) => b.checked),
+          };
+        }"""
+    )
+    assert result["conditions"] == result["before"]["conditions"]
+    assert result["names"] == result["before"]["names"] == ["n", "g", "id"]
+    # The removal and the later commit were sent; the restore and the waiting tick were not.
+    assert result["changes"] == 1
+    # What only shows stays as it is.
+    assert result["order"] == "count"
+    assert result["summary"] == "n: 2〜8、g: 1/3、id: 「x1」を含む"
+    assert result["checked"] == [True, False, False]
+
+
+def test_restore_drops_a_card_added_since_and_keeps_sending_after(
+    clock_page: Page,
+) -> None:
+    """A card added after the snapshot goes; a change after the restore is sent, and the restored conditions are not sent again."""
+    page = clock_page
+    page.evaluate(PANE)
+    result = page.evaluate(
+        """async () => {
+          const pane = window.pane;
+          const id = pane.cards[2];
+          pane.remove(id);
+          const snapshot = pane.snapshot();
+          pane.add({ name: "id", numeric: false });
+          while (!pane.cards[2].summary) await new Promise((r) => setTimeout(r, 10));
+          pane.restore(snapshot);
+          const names = pane.cards.map((c) => c.name);
+          const sent = window.changes;
+          pane.commit();
+          const same = window.changes - sent;
+          pane.cards[1].levels.add("b");
+          pane.commit();
+          return { names, same, after: window.changes - sent };
+        }"""
+    )
+    assert result == {"names": ["n", "g"], "same": 0, "after": 1}
+
+
+def test_the_restore_point_is_the_latest_confirmed(js_page: Page) -> None:
+    """A failure before a candidate is confirmed gets the previous point; an older candidate confirmed late does not replace a newer one."""
+    result = js_page.evaluate(
+        """async () => {
+          const { RestorePoint } = await import("/static/js/filters.js");
+          const point = new RestorePoint("start");
+          const first = point.propose("one");
+          const second = point.propose("two");
+          const out = [point.point()];
+          point.confirm(second);
+          out.push(point.point());
+          point.confirm(first);
+          out.push(point.point());
+          const third = point.propose("three");
+          out.push(point.point());
+          point.confirm(third);
+          out.push(point.point());
+          return out;
+        }"""
+    )
+    assert result == ["start", "two", "two", "two", "three"]
+
+
+def test_a_card_without_a_condition_goes_to_the_state_sent(clock_page: Page) -> None:
+    """Adding or removing a card that sets no condition sends nothing, but the state sent has it or not, so that a restore to it keeps the cards of the request."""
+    page = clock_page
+    page.evaluate(PANE)
+    result = page.evaluate(
+        """async () => {
+          const pane = window.pane;
+          const sent = window.changes;
+          const id = pane.cards[2];
+          pane.remove(id);
+          const removed = pane.sent.map((s) => s.card.name);
+          pane.add({ name: "id", numeric: false });
+          const added = pane.sent.map((s) => s.card.name);
+          while (!pane.cards[2].summary) await new Promise((r) => setTimeout(r, 10));
+          const point = pane.sent;
+          pane.cards[1].levels.add("a");
+          pane.commit();
+          pane.restore(point);
+          return {
+            removed,
+            added,
+            names: pane.cards.map((c) => c.name),
+            conditions: pane.conditions(),
+            changes: window.changes - sent,
+          };
+        }"""
+    )
+    assert result == {
+        "removed": ["n", "g"],
+        "added": ["n", "g", "id"],
+        "names": ["n", "g", "id"],
+        "conditions": [],
+        "changes": 1,
+    }

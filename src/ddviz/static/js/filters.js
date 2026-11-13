@@ -142,6 +142,8 @@ export class FilterPane {
     // ticked set, `contains` the text of a column with too many levels.
     this.cards = [];
     this.committed = "[]";
+    // The state of the conditions sent last (`commit`).
+    this.sent = [];
     this.timer = null;
     this.up.addEventListener("click", () => this.step(1));
     this.down.addEventListener("click", () => this.step(-1));
@@ -257,6 +259,9 @@ export class FilterPane {
     if (this.cards.some((c) => c.name === name)) return;
     const card = { name, numeric, summary: null, range: null, levels: new Set(), contains: "", order: "name", element: null };
     this.cards.push(card);
+    // A new card sets no condition: the state sent has it, so that a request
+    // sent now goes back to it (`RestorePoint`).
+    this.sent = [...this.sent, { card, range: null, levels: new Set(), contains: "" }];
     // A folded pane opens to show the card; a maximized one stays so.
     if (this.state === "collapsed") this.setState("open");
     this.render();
@@ -265,6 +270,9 @@ export class FilterPane {
 
   remove(card) {
     this.cards = this.cards.filter((c) => c !== card);
+    // Gone from the state sent too, even when its conditions stay the same
+    // (a card without a condition) and nothing is sent.
+    this.sent = this.sent.filter((s) => s.card !== card);
     this.render();
     this.commit();
   }
@@ -322,7 +330,9 @@ export class FilterPane {
       .join("、");
   }
 
-  // Sends the conditions now, unless they are the ones sent last.
+  // Sends the conditions now, unless they are the ones sent last. The state
+  // they come from is kept as `sent` (`snapshot`), for a failed request to
+  // go back to (`RestorePoint`).
   commit() {
     clearTimeout(this.timer);
     this.updateSummary();
@@ -330,7 +340,44 @@ export class FilterPane {
     const key = JSON.stringify(conditions);
     if (key === this.committed) return;
     this.committed = key;
+    this.sent = this.snapshot();
     this.onChange(conditions);
+  }
+
+  // Returns the state of the pane that sets the conditions: its cards in
+  // their order, and each one's range, ticked levels and text. What only
+  // shows (the order of a card's levels) is not part of it.
+  snapshot() {
+    return this.cards.map((card) => ({
+      card,
+      range: card.range && [...card.range],
+      levels: new Set(card.levels),
+      contains: card.contains,
+    }));
+  }
+
+  // Puts the cards back as `snapshot()` had them: a card removed since comes
+  // back as it was before, with what it showed, and one added since goes; a
+  // card kept keeps what it shows. Ticks waiting to be sent are dropped and
+  // nothing is sent (`onChange` is not called); the summary follows.
+  restore(snapshot) {
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.cards = snapshot.map(({ card, range, levels, contains }) => {
+      // A card whose summary came after the snapshot has its whole range.
+      const whole = card.summary?.numeric && card.summary.min !== null ? [card.summary.min, card.summary.max] : null;
+      card.range = range ? [...range] : whole;
+      card.levels = new Set(levels);
+      card.contains = contains;
+      return card;
+    });
+    this.committed = JSON.stringify(this.conditions());
+    this.sent = snapshot;
+    this.render();
+    // A card removed while its summary loaded stopped loading it.
+    for (const card of this.cards) {
+      if (!card.summary && !card.error) this.loadSummary(card);
+    }
   }
 
   // Sends the conditions once the ticks have stopped for a moment.
@@ -601,5 +648,36 @@ export class FilterPane {
     });
     bar.append(input);
     body.append(note, bar);
+  }
+}
+
+// Where the filter pane goes back to when a change of the filter fails: the
+// state of the pane (`FilterPane.snapshot`) that the result drawn last was
+// aggregated with. A request keeps the state it is sent with as a candidate
+// (`propose`), which becomes the point once its result is drawn (`confirm`),
+// as the figure does; a candidate older than the point never replaces it.
+export class RestorePoint {
+  constructor(state = []) {
+    this.state = state;
+    this.order = 0;
+    this.confirmed = 0;
+  }
+
+  // Returns the candidate of a request sent with the pane's state `state`.
+  propose(state) {
+    return { state, order: ++this.order };
+  }
+
+  // Makes a candidate the point, its request's result being drawn, unless a
+  // later one already is.
+  confirm(candidate) {
+    if (candidate.order <= this.confirmed) return;
+    this.confirmed = candidate.order;
+    this.state = candidate.state;
+  }
+
+  // Returns the state to go back to: that of the result drawn last.
+  point() {
+    return this.state;
   }
 }

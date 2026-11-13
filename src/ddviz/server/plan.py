@@ -287,6 +287,7 @@ def scatter_spec(
     margin_left: int = MARGIN_LEFT,
     margin_bottom: int = MARGIN_BOTTOM,
     line_width: int | None = None,
+    keep_unfiltered_color_levels: bool = False,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -453,6 +454,7 @@ def scatter_spec(
         log_y=log_y,
         margin_left=left_margin(margin_left, width),
         margin_bottom=bottom_margin(margin_bottom, height),
+        keep_unfiltered_color_levels=keep_unfiltered_color_levels,
     )
 
 

@@ -18,7 +18,12 @@ from ddviz.compute.aggregate import (
     _range_query,
     aggregate,
 )
-from ddviz.shared.scatter import ScatterSpec, Selection, View
+from ddviz.shared.scatter import (
+    FilteredColorLevelsError,
+    ScatterSpec,
+    Selection,
+    View,
+)
 
 
 def test_aggregate_matches_brute_force(
@@ -114,15 +119,21 @@ def test_view_bins_only_the_rows_in_its_ranges(
 
 
 def test_a_role_with_too_many_levels_is_refused(scatter_spec: ScatterSpec) -> None:
-    """A numeric column on color has a level per row and is refused before binning."""
+    """A numeric column on color has a level per row and is refused before binning, with its levels over every row or of the filter."""
     with pytest.raises(ValueError, match="水準が上限を超えるため描けない"):
+        aggregate(replace(scatter_spec, color="x", keep_unfiltered_color_levels=True))
+    with pytest.raises(FilteredColorLevelsError):
         aggregate(replace(scatter_spec, color="x"))
 
 
 def test_the_level_limit_comes_from_the_spec(scatter_spec: ScatterSpec) -> None:
     """``max_levels`` refuses a color column with more levels and lets one with as many through."""
     assert aggregate(replace(scatter_spec, max_levels=3)).grid.n_series == 3
-    spec = ScatterSpec.from_dict(replace(scatter_spec, max_levels=2).to_dict())
+    spec = ScatterSpec.from_dict(
+        replace(
+            scatter_spec, max_levels=2, keep_unfiltered_color_levels=True
+        ).to_dict()
+    )
     with pytest.raises(
         ValueError, match="（color は 3 個で、Color・Symbol・Group・Wrap の上限は 2 個）"
     ):
@@ -182,7 +193,7 @@ def test_a_column_on_an_axis_and_color_meets_both_limits(
     scatter_spec: ScatterSpec,
 ) -> None:
     """The same column on x and color is refused by the lower limit of its roles, either one."""
-    both = _axis_spec(scatter_spec, color="color")
+    both = _axis_spec(scatter_spec, color="color", keep_unfiltered_color_levels=True)
     assert aggregate(replace(both, max_levels=3, max_axis_levels=3)).grid.n_series == 3
     with pytest.raises(ValueError, match="Color・Symbol・Group・Wrap の上限は 2 個"):
         aggregate(replace(both, max_levels=2, max_axis_levels=1_000_000))
