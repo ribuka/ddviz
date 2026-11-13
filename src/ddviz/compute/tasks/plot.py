@@ -82,10 +82,13 @@ def _shown(
     Such a panel keeps the bins of its rows for the hover and the selection
     (`ddviz.compute.aggregate.aggregate`).
     """
+    # Only the panels of lines: those of box plots without points draw
+    # their outliers, and those of smoothing lines have no bins.
+    lines = spec.line_pairs()
     hidden = []
     for p in range(axes.panels):
-        xi, yj = axes.axes(p)
-        if not spec.draws_points(spec.x[xi], spec.y[yj]):
+        x, y = spec.x[axes.axes(p)[0]], spec.y[axes.axes(p)[1]]
+        if (x, y) in lines and not spec.draws_points(x, y):
             hidden.append(p)
     if not hidden or len(keys) == 0:
         return np.ones(len(keys), dtype=bool)

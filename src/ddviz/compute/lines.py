@@ -17,6 +17,7 @@ grows with the panels' width, not the rows.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -157,6 +158,76 @@ def _clip(
     )
 
 
+def _spans(
+    starts: np.ndarray,
+    y: np.ndarray,
+    column: np.ndarray,
+    new: np.ndarray,
+    kept: np.ndarray,
+    width: int,
+    height: int,
+    add: Callable[[np.ndarray, np.ndarray, np.ndarray], None],
+) -> None:
+    """Add the rows of its column each segment within a cell shows (`_pixels`).
+
+    Parameters
+    ----------
+    starts : numpy.ndarray
+        The first row of each segment within a cell, among the kept rows.
+    y : numpy.ndarray
+        The y in pixels of the kept rows.
+    column : numpy.ndarray
+        The pixel column of the kept rows.
+    new : numpy.ndarray
+        Whether each kept row starts a cell.
+    kept : numpy.ndarray
+        The place of each kept row among the rows.
+    width, height : int
+        Pixels of a panel.
+    add : callable
+        Takes the pixel rows, the pixel columns and the rows (places among
+        all the rows) the pixels take their panels and colors from.
+    """
+    # Just outside the panel is as far as any row needs to be.
+    clipped = np.clip(y, -1.0, height + 1.0)
+    cell = np.cumsum(new)
+    # The least and largest y of the rows from each row to the end of its
+    # cell: running in reverse, each cell lifted (or lowered) past the
+    # ones after it, so that none carries over.
+    lift = (cell[-1] - cell)[::-1].astype(np.float64) * (height + 3.0)
+    reverse = clipped[::-1]
+    least = (np.minimum.accumulate(reverse - lift) + lift)[::-1]
+    largest = (np.maximum.accumulate(reverse + lift) - lift)[::-1]
+    a, b = clipped[starts], clipped[starts + 1]
+    # Whether later segments follow in the cell: from the second row on.
+    later = (starts + 2 < len(y)) & (
+        cell[np.minimum(starts + 2, len(y) - 1)] == cell[starts]
+    )
+    lo, hi = least[starts + 1], largest[starts + 1]
+    whole = ~later
+    below = later & (a < lo)
+    above = later & (a > hi)
+    r0 = np.where(whole, np.floor(np.minimum(a, b)), 0.0)
+    r1 = np.where(whole, np.floor(np.maximum(a, b)), -1.0)
+    r0 = np.where(below, np.floor(a), r0)
+    r1 = np.where(below, np.floor(lo) - 1, r1)
+    r0 = np.where(above, np.floor(hi) + 1, r0)
+    r1 = np.where(above, np.floor(a), r1)
+    r0 = np.clip(r0, 0, height - 1).astype(np.int64)
+    r1 = np.clip(r1, -1, height - 1).astype(np.int64)
+    col = column[starts]
+    show = (r1 >= r0) & (col >= 0) & (col < width)
+    if not show.any():
+        return
+    r0, r1, col, src = r0[show], r1[show], col[show], kept[starts[show]]
+    item, step = _ranges(r1 - r0 + 1)
+    add(
+        (r0[item] + step).astype(np.float64),
+        col[item].astype(np.float64),
+        src[item],
+    )
+
+
 def _ranges(lengths: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Return, for items of the given lengths laid end to end, the item and the step within it of each."""
     item = np.repeat(np.arange(len(lengths)), lengths)
@@ -269,38 +340,24 @@ def _pixels(
     last = np.append(first[1:], len(kept)) - 1
     pixels, layers, ranks = [], [], []
 
-    def add(
-        at_panel: np.ndarray, row: np.ndarray, col: np.ndarray, src: np.ndarray
-    ) -> None:
+    def add(row: np.ndarray, col: np.ndarray, src: np.ndarray) -> None:
+        """Add pixels at rows and columns of a panel, colored by rows `src`."""
+        at_panel = panel[src]
         rows_at = np.clip(np.floor(row), 0, height - 1).astype(np.int64)
         cols_at = np.clip(np.floor(col), 0, width - 1).astype(np.int64)
         pixels.append((at_panel * height + rows_at) * width + cols_at)
         layers.append(layer[src])
         ranks.append(src + 1)
 
-    # The segments within a cell cover its column from its least to its
-    # largest y; each takes the color of the last of them (its row before
-    # the last).
-    lo = np.minimum.reduceat(y, first)
-    hi = np.maximum.reduceat(y, first)
-    span = (
-        (last > first)
-        & (column[first] >= 0)
-        & (column[first] < width)
-        & (hi >= 0)
-        & (lo <= height)
-    )
-    if span.any():
-        r0 = np.clip(np.floor(lo[span]), 0, height - 1).astype(np.int64)
-        r1 = np.clip(np.floor(hi[span]), 0, height - 1).astype(np.int64)
-        item, step = _ranges(r1 - r0 + 1)
-        src = kept[last[span] - 1][item]
-        add(
-            panel[src],
-            (r0[item] + step).astype(np.float64),
-            column[first[span]][item].astype(np.float64),
-            src,
-        )
+    # The segments within a cell: each covers its column from one row's y
+    # to the next's, and the later ones lie over it. The later segments of a
+    # cell join into one path, which covers the column from the least to the
+    # largest y of their rows: a segment shows only on the side of it where
+    # its first row lies, in the color of that row; the last shows whole.
+    # The parts shown do not overlap, and fill the cell's span.
+    starts = np.flatnonzero(new[1:] == 0)
+    if len(starts):
+        _spans(starts, y, column, new, kept, width, height, add)
     # The segment from the last row of a cell to the first of the next one
     # of its run, cut at the panel's edges.
     joined = run[last[:-1]] == run[first[1:]]
@@ -315,7 +372,6 @@ def _pixels(
         t = step / np.maximum(steps[item] - 1, 1)
         src = kept[a][item]
         add(
-            panel[src],
             y0[item] + t * (y1 - y0)[item],
             x0[item] + t * (x1 - x0)[item],
             src,

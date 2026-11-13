@@ -260,3 +260,82 @@ def test_chunks_of_rows_draw_the_same_pixels(
         assert set(chunked.pixel[chunked.layer == layer].tolist()) == set(
             whole.pixel[whole.layer == layer].tolist()
         )
+
+
+def _top(agg: Aggregation, x: float, y: float) -> tuple[int, float | None]:
+    """Return the layer and the color value of the last segment at the pixel of a data point."""
+    (x0, x1), (y0, y1) = agg.x_ranges[0], agg.y_ranges[0]
+    w, h = agg.grid.width, agg.grid.height
+    bx = min(int((x - x0) / (x1 - x0) * w), w - 1)
+    by = min(int((y - y0) / (y1 - y0) * h), h - 1)
+    lines = agg.lines
+    at = np.flatnonzero(lines.pixel == by * w + bx)
+    top = at[np.argmax(lines.rank[at])]
+    return int(lines.layer[top]), agg.line_values[int(lines.rank[top]) - 1]
+
+
+def test_segments_of_one_x_keep_the_colors_of_the_rows_they_start_from(
+    tmp_path: Path,
+) -> None:
+    """Rows of one x make segments one above another, each in the color (and the layer) of its first row, the later one on top."""
+    frame = pl.DataFrame(
+        {"x": [1.0, 1.0, 1.0], "y": [0.0, 10.0, 9.0], "v": [0.0, 1.0, 0.5]}
+    )
+    spec = _spec(tmp_path, frame, color="v", gradient=True, hover=["x", "y", "v"])
+    agg = aggregate(spec)
+    # (1, 0) to (1, 10) starts at v 0; (1, 10) to (1, 9) at v 1, over it.
+    assert _top(agg, 1, 5) == (0, 0.0)
+    assert _top(agg, 1, 9.5) == (0, 1.0)
+    assert _top(agg, 1, 0.2)[1] == 0.0
+
+    frame = frame.with_columns(pl.Series("v", [0.0, None, 0.5]))
+    spec = _spec(
+        tmp_path,
+        frame,
+        color="v",
+        gradient=True,
+        null_roles=["color"],
+        hover=["x", "y", "v"],
+    )
+    agg = aggregate(spec)
+    missing = len(agg.levels["color"]) - 1
+    assert missing > 0
+    # Only the segment from the null row lies in the missing level's layer.
+    assert _top(agg, 1, 5)[0] == 0
+    assert _top(agg, 1, 9.5)[0] == missing
+
+
+def test_rows_of_one_pixel_column_cover_it_from_their_least_to_their_largest_y(
+    tmp_path: Path,
+) -> None:
+    """However the segments of one column overlap, their shown parts cover its rows from the least y to the largest, once each."""
+    rng = np.random.default_rng(2)
+    frame = pl.DataFrame({"x": np.ones(50), "y": rng.uniform(0, 10, 50)})
+    agg = aggregate(_spec(tmp_path, frame))
+    lines = agg.lines
+    (y0, y1), h = agg.y_ranges[0], agg.grid.height
+    rows = lines.pixel // agg.grid.width
+    lo, hi = (
+        int((v - y0) / (y1 - y0) * h) for v in (frame["y"].min(), frame["y"].max())
+    )
+    assert sorted(rows.tolist()) == list(range(lo, hi + 1))
+
+
+def test_box_plots_without_points_keep_the_image_of_their_outliers(
+    tmp_path: Path,
+) -> None:
+    """The panels left without points' images are those of lines only: box plots still draw their outliers."""
+    frame = pl.DataFrame({"g": ["a"] * 6, "y": [0.0, 0.0, 0.0, 0.0, 0.0, 100.0]})
+    spec = _spec(
+        tmp_path,
+        frame,
+        x=["g"],
+        categorical=["g"],
+        hover=["g", "y"],
+        box=True,
+        line_width=None,
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    run_plot(spec, out, lambda _: None)
+    assert PlotManifest.read(out).images[0] is not None
