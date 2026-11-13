@@ -436,36 +436,14 @@ function orientedLayout(layout, meta) {
 }
 
 // Puts an axis column of the drawn result `meta` on a log or a linear axis:
-// the graph is aggregated again, with the column's axis over its whole
-// range and the other columns' axes at their shown ranges. A refusal (no
-// positive value) keeps the drawn plot, its selection and the scale.
+// the graph is plotted again, with the column's axis over its whole range
+// (its coordinates changed) and the other columns' axes at their shown
+// ranges (`carriedView`). A refusal (no positive value) keeps the drawn
+// plot, its selection and the scale.
 async function setAxisLog(meta, axis, column, log) {
   if (meta !== current || !plottedEncoding) return;
-  const shown = shownRanges(meta);
-  const kept = {};
-  for (const role of ["x", "y"]) {
-    meta[`${role}_columns`].forEach((c, i) => {
-      if (!(role === axis && c === column)) kept[`${role}:${c}`] = shown[role][i];
-    });
-  }
   axisScales.set(axis, column, log);
-  const drawn = await plot(plottedEncoding);
-  if (drawn === "refused") axisScales.set(axis, column, !log);
-  if (!drawn || drawn === "refused") return;
-  // The other axes back at their ranges: a view, as after a zoom.
-  const next = current;
-  const update = {};
-  for (const role of ["x", "y"]) {
-    next[`${role}_columns`].forEach((c, i) => {
-      const range = kept[`${role}:${c}`];
-      const key = axisKey(next[`${role}_axes`][i]);
-      const full = gd._fullLayout[key];
-      if (range && !sameRange(ascending(linearRange(full)), range)) {
-        update[`${key}.range`] = plotlyRange(full, oriented(range, axisDirections.isReversed(role, c)));
-      }
-    });
-  }
-  if (next === drawn && Object.keys(update).length) await Plotly.relayout(gd, update);
+  if ((await plot(plottedEncoding)) === "refused") axisScales.set(axis, column, !log);
 }
 
 // Opens the dialog of the axis column `index` of `axis` ("x" or "y") of the drawn result.
@@ -840,6 +818,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     return plotFailed("図の画像を読み込めなかった", askedSize, restoring);
   }
   const kept = keptView();
+  // The ranges zoomed of the axes this edit kept, read just before the switch.
+  const carried = keep ? null : carriedView(meta);
   const drawStarted = performance.now();
   try {
     // The selection and the shapes of another symbol column go with the drawn plot.
@@ -853,13 +833,17 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     empty.hidden = true;
     showImages(meta, null);
     // A plot drawn again after a failure has the view and the box drawn before.
-    const view = keep && sameAxes(keep, meta) ? keep : null;
+    const view = keep && sameAxes(keep, meta) ? keep : carried;
     if (view?.box) selection = { box: view.box, base: null, bitmaps: null, fresh: true };
-    const ranged = view?.zoomed ? withRanges(figure.layout, meta, view.ranges) : figure.layout;
-    const layout = withBandTicks(orientedLayout(decorate(ranged, meta, settingsOf, angleOf), meta), meta);
+    const shaped = (ranged) => withBandTicks(orientedLayout(decorate(ranged, meta, settingsOf, angleOf), meta), meta);
+    const layout = shaped(figure.layout);
     drawnKey = figureKey(figure.data, layout);
     Plotly.purge(gd);
     await Plotly.newPlot(gd, figure.data, forPlotly(withSelectionBox(layout, meta)), PLOT_CONFIG);
+    // The view's ranges go on after the whole ones: plotly keeps the ranges
+    // of its first draw for Reset axes and a double click.
+    const zoomedUpdate = view?.zoomed && rangeUpdate(shaped(withRanges(figure.layout, meta, view.ranges)));
+    if (zoomedUpdate) await Plotly.relayout(gd, zoomedUpdate);
     timings.plot = Math.round(performance.now() - drawStarted);
     // The legend and the colors and shapes picked change once the figure is
     // drawn: a figure that fails keeps them for the graph drawn again.
@@ -920,6 +904,47 @@ function keptView() {
   const { x_ranges: x, y_ranges: y } = overview.meta;
   const zoomed = !(sameRanges(ranges.x, x) && sameRanges(ranges.y, y));
   return { ranges, zoomed, box: selection ? structuredClone(selection.box) : null };
+}
+
+// Returns the view of a new result `meta` that keeps the drawn figure's
+// zoomed ranges (`shownRanges`): an axis column keeps its range while it
+// stays in its role on the same coordinates (`axisCoordinates`), unless it
+// was shown over its whole range; any other axis column has the new whole
+// range. Null when no range is kept, or without a figure.
+function carriedView(meta) {
+  if (!overview || !gd._fullLayout) return null;
+  const old = overview.meta;
+  const shown = shownRanges(old);
+  const ranges = { x: [], y: [] };
+  let zoomed = false;
+  for (const role of ["x", "y"]) {
+    meta[`${role}_columns`].forEach((column, i) => {
+      const whole = meta[`${role}_ranges`][i];
+      const j = old[`${role}_columns`].indexOf(column);
+      const range = j < 0 ? null : shown[role][j];
+      const keeps =
+        range &&
+        !sameRange(range, old[`${role}_ranges`][j]) &&
+        axisCoordinates(old, role, j) === axisCoordinates(meta, role, i) &&
+        !sameRange(range, whole);
+      ranges[role].push(keeps ? range : whole);
+      zoomed ||= Boolean(keeps);
+    });
+  }
+  return zoomed ? { ranges, zoomed, box: null } : null;
+}
+
+// Returns what the coordinates of the axis column `index` of `role` of
+// `meta` mean: its scale, temporal kind, and the levels of a categorical
+// axis (the order of its bands), or the one band of a figure without x.
+function axisCoordinates(meta, role, index) {
+  const column = meta[`${role}_columns`][index];
+  return JSON.stringify([
+    role === "x" && meta.one_band,
+    meta[`${role}_log`][index],
+    meta.temporal?.[column] ?? null,
+    meta.axis_levels?.[column] ?? null,
+  ]);
 }
 
 // Whether a kept view (`keptView`) has a range for each axis column of a result.
