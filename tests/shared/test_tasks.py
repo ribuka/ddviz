@@ -28,12 +28,13 @@ def _every_task(spec: ScatterSpec) -> list[Task]:
     """Return one task of each kind."""
     return [
         SchemaTask(["a.parquet", "b.parquet"]),
-        NonnullTask(["a.parquet", "b.parquet"], ["x", "y"]),
+        NonnullTask(["a.parquet", "b.parquet"], ["x", "y"], []),
         ConvertTask(
             "schema.parquet",
             {"x": "Float64"},
             ["a.parquet"],
-            [{"x": "a/x.parquet"}],
+            [{"x": "a/x.parquet", "source": "a/s.parquet"}],
+            {"source": "source"},
         ),
         PlotTask(spec),
         SelectionTask(spec),
@@ -44,7 +45,11 @@ def _every_task(spec: ScatterSpec) -> list[Task]:
             ["x", "y"],
             {"x": ["a/x.parquet", "b/x.parquet"]},
             SourceFiles(
-                ["a.parquet", "b.parquet"], [3, 4], "schema.parquet", {"y": "Int64"}
+                ["a.parquet", "b.parquet"],
+                [3, 4],
+                "schema.parquet",
+                {"y": "Int64", "filename": "String"},
+                {"filename": "filename"},
             ),
         ),
         SummaryTask(["a/x.parquet", "b/x.parquet"], "x"),

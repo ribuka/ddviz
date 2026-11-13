@@ -14,6 +14,7 @@ from ddviz.compute.convert import column_expr, input_dtypes
 from ddviz.compute.progress import Emit
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.selection import selection_columns, selection_filter
+from ddviz.shared.generated import generated_value
 from ddviz.shared.manifest import write_manifest
 from ddviz.shared.tasks import SourceFiles, TableTask
 
@@ -61,9 +62,11 @@ def _source_rows(
 
     Only the files holding the rows are scanned, each once: a scan of all the
     files would parse every footer. Values are cast to the input's types,
-    and a file lacking a column gives nulls.
+    and a file lacking a column gives nulls. An added column
+    (`ddviz.shared.generated`) gives the file's value, as its parts do.
     """
-    dtypes = {c: source.dtypes[c] for c in columns}
+    added = {c: source.generated[c] for c in columns if c in source.generated}
+    dtypes = {c: source.dtypes[c] for c in columns if c not in added}
     target: dict[str, pl.DataType] = {}
     starts = list(itertools.accumulate(source.rows, initial=0))
     by_file: dict[int, list[int]] = {}
@@ -79,13 +82,16 @@ def _source_rows(
             c not in present or str(present[c]) != d for c, d in dtypes.items()
         ):
             target = input_dtypes(source.schema, dtypes)
-        values = [
-            column_expr(c, d, present, target)
+        values = {
+            c: column_expr(c, d, present, target)
             if c in present
             else pl.lit(None, dtype=target[c]).alias(c)
             for c, d in dtypes.items()
-        ]
-        frame = scan.select(INDEX, *values)
+        }
+        for c, kind in added.items():
+            value = generated_value(kind, source.paths[i])
+            values[c] = pl.lit(value, dtype=pl.String).alias(c)
+        frame = scan.select(INDEX, *(values[c] for c in columns))
         found += [
             frame.slice(start - starts[i], length).collect()
             for start, length in _spans(rows)
@@ -93,7 +99,8 @@ def _source_rows(
     if found:
         return pl.concat(found).filter(pl.col(INDEX).is_in(index))
     target = target or input_dtypes(source.schema, dtypes)
-    return pl.DataFrame(schema={INDEX: pl.UInt32, **target})
+    empty = {c: target[c] if c in dtypes else pl.String for c in columns}
+    return pl.DataFrame(schema={INDEX: pl.UInt32, **empty})
 
 
 def run_table(task: TableTask, out: Path, emit: Emit) -> None:

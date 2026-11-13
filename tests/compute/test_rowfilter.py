@@ -16,7 +16,7 @@ from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
 from ddviz.shared.tasks import SourceFiles, TableTask
 
 # A table task whose columns are all in the cache reads no source file.
-NO_SOURCE = SourceFiles([], [], "", {})
+NO_SOURCE = SourceFiles([], [], "", {}, {})
 FILTERS = [Filter("facet", levels=["q"]), Filter("x", range=[-1.0, 0.5])]
 
 

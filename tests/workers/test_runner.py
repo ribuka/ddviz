@@ -97,6 +97,7 @@ def test_convert_task_writes_each_column(
         {"x": "Float64", "label": "String"},
         [str(scatter_path)],
         [files],
+        {},
     )
     task_id = workers.submit(task_to_dict(task))
     seen = []

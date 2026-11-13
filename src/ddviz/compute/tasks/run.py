@@ -45,8 +45,8 @@ def run_task(data: dict, emit: Emit) -> None:
     match task:
         case SchemaTask(paths=paths):
             run_schema(paths, out, emit)
-        case NonnullTask(paths=paths, names=names):
-            run_nonnull(paths, names, out, emit)
+        case NonnullTask(paths=paths, names=names, generated=generated):
+            run_nonnull(paths, names, generated, out, emit)
         case ConvertTask():
             convert_columns(task, emit)
         case PlotTask(spec=spec):

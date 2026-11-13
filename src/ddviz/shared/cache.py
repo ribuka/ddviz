@@ -133,9 +133,12 @@ class ColumnCache:
         column : str
             Column name.
         dtype : str
-            The input's type of the column. Parts are named by the name and
-            the type, since names may not be valid file names and a file
-            added with another type can change the input's type.
+            The input's type of the column, with the kind of an added column
+            (`ddviz.shared.generated.part_key`). Parts are named by the name
+            and the type, since names may not be valid file names and a file
+            added with another type can change the input's type; and by the
+            kind, since a replaced file can move a name between a column of
+            the files and an added one.
 
         Returns
         -------
@@ -151,7 +154,7 @@ class ColumnCache:
         Parameters
         ----------
         columns : dict of str to str
-            The type of each column.
+            The type of each column (`parts`).
 
         Returns
         -------
@@ -174,7 +177,7 @@ class ColumnCache:
         Parameters
         ----------
         columns : dict of str to str
-            The type of each column whose parts exist.
+            The type of each column whose parts exist (`parts`).
         """
         for column, dtype in columns.items():
             for part in self.parts(column, dtype):

@@ -26,12 +26,15 @@ class SourceFiles:
         Empty Parquet file with the input's type of every column.
     dtypes : dict of str to str
         The input's type of each column to read, as text.
+    generated : dict of str to str
+        The kind of each added column to read (`ddviz.shared.generated`).
     """
 
     paths: list[str]
     rows: list[int]
     schema: str
     dtypes: dict[str, str]
+    generated: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -58,11 +61,14 @@ class NonnullTask:
         The Parquet files read as one table.
     names : list of str
         Their columns, in schema order.
+    generated : list of str
+        The added columns among them (`ddviz.shared.generated`).
     """
 
     KIND: ClassVar[str] = "nonnull"
     paths: list[str]
     names: list[str]
+    generated: list[str]
 
 
 @dataclass(frozen=True)
@@ -80,6 +86,9 @@ class ConvertTask:
         Source files with parts to write.
     parts : list of dict of str to str
         Per source file, the part to write for each column.
+    generated : dict of str to str
+        The kind of each added column to convert (`ddviz.shared.generated`):
+        its parts hold a value made from the source file, not read from it.
     """
 
     KIND: ClassVar[str] = "convert"
@@ -87,6 +96,7 @@ class ConvertTask:
     dtypes: dict[str, str]
     sources: list[str]
     parts: list[dict[str, str]]
+    generated: dict[str, str]
 
 
 @dataclass(frozen=True)

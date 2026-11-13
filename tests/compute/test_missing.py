@@ -285,7 +285,7 @@ def test_selection_lists_missing_rows_with_their_null_values(
     out.mkdir()
     parts = {c: view.files[c] for c in ["x", "v"]}
     run_table(
-        TableTask(view, 0, 10, ["x", "v"], parts, SourceFiles([], [], "", {})),
+        TableTask(view, 0, 10, ["x", "v"], parts, SourceFiles([], [], "", {}, {})),
         out,
         lambda _: None,
     )

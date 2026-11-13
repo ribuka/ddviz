@@ -24,6 +24,7 @@ from ddviz.server.errors import ensure_done
 from ddviz.server.plan import parse_filters
 from ddviz.server.settings import Settings
 from ddviz.shared.cache import SCHEMA, ColumnCache, evict
+from ddviz.shared.generated import part_key
 from ddviz.shared.inputs import parquet_files, unique
 from ddviz.shared.scatter import Filter
 from ddviz.shared.tasks import (
@@ -81,6 +82,9 @@ class Source:
         # they are read as (`ddviz.compute.tasks.columns.run_schema`).
         self.casts: list[dict] = []
         self._dtypes: dict[str, str] = {}
+        # The columns added to an input of several files, with their kinds
+        # (`ddviz.shared.generated`).
+        self._generated: dict[str, str] = {}
         self.cache: ColumnCache | None = None
         # Non-null values per column and the rows, ``{"counts", "rows"}``
         # (`ddviz.compute.nonnull`), measured after Load; "pending" until
@@ -126,11 +130,19 @@ class Source:
             found = None
             if stored.exists():
                 found = json.loads(stored.read_text(encoding="utf-8"))
-            # A schema stored before columns had their temporal kind is read again.
-            if found is None or any("temporal" not in c for c in found["columns"]):
+            # A schema stored before columns had their temporal kind, or
+            # before several files had added columns, is read again, and the
+            # non-null counts made with it are measured again.
+            if (
+                found is None
+                or "generated" not in found
+                or any("temporal" not in c for c in found["columns"])
+            ):
+                (self.cache.dir / NONNULL).unlink(missing_ok=True)
                 found = await self._read_schema()
             self.rows = found["rows"]
             self.casts = found["casts"]
+            self._generated = found["generated"]
             self._dtypes = {c["name"]: c["dtype"] for c in found["columns"]}
             await asyncio.to_thread(self.evict, [])
             self._schema = found["columns"]
@@ -150,7 +162,7 @@ class Source:
             raise HTTPException(500, end.error)
         await asyncio.to_thread(shutil.move, end.out / SCHEMA, self.cache.dir / SCHEMA)
         manifest = end.take()
-        found = {k: manifest[k] for k in ("columns", "rows", "casts")}
+        found = {k: manifest[k] for k in ("columns", "rows", "casts", "generated")}
         _write_json(self.cache.dir / SCHEMA_JSON, found)
         return found
 
@@ -162,9 +174,13 @@ class Source:
         """Return the kind of each temporal column (`ddviz.shared.temporal.KINDS`)."""
         return {c["name"]: c["temporal"] for c in await self.schema() if c["temporal"]}
 
+    def _key(self, column: str) -> str:
+        """Return what names the column's parts besides its name (`ddviz.shared.generated.part_key`)."""
+        return part_key(self._dtypes[column], self._generated.get(column))
+
     def parts(self, column: str) -> list[str]:
         """Return the column's parts in the cache, one per source file."""
-        return [str(p) for p in self.cache.parts(column, self._dtypes[column])]
+        return [str(p) for p in self.cache.parts(column, self._key(column))]
 
     def source_files(self, columns: list[str]) -> SourceFiles:
         """Return the source files, for reading columns not in the cache.
@@ -184,15 +200,16 @@ class Source:
             self.rows,
             str(self.cache.dir / SCHEMA),
             {c: self._dtypes[c] for c in columns},
+            {c: self._generated[c] for c in columns if c in self._generated},
         )
 
     def missing(self, columns: list[str]) -> dict[str, list[int]]:
         """Return the columns with parts not converted yet (`ColumnCache.missing`)."""
-        return self.cache.missing({c: self._dtypes[c] for c in dict.fromkeys(columns)})
+        return self.cache.missing({c: self._key(c) for c in dict.fromkeys(columns)})
 
     def touch(self, columns: list[str]) -> None:
         """Mark columns whose parts exist as used now."""
-        self.cache.touch({c: self._dtypes[c] for c in dict.fromkeys(columns)})
+        self.cache.touch({c: self._key(c) for c in dict.fromkeys(columns)})
 
     def evict(self, keep: list[Path]) -> None:
         """Remove old column parts, keeping the given ones."""
@@ -208,7 +225,8 @@ class Source:
         names = [c["name"] for c in self._schema]
         paths = [str(f) for f in self.files]
         async with self._summary_lock:
-            end = await self._broker.run(NonnullTask(paths, names), "summary")
+            task = NonnullTask(paths, names, list(self._generated))
+            end = await self._broker.run(task, "summary")
         if end.type != "done":
             self.shares_state = "failed"
             end.discard()
@@ -258,6 +276,7 @@ class Source:
             {c: self._dtypes[c] for c in missing},
             [str(self.files[i]) for i in order],
             [by_file[i] for i in order],
+            {c: self._generated[c] for c in missing if c in self._generated},
         )
         end = await self._broker.run(task, pool)
         end.discard()

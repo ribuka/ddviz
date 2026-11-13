@@ -16,7 +16,7 @@ from ddviz.shared.scatter import ScatterSpec, Selection
 from ddviz.shared.tasks import SourceFiles, TableTask
 
 # A table task whose columns are all in the cache reads no source file.
-NO_SOURCE = SourceFiles([], [], "", {})
+NO_SOURCE = SourceFiles([], [], "", {}, {})
 
 
 def test_spans_split_where_rows_are_far_apart() -> None:
@@ -101,6 +101,7 @@ def test_table_page_reads_columns_from_the_files_of_a_folder(
         read_manifest(tmp_path)["rows"],
         str(tmp_path / SCHEMA),
         {c: schema[c] for c in ("n", "label")},
+        {},
     )
     out = tmp_path / "page"
     out.mkdir()

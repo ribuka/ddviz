@@ -10,6 +10,7 @@ from ddviz.compute.progress import Emit
 from ddviz.compute.summary import summarize_column
 from ddviz.compute.temporal import temporal_kind
 from ddviz.shared.cache import SCHEMA
+from ddviz.shared.generated import generated_names
 from ddviz.shared.manifest import write_manifest
 
 
@@ -34,7 +35,9 @@ def run_schema(paths: list[str], out: Path, emit: Emit) -> None:
     The columns are those of every file, in the order they first appear. A
     column whose type differs between files gets the type all its types
     cast to (`supertype`); such columns are listed as ``casts``, so that the
-    page can tell. A file lacking a column holds nulls in it.
+    page can tell. A file lacking a column holds nulls in it. Two files or
+    more add, after them, the String columns of each row's source file
+    (`ddviz.shared.generated`), listed as ``generated``.
 
     Each file is scanned once and dropped before the next, so that only one
     footer is in memory.
@@ -47,8 +50,9 @@ def run_schema(paths: list[str], out: Path, emit: Emit) -> None:
         Directory to write the result into: the manifest, with ``columns``
         (``{"name", "dtype", "numeric", "temporal"}`` each: a temporal column
         is numeric, with its kind, `ddviz.compute.temporal.temporal_kind`),
-        ``rows``, the rows of each file, and ``schema.parquet``, an empty
-        file with the type of every column.
+        ``rows``, the rows of each file, ``generated``, the added columns
+        with their kinds, and ``schema.parquet``, an empty file with the
+        type of every column.
     emit : callable
         Receives a ``progress`` message before each file.
     """
@@ -71,6 +75,8 @@ def run_schema(paths: list[str], out: Path, emit: Emit) -> None:
                     raise ValueError(f"{name}: {error}") from error
         # The row count comes from the footer the scan has parsed.
         rows.append(scan.select(pl.len()).collect().item())
+    generated = generated_names(dtypes, len(paths))
+    dtypes.update(dict.fromkeys(generated, pl.String))
     pl.DataFrame(schema=dtypes).write_parquet(out / SCHEMA)
     columns = []
     for name, dtype in dtypes.items():
@@ -84,12 +90,23 @@ def run_schema(paths: list[str], out: Path, emit: Emit) -> None:
         for name, found in variants.items()
     ]
     write_manifest(
-        out, {"kind": "schema", "columns": columns, "rows": rows, "casts": casts}
+        out,
+        {
+            "kind": "schema",
+            "columns": columns,
+            "rows": rows,
+            "casts": casts,
+            "generated": generated,
+        },
     )
 
 
-def run_nonnull(paths: list[str], names: list[str], out: Path, emit: Emit) -> None:
+def run_nonnull(
+    paths: list[str], names: list[str], generated: list[str], out: Path, emit: Emit
+) -> None:
     """Write the non-null values of each column and the rows (`ddviz.compute.nonnull`).
+
+    An added column (`ddviz.shared.generated`) has a value in every row.
 
     Parameters
     ----------
@@ -97,6 +114,8 @@ def run_nonnull(paths: list[str], names: list[str], out: Path, emit: Emit) -> No
         Parquet files read as one table.
     names : list of str
         Column names, in schema order.
+    generated : list of str
+        The added columns among them.
     out : pathlib.Path
         Directory to write the result into.
     emit : callable
@@ -106,6 +125,11 @@ def run_nonnull(paths: list[str], names: list[str], out: Path, emit: Emit) -> No
     from ddviz.compute.nonnull import nonnull_counts
 
     counts, rows = nonnull_counts(paths, names)
+    added = set(generated)
+    counts = [
+        (rows or None) if name in added else count
+        for name, count in zip(names, counts, strict=True)
+    ]
     write_manifest(out, {"kind": "nonnull", "counts": counts, "rows": rows})
 
 

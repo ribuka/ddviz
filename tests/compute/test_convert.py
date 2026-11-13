@@ -13,6 +13,7 @@ from ddviz.compute.convert import convert_columns
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.tasks.columns import run_schema
 from ddviz.shared.cache import SCHEMA, ColumnCache
+from ddviz.shared.generated import part_key
 from ddviz.shared.inputs import parquet_files
 from ddviz.shared.manifest import read_manifest
 from ddviz.shared.scatter import ScatterSpec
@@ -33,13 +34,16 @@ def _convert(source: Path, tmp_path: Path, columns: list[str]) -> dict[str, list
     dtypes = {
         c["name"]: c["dtype"] for c in manifest["columns"] if c["name"] in columns
     }
+    generated = {c: k for c, k in manifest["generated"].items() if c in columns}
+    keys = {c: part_key(dtypes[c], generated.get(c)) for c in columns}
     cache = ColumnCache(tmp_path / "cache", [source], files)
-    parts = {c: [str(p) for p in cache.parts(c, dtypes[c])] for c in columns}
+    parts = {c: [str(p) for p in cache.parts(c, keys[c])] for c in columns}
     task = ConvertTask(
         str(tmp_path / "schema" / SCHEMA),
         dtypes,
         [str(f) for f in files],
         [{c: parts[c][i] for c in columns} for i in range(len(files))],
+        generated,
     )
     messages = []
     convert_columns(task, messages.append)
@@ -47,7 +51,7 @@ def _convert(source: Path, tmp_path: Path, columns: list[str]) -> dict[str, list
     assert [(m["done"], m["total"]) for m in messages] == [
         (i, total) for i in range(total)
     ]
-    assert cache.missing(dtypes) == {}
+    assert cache.missing(keys) == {}
     return parts
 
 
@@ -56,15 +60,17 @@ def test_the_schema_of_a_folder_unites_its_files(
 ) -> None:
     """Columns come in the order they first appear; differing types are cast and listed."""
     manifest = _schema(folder_path, tmp_path / "out")
-    assert [c["name"] for c in manifest["columns"]] == folder_frame.columns
+    added = ["source", "filename"]
+    assert [c["name"] for c in manifest["columns"]] == [*folder_frame.columns, *added]
     assert {c["name"]: c["dtype"] for c in manifest["columns"]}["n"] == "Int64"
     assert manifest["rows"] == [700, 700, folder_frame.height - 1400]
     assert manifest["casts"] == [
         {"name": "n", "dtypes": ["Int32", "Int64"], "dtype": "Int64"}
     ]
-    assert pl.read_parquet_schema(tmp_path / "out" / SCHEMA) == dict(
-        folder_frame.schema
-    )
+    assert pl.read_parquet_schema(tmp_path / "out" / SCHEMA) == {
+        **folder_frame.schema,
+        **dict.fromkeys(added, pl.String),
+    }
 
 
 def test_a_schema_without_a_common_type_fails(tmp_path: Path) -> None:
