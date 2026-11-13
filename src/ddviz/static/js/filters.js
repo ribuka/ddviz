@@ -13,6 +13,13 @@
 // The "…" button of a card with its levels listed opens "Sort by": Name keeps
 // the order of the summary (natural), Count puts the most rows first. The
 // order belongs to the card and only moves the rows of the list.
+//
+// A column with too many levels to list but few enough to search (the server
+// says, `GET /api/filter-levels`) gets a card of candidates: a search of its
+// levels, the first 100 of which it lists by Name or Count to tick, and the
+// ticked ones the list does not show, apart. The card switches to the text box
+// (`部分一致`); only the mode shown sets its condition. A search or an order
+// only fetches the candidates: the plot is not aggregated again.
 import { draggedColumn } from "./builder.js";
 import { levelText } from "./names.js";
 import { formatTemporal, isDateKind, parseTemporal } from "./temporal.js";
@@ -21,6 +28,8 @@ const TICK_SETTLE_MS = 400;
 // Steps of a slider over the column's range.
 const STEPS = 1000;
 const SUMMARY_RETRY_MS = 300;
+// Most candidates a search lists (`ddviz.compute.levelindex.LISTED`).
+const LISTED = 100;
 const MS_PER_DAY = 86_400_000;
 // Heights of the pane, lowest first: its head only (with the conditions in
 // words), below the column list (55% of the left pane at most, or the height
@@ -108,6 +117,40 @@ function openLevelMenu(button, order, pick) {
   levelMenuButton = button;
 }
 
+// Returns the text of an error answer: its `detail`, or the text itself.
+function errorText(text, status) {
+  try {
+    const { detail } = JSON.parse(text);
+    if (typeof detail === "string") return detail;
+  } catch {
+    // Not JSON: the text as it is.
+  }
+  return text || `HTTP ${status}`;
+}
+
+// Returns the row of a level to tick: its box, its name and its rows (none
+// when `count` is null); `toggle` gets whether it is ticked.
+function levelRow(level, count, checked, toggle) {
+  const label = document.createElement("label");
+  label.className = "filter-level";
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = checked;
+  box.addEventListener("change", () => toggle(box.checked));
+  const text = document.createElement("span");
+  text.className = "filter-level-name";
+  text.textContent = levelText(level);
+  text.title = levelText(level);
+  label.append(box, text);
+  if (count !== null) {
+    const num = document.createElement("span");
+    num.className = "filter-level-count";
+    num.textContent = count.toLocaleString();
+    label.append(num);
+  }
+  return label;
+}
+
 // Returns a number short enough for the pane.
 export function formatNumber(value) {
   if (!Number.isFinite(value)) return String(value);
@@ -139,7 +182,13 @@ export class FilterPane {
     this.onSummary = onSummary;
     // One card per column, in the order added: `{name, numeric, summary,
     // range, levels, contains, element}`; `range` is [lo, hi], `levels` the
-    // ticked set, `contains` the text of a column with too many levels.
+    // ticked set, `contains` the text of a column with too many levels. A
+    // card of candidates also has `candidates` (`null` until the first
+    // answer, `false` for a column with too many levels to search, else the
+    // answer), its `mode` ("pick" or "contains"), the `query` sent last, the
+    // `draft` in its search box, `shown` (the query and order of the
+    // candidates listed), `seq` (the number of its request sent last, for
+    // dropping older answers), `loading` and `failure`.
     this.cards = [];
     this.committed = "[]";
     // The state of the conditions sent last (`commit`).
@@ -257,11 +306,28 @@ export class FilterPane {
 
   add({ name, numeric }) {
     if (this.cards.some((c) => c.name === name)) return;
-    const card = { name, numeric, summary: null, range: null, levels: new Set(), contains: "", order: "name", element: null };
+    const card = {
+      name,
+      numeric,
+      summary: null,
+      range: null,
+      levels: new Set(),
+      contains: "",
+      order: "name",
+      element: null,
+      candidates: null,
+      mode: "pick",
+      query: "",
+      draft: "",
+      shown: null,
+      seq: 0,
+      loading: false,
+      failure: null,
+    };
     this.cards.push(card);
     // A new card sets no condition: the state sent has it, so that a request
     // sent now goes back to it (`RestorePoint`).
-    this.sent = [...this.sent, { card, range: null, levels: new Set(), contains: "" }];
+    this.sent = [...this.sent, { card, range: null, levels: new Set(), contains: "", mode: "pick", query: "", order: "name" }];
     // A folded pane opens to show the card; a maximized one stays so.
     if (this.state === "collapsed") this.setState("open");
     this.render();
@@ -270,6 +336,8 @@ export class FilterPane {
 
   remove(card) {
     this.cards = this.cards.filter((c) => c !== card);
+    // An answer to its request on the way is dropped.
+    card.seq++;
     // Gone from the state sent too, even when its conditions stay the same
     // (a card without a condition) and nothing is sent.
     this.sent = this.sent.filter((s) => s.card !== card);
@@ -292,8 +360,74 @@ export class FilterPane {
         if (card.summary.numeric && card.summary.min !== null) card.range = [card.summary.min, card.summary.max];
       }
       this.render();
+      if (this.searches(card)) this.loadCandidates(card);
       return;
     }
+  }
+
+  // Whether a card searches the candidates of its levels: a categorical
+  // column with too many levels to list, unless the server found too many
+  // to search.
+  searches(card) {
+    return !card.numeric && card.summary?.levels === null && card.candidates !== false;
+  }
+
+  // Whether a card's condition is its ticked candidates.
+  picks(card) {
+    return Boolean(card.candidates) && card.mode === "pick";
+  }
+
+  // Fetches the candidates of a card for its `query` and `order`. An answer
+  // to a card removed since, or to an older request of the card, is dropped.
+  async loadCandidates(card) {
+    const seq = ++card.seq;
+    const asked = { query: card.query, order: card.order };
+    card.loading = true;
+    card.failure = null;
+    this.showCandidates(card);
+    let found = null;
+    let failure = null;
+    try {
+      const params = new URLSearchParams({ column: card.name, q: asked.query, order: asked.order });
+      const response = await fetch(`/api/filter-levels?${params}`);
+      if (response.ok) found = await response.json();
+      else failure = errorText(await response.text(), response.status);
+    } catch (error) {
+      failure = String(error);
+    }
+    if (!this.cards.includes(card) || seq !== card.seq) return;
+    card.loading = false;
+    if (failure !== null) {
+      card.failure = failure;
+      this.showCandidates(card);
+      return;
+    }
+    const first = card.candidates === null;
+    if (found.levels === null) {
+      // Too many to search: the card filters by the text its values contain.
+      card.candidates = false;
+      card.mode = "contains";
+      card.summary = { ...card.summary, n_levels: found.n_levels };
+      card.levels.clear();
+      this.renderCard(card);
+      return;
+    }
+    card.candidates = found;
+    card.shown = asked;
+    if (first) this.renderCard(card);
+    else this.showCandidates(card);
+  }
+
+  // Shows the candidates of a card, its fetching or its failure.
+  showCandidates(card) {
+    if (card.refresh) card.refresh();
+    else this.renderCard(card);
+  }
+
+  // Draws one card again, keeping the others (and their boxes' focus).
+  renderCard(card) {
+    if (card.element?.isConnected) card.element.replaceWith(this.cardElement(card));
+    this.updateSummary();
   }
 
   // Returns the conditions of the cards that leave rows out, for the server
@@ -303,6 +437,7 @@ export class FilterPane {
     for (const card of this.cards) {
       if (!this.isActive(card)) continue;
       if (card.numeric) out.push({ column: card.name, range: [...card.range] });
+      else if (this.picks(card)) out.push({ column: card.name, levels: [...card.levels].sort() });
       else if (card.summary.levels === null) out.push({ column: card.name, contains: card.contains });
       else out.push({ column: card.name, levels: [...card.levels].sort() });
     }
@@ -314,7 +449,7 @@ export class FilterPane {
     if (card.numeric) {
       return card.range !== null && (card.range[0] > card.summary.min || card.range[1] < card.summary.max);
     }
-    if (card.summary.levels === null) return card.contains !== "";
+    if (card.summary.levels === null && !this.picks(card)) return card.contains !== "";
     return card.levels.size > 0;
   }
 
@@ -324,6 +459,7 @@ export class FilterPane {
       .filter((card) => this.isActive(card))
       .map((card) => {
         if (card.numeric) return `${card.name}: ${formatBound(card, card.range[0])}〜${formatBound(card, card.range[1])}`;
+        if (this.picks(card)) return `${card.name}: ${card.levels.size}/${card.candidates.n_levels}`;
         if (card.summary.levels === null) return `${card.name}: 「${card.contains}」を含む`;
         return `${card.name}: ${card.levels.size}/${card.summary.levels.length}`;
       })
@@ -345,14 +481,18 @@ export class FilterPane {
   }
 
   // Returns the state of the pane that sets the conditions: its cards in
-  // their order, and each one's range, ticked levels and text. What only
-  // shows (the order of a card's levels) is not part of it.
+  // their order, and each one's range, ticked levels and text; a card of
+  // candidates' mode, and the query and order of its candidates. What only
+  // shows (the order of a listed card's levels) is not part of it.
   snapshot() {
     return this.cards.map((card) => ({
       card,
       range: card.range && [...card.range],
       levels: new Set(card.levels),
       contains: card.contains,
+      mode: card.mode,
+      query: card.query,
+      order: card.order,
     }));
   }
 
@@ -360,15 +500,28 @@ export class FilterPane {
   // back as it was before, with what it showed, and one added since goes; a
   // card kept keeps what it shows. Ticks waiting to be sent are dropped and
   // nothing is sent (`onChange` is not called); the summary follows.
+  //
+  // A card of candidates gets back its mode and the query and order of its
+  // candidates, fetched again when they differ from those listed or when the
+  // card was removed while they loaded.
   restore(snapshot) {
     clearTimeout(this.timer);
     this.timer = null;
-    this.cards = snapshot.map(({ card, range, levels, contains }) => {
+    const refetch = [];
+    this.cards = snapshot.map(({ card, range, levels, contains, mode, query, order }) => {
       // A card whose summary came after the snapshot has its whole range.
       const whole = card.summary?.numeric && card.summary.min !== null ? [card.summary.min, card.summary.max] : null;
       card.range = range ? [...range] : whole;
       card.levels = new Set(levels);
       card.contains = contains;
+      if (this.searches(card)) {
+        card.mode = mode;
+        card.query = query;
+        card.draft = query;
+        card.order = order;
+        const listed = card.shown && card.shown.query === query && card.shown.order === order;
+        if (card.summary && (card.loading || (card.candidates && !listed))) refetch.push(card);
+      }
       return card;
     });
     this.committed = JSON.stringify(this.conditions());
@@ -378,6 +531,7 @@ export class FilterPane {
     for (const card of this.cards) {
       if (!card.summary && !card.error) this.loadSummary(card);
     }
+    for (const card of refetch) this.loadCandidates(card);
   }
 
   // Sends the conditions once the ticks have stopped for a moment.
@@ -420,7 +574,7 @@ export class FilterPane {
     close.title = "このフィルタを外す";
     close.addEventListener("click", () => this.remove(card));
     head.append(type, name);
-    if (!card.numeric && card.summary && card.summary.levels !== null) {
+    if (!card.numeric && card.summary && (card.summary.levels !== null || this.picks(card))) {
       const sort = document.createElement("button");
       sort.type = "button";
       sort.className = "filter-card-sort";
@@ -430,6 +584,13 @@ export class FilterPane {
       sort.addEventListener("click", () => {
         if (closeLevelMenu() === sort) return;
         openLevelMenu(sort, card.order, (picked) => {
+          if (this.picks(card)) {
+            // The candidates of the query sent last, in the new order.
+            if (picked === card.order && !card.failure) return;
+            card.order = picked;
+            this.loadCandidates(card);
+            return;
+          }
           card.order = picked;
           card.arrange?.();
         });
@@ -563,9 +724,11 @@ export class FilterPane {
   }
 
   levelBody(card, body) {
-    const { levels, n_levels: count, nulls } = card.summary;
+    const { levels, nulls } = card.summary;
+    card.refresh = null;
     if (levels === null) {
-      this.containsBody(card, body);
+      if (card.candidates === false) this.containsBody(card, body);
+      else this.candidateBody(card, body);
       return;
     }
     const bar = document.createElement("div");
@@ -581,27 +744,14 @@ export class FilterPane {
     list.className = "filter-levels";
     const labels = new Map();
     const boxes = levels.map(([level, n]) => {
-      const label = document.createElement("label");
-      label.className = "filter-level";
-      const box = document.createElement("input");
-      box.type = "checkbox";
-      box.checked = card.levels.has(level);
-      box.addEventListener("change", () => {
-        if (box.checked) card.levels.add(level);
+      const label = levelRow(level, n, card.levels.has(level), (checked) => {
+        if (checked) card.levels.add(level);
         else card.levels.delete(level);
         update();
         this.commitSoon();
       });
-      const text = document.createElement("span");
-      text.className = "filter-level-name";
-      text.textContent = levelText(level);
-      text.title = levelText(level);
-      const num = document.createElement("span");
-      num.className = "filter-level-count";
-      num.textContent = n.toLocaleString();
-      label.append(box, text, num);
       labels.set(level, label);
-      return box;
+      return label.querySelector("input");
     });
     // Puts the rows in the card's order; the ticks stay as they are.
     card.arrange = () => list.replaceChildren(...sortLevels(levels, card.order).map(([level]) => labels.get(level)));
@@ -622,6 +772,170 @@ export class FilterPane {
     body.append(bar, list);
   }
 
+  // A card of candidates: "候補を集計中…" until the first answer (or its
+  // failure), then the switch of its modes over either the search of the
+  // candidates or the text box.
+  candidateBody(card, body) {
+    if (card.candidates === null) {
+      if (card.failure) body.append(this.failureLine(card));
+      else body.textContent = "候補を集計中…";
+      return;
+    }
+    body.append(this.modeSwitch(card));
+    if (card.mode === "contains") {
+      this.containsBody(card, body);
+      return;
+    }
+    const { nulls } = card.summary;
+    const bar = document.createElement("div");
+    bar.className = "filter-note";
+    const counter = document.createElement("span");
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "filter-reset";
+    clear.textContent = "すべて外す";
+    clear.title = "選んだ水準を、候補に無いものも含めて外す（絞らない）";
+    bar.append(counter, clear);
+    const search = document.createElement("div");
+    search.className = "filter-search";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = card.draft;
+    input.placeholder = "候補を検索";
+    input.title = "空白で区切った語をすべて含む水準を探す（順不同。大文字と小文字を区別しない。空ならすべて）。Enter か「検索」で探す";
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "filter-reset filter-search-go";
+    go.textContent = "検索";
+    search.append(input, go);
+    const status = document.createElement("div");
+    status.className = "filter-candidates-status";
+    const list = document.createElement("div");
+    list.className = "filter-levels";
+    const more = document.createElement("div");
+    more.className = "filter-note filter-truncated";
+    more.textContent = `先頭${LISTED}件を表示しています。検索語を絞ってください`;
+    const picked = document.createElement("div");
+    picked.className = "filter-picked";
+    const pickedHead = document.createElement("div");
+    pickedHead.className = "filter-note";
+    pickedHead.textContent = "選択済み";
+    const pickedList = document.createElement("div");
+    pickedList.className = "filter-levels";
+    picked.append(pickedHead, pickedList);
+
+    const send = () => {
+      card.query = input.value;
+      card.draft = input.value;
+      this.loadCandidates(card);
+    };
+    input.addEventListener("input", () => (card.draft = input.value));
+    input.addEventListener("keydown", (event) => {
+      // The Enter that commits an IME conversion keeps editing.
+      if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      send();
+    });
+    go.addEventListener("click", send);
+
+    const count = () => {
+      const size = card.levels.size;
+      const total = card.candidates.n_levels.toLocaleString();
+      counter.textContent = size ? `${size.toLocaleString()} / ${total} 水準を選択` : `${total} 水準（検索して選ぶと絞る）`;
+      if (nulls) counter.textContent += `　null ${nulls.toLocaleString()} 行`;
+      clear.disabled = size === 0;
+    };
+    // A ticked level the candidates do not list, to untick.
+    const showPicked = () => {
+      const listed = new Set(card.candidates.levels.map(([level]) => level));
+      const outside = [...card.levels].filter((level) => !listed.has(level));
+      pickedList.replaceChildren(
+        ...outside.map((level) =>
+          levelRow(level, null, true, () => {
+            card.levels.delete(level);
+            showPicked();
+            count();
+            this.commitSoon();
+          }),
+        ),
+      );
+      picked.hidden = outside.length === 0;
+    };
+    card.refresh = () => {
+      const { levels, truncated } = card.candidates;
+      status.replaceChildren();
+      if (card.loading) status.textContent = "候補を取得中…";
+      else if (card.failure) status.append(this.failureLine(card));
+      else if (levels.length === 0) status.textContent = "一致する候補がありません";
+      status.hidden = !status.hasChildNodes();
+      list.classList.toggle("loading", card.loading);
+      list.replaceChildren(
+        ...levels.map(([level, n]) =>
+          levelRow(level, n, card.levels.has(level), (checked) => {
+            if (checked) card.levels.add(level);
+            else card.levels.delete(level);
+            count();
+            this.commitSoon();
+          }),
+        ),
+      );
+      list.hidden = levels.length === 0;
+      more.hidden = !truncated;
+      showPicked();
+      count();
+    };
+    clear.addEventListener("click", () => {
+      card.levels.clear();
+      card.refresh();
+      this.commit();
+    });
+    body.append(bar, search, status, list, more, picked);
+    card.refresh();
+  }
+
+  // The error of a card's candidates, with a button that asks again.
+  failureLine(card) {
+    const line = document.createElement("div");
+    line.className = "filter-error";
+    const text = document.createElement("span");
+    text.textContent = `エラー: ${card.failure}`;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "filter-reset";
+    retry.textContent = "再試行";
+    retry.title = "同じ検索語と並び順で候補を取り直す";
+    retry.addEventListener("click", () => this.loadCandidates(card));
+    line.append(text, retry);
+    return line;
+  }
+
+  // The switch between ticking candidates and typing the text the values
+  // contain; each mode keeps its own state.
+  modeSwitch(card) {
+    const bar = document.createElement("div");
+    bar.className = "filter-mode";
+    bar.setAttribute("role", "group");
+    for (const [mode, text, title] of [
+      ["pick", "水準を選択", "水準を検索してチェックした値と一致する行だけを残す"],
+      ["contains", "部分一致", "入力した語をすべて含む行だけを残す"],
+    ]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.mode = mode;
+      button.textContent = text;
+      button.title = title;
+      button.setAttribute("aria-pressed", String(card.mode === mode));
+      button.addEventListener("click", () => {
+        if (card.mode === mode) return;
+        card.mode = mode;
+        this.renderCard(card);
+        this.commit();
+      });
+      bar.append(button);
+    }
+    return bar;
+  }
+
   // A column with too many levels to list is filtered by the text its kept
   // values contain: every word of it, in any order, literally and ignoring
   // case (`ddviz.shared.keywords`); a blank box keeps every row.
@@ -629,7 +943,11 @@ export class FilterPane {
     const { n_levels: count, nulls } = card.summary;
     const note = document.createElement("div");
     note.className = "filter-note";
-    note.textContent = `水準が多すぎる（約 ${count.toLocaleString()} 個）ため、部分一致で絞る`;
+    if (card.candidates) {
+      note.textContent = `${card.candidates.n_levels.toLocaleString()} 水準から部分一致で絞る`;
+    } else {
+      note.textContent = `水準が多すぎる（約 ${count.toLocaleString()} 個）ため、部分一致で絞る`;
+    }
     if (nulls) note.textContent += `　null ${nulls.toLocaleString()} 行`;
     const bar = document.createElement("div");
     bar.className = "filter-contains";

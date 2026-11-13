@@ -10,6 +10,8 @@ from ddviz.shared.scatter import ScatterSpec
 from ddviz.shared.tasks import (
     TASKS,
     ConvertTask,
+    LevelIndexTask,
+    LevelSearchTask,
     NonnullTask,
     PlotDataTask,
     PlotTask,
@@ -53,6 +55,8 @@ def _every_task(spec: ScatterSpec) -> list[Task]:
             ),
         ),
         SummaryTask(["a/x.parquet", "b/x.parquet"], "x"),
+        LevelIndexTask(["a/g.parquet", "b/g.parquet"], "g", "level-index/1.parquet"),
+        LevelSearchTask("level-index/1.parquet", "id 7", "count"),
         PlotDataTask("tasks/1", "csv"),
     ]
 

@@ -81,7 +81,7 @@ def test_the_levels_found_and_their_shape(client: TestClient) -> None:
     assert found["truncated"] is True
     assert len(found["levels"]) == 100
     assert found["levels"][:3] == [["ABC", 1], ["abc", 1], ["ABC-123", 1]]
-    by_count = _levels(client, column="id", q="id 7", order="count")
+    by_count = _levels(client, column="id", q="ID7", order="count")
     assert by_count == {
         "levels": [["ID7", 4], *([f"ID{i}", 1] for i in range(70, 80))],
         "truncated": False,

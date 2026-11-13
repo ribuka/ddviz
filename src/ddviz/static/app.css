@@ -500,6 +500,75 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* A card of candidates: its modes, its search and the ticked levels it does not list. */
+.filter-mode {
+  display: flex;
+  margin-bottom: 4px;
+}
+
+.filter-mode button {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: 1px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.filter-mode button + button {
+  border-left: none;
+}
+
+.filter-mode button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-color);
+}
+
+.filter-search {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.filter-search input {
+  width: 0;
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 1px 3px;
+}
+
+.filter-search .filter-reset {
+  margin-left: 0;
+}
+
+.filter-candidates-status {
+  margin-top: 4px;
+  color: var(--text-faint);
+}
+
+.filter-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--error-text);
+}
+
+.filter-levels.loading {
+  opacity: 0.5;
+}
+
+.filter-picked {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 2px;
+}
+
+.filter-card [hidden] {
+  display: none;
+}
+
 .column-search {
   margin: 6px 8px 4px;
   padding: 3px 6px;
