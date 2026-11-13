@@ -187,7 +187,7 @@ let bottomMargin = MARGIN_BOTTOM;
 let filters = [];
 // Returns a key of conditions, from the page's or from a result's meta.
 function filtersKey(list) {
-  return JSON.stringify(list.map((f) => [f.column, f.range ?? null, f.levels ?? null]));
+  return JSON.stringify(list.map((f) => [f.column, f.range ?? null, f.levels ?? null, f.contains ?? null]));
 }
 // How a numeric color column is cut into intervals ({n, by}), or null for a
 // gradient (`ddviz.server.plan.parse_color_bins`); back to null for another color
@@ -1424,7 +1424,9 @@ async function requestOverview() {
   });
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
-    viewFailed(await response.text());
+    const text = await response.text();
+    // A newer request may have come while the answer was read.
+    if (mine === generation) viewFailed(text);
     return;
   }
   const { figure, meta } = await response.json();
@@ -1478,7 +1480,9 @@ async function requestView({ x: xRanges, y: yRanges }) {
   });
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
-    viewFailed(await response.text());
+    const text = await response.text();
+    // A newer request may have come while the answer was read.
+    if (mine === generation) viewFailed(text);
     return;
   }
   const { figure, meta } = await response.json();
@@ -1512,8 +1516,8 @@ async function requestView({ x: xRanges, y: yRanges }) {
 // (`ddviz.compute.aggregate.FilteredColorLevelsError`) leaves the figure, the
 // legend and the selection drawn, and puts the filter pane back to the
 // conditions of the result drawn last (`RestorePoint`), without asking for
-// anything; but when the axes were moved meanwhile, their ranges stay and
-// their view of those conditions is asked for. The error stays shown until
+// anything; but when the axes were moved meanwhile, or the result shown is
+// not of those conditions, the shown ranges are aggregated with them. The error stays shown until
 // the next edit (`StatusLine.hold`).
 function viewFailed(text) {
   setPending(false);
@@ -1530,8 +1534,11 @@ function viewFailed(text) {
   filters = filterPane.conditions();
   const whole = current === overview.meta;
   requested = whole ? { x: [], y: [] } : { x: current.x_ranges, y: current.y_ranges };
+  // The result shown may be an old overview standing in (`showOverview`):
+  // it has other conditions, so the shown ranges are aggregated again.
   const shown = shownRanges(current);
-  if (sameRanges(shown.x, current.x_ranges) && sameRanges(shown.y, current.y_ranges)) return;
+  const sameFilter = filtersKey(current.filters) === filtersKey(filters);
+  if (sameFilter && sameRanges(shown.x, current.x_ranges) && sameRanges(shown.y, current.y_ranges)) return;
   hideHover();
   if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) showOverview();
   else requestView(shown);

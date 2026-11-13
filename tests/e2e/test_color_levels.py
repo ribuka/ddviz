@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -143,6 +144,15 @@ def api_requests(page: Page) -> list[str]:
 
     page.on("request", lambda r: seen(r.url))
     return paths
+
+
+def wait_until(page: Page, done: Callable[[], bool]) -> None:
+    """Let the page run until `done()` holds, for 15s at most."""
+    for _ in range(25):
+        if done():
+            return
+        settle(page)
+    raise AssertionError("timed out")
 
 
 def settle(page: Page) -> None:
@@ -402,16 +412,14 @@ def test_a_zoom_while_waiting_keeps_its_ranges(app_page: Page) -> None:
     page.wait_for_function(
         "() => document.getElementById('plot').classList.contains('busy')"
     )
-    while not held:
-        settle(page)
+    wait_until(page, lambda: bool(held))
     views: list[int] = []
     page.on(
         "response",
         lambda r: views.append(r.status) if r.url.endswith("/api/view") else None,
     )
     page.evaluate("Plotly.relayout('plot', {'xaxis.range': [300, 1200]})")
-    while len(views) < 2:
-        settle(page)
+    wait_until(page, lambda: len(views) >= 2)
     wait_idle(page)
     settle(page)
     assert views == [400, 200]
@@ -443,8 +451,7 @@ def test_an_older_refusal_after_a_newer_success_changes_nothing(app_page: Page) 
 
     page.route("**/api/overview", handle)
     box(page, "half", "hi").check()
-    while not held:
-        settle(page)
+    wait_until(page, lambda: bool(held))
     box(page, "half", "lo").uncheck()
     page.wait_for_function(
         "() => document.querySelectorAll('#legend .legend-item').length === 70"
@@ -515,4 +522,108 @@ def test_the_hover_selection_and_lines_follow_the_new_levels(app_page: Page) -> 
     table = page.evaluate("() => fetch('/api/table').then((r) => r.json())")
     values = next(c["values"] for c in table["columns"] if c["name"] == "s")
     assert set(values) == {"s9"}
+    assert errors == []
+
+
+def test_a_refusal_while_an_old_overview_stands_in_draws_the_last_filter(
+    app_page: Page,
+) -> None:
+    """Back from a zoom of another filter, the old overview stands in; a refused filter then goes back to the filter drawn last and draws its overview, not the old one."""
+    page = app_page
+    errors = watch_errors(page)
+    lo_drawn(page)
+    zoom(page, 200, 1500)
+    box(page, "half", "lo").uncheck()
+    tick(page, "half", ["hi"], "**/api/view")
+    expect(page.locator(LEGEND_NAMES)).to_have_count(70)
+    held: list[Route] = []
+    answers: list[int] = []
+
+    def handle(route: Route) -> None:
+        if held:
+            route.continue_()
+        else:
+            held.append(route)
+
+    page.route("**/api/overview", handle)
+    page.on(
+        "response",
+        lambda r: answers.append(r.status) if r.url.endswith("/api/overview") else None,
+    )
+    # Back to the whole ranges: the overview of lo stands in.
+    page.evaluate(
+        "Plotly.relayout('plot', {'xaxis.autorange': true, 'yaxis.autorange': true})"
+    )
+    wait_until(page, lambda: bool(held))
+    expect(page.locator(LEGEND_NAMES)).to_have_count(70)
+    box(page, "half", "lo").check()
+    wait_until(page, lambda: len(answers) >= 2)
+    wait_idle(page)
+    assert answers == [400, 200]
+    expect(page.locator("#status")).to_have_text(REFUSED)
+    expect(box(page, "half", "hi")).to_be_checked()
+    expect(box(page, "half", "lo")).not_to_be_checked()
+    expect(page.locator(LEGEND_NAMES)).to_have_count(70)
+    # The overview drawn is that of hi.
+    assert (
+        page.evaluate(
+            "() => document.getElementById('plot').classList.contains('pending')"
+        )
+        is False
+    )
+    held[0].fulfill(
+        status=409, content_type="application/json", body='{"cancelled": true}'
+    )
+    page.unroute("**/api/overview")
+    settle(page)
+    assert errors == []
+
+
+# Holds the text of the next answer of /api/overview until
+# `window.releaseText()`; its headers come at once.
+HOLD_TEXT = """() => {
+  const original = window.fetch;
+  window.fetch = async (url, options) => {
+    const response = await original(url, options);
+    if (!String(url).endsWith("/api/overview") || window.releaseText) return response;
+    const hold = new Promise((resolve) => { window.releaseText = resolve; });
+    const text = response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: async () => { await hold; return text; },
+      json: async () => { await hold; return JSON.parse(await text); },
+    };
+  };
+}"""
+
+
+def test_a_refusal_read_after_a_newer_request_changes_nothing(app_page: Page) -> None:
+    """A refusal whose text is read after a newer filter was sent leaves the pane at the newer filter, which is then drawn."""
+    page = app_page
+    errors = watch_errors(page)
+    lo_drawn(page)
+    page.evaluate(HOLD_TEXT)
+    with page.expect_response("**/api/overview") as refused:
+        box(page, "half", "hi").check()
+    assert refused.value.status == 400
+    page.wait_for_function("() => Boolean(window.releaseText)")
+    # The newer filter is held while the old text is read.
+    newer: list[Route] = []
+    page.route("**/api/overview", lambda route: newer.append(route))
+    box(page, "half", "lo").uncheck()
+    wait_until(page, lambda: bool(newer))
+    page.evaluate("() => window.releaseText()")
+    settle(page)
+    expect(box(page, "half", "hi")).to_be_checked()
+    expect(box(page, "half", "lo")).not_to_be_checked()
+    expect(page.locator("#status")).not_to_have_class(re.compile("notice-error"))
+    newer[0].continue_()
+    page.unroute("**/api/overview")
+    page.wait_for_function(
+        "() => document.querySelectorAll('#legend .legend-item').length === 70"
+    )
+    page.wait_for_function(SETTLED)
+    expect(box(page, "half", "hi")).to_be_checked()
+    expect(box(page, "half", "lo")).not_to_be_checked()
     assert errors == []

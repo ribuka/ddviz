@@ -259,6 +259,9 @@ export class FilterPane {
     if (this.cards.some((c) => c.name === name)) return;
     const card = { name, numeric, summary: null, range: null, levels: new Set(), contains: "", order: "name", element: null };
     this.cards.push(card);
+    // A new card sets no condition: the state sent has it, so that a request
+    // sent now goes back to it (`RestorePoint`).
+    this.sent = [...this.sent, { card, range: null, levels: new Set(), contains: "" }];
     // A folded pane opens to show the card; a maximized one stays so.
     if (this.state === "collapsed") this.setState("open");
     this.render();
@@ -267,6 +270,9 @@ export class FilterPane {
 
   remove(card) {
     this.cards = this.cards.filter((c) => c !== card);
+    // Gone from the state sent too, even when its conditions stay the same
+    // (a card without a condition) and nothing is sent.
+    this.sent = this.sent.filter((s) => s.card !== card);
     this.render();
     this.commit();
   }

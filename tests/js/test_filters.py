@@ -193,3 +193,39 @@ def test_the_restore_point_is_the_latest_confirmed(js_page: Page) -> None:
         }"""
     )
     assert result == ["start", "two", "two", "two", "three"]
+
+
+def test_a_card_without_a_condition_goes_to_the_state_sent(clock_page: Page) -> None:
+    """Adding or removing a card that sets no condition sends nothing, but the state sent has it or not, so that a restore to it keeps the cards of the request."""
+    page = clock_page
+    page.evaluate(PANE)
+    result = page.evaluate(
+        """async () => {
+          const pane = window.pane;
+          const sent = window.changes;
+          const id = pane.cards[2];
+          pane.remove(id);
+          const removed = pane.sent.map((s) => s.card.name);
+          pane.add({ name: "id", numeric: false });
+          const added = pane.sent.map((s) => s.card.name);
+          while (!pane.cards[2].summary) await new Promise((r) => setTimeout(r, 10));
+          const point = pane.sent;
+          pane.cards[1].levels.add("a");
+          pane.commit();
+          pane.restore(point);
+          return {
+            removed,
+            added,
+            names: pane.cards.map((c) => c.name),
+            conditions: pane.conditions(),
+            changes: window.changes - sent,
+          };
+        }"""
+    )
+    assert result == {
+        "removed": ["n", "g"],
+        "added": ["n", "g", "id"],
+        "names": ["n", "g", "id"],
+        "conditions": [],
+        "changes": 1,
+    }
