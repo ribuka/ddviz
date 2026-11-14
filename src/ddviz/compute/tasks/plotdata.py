@@ -3,14 +3,16 @@
 The rows are those the plot draws (`drawn_rows`), or every row the local
 filter keeps; the columns are those the task lists, with the row index
 first. The rows are found from the column cache, then written a chunk after
-another, so that no more than a chunk's values are held at once: each chunk
-reports its progress (`run_plot_data`).
+another, so that no more than a chunk's values are held at once: a chunk
+ends where its values reach `CHUNK_BYTES`, measured before they are read
+(`_cut`), and each chunk reports its progress (`run_plot_data`).
 """
 
 from __future__ import annotations
 
 import bisect
 import itertools
+from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
@@ -31,11 +33,12 @@ from ddviz.shared.tasks import PlotDataTask, SourceFiles
 # Name of the row index column of the file, unless a column has it
 # (`index_name`).
 INDEX_NAME = "index"
-# Bytes of values a chunk holds at most (`chunk_rows`), the rows of the first
-# chunk, which measures them, and the rows of a chunk at most.
+# Bytes of values a chunk holds at most (`_cut`), and its rows at most.
 CHUNK_BYTES = 512 * 2**20
-FIRST_CHUNK_ROWS = 10_000
 MAX_CHUNK_ROWS = 10_000_000
+# Bytes counted for each value besides those of a text, binary or list
+# (`_length`): a number, or the offset of a text.
+VALUE_BYTES = 8
 
 
 def index_name(columns: list[str]) -> str:
@@ -47,15 +50,20 @@ def index_name(columns: list[str]) -> str:
     return name
 
 
-def chunk_rows(row_bytes: float) -> int:
-    """Return the rows of the next chunk, from the most bytes a row of the chunks written took.
+def _length(value: pl.Expr, dtype: pl.DataType) -> pl.Expr | None:
+    """Return the bytes of each value of a column besides `VALUE_BYTES`, or None for a type of fixed size.
 
-    Text values have no fixed size, so the chunks measure them: the first
-    chunk has `FIRST_CHUNK_ROWS` rows, and each next one as many rows as
-    `CHUNK_BYTES` holds at the largest bytes per row so far (a column of
-    long texts makes chunks of fewer rows).
+    A text or binary value takes its bytes, a list 8 per item.
     """
-    return max(1, min(MAX_CHUNK_ROWS, int(CHUNK_BYTES // max(row_bytes, 1))))
+    if dtype == pl.String:
+        size = value.str.len_bytes()
+    elif dtype == pl.Binary:
+        size = value.bin.size()
+    elif isinstance(dtype, pl.List):
+        size = value.list.len() * 8
+    else:
+        return None
+    return size.cast(pl.UInt64).fill_null(0)
 
 
 def _on_axis(spec: ScatterSpec, column: str, log: list[str]) -> pl.Expr:
@@ -99,14 +107,30 @@ def drawn_rows(spec: ScatterSpec) -> list[pl.Expr]:
 
 
 def _cached(
-    parts: dict[str, list[str]], index: pl.Series, lo: int, hi: int
+    parts: dict[str, list[str]],
+    index: pl.Series,
+    lo: int,
+    hi: int,
+    measure: bool = False,
 ) -> pl.DataFrame:
-    """Return the rows `index` (between `lo` and `hi`) of columns in the column cache, with their values."""
+    """Return the rows `index` (between `lo` and `hi`) of columns in the column cache, with their values.
+
+    With `measure`, the bytes of the values of variable size (`_length`)
+    instead, one column for each such column; the values are not held.
+    """
+    frame = scan_columns(parts, INDEX, numbers=False)
+    if measure:
+        schema = frame.collect_schema()
+        lengths = [
+            size.alias(c)
+            for c in parts
+            if (size := _length(pl.col(c), schema[c])) is not None
+        ]
+        frame = frame.select(INDEX, *lengths)
     return (
-        scan_columns(parts, INDEX, numbers=False)
-        .slice(lo, hi - lo + 1)
+        frame.slice(lo, hi - lo + 1)
         .filter(pl.col(INDEX).is_in(index.implode()))
-        .collect()
+        .collect(engine="streaming" if measure else "auto")
     )
 
 
@@ -117,13 +141,16 @@ def _source(
     index: pl.Series,
     lo: int,
     hi: int,
+    measure: bool = False,
 ) -> pl.DataFrame:
     """Return the rows `index` (between `lo` and `hi`) of columns read from the source files.
 
     Only the files holding rows between `lo` and `hi` are scanned. Values
     are cast to the input's types, a file lacking a column gives nulls, and
     an added column (`ddviz.shared.generated`) gives the file's value, as
-    the selection table reads them (`ddviz.compute.tasks.table`).
+    the selection table reads them (`ddviz.compute.tasks.table`). With
+    `measure`, the bytes of the values of variable size instead, as
+    `_cached` gives them.
     """
     starts = list(itertools.accumulate(source.rows, initial=0))
     first = max(bisect.bisect_right(starts, lo) - 1, 0)
@@ -142,23 +169,43 @@ def _source(
         for c in columns:
             if c in source.generated:
                 value = generated_value(source.generated[c], source.paths[i])
-                values.append(pl.lit(value, dtype=pl.String).alias(c))
-                continue
-            expr = column_expr(c, source.dtypes[c], present, target)
-            values.append(
-                pl.lit(None, dtype=target[c]).alias(c) if expr is None else expr
-            )
+                expr, dtype = pl.lit(value, dtype=pl.String), pl.String
+            else:
+                expr, dtype = column_expr(c, source.dtypes[c], present, target), target[c]
+                if expr is None:
+                    expr = pl.lit(None, dtype=dtype)
+            if measure:
+                expr = _length(expr, dtype)
+            if expr is not None:
+                values.append(expr.alias(c))
         begin = max(lo, start)
         found.append(
             scan.select(INDEX, *values)
             .slice(begin - start, min(hi + 1, end) - begin)
             .filter(pl.col(INDEX).is_in(index.implode()))
-            .collect()
+            .collect(engine="streaming" if measure else "auto")
         )
     if found:
         return pl.concat(found)
     schema = {c: target.get(c, pl.String) for c in columns}
+    if measure:
+        schema = {c: pl.UInt64 for c, d in schema.items() if _length(pl.col(c), d) is not None}
     return pl.DataFrame(schema={INDEX: index.dtype, **schema})
+
+
+def _cut(
+    index: pl.Series, bytes_of: Callable[[pl.Series], pl.Series | None], fixed: int
+) -> int:
+    """Return how many rows of `index`, from the first, a chunk takes: as many as `CHUNK_BYTES` holds, at least one.
+
+    `fixed` is the bytes of every row; `bytes_of` returns the bytes of the
+    values of variable size of each row, or None when there are none.
+    """
+    sizes = bytes_of(index)
+    if sizes is None:
+        return max(1, min(len(index), CHUNK_BYTES // fixed))
+    held = ((sizes + fixed).cum_sum() <= CHUNK_BYTES).sum()
+    return max(1, min(len(index), held))
 
 
 class _Writer:
@@ -244,12 +291,39 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
     dtypes = {c: d for c, d in task.source.dtypes.items() if c not in generated}
     target = input_dtypes(task.source.schema, dtypes) if dtypes else {}
     name = index_name(task.columns)
+    # Every value counts VALUE_BYTES, the row index too; texts, binaries and
+    # lists count their bytes besides (`_length`).
+    fixed = VALUE_BYTES * (len(task.columns) + 1)
+
+    # Whether no column has values of variable size, once a chunk found it.
+    fixed_only: list[bool] = []
+
+    def bytes_of(index: pl.Series) -> pl.Series | None:
+        """Return the bytes of the values of variable size of the rows `index`, or None without such values."""
+        if fixed_only:
+            return None
+        lo, hi = index.min(), index.max()
+        frames = []
+        if cached:
+            frames.append(_cached(cached, index, lo, hi, measure=True).drop(INDEX))
+        if others:
+            frames.append(
+                _source(task.source, others, target, index, lo, hi, True).drop(INDEX)
+            )
+        lengths = pl.concat(frames, how="horizontal")
+        if lengths.width == 0:
+            fixed_only.append(True)
+            return None
+        return lengths.sum_horizontal()
+
     file = f"data.{task.file_format}"
     writer = _Writer(out / file, task.file_format)
-    step, start, row_bytes = FIRST_CHUNK_ROWS, 0, 0.0
+    start = 0
     try:
         while True:
-            chunk = indices.slice(start, step).collect()[INDEX]
+            chunk = indices.slice(start, MAX_CHUNK_ROWS).collect()[INDEX]
+            if len(chunk):
+                chunk = chunk[: _cut(chunk, bytes_of, fixed)]
             lo, hi = (chunk.min(), chunk.max()) if len(chunk) else (0, -1)
             frames = [chunk.to_frame()]
             if cached:
@@ -264,8 +338,6 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
             emit({**progress, "done": start, "total": total})
             if start >= total:
                 break
-            row_bytes = max(row_bytes, table.estimated_size() / len(chunk))
-            step = chunk_rows(row_bytes)
     finally:
         writer.close()
     (out / "rows.parquet").unlink(missing_ok=True)

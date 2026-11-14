@@ -223,7 +223,6 @@ def test_chunks_write_the_same_file_and_report_progress(
 ) -> None:
     """Small chunks write the same rows and values as one, each chunk adding to ``done`` until ``total``."""
     whole = _export(tmp_path, scatter_spec, file_format=file_format)
-    monkeypatch.setattr(plotdata, "FIRST_CHUNK_ROWS", 7)
     monkeypatch.setattr(plotdata, "MAX_CHUNK_ROWS", 7)
     messages: list[dict] = []
     chunked = _export(
@@ -239,17 +238,15 @@ def test_chunks_write_the_same_file_and_report_progress(
     assert done[-1] == messages[-1]["total"] == whole.height
 
 
+@pytest.mark.parametrize("short", [0, 10])
 def test_long_texts_make_chunks_of_fewer_rows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, short: int
 ) -> None:
-    """A column of 1 KiB texts keeps each chunk after the first within the bytes of a chunk."""
+    """A column of 1 KiB texts keeps every chunk within the bytes of a chunk, also after `short` rows of short texts."""
     n = 2_000
+    texts = [f"{i:04d}" + ("" if i < short else "w" * 1020) for i in range(n)]
     frame = pl.DataFrame(
-        {
-            "x": [float(i) for i in range(n)],
-            "y": [1.0] * n,
-            "s": [f"{i:04d}" + "w" * 1020 for i in range(n)],
-        }
+        {"x": [float(i) for i in range(n)], "y": [1.0] * n, "s": texts}
     )
     path = tmp_path / "texts.parquet"
     frame.write_parquet(path)
@@ -264,17 +261,18 @@ def test_long_texts_make_chunks_of_fewer_rows(
         height=200,
         hover=list(frame.columns),
     )
-    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
-    monkeypatch.setattr(plotdata, "FIRST_CHUNK_ROWS", 10)
+    budget = 64 * 2**10
+    monkeypatch.setattr(plotdata, "CHUNK_BYTES", budget)
     messages: list[dict] = []
     saved = _export(tmp_path, spec, messages=messages)
     assert saved.drop("index").equals(frame)
     done = [m["done"] for m in messages[1:]]
-    sizes = [b - a for a, b in itertools.pairwise(done)]
-    assert sizes[0] == 10
-    # 64 KiB holds fewer than 64 rows of more than 1 KiB each.
-    assert 0 < max(sizes[1:]) < 64
-    assert sum(sizes) == n
+    row_bytes = [4 * plotdata.VALUE_BYTES + len(t) for t in texts]
+    chunks = [row_bytes[a:b] for a, b in itertools.pairwise(done)]
+    assert sum(len(c) for c in chunks) == n
+    assert all(0 < sum(c) <= budget for c in chunks)
+    # Each chunk ends where the next row would not fit.
+    assert all(sum(c) + nxt[0] > budget for c, nxt in itertools.pairwise(chunks))
 
 
 def test_no_rows_give_the_columns_alone(
