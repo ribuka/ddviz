@@ -32,7 +32,7 @@ import { LeftPane } from "./leftpane.js";
 import { Legend } from "./legend.js";
 import { levelText } from "./names.js";
 import { MemoryMeter } from "./memory.js";
-import { StatusLine, Toasts, errorText } from "./notice.js";
+import { showSaveResult, StatusLine, Toasts, errorText } from "./notice.js";
 import { openPlotMenu } from "./plotmenu.js";
 import { openScaleMenu } from "./scalemenu.js";
 import { LINE_HEADING, LINE_WIDTHS, levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
@@ -43,7 +43,12 @@ import { forPlotly, linearRange, plotlyRange } from "./temporal.js";
 import { closeWrapMenu, openWrapMenu, setWrapAuto } from "./wrapmenu.js";
 import { attachZoneMenu } from "./zonemenu.js";
 
-const statusLine = new StatusLine(document.getElementById("status"), new Toasts(document.getElementById("toasts")));
+const toasts = new Toasts(document.getElementById("toasts"));
+const statusLine = new StatusLine(document.getElementById("status"), toasts);
+// The desktop window saves the plot's data to the Downloads folder by itself
+// and calls this with how it ended (ddviz.desktop.downloads); a browser
+// (`--port`) saves it as its own download and never calls it.
+window.ddvizSaved = (result) => showSaveResult(toasts, result);
 // The memory in use, fetched as soon as the page shows and then about every second.
 new MemoryMeter(document.getElementById("memory-backend"), document.getElementById("memory-frontend")).fetch();
 const hoverWarning = document.getElementById("hover-warning");

@@ -79,8 +79,9 @@ async function detail(response) {
   }
 }
 
-// Fetches a written file as a download: a browser saves it, the window
-// (WebView2) asks where with the OS dialog.
+// Fetches a written file as a download: a browser saves it as its settings
+// say; the window (WebView2) saves it to Downloads without asking and tells
+// how it went in a toast (ddviz.desktop.downloads, `window.ddvizSaved`).
 function download(file) {
   const link = document.createElement("a");
   link.href = `/api/plot-data/file/${file}`;

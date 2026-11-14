@@ -24,6 +24,7 @@ import uvicorn
 import webview
 from webview.dom import DOMEventHandler
 
+from ddviz.desktop.downloads import Downloads
 from ddviz.desktop.runlog import RunLog, app_data_dir
 from ddviz.desktop.single_instance import IN_USE_MESSAGE, Outcome, claim, record_window
 from ddviz.desktop.titlebar import TitleBar
@@ -617,9 +618,6 @@ def _run(
     """Show the window until it closes; return whether everything went well."""
     webview.settings["SHOW_DEFAULT_MENUS"] = False
     webview.settings["ALLOW_FILE_URLS"] = False
-    # The plot's data is saved as a download; pywebview cancels downloads
-    # unless allowed, and asks where to save them with the OS dialog.
-    webview.settings["ALLOW_DOWNLOADS"] = True
     api = _Api()
     window = webview.create_window(
         TITLE,
@@ -633,6 +631,8 @@ def _run(
     frontend.attach(window)
     window.events.shown += lambda: _record(window)
     TitleBar().attach(window)
+    # The plot's data is saved to Downloads without pywebview's dialog.
+    Downloads().attach(window)
     app = _App(
         window,
         paths,

@@ -116,3 +116,44 @@ def test_a_toast_moves_only_without_reduced_motion(app_page: Page) -> None:
         assert entering == expected, motion
         assert leaving == expected, motion
         expect(page.locator("#toasts .toast")).to_have_count(0)
+
+
+# Shows the desktop window's toast of a save alone, lets it come in, and returns
+# the gaps of the toast to the page's right edge and to what is above it: the
+# title bar's bottom in the window, the page's top in a browser.
+GAPS = """() => {
+  document.getElementById("toasts").replaceChildren();
+  window.ddvizSaved({ saved: "a.csv" });
+  const toast = document.querySelector("#toasts .toast");
+  for (const animation of toast.getAnimations()) animation.finish();
+  const box = toast.getBoundingClientRect();
+  const bar = document.getElementById("titlebar");
+  const above = bar && getComputedStyle(bar).display !== "none" ? bar.getBoundingClientRect().bottom : 0;
+  return [document.documentElement.clientWidth - box.right, box.top - above];
+}"""
+
+
+def test_a_toast_is_12_px_from_the_top_right_in_a_browser(app_page: Page) -> None:
+    """In a browser (`--port`), the toast is 12 CSS px from the page's top and right."""
+    page = app_page
+    expect(page.locator("#titlebar")).to_have_count(0)
+    right, top = page.evaluate(GAPS)
+    assert right == pytest.approx(12, abs=0.5)
+    assert top == pytest.approx(12, abs=0.5)
+    expect(page.locator("#toasts .toast")).to_have_text("ダウンロードに保存しました（a.csv）×")
+
+
+@pytest.mark.parametrize("desktop", [True])
+def test_a_toast_is_12_px_below_the_title_bar_in_the_window(app_page: Page) -> None:
+    """In the window, the toast is 12 CSS px below the title bar, also when the row's height changes (maximized, another scale)."""
+    page = app_page
+    bar = page.locator("#titlebar")
+    expect(bar).to_be_visible()
+    for row in [30, 45, 22]:
+        page.evaluate(
+            "(row) => { window.ddvizCaption = [138, row]; window.ddvizCaptionChanged(); }", row
+        )
+        assert bar.evaluate("e => e.getBoundingClientRect().height") == pytest.approx(row)
+        right, top = page.evaluate(GAPS)
+        assert right == pytest.approx(12, abs=0.5), row
+        assert top == pytest.approx(12, abs=0.5), row

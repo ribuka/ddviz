@@ -55,12 +55,17 @@ def test_colors_come_from_root_variables() -> None:
     assert written == []
 
 
+# Set on <html> by a script, not by the stylesheet: the title bar's row height
+# (static/js/titlebar.js), which the toasts keep below in the window.
+SET_BY_SCRIPT = {"--caption-row"}
+
+
 def test_used_variables_are_defined() -> None:
-    """Every `var(--name)` names a variable that the stylesheet defines."""
+    """Every `var(--name)` names a variable that the stylesheet defines, or one a script sets."""
     text = CSS.read_text(encoding="utf-8")
     defined = set(re.findall(r"(--[\w-]+)\s*:", text))
     used = set(re.findall(r"var\((--[\w-]+)", text))
-    assert used - defined == set()
+    assert used - defined - SET_BY_SCRIPT == set()
 
 
 def test_one_accent_blue() -> None:
