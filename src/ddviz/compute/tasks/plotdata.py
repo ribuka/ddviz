@@ -1,190 +1,260 @@
-"""Task that writes the data of a drawn plot as a file to save: one row per bin of its result.
+"""Task that writes the rows of a drawn plot as a file to save.
 
-A result holds no points, only the pixel bins they fall in (`ddviz.shared.keys`)
-with how many rows each holds; the table is those bins with what they are in
-the figure's terms: the panel's axis columns, the facet, color and symbol
-levels, the bin's range along each axis and its rows. A categorical axis
-gives the bin's level too; its range is in the axis' positions, where level
-``i`` is centered at ``i``.
+The rows are those the plot draws (`drawn_rows`), or every row the local
+filter keeps; the columns are those the task lists, with the row index
+first. The rows are found from the column cache, then written a chunk after
+another, so that no more than a chunk's values are held at once: each chunk
+reports its progress (`run_plot_data`).
 """
 
 from __future__ import annotations
 
+import bisect
+import itertools
 from pathlib import Path
 
-import numpy as np
 import polars as pl
+import pyarrow.parquet as pq
 
+from ddviz.compute.aggregate import INDEX
+from ddviz.compute.axisposition import on_axis
+from ddviz.compute.convert import column_expr, input_dtypes
+from ddviz.compute.missing import drawn_conditions
 from ddviz.compute.progress import Emit
+from ddviz.compute.rowfilter import filter_columns, filter_conditions
+from ddviz.compute.scan import scan_columns
+from ddviz.shared.generated import generated_value
 from ddviz.shared.manifest import PlotManifest, write_manifest
-from ddviz.shared.missing import MISSING
-from ddviz.shared.scatter import ONE_BAND
+from ddviz.shared.scatter import ONE_BAND, ScatterSpec
+from ddviz.shared.tasks import PlotDataTask, SourceFiles
 
-# The facet and series roles of a figure, as the table's columns name them
-# after the drop zones; only the roles in use get a column.
-_ROLES = (
-    ("row", "group_y"),
-    ("col", "group_x"),
-    ("color", "color"),
-    ("symbol", "symbol"),
-)
-
-
-def _values(at: np.ndarray, log: np.ndarray) -> np.ndarray:
-    """Return the values at positions: the powers of 10 of those on a log axis (`log`)."""
-    return np.where(log, np.power(10.0, at), at)
+# Name of the row index column of the file, unless a column has it
+# (`index_name`).
+INDEX_NAME = "index"
+# Bytes of values a chunk holds at most, counting 8 per value, and its rows
+# at most: 10M rows of 6 columns.
+CHUNK_BYTES = 512 * 2**20
+MAX_CHUNK_ROWS = 10_000_000
 
 
-def _levels(levels: list, index: np.ndarray) -> pl.Series:
-    """Return the text of each bin's level; null for the missing level (`ddviz.shared.missing.MISSING`)."""
-    texts = [None if v == MISSING else str(v) for v in levels]
-    return pl.Series(texts, dtype=pl.String).gather(index)
+def index_name(columns: list[str]) -> str:
+    """Return the name of the row index column: ``index``, or ``index_2``, ... when a column has it."""
+    name, n = INDEX_NAME, 1
+    while name in columns:
+        n += 1
+        name = f"{INDEX_NAME}_{n}"
+    return name
 
 
-def _axis(
-    name: str,
-    columns: list[str],
-    ranges: list[list[float]],
-    axis_levels: dict[str, list[str]],
-    which: np.ndarray,
-    bins: np.ndarray,
-    n: int,
-    logs: list[str],
-) -> dict[str, pl.Series]:
-    """Return the columns of one axis: its data column, the bin's range and, with a categorical column, its level.
-
-    The range of a bin of a column on a log axis (`logs`) is of the
-    values: the powers of 10 of its positions.
-    """
-    log = np.array([c in logs for c in columns])[which]
-    lo = np.array([r[0] for r in ranges])[which]
-    step = (np.array([r[1] for r in ranges])[which] - lo) / n
-    out = {
-        f"{name}_column": pl.Series(
-            [None if c == ONE_BAND else c for c in columns], dtype=pl.String
-        ).gather(which),
-        f"{name}_lo": pl.Series(_values(lo + bins * step, log)),
-        f"{name}_hi": pl.Series(_values(lo + (bins + 1) * step, log)),
-    }
-    if any(c in axis_levels for c in columns):
-        # The band of a level is centered at its index; null for a numeric column.
-        texts = []
-        center = np.rint(lo + (bins + 0.5) * step).astype(np.int64)
-        for column, i in zip(
-            np.array(columns, dtype=object)[which], center, strict=True
-        ):
-            levels = axis_levels.get(column)
-            texts.append(
-                None if levels is None else levels[min(max(i, 0), len(levels) - 1)]
-            )
-        out[f"{name}_level"] = pl.Series(texts, dtype=pl.String)
-    return out
+def chunk_rows(n_columns: int) -> int:
+    """Return the rows of a chunk of `n_columns` columns and the row index."""
+    return max(1, min(MAX_CHUNK_ROWS, CHUNK_BYTES // (8 * (n_columns + 1))))
 
 
-def bins_table(out: Path) -> pl.DataFrame:
-    """Return the bins of a plot task's result as a table.
+def _on_axis(spec: ScatterSpec, column: str, log: list[str]) -> pl.Expr:
+    """Return whether a row has a place along an axis of a column, as the aggregation draws it."""
+    if column == ONE_BAND:
+        return pl.lit(True)
+    if column in spec.categorical:
+        return pl.col(column).is_not_null()
+    return on_axis(pl.col(column).cast(pl.Float64), column in log)
 
-    The result must have its hover files (`PlotManifest.hover_files`), which
-    hold the bins: those of the points, and those of the rows of the piles
-    at their centers, counted in their series' bins as any row.
 
+def drawn_rows(spec: ScatterSpec) -> list[pl.Expr]:
+    """Return the conditions of the rows a plot draws.
+
+    A row is drawn when the local filter keeps it, its color, symbol, row
+    and col are drawn (`ddviz.compute.missing.drawn_conditions`), and some
+    panel places it: its x and y have a place on that panel's axes (finite,
+    positive on a log axis, not null on a categorical axis). A row placed on
+    several panels is one row.
 
     Parameters
     ----------
-    out : pathlib.Path
-        The task's output directory.
+    spec : ScatterSpec
+        The spec of the drawn result.
 
     Returns
     -------
-    polars.DataFrame
-        One row per bin with rows: ``x_column``, ``x_lo``, ``x_hi`` (and
-        ``x_level`` with a categorical x), the same for y, then ``group_y``,
-        ``group_x`` (``wrap`` in a wrapped grid), ``color`` and ``symbol``
-        for the roles in use, and ``count``, the rows in the bin. A gradient's
-        color has no levels, so no column.
+    list of polars.Expr
+        Conditions to filter on.
     """
-    manifest = PlotManifest.read(out)
-    spec, grid, axes, levels = (
-        manifest.spec,
-        manifest.grid,
-        manifest.axes,
-        manifest.levels,
+    placed = [
+        _on_axis(spec, x, spec.log_x) & _on_axis(spec, y, spec.log_y)
+        for x in spec.x
+        for y in spec.y
+    ]
+    return [
+        *drawn_conditions(spec),
+        *filter_conditions(spec.filters),
+        pl.any_horizontal(placed),
+    ]
+
+
+def _cached(
+    parts: dict[str, list[str]], index: pl.Series, lo: int, hi: int
+) -> pl.DataFrame:
+    """Return the rows `index` (between `lo` and `hi`) of columns in the column cache, with their values."""
+    return (
+        scan_columns(parts, INDEX, numbers=False)
+        .slice(lo, hi - lo + 1)
+        .filter(pl.col(INDEX).is_in(index.implode()))
+        .collect()
     )
-    keys = np.load(out / "keys.npy")
-    count = np.load(out / "count.npy").astype(np.int64)
-    # The rows of the piles are rows of their series' bins at their centers,
-    # drawn as piles instead of points (`ddviz.compute.stacks`).
-    pile_keys = np.load(out / "pile_keys.npy")
-    if len(pile_keys):
-        keys, at = np.unique(np.concatenate([keys, pile_keys]), return_inverse=True)
-        pile_count = np.load(out / "pile_count.npy").astype(np.int64)
-        count = np.bincount(at, np.concatenate([count, pile_count])).astype(np.int64)
-    panel, series, by, bx = grid.unpack(keys)
-    # Panels count row by row (`ddviz.shared.layout.AxisGrid`).
-    prow, pcol = np.divmod(panel, axes.cols)
-    xi, yj = pcol % axes.nx, prow % axes.ny
-    row, col = prow // axes.ny, pcol // axes.nx
-    if axes.wrap:
-        row, col = np.zeros_like(row), row * axes.ncol + col
-    columns = {
-        **_axis(
-            "x",
-            spec.x,
-            manifest.x_ranges,
-            manifest.axis_levels,
-            xi,
-            bx,
-            grid.width,
-            spec.log_x,
-        ),
-        **_axis(
-            "y",
-            spec.y,
-            manifest.y_ranges,
-            manifest.axis_levels,
-            yj,
-            by,
-            grid.height,
-            spec.log_y,
-        ),
-    }
-    shapes = len(levels["symbol"])
-    index = {
-        "row": row,
-        "col": col,
-        "color": series // shapes,
-        "symbol": series % shapes,
-    }
-    for role, name in _ROLES:
-        if getattr(spec, role) is None or (role == "color" and spec.gradient):
+
+
+def _source(
+    source: SourceFiles,
+    columns: list[str],
+    target: dict[str, pl.DataType],
+    index: pl.Series,
+    lo: int,
+    hi: int,
+) -> pl.DataFrame:
+    """Return the rows `index` (between `lo` and `hi`) of columns read from the source files.
+
+    Only the files holding rows between `lo` and `hi` are scanned. Values
+    are cast to the input's types, a file lacking a column gives nulls, and
+    an added column (`ddviz.shared.generated`) gives the file's value, as
+    the selection table reads them (`ddviz.compute.tasks.table`).
+    """
+    starts = list(itertools.accumulate(source.rows, initial=0))
+    first = max(bisect.bisect_right(starts, lo) - 1, 0)
+    found = []
+    for i in range(first, len(source.paths)):
+        start, end = starts[i], starts[i + 1]
+        if start > hi:
+            break
+        if end <= lo:
             continue
-        if role == "col" and spec.wrap:
-            name = "wrap"
-        columns[name] = _levels(levels[role], index[role])
-    columns["count"] = pl.Series(count.astype(np.int64))
-    return pl.DataFrame(columns)
+        scan = pl.scan_parquet(
+            source.paths[i], row_index_name=INDEX, row_index_offset=start
+        )
+        present = scan.collect_schema()
+        values = []
+        for c in columns:
+            if c in source.generated:
+                value = generated_value(source.generated[c], source.paths[i])
+                values.append(pl.lit(value, dtype=pl.String).alias(c))
+                continue
+            expr = column_expr(c, source.dtypes[c], present, target)
+            values.append(
+                pl.lit(None, dtype=target[c]).alias(c) if expr is None else expr
+            )
+        begin = max(lo, start)
+        found.append(
+            scan.select(INDEX, *values)
+            .slice(begin - start, min(hi + 1, end) - begin)
+            .filter(pl.col(INDEX).is_in(index.implode()))
+            .collect()
+        )
+    if found:
+        return pl.concat(found)
+    schema = {c: target.get(c, pl.String) for c in columns}
+    return pl.DataFrame(schema={INDEX: index.dtype, **schema})
 
 
-def run_plot_data(result: Path, file_format: str, out: Path, emit: Emit) -> None:
-    """Write the bins of a plot task's result (`bins_table`) as a file.
+class _Writer:
+    """Writes the chunks of a CSV or Parquet file one after another."""
+
+    def __init__(self, path: Path, file_format: str) -> None:
+        self._path = path
+        self._format = file_format
+        self._csv = None
+        self._parquet: pq.ParquetWriter | None = None
+
+    def write(self, table: pl.DataFrame) -> None:
+        """Append a chunk: the first one starts the file with its columns."""
+        if self._format == "csv":
+            first = self._csv is None
+            if first:
+                self._csv = self._path.open("wb")
+            table.write_csv(self._csv, include_bom=first, include_header=first)
+            return
+        arrow = table.to_arrow()
+        if self._parquet is None:
+            self._parquet = pq.ParquetWriter(self._path, arrow.schema)
+            self._schema = arrow.schema
+        self._parquet.write_table(arrow.cast(self._schema))
+
+    def close(self) -> None:
+        """Finish the file."""
+        if self._csv is not None:
+            self._csv.close()
+        if self._parquet is not None:
+            self._parquet.close()
+
+
+def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
+    """Write the rows of a plot task's result as a file.
+
+    Progress messages carry the stage ``"export"`` and the task's
+    ``export``; once the rows are counted, also ``done`` and ``total``,
+    the rows written and to write.
 
     Parameters
     ----------
-    result : pathlib.Path
-        The plot task's output directory.
-    file_format : str
-        ``"csv"`` (UTF-8 with a byte order mark, so that Excel reads it as
-        UTF-8) or ``"parquet"``.
+    task : PlotDataTask
+        The result, the rows and columns, and where to read them from.
     out : pathlib.Path
         Directory to write the file into; the manifest names it.
     emit : callable
         Receives progress messages.
     """
-    emit({"type": "progress", "stage": "plot data"})
-    table = bins_table(result)
-    file = f"data.{file_format}"
-    if file_format == "csv":
-        table.write_csv(out / file, include_bom=True)
+    spec = PlotManifest.read(Path(task.result)).spec
+    progress = {"type": "progress", "stage": "export", "export": task.export}
+    emit(progress)
+    if task.rows == "drawn":
+        conditions = drawn_rows(spec)
+        roles = [spec.color, spec.symbol, spec.row, spec.col]
+        read = [
+            c
+            for c in dict.fromkeys([*spec.x, *spec.y, *roles, *filter_columns(spec.filters)])
+            if c is not None and c != ONE_BAND
+        ]
     else:
-        table.write_parquet(out / file)
+        conditions = filter_conditions(spec.filters)
+        read = filter_columns(spec.filters)
+    if conditions:
+        rows = out / "rows.parquet"
+        scan_columns({c: spec.files[c] for c in read}, INDEX).filter(
+            *conditions
+        ).select(INDEX).sink_parquet(rows)
+        indices = pl.scan_parquet(rows)
+    else:
+        # Every row: counted from the footers of any column of the plot.
+        column = next(c for c in spec.files if c != ONE_BAND)
+        n = scan_columns({column: spec.files[column]}).select(pl.len()).collect()
+        indices = pl.LazyFrame().select(
+            pl.int_range(n.item(), dtype=pl.get_index_type()).alias(INDEX)
+        )
+    total = indices.select(pl.len()).collect().item()
+    emit({**progress, "done": 0, "total": total})
+
+    cached = {c: task.parts[c] for c in task.columns if c in task.parts}
+    others = [c for c in task.columns if c not in task.parts]
+    generated = task.source.generated
+    dtypes = {c: d for c, d in task.source.dtypes.items() if c not in generated}
+    target = input_dtypes(task.source.schema, dtypes) if dtypes else {}
+    name = index_name(task.columns)
+    file = f"data.{task.file_format}"
+    writer = _Writer(out / file, task.file_format)
+    step = chunk_rows(len(task.columns))
+    try:
+        for start in range(0, max(total, 1), step):
+            chunk = indices.slice(start, step).collect()[INDEX]
+            lo, hi = (chunk.min(), chunk.max()) if len(chunk) else (0, -1)
+            frames = [chunk.to_frame()]
+            if cached:
+                frames.append(_cached(cached, chunk, lo, hi).drop(INDEX))
+            if others:
+                frames.append(
+                    _source(task.source, others, target, chunk, lo, hi).drop(INDEX)
+                )
+            table = pl.concat(frames, how="horizontal")
+            writer.write(table.select(pl.col(INDEX).alias(name), *task.columns))
+            emit({**progress, "done": min(start + step, total), "total": total})
+    finally:
+        writer.close()
+    (out / "rows.parquet").unlink(missing_ok=True)
     write_manifest(out, {"kind": "plot_data", "file": file})

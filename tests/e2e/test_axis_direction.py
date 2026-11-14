@@ -146,7 +146,7 @@ def test_the_tick_menu_reverses_x_and_y_without_a_request(app_page: Page) -> Non
     _reverse(page, "y", "Y 軸: y")
     page.wait_for_function(f"() => {FULL}.yaxis.range[0] > {FULL}.yaxis.range[1]")
     assert page.evaluate(AXES, "x")["xaxis"]["reversed"]
-    # The bins saved do not change with the direction.
+    # The rows saved do not change with the direction.
     assert saved() == before
 
     # Back: the same ranges, ascending.

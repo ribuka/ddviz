@@ -22,7 +22,7 @@ import { showCasts } from "./casts.js";
 import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } from "./colorscale.js";
 import { openColumnMenu } from "./columnmenu.js";
 import { attachColumnList } from "./columns.js";
-import { openDataMenu } from "./datamenu.js";
+import { exportProgress, openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
 import { FilterPane, RestorePoint } from "./filters.js";
 import { attachHover } from "./hover.js";
@@ -111,6 +111,10 @@ const events = new EventSource("/api/events");
 events.onmessage = (event) => {
   const message = JSON.parse(event.data);
   if (message.type !== "progress") return;
+  if (message.export !== undefined) {
+    exportProgress(message);
+    return;
+  }
   if (message.stage === "convert") {
     showConverting(message);
     return;

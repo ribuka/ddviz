@@ -113,6 +113,22 @@ def test_listeners_get_the_plot_pool_messages(tmp_path: Path) -> None:
     asyncio.run(main())
 
 
+def test_listeners_get_the_progress_of_an_export(tmp_path: Path) -> None:
+    """A message of another pool that carries ``export`` (the plot's data written) reaches the listeners."""
+
+    async def main() -> None:
+        broker, pools = _started(tmp_path)
+        queue = broker.listen()
+        progress = {"type": "progress", "stage": "export", "export": "t", "done": 1}
+        pools["table"].on_event(7, progress)
+        while queue.empty():
+            await asyncio.sleep(0.01)
+        assert queue.get_nowait() == {"task": 7, **progress}
+        broker.unlisten(queue)
+
+    asyncio.run(main())
+
+
 def test_events_after_the_loop_closed_are_dropped(tmp_path: Path) -> None:
     """A worker killed at shutdown reports into a closed loop without raising."""
 

@@ -57,7 +57,15 @@ def _every_task(spec: ScatterSpec) -> list[Task]:
         SummaryTask(["a/x.parquet", "b/x.parquet"], "x"),
         LevelIndexTask(["a/g.parquet", "b/g.parquet"], "g", "level-index/1.parquet"),
         LevelSearchTask("level-index/1.parquet", "id 7", "count"),
-        PlotDataTask("tasks/1", "csv"),
+        PlotDataTask(
+            "tasks/1",
+            "csv",
+            "drawn",
+            ["x", "y"],
+            {"x": ["a/x.parquet"]},
+            SourceFiles(["a.parquet"], [3], "schema.parquet", {"y": "Int64"}, {}),
+            "token",
+        ),
     ]
 
 

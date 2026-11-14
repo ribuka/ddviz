@@ -176,16 +176,17 @@ def test_several_files_add_their_source_and_name(
         assert dict(map(tuple, summary["levels"])) == {"run.01": 5, "z": 1}
         assert summary["nulls"] == 0
 
-        # A plot colored by the name saves its bins with the names.
+        # A plot colored by the name saves its rows with the names.
         meta = _plot(client, {**XY, "color": "filename"})["meta"]
-        url = f"/api/plot-data/{meta['task']}"
-        saved = client.get(url, params={"format": "parquet"})
-        assert saved.status_code == 200, saved.text
-        bins = pl.read_parquet(io.BytesIO(saved.content))
-        counts = bins.group_by("color").agg(pl.col("count").sum())
+        written = client.post(
+            f"/api/plot-data/{meta['task']}",
+            json={"format": "parquet", "rows": "drawn", "columns": "all", "export": "t"},
+        )
+        assert written.status_code == 200, written.text
+        saved = client.get(f"/api/plot-data/file/{written.json()['file']}")
+        rows = pl.read_parquet(io.BytesIO(saved.content))
+        counts = rows.group_by("filename").len()
         assert dict(counts.iter_rows()) == {"run.01": 5, "z": 1}
-        csv = client.get(url, params={"format": "csv"})
-        assert pl.read_csv(io.BytesIO(csv.content)).equals(bins)
 
 
 @pytest.mark.parametrize("folder_input", [False, True])

@@ -42,6 +42,7 @@
   --bg-pressed: #e3e3e3;
   --bg-tip: rgb(0 0 0 / 75%);
   --bg-veil: rgb(255 255 255 / 70%);
+  --bg-dim: rgb(0 0 0 / 35%);
   --track: #ddd;
 
   /* borders */
@@ -1860,6 +1861,77 @@ button {
 }
 
 /* ---- menu of the mode bar's download button (datamenu.js) ---- */
+.data-menu-group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A radio's mark: a ring, filled in the middle when it is picked. Drawn
+   rather than ○ and ●, whose sizes differ between fonts. */
+.data-menu-radio::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -5.5px;
+  box-sizing: border-box;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.data-menu-radio[aria-checked="true"]::before {
+  background: radial-gradient(circle, currentColor 0 2px, transparent 2.5px);
+}
+
+/* Covers the page, grayed out, while the plot's data is written: a spinner,
+   the rows written and a bar. Above the menu, which stays open under it. */
+#exporting {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-dim);
+  z-index: 200;
+}
+
+#exporting[hidden] {
+  display: none;
+}
+
+#exporting .box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 32px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+#exporting .spinner {
+  width: 48px;
+  height: 48px;
+  box-sizing: border-box;
+  border: 5px solid var(--track);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: exporting-spin 0.9s linear infinite;
+}
+
+#exporting progress {
+  width: 320px;
+}
+
+@keyframes exporting-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .data-menu-error {
   max-width: 260px;
   padding: 4px 12px;

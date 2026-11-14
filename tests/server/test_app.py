@@ -9,6 +9,7 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
 import pytest
@@ -28,6 +29,9 @@ from ddviz.shared.missing import MISSING, MISSING_COLOR
 from ddviz.shared.scatter import POINT_SIZE, SHAPE_SIZE
 from ddviz.shared.shapes import SHAPES, kernel
 from ddviz.shared.tasks import PlotTask
+
+if TYPE_CHECKING:
+    from httpx import Response
 
 ENCODING = {"x": ["x"], "y": ["y"], "color": "color", "col": "facet"}
 SIZE = {"width": 400, "height": 300}
@@ -832,89 +836,75 @@ def test_symbol_plots_shapes_selects_and_hovers(client: TestClient) -> None:
     assert client.post("/api/plot", json=bad).status_code == 400
 
 
-def test_plot_data_saves_the_overview_bins(client: TestClient) -> None:
-    """The data of a plot is its overview's bins, as CSV or Parquet, whatever the zoom."""
+def _save(client: TestClient, task: int, **body: str) -> Response:
+    """Write the rows of a plot (Parquet, drawn rows and columns unless asked) and fetch the file."""
+    request = {
+        "format": "parquet",
+        "rows": "drawn",
+        "columns": "drawn",
+        "export": "t",
+        **body,
+    }
+    written = client.post(f"/api/plot-data/{task}", json=request)
+    assert written.status_code == 200, written.text
+    return client.get(f"/api/plot-data/file/{written.json()['file']}")
+
+
+def test_plot_data_saves_the_drawn_rows(
+    tmp_path: Path, client: TestClient, scatter_frame: pl.DataFrame
+) -> None:
+    """The data of a plot is its rows, as Parquet or CSV, whatever the zoom; a file is fetched once."""
     meta = _plot(client)["meta"]
-    url = f"/api/plot-data/{meta['task']}"
-    response = client.get(url, params={"format": "parquet"})
+    response = _save(client, meta["task"])
     assert response.status_code == 200, response.text
     assert re.fullmatch(
         r'attachment; filename="scatter_\d{8}-\d{6}\.parquet"',
         response.headers["content-disposition"],
     )
     table = pl.read_parquet(io.BytesIO(response.content))
-    assert table.columns == [
-        "x_column",
-        "x_lo",
-        "x_hi",
-        "y_column",
-        "y_lo",
-        "y_hi",
-        "group_x",
-        "color",
-        "count",
-    ]
-    assert table["count"].sum() == meta["rows"]
-    assert set(table["x_column"]) == {"x"}
-    assert set(table["group_x"]) == {"p", "q"}
-    assert set(table["color"]) == {"a", "b", "c"}
-    assert (table["x_lo"] < table["x_hi"]).all()
-    (lo, hi), width = meta["x_ranges"][0], SIZE["width"]
-    assert table["x_lo"].min() >= lo
-    assert table["x_hi"].max() <= hi + (hi - lo) / width
+    assert table.columns == ["index", "x", "y", "color", "facet"]
+    assert table.height == meta["rows"]
+    # The task's directory is gone once the file is sent.
+    assert list((tmp_path / "run" / "table").iterdir()) == []
 
-    # A zoom does not change it; the CSV holds the same table.
+    # A zoom does not change it; the CSV holds the same rows.
     view = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
     assert client.post("/api/view", json=view).status_code == 200
-    csv = client.get(url, params={"format": "csv"})
-    assert csv.content.startswith("﻿".encode())
+    csv = _save(client, meta["task"], format="csv")
+    assert csv.content.startswith("\ufeff".encode())
     assert csv.headers["content-disposition"].endswith('.csv"')
     assert pl.read_csv(io.BytesIO(csv.content)).equals(table)
 
-    assert client.get(url, params={"format": "xlsx"}).status_code == 400
-    stale = f"/api/plot-data/{meta['task'] + 99}"
-    assert client.get(stale, params={"format": "csv"}).status_code == 404
+    # Every column, and every row: the null and infinite x too.
+    every = _save(client, meta["task"], rows="filtered", columns="all")
+    table = pl.read_parquet(io.BytesIO(every.content))
+    assert table.drop("index").equals(scatter_frame)
+
+    written = client.post(
+        f"/api/plot-data/{meta['task']}",
+        json={"format": "csv", "rows": "drawn", "columns": "drawn", "export": "t"},
+    ).json()["file"]
+    assert client.get(f"/api/plot-data/file/{written}").status_code == 200
+    assert client.get(f"/api/plot-data/file/{written}").status_code == 404
 
 
-def test_plot_data_names_the_symbol_column_symbol(client: TestClient) -> None:
-    """The symbol's levels are saved in a column named after its zone, with or without a color column."""
-    for encoding, columns in (
-        ({"x": ["x"], "y": ["y"], "symbol": "facet"}, ["symbol"]),
-        (
-            {"x": ["x"], "y": ["y"], "color": "color", "symbol": "facet"},
-            ["color", "symbol"],
-        ),
+def test_plot_data_refuses_bad_requests(client: TestClient) -> None:
+    """A missing or unknown format, rows or columns is 422; a result no longer drawn is 404."""
+    task = _plot(client)["meta"]["task"]
+    good = {"format": "csv", "rows": "drawn", "columns": "drawn", "export": "t"}
+    for bad in (
+        {**good, "format": "xlsx"},
+        {**good, "rows": "all"},
+        {**good, "columns": "some"},
+        {k: v for k, v in good.items() if k != "rows"},
     ):
-        meta = client.post(
-            "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS}
-        ).json()["meta"]
-        response = client.get(
-            f"/api/plot-data/{meta['task']}", params={"format": "parquet"}
-        )
-        table = pl.read_parquet(io.BytesIO(response.content))
-        assert table.columns[6:-1] == columns
-        assert set(table["symbol"]) == {"p", "q"}
+        response = client.post(f"/api/plot-data/{task}", json=bad)
+        assert response.status_code == 422, bad
+    assert client.post(f"/api/plot-data/{task + 99}", json=good).status_code == 404
 
 
-def test_plot_data_of_a_categorical_axis_has_its_levels(client: TestClient) -> None:
-    """A categorical x gives each bin's level; a wrapped grid names its levels wrap."""
-    encoding = {"x": ["color"], "y": ["y"], "color": "color", "wrap": "facet"}
-    meta = client.post(
-        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS}
-    ).json()["meta"]
-    response = client.get(
-        f"/api/plot-data/{meta['task']}", params={"format": "parquet"}
-    )
-    table = pl.read_parquet(io.BytesIO(response.content))
-    assert "x_level" in table.columns
-    assert "y_level" not in table.columns
-    assert set(table["wrap"]) == {"p", "q"}
-    assert (table["x_level"] == table["color"]).all()
-    assert table["count"].sum() == meta["rows"]
-
-
-def test_plot_data_needs_the_hover_files(tmp_path: Path, scatter_path: Path) -> None:
-    """A result without hover files kept no bins: its data is refused with the reason."""
+def test_plot_data_needs_no_hover_files(tmp_path: Path, scatter_path: Path) -> None:
+    """A result without hover files still saves its rows: they are read from the columns."""
     settings = Settings(hover=HoverSettings(max_temp_bytes=1))
     app = create_app(
         [str(scatter_path)],
@@ -930,11 +920,9 @@ def test_plot_data_needs_the_hover_files(tmp_path: Path, scatter_path: Path) -> 
         limited.get("/", params={"token": TOKEN})
         meta = _plot(limited)["meta"]
         assert meta["hover"]["files"] is False
-        response = limited.get(
-            f"/api/plot-data/{meta['task']}", params={"format": "csv"}
-        )
-        assert response.status_code == 409
-        assert "ホバー" in response.json()["detail"]
+        response = _save(limited, meta["task"])
+        assert response.status_code == 200
+        assert pl.read_parquet(io.BytesIO(response.content)).height == meta["rows"]
 
 
 def test_log_axes_plot_zoom_select_and_refuse(client: TestClient) -> None:

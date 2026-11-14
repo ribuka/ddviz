@@ -12,7 +12,6 @@ import pytest
 
 from ddviz.compute.aggregate import COUNT, aggregate
 from ddviz.compute.tasks.plot import run_plot
-from ddviz.compute.tasks.plotdata import bins_table
 from ddviz.server.derive import box_selection, selection_spec
 from ddviz.shared.axisscale import NoPositiveValuesError
 from ddviz.shared.manifest import PlotManifest
@@ -199,19 +198,3 @@ def test_a_box_on_a_log_axis_selects_the_rows_by_their_values(
     assert agg.selected_rows == 2
     with pytest.raises(ValueError, match="positive"):
         box_selection(manifest, 0, (0.0, 5.0), (0.5, 2.0))
-
-
-def test_saved_bins_of_a_log_axis_hold_values(tmp_path: Path) -> None:
-    """The saved bounds are values, ascending, around each row's value; the counts are the drawn rows."""
-    frame = pl.DataFrame({"x": [0.0, 1e-3, 1.0, 1e3], "y": [1.0, 2.0, 3.0, 4.0]})
-    spec = _spec(tmp_path, frame, log_x=["x"])
-    out = tmp_path / "plot"
-    out.mkdir()
-    run_plot(spec, out, lambda _: None)
-    table = bins_table(out).sort("x_lo")
-    assert table["count"].sum() == 3
-    for value, lo, hi in zip(
-        [1e-3, 1.0, 1e3], table["x_lo"], table["x_hi"], strict=True
-    ):
-        assert 0 < lo <= value < hi
-    assert set(table.columns) >= {"x_lo", "x_hi", "y_lo", "y_hi"}

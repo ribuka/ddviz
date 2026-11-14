@@ -1207,7 +1207,7 @@ def test_the_mode_bar_shows_without_hover_and_stays_in_sight(app_page: Page) -> 
 
 
 def test_the_mode_bar_saves_the_plot_data(app_page: Page) -> None:
-    """The mode bar's download button opens a menu that saves the overview's bins as CSV; Esc closes it."""
+    """The mode bar's download button opens a menu that saves the plot's rows: its radios pick the rows and columns, a cover shows while the file is written, and a failure shows in the menu."""
     page = app_page
     place(page, "x", "x")
     place(page, "y", "y")
@@ -1215,6 +1215,18 @@ def test_the_mode_bar_saves_the_plot_data(app_page: Page) -> None:
     button.click()
     menu = page.locator(".data-menu")
     expect(menu).to_be_visible()
+    radios = menu.get_by_role("radio")
+    expect(radios).to_have_text(
+        ["Drawn rows", "All filtered rows", "Drawn columns", "All columns"]
+    )
+    expect(menu.get_by_role("radiogroup", name="Rows")).to_be_visible()
+    expect(menu.get_by_role("radiogroup", name="Columns")).to_be_visible()
+    expect(menu.get_by_role("radio", name="Drawn rows")).to_have_attribute(
+        "aria-checked", "true"
+    )
+    expect(menu.get_by_role("radio", name="Drawn columns")).to_have_attribute(
+        "aria-checked", "true"
+    )
     page.keyboard.press("Escape")
     expect(menu).to_have_count(0)
 
@@ -1224,10 +1236,60 @@ def test_the_mode_bar_saves_the_plot_data(app_page: Page) -> None:
     download = info.value
     assert re.fullmatch(r"scatter_\d{8}-\d{6}\.csv", download.suggested_filename)
     table = pl.read_csv(download.path())
-    assert table.columns[:3] == ["x_column", "x_lo", "x_hi"]
+    assert table.columns == ["index", "x", "y"]
     status = page.locator("#status").text_content()
-    assert status.startswith(f"{table['count'].sum():,} 行")
+    assert status.startswith(f"{table.height:,} 行")
     expect(menu).to_have_count(0)
+    expect(page.locator("#exporting")).to_be_hidden()
+
+    # The radios keep the menu open, and stay picked when it opens again.
+    button.click()
+    menu.get_by_role("radio", name="All filtered rows").click()
+    menu.get_by_role("radio", name="All columns").click()
+    expect(menu).to_be_visible()
+    expect(menu.get_by_role("radio", name="Drawn rows")).to_have_attribute(
+        "aria-checked", "false"
+    )
+    page.keyboard.press("Escape")
+    button.click()
+    expect(menu.get_by_role("radio", name="All columns")).to_have_attribute(
+        "aria-checked", "true"
+    )
+
+    # While the server writes the file, a cover with a spinner and a bar shows.
+    held: list[Route] = []
+    page.route("**/api/plot-data/*", lambda route: held.append(route))
+    with page.expect_download() as info:
+        menu.get_by_role("button", name="Parquet").click()
+        cover = page.locator("#exporting")
+        expect(cover).to_be_visible()
+        expect(cover.locator(".spinner")).to_be_visible()
+        expect(cover.locator("progress")).to_be_visible()
+        expect(page.locator("#exporting-text")).to_have_text(
+            "書き出す行を数えています…"
+        )
+        page.wait_for_timeout(100)
+        assert len(held) == 1
+        held[0].continue_()
+    page.unroute("**/api/plot-data/*")
+    every = pl.read_parquet(info.value.path())
+    assert every.columns == ["index", "x", "y", "label", "color", "facet"]
+    assert every.height > table.height
+    expect(page.locator("#exporting")).to_be_hidden()
+
+    # A failure hides the cover and keeps the menu open with the reason.
+    button.click()
+    page.route(
+        "**/api/plot-data/*",
+        lambda route: route.fulfill(
+            status=500, content_type="application/json", body='{"detail": "壊れた"}'
+        ),
+    )
+    menu.get_by_role("button", name="CSV").click()
+    expect(menu.locator(".data-menu-error")).to_have_text("保存できませんでした：壊れた")
+    expect(page.locator("#exporting")).to_be_hidden()
+    expect(menu).to_be_visible()
+    page.unroute("**/api/plot-data/*")
 
 
 def drop_at(page: Page, column: str, role: str, x: float, y: float) -> None:

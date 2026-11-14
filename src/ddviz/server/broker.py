@@ -137,8 +137,12 @@ class TaskBroker:
         return handle
 
     def _deliver(self, pool: Pool, task_id: int, message: dict) -> None:
-        """Resolve the request waiting on a task and notify the progress listeners of plots."""
-        if pool == "plot":
+        """Resolve the request waiting on a task and notify the progress listeners.
+
+        The listeners hear the plot pool's tasks, and the exports of a
+        plot's data (their messages carry ``export``).
+        """
+        if pool == "plot" or "export" in message:
             for queue in self._listeners:
                 queue.put_nowait({"task": task_id, **message})
         if message["type"] not in ENDS:
