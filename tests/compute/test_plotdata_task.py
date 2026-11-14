@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import itertools
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -273,6 +274,62 @@ def test_long_texts_make_chunks_of_fewer_rows(
     assert all(0 < sum(c) <= budget for c in chunks)
     # Each chunk ends where the next row would not fit.
     assert all(sum(c) + nxt[0] > budget for c, nxt in itertools.pairwise(chunks))
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [
+        lambda text: [text],
+        lambda text: {"s": text, "n": 1},
+        lambda text: [{"s": text}],
+    ],
+    ids=["list", "struct", "list-of-struct"],
+)
+def test_texts_inside_nested_values_count_in_a_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nested: Callable
+) -> None:
+    """A column of all columns read from the source files, nesting 1 KiB texts in lists or structs, keeps every chunk within the bytes of a chunk."""
+    n = 2_000
+    frame = pl.DataFrame(
+        {
+            "x": [float(i) for i in range(n)],
+            "y": [1.0] * n,
+            "t": [nested(f"{i:04d}" + "w" * 1020) for i in range(n)],
+        }
+    )
+    path = tmp_path / "nested.parquet"
+    frame.write_parquet(path)
+    spec = ScatterSpec(
+        files={c: [str(path)] for c in ("x", "y")},
+        x=["x"],
+        y=["y"],
+        color=None,
+        row=None,
+        col=None,
+        width=300,
+        height=200,
+        hover=["x", "y"],
+    )
+    schema_dir = tmp_path / "schema"
+    schema_dir.mkdir()
+    run_schema([str(path)], schema_dir, lambda _: None)
+    found = read_manifest(schema_dir)
+    dtypes = {c["name"]: c["dtype"] for c in found["columns"]}
+    source = SourceFiles(
+        [str(path)], found["rows"], str(schema_dir / SCHEMA), {"t": dtypes["t"]}, {}
+    )
+    budget = 64 * 2**10
+    monkeypatch.setattr(plotdata, "CHUNK_BYTES", budget)
+    messages: list[dict] = []
+    saved = _export(
+        tmp_path, spec, columns=["x", "y", "t"], source=source, messages=messages
+    )
+    assert saved.drop("index").equals(frame)
+    done = [m["done"] for m in messages[1:]]
+    sizes = [b - a for a, b in itertools.pairwise(done)]
+    assert sum(sizes) == n
+    # A row holds more than 1 KiB of text: 64 KiB holds fewer than 64.
+    assert 0 < max(sizes) < 64
 
 
 def test_no_rows_give_the_columns_alone(

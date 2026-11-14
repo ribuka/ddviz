@@ -36,8 +36,8 @@ INDEX_NAME = "index"
 # Bytes of values a chunk holds at most (`_cut`), and its rows at most.
 CHUNK_BYTES = 512 * 2**20
 MAX_CHUNK_ROWS = 10_000_000
-# Bytes counted for each value besides those of a text, binary or list
-# (`_length`): a number, or the offset of a text.
+# Bytes counted for each value besides those of texts, binaries and nested
+# values (`_length`): a number, or the offset of a text or a list.
 VALUE_BYTES = 8
 
 
@@ -53,14 +53,31 @@ def index_name(columns: list[str]) -> str:
 def _length(value: pl.Expr, dtype: pl.DataType) -> pl.Expr | None:
     """Return the bytes of each value of a column besides `VALUE_BYTES`, or None for a type of fixed size.
 
-    A text or binary value takes its bytes, a list 8 per item.
+    A text or binary value takes its bytes. A nested value counts its items
+    as values themselves, down to their texts: a list (or an array) takes
+    `VALUE_BYTES` and the bytes besides of each item, a struct those of
+    each field.
     """
     if dtype == pl.String:
         size = value.str.len_bytes()
     elif dtype == pl.Binary:
         size = value.bin.size()
+    elif isinstance(dtype, pl.Array):
+        return _length(value.arr.to_list(), pl.List(dtype.inner))
     elif isinstance(dtype, pl.List):
-        size = value.list.len() * 8
+        size = value.list.len().cast(pl.UInt64) * VALUE_BYTES
+        inner = _length(pl.element(), dtype.inner)
+        if inner is not None:
+            size = size + value.list.eval(inner).list.sum()
+    elif isinstance(dtype, pl.Struct):
+        fields = [
+            _length(value.struct.field(f.name), f.dtype) for f in dtype.fields
+        ]
+        parts = [f for f in fields if f is not None]
+        extra = VALUE_BYTES * (len(dtype.fields) - 1)
+        if not parts and extra <= 0:
+            return None
+        size = pl.sum_horizontal(pl.lit(extra, dtype=pl.UInt64), *parts)
     else:
         return None
     return size.cast(pl.UInt64).fill_null(0)
@@ -292,7 +309,7 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
     target = input_dtypes(task.source.schema, dtypes) if dtypes else {}
     name = index_name(task.columns)
     # Every value counts VALUE_BYTES, the row index too; texts, binaries and
-    # lists count their bytes besides (`_length`).
+    # nested values count their bytes besides (`_length`).
     fixed = VALUE_BYTES * (len(task.columns) + 1)
 
     # Whether no column has values of variable size, once a chunk found it.
