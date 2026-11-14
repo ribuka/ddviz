@@ -1,9 +1,12 @@
 name: Release
 
-# When VERSION changes on main, tags v<VERSION>, creates the release and
-# attaches the exe (ddviz-<VERSION>-win-x64.zip). If the tag already exists, a
-# push does nothing; a manual run builds the exe from the tag again and
-# replaces the zip on its release.
+# When VERSION changes on main, tags the commit v<VERSION>, builds the exe from
+# the tag (exe.yml, with its smoke test), then creates the release as a draft,
+# attaches ddviz-<VERSION>-win-x64.zip and only then publishes it. If any step
+# fails, the release stays unpublished; run the workflow manually to retry: it
+# reuses the tag and a draft left by the failed run. A push for a published
+# release does nothing; a manual run rebuilds it from the tag and replaces the
+# zip. The release steps are in packaging/release.py.
 
 on:
   workflow_dispatch:
@@ -21,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  tag:
     runs-on: ubuntu-latest
 
     permissions:
@@ -29,12 +32,14 @@ jobs:
 
     outputs:
       tag: ${{ steps.version.outputs.tag }}
-      created: ${{ steps.tag.outputs.exists == 'false' }}
+      build: ${{ steps.state.outputs.build }}
 
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v7
 
       - name: Read and validate version
         id: version
@@ -49,62 +54,58 @@ jobs:
 
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Check tag
-        id: tag
+      # An existing tag is kept as it is, so a retry builds the same commit.
+      - name: Create tag
         shell: bash
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-              echo "exists=true" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "$TAG exists: $(git rev-parse "$TAG^{commit}")"
           else
-              echo "exists=false" >> "$GITHUB_OUTPUT"
+              git tag "$TAG"
+              git push origin "$TAG"
           fi
 
-      - name: Create tag
-        if: steps.tag.outputs.exists == 'false'
-        run: |
-          TAG="${{ steps.version.outputs.tag }}"
-          git tag "$TAG"
-          git push origin "$TAG"
-
-      - name: Create release
-        if: steps.tag.outputs.exists == 'false'
+      - name: Check release
+        id: state
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ steps.version.outputs.tag }}"
-
-          gh release create \
-            "$TAG" \
-            --title "$TAG" \
-            --generate-notes
+          uv run --no-project packaging/release.py state \
+            --tag "${{ steps.version.outputs.tag }}" \
+            --event "${{ github.event_name }}" \
+            | tee -a "$GITHUB_OUTPUT"
 
   exe:
-    needs: release
-    if: needs.release.outputs.created == 'true' || github.event_name == 'workflow_dispatch'
+    needs: tag
+    if: needs.tag.outputs.build == 'true'
     uses: ./.github/workflows/exe.yml
     with:
-      ref: ${{ needs.release.outputs.tag }}
+      ref: ${{ needs.tag.outputs.tag }}
 
-  attach:
-    needs: [release, exe]
+  # Runs only when the build and its smoke test passed (no `if:` here).
+  publish:
+    needs: [tag, exe]
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
 
     steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+
       - uses: actions/download-artifact@v4
         with:
           name: ${{ needs.exe.outputs.zip }}
 
-      - name: Attach the exe to the release
+      - name: Attach the exe and publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload \
-            "${{ needs.release.outputs.tag }}" \
-            "${{ needs.exe.outputs.zip }}" \
-            --clobber \
-            --repo "${{ github.repository }}"
+          uv run --no-project packaging/release.py publish \
+            --tag "${{ needs.tag.outputs.tag }}" \
+            --zip "${{ needs.exe.outputs.zip }}"
