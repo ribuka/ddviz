@@ -2,24 +2,27 @@
 
 The rows are those the plot draws (`drawn_rows`), or every row the local
 filter keeps; the columns are those the task lists, with the row index
-first. The rows are found from the column cache, then written a chunk after
-another, so that no more than a chunk's values are held at once: a chunk
-ends where its values reach `CHUNK_BYTES`, measured before they are read
-(`_cut`), and each chunk reports its progress (`run_plot_data`).
+first. The rows are found from the column cache, then read a chunk after
+another, so that only a chunk's values or two are held at once: a chunk
+ends where its values reach its budget, measured before they are read
+(`_cut`). A CSV appends each chunk and reports it written; a Parquet file
+streams the chunks to a sink (`ddviz.compute.chunksink`), which writes one
+while the next is read, so that its chunks take half the budget, and
+reports each chunk the sink receives (`run_plot_data`).
 """
 
 from __future__ import annotations
 
 import bisect
 import itertools
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import polars as pl
-import pyarrow.parquet as pq
 
 from ddviz.compute.aggregate import INDEX
 from ddviz.compute.axisposition import on_axis
+from ddviz.compute.chunksink import sink_chunks
 from ddviz.compute.convert import column_expr, input_dtypes
 from ddviz.compute.missing import drawn_conditions
 from ddviz.compute.progress import Emit
@@ -33,7 +36,8 @@ from ddviz.shared.tasks import PlotDataTask, SourceFiles
 # Name of the row index column of the file, unless a column has it
 # (`index_name`).
 INDEX_NAME = "index"
-# Bytes of values a chunk holds at most (`_cut`), and its rows at most.
+# Bytes of values a chunk of a CSV holds at most (`_cut`), and its rows at
+# most; a chunk of a Parquet file holds half of each.
 CHUNK_BYTES = 512 * 2**20
 MAX_CHUNK_ROWS = 10_000_000
 # Bytes counted for each value besides those of texts, binaries and nested
@@ -211,49 +215,21 @@ def _source(
 
 
 def _cut(
-    index: pl.Series, bytes_of: Callable[[pl.Series], pl.Series | None], fixed: int
+    index: pl.Series,
+    bytes_of: Callable[[pl.Series], pl.Series | None],
+    fixed: int,
+    budget: int,
 ) -> int:
-    """Return how many rows of `index`, from the first, a chunk takes: as many as `CHUNK_BYTES` holds, at least one.
+    """Return how many rows of `index`, from the first, a chunk takes: as many as `budget` bytes hold, at least one.
 
     `fixed` is the bytes of every row; `bytes_of` returns the bytes of the
     values of variable size of each row, or None when there are none.
     """
     sizes = bytes_of(index)
     if sizes is None:
-        return max(1, min(len(index), CHUNK_BYTES // fixed))
-    held = ((sizes + fixed).cum_sum() <= CHUNK_BYTES).sum()
+        return max(1, min(len(index), budget // fixed))
+    held = ((sizes + fixed).cum_sum() <= budget).sum()
     return max(1, min(len(index), held))
-
-
-class _Writer:
-    """Writes the chunks of a CSV or Parquet file one after another."""
-
-    def __init__(self, path: Path, file_format: str) -> None:
-        self._path = path
-        self._format = file_format
-        self._csv = None
-        self._parquet: pq.ParquetWriter | None = None
-
-    def write(self, table: pl.DataFrame) -> None:
-        """Append a chunk: the first one starts the file with its columns."""
-        if self._format == "csv":
-            first = self._csv is None
-            if first:
-                self._csv = self._path.open("wb")
-            table.write_csv(self._csv, include_bom=first, include_header=first)
-            return
-        arrow = table.to_arrow()
-        if self._parquet is None:
-            self._parquet = pq.ParquetWriter(self._path, arrow.schema)
-            self._schema = arrow.schema
-        self._parquet.write_table(arrow.cast(self._schema))
-
-    def close(self) -> None:
-        """Finish the file."""
-        if self._csv is not None:
-            self._csv.close()
-        if self._parquet is not None:
-            self._parquet.close()
 
 
 def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
@@ -261,7 +237,8 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
 
     Progress messages carry the stage ``"export"`` and the task's
     ``export``; once the rows are counted, also ``done`` and ``total``,
-    the rows written and to write.
+    the rows written (for a Parquet file, those the sink received) and to
+    write.
 
     Parameters
     ----------
@@ -333,14 +310,13 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
             return None
         return lengths.sum_horizontal()
 
-    file = f"data.{task.file_format}"
-    writer = _Writer(out / file, task.file_format)
-    start = 0
-    try:
+    def chunks(budget: int, max_rows: int) -> Iterator[pl.DataFrame]:
+        """Yield the chunks of the file: at least one, with no row when there are none."""
+        start = 0
         while True:
-            chunk = indices.slice(start, MAX_CHUNK_ROWS).collect()[INDEX]
+            chunk = indices.slice(start, max_rows).collect()[INDEX]
             if len(chunk):
-                chunk = chunk[: _cut(chunk, bytes_of, fixed)]
+                chunk = chunk[: _cut(chunk, bytes_of, fixed, budget)]
             lo, hi = (chunk.min(), chunk.max()) if len(chunk) else (0, -1)
             frames = [chunk.to_frame()]
             if cached:
@@ -349,13 +325,34 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
                 frames.append(
                     _source(task.source, others, target, chunk, lo, hi).drop(INDEX)
                 )
-            table = pl.concat(frames, how="horizontal")
-            writer.write(table.select(pl.col(INDEX).alias(name), *task.columns))
             start += len(chunk)
-            emit({**progress, "done": start, "total": total})
+            table = pl.concat(frames, how="horizontal").select(
+                pl.col(INDEX).alias(name), *task.columns
+            )
+            # Only the chunk handed on is held while the next is made.
+            del chunk, frames
+            yield table
+            del table
             if start >= total:
-                break
-    finally:
-        writer.close()
+                return
+
+    file = f"data.{task.file_format}"
+    path = out / file
+    if task.file_format == "csv":
+        done = 0
+        with path.open("wb") as csv:
+            for i, table in enumerate(chunks(CHUNK_BYTES, MAX_CHUNK_ROWS)):
+                table.write_csv(csv, include_bom=i == 0, include_header=i == 0)
+                done += table.height
+                emit({**progress, "done": done, "total": total})
+    else:
+        # The sink makes the next chunk while it writes one: half the bytes
+        # and rows keep the two within those of a CSV chunk.
+        sink_chunks(
+            chunks(CHUNK_BYTES // 2, MAX_CHUNK_ROWS // 2),
+            path,
+            lambda done: emit({**progress, "done": done, "total": total}),
+        )
+        emit({**progress, "done": total, "total": total})
     (out / "rows.parquet").unlink(missing_ok=True)
     write_manifest(out, {"kind": "plot_data", "file": file})
