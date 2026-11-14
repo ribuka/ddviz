@@ -145,7 +145,8 @@ export function attachHover(gd, getMeta, legend, onTiming) {
       showBox(meta, at.panel, box, event);
       return;
     }
-    const order = legend.order(meta.grid.n_series);
+    // The points' order: the topmost drawn point answers.
+    const order = legend.pointOrder(meta.grid.n_series);
     const query = new URLSearchParams({
       task: meta.task,
       panel: at.panel,

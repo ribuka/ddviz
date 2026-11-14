@@ -321,6 +321,20 @@ export class Legend {
     const down = [...Array(nSeries).keys()].reverse();
     return [...down.filter((s) => !this.inactive.has(s)), ...down.filter((s) => this.inactive.has(s))];
   }
+
+  // Returns the series of the points and of the lines joining them from the
+  // top drawn layer down: as `order`, but of the series of the same activity,
+  // those of the missing color level (`isMissingLevel`) sit behind the
+  // others, so that a gray point does not cover the colored ones. The box
+  // plots, the smoothing lines and the piles keep `order`.
+  pointOrder(nSeries) {
+    const shapes = this.meta?.color.shapes ?? 1;
+    const missing = (s) => !!this.meta && isMissingLevel(this.meta, Math.floor(s / shapes));
+    const order = this.order(nSeries);
+    const group = (active, miss) =>
+      order.filter((s) => !this.inactive.has(s) === active && missing(s) === miss);
+    return [...group(true, false), ...group(true, true), ...group(false, false), ...group(false, true)];
+  }
 }
 
 // Returns a tick of a gradient: a datetime, date or time column's (`kind`) as such.

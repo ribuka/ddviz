@@ -169,8 +169,9 @@ export class ImageLayers {
   // clipped to the box. With `fade`, the points under box plots fade.
   drawLayer(ctx, full, dpr, meta, bitmaps, alpha, box = null, fade = false) {
     const nSeries = meta.grid.n_series;
-    // Bottom layer first: inactive series behind, later series above earlier ones.
-    const order = this.legend.order(nSeries).reverse();
+    // Bottom layer first: inactive series behind, of the same activity the
+    // missing color level behind the others, later series above earlier ones.
+    const order = this.legend.pointOrder(nSeries).reverse();
     const { width: w, height: h } = meta.grid;
     meta.panels.forEach((panel, p) => {
       if (box && box.panel !== p) return;

@@ -25,10 +25,29 @@ X = [3.0, 1.0, 5.0, 2.0, 4.0]
 Y = [0.0, 0.0, 0.0, 10.0, 10.0]
 
 
+# Pairs of rows at the same x and y, one with a value of v and k and one
+# without, and a row without them alone at (5, 1). k splits the lines by its
+# levels: those of "a" and of the missing level both pass (2, 2), only the
+# missing level's (4, 2). A gradient (v) joins every row in one line, the
+# null rows too, each segment in the color of its first row: its segments of
+# either level never cover the same pixels.
+OVERLAP = {
+    "x": [1.0, 3.0, 1.0, 3.0, 5.0],
+    "y": [1.0, 3.0, 1.0, 3.0, 1.0],
+    "v": [1.0, 2.0, None, None, None],
+    "k": ["a", "a", None, None, None],
+}
+
+
 @pytest.fixture
-def scatter_path(tmp_path: Path) -> Path:
-    """Write five rows of a numeric x and y, and a categorical column."""
-    frame = pl.DataFrame({"x": X, "y": Y, "g": ["a", "b", "a", "b", "a"]})
+def scatter_path(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
+    """Write five rows of a numeric x and y, and a categorical column; or the columns of a test's `scatter_path` parameter."""
+    columns = getattr(request, "param", None)
+    frame = (
+        pl.DataFrame(columns, schema_overrides={"v": pl.Float64})
+        if columns
+        else pl.DataFrame({"x": X, "y": Y, "g": ["a", "b", "a", "b", "a"]})
+    )
     path = tmp_path / "lines.parquet"
     frame.write_parquet(path)
     return path
@@ -245,3 +264,101 @@ def test_the_width_of_the_lines_is_picked_in_their_icon_menu(app_page: Page) -> 
     line.click(button="right")
     expect(page.locator(".scale-menu .scale-menu-item.checked")).to_have_text("5 px")
     page.keyboard.press("Escape")
+
+
+# The opaque pixels around a data point of the first panel, in a square of
+# `r` CSS px: how many are gray (the missing level's color) and how many are
+# of another color.
+GRAY_NEAR = """([x, y, r]) => {
+  const full = document.getElementById("plot")._fullLayout;
+  const canvas = document.querySelector("canvas.image-layers");
+  const dpr = canvas.width / full.width;
+  const px = Math.round((full.xaxis._offset + full.xaxis.l2p(x)) * dpr);
+  const py = Math.round((full.yaxis._offset + full.yaxis.l2p(y)) * dpr);
+  const side = Math.round(r * dpr);
+  const { data } = canvas.getContext("2d").getImageData(px - side, py - side, 2 * side + 1, 2 * side + 1);
+  let gray = 0;
+  let other = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 250) continue;
+    const near = [0, 1, 2].every((c) => Math.abs(data[i + c] - 128) <= 8);
+    if (near) gray += 1;
+    else other += 1;
+  }
+  return { gray, other };
+}"""
+
+
+def colors_near(page: Page, x: float, y: float, r: int = 1) -> dict[str, int]:
+    """Return how many opaque pixels around a data point are gray and how many of another color."""
+    return page.evaluate(f"(a) => ({GRAY_NEAR})(a)", [x, y, r])
+
+
+def hover_value(page: Page, x: float, y: float, column: str) -> str | None:
+    """Hover at a data point; return the label's value of a column, or None when it stays hidden."""
+    page.mouse.move(0, 0)
+    point = at(page, x, y)
+    page.mouse.move(point["x"], point["y"])
+    label = page.locator("#hover-label")
+    try:
+        expect(label).to_be_visible(timeout=1500)
+    except AssertionError:
+        return None
+    lines = dict(line.split(": ", 1) for line in label.inner_text().splitlines() if ": " in line)
+    return lines.get(column)
+
+
+@pytest.mark.parametrize("scatter_path", [OVERLAP], indirect=True, ids=["overlap"])
+def test_the_missing_level_lies_behind_the_values_of_the_same_activity(
+    app_page: Page,
+) -> None:
+    """A point (with a gradient color) and a line (with a categorical one) of the missing level at the place of one with a value lie behind it, and the hover finds the row with a value; with the values' series inactive, the active missing level lies on top (Issue #186)."""
+    page = app_page
+    expect(page.locator("#columns .column").filter(has_text="v")).to_be_visible()
+    place(page, "x", "x")
+    place(page, "y", "y")
+    place(page, "v", "color")
+    page.wait_for_function(PAINTED_PIXEL)
+    items = page.locator("#legend .legend-item")
+    expect(items.locator(".legend-name")).to_have_text(["(null)"])
+
+    # The points where both series are: the value's color only. Where only
+    # the missing level is: gray.
+    for x, y in [(1, 1), (3, 3)]:
+        near = colors_near(page, x, y)
+        assert near["other"] > 0 and near["gray"] == 0, (x, y, near)
+    near = colors_near(page, 5, 1)
+    assert near["gray"] > 0 and near["other"] == 0, near
+    assert hover_value(page, 1, 1, "v") == "1"
+    assert hover_value(page, 3, 3, "v") == "2"
+
+    # Only the missing level active: it lies on top of the inactive values,
+    # and the hover finds it.
+    items.last.click(button="right")
+    expect(page.locator("#legend .colorbar.inactive")).to_have_count(1)
+    page.wait_for_function(f"() => ({GRAY_NEAR})([1, 1, 1]).other === 0")
+    for x, y in [(1, 1), (3, 3)]:
+        near = colors_near(page, x, y)
+        assert near["gray"] > 0 and near["other"] == 0, (x, y, near)
+    assert hover_value(page, 1, 1, "v") == "(null)"
+
+    # The lines of a categorical color: "a"'s lies over the missing level's.
+    place(page, "k", "color")
+    expect(items.locator(".legend-name")).to_have_text(["a", "(null)"])
+    task = drawn_task(page)
+    icon(page, "line").click()
+    new_result(page, task)
+    wait_idle(page)
+    for x, y in [(1, 1), (2, 2)]:
+        near = colors_near(page, x, y)
+        assert near["other"] > 0 and near["gray"] == 0, (x, y, near)
+    for x, y in [(5, 1), (4, 2)]:
+        near = colors_near(page, x, y)
+        assert near["gray"] > 0 and near["other"] == 0, (x, y, near)
+    assert hover_value(page, 1, 1, "k") == "a"
+    # "a" inactive: the active missing level's line and point lie on top.
+    items.first.click()
+    page.wait_for_function(f"() => ({GRAY_NEAR})([2, 2, 1]).other === 0")
+    for x, y in [(1, 1), (2, 2)]:
+        near = colors_near(page, x, y)
+        assert near["gray"] > 0 and near["other"] == 0, (x, y, near)
