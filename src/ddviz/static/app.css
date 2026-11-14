@@ -1285,7 +1285,10 @@ button {
   background: var(--warning);
 }
 
-/* Error toasts stack at the top right, above the page. */
+/* Toasts stack at the top right, above the page: 12px from the right and the
+   top, and in the desktop window from the title bar's bottom, whose height
+   (--caption-row, js/titlebar.js) follows maximizing and the display scale
+   (Issue #182). */
 #toasts {
   position: fixed;
   top: 12px;
@@ -1298,6 +1301,12 @@ button {
   z-index: 100;
 }
 
+html.desktop #toasts {
+  top: calc(var(--caption-row, 30px) + 12px);
+}
+
+/* An error's toast is red; a success's (a save in the desktop window) is a
+   plain notice, without the error's color or icon. */
 .toast {
   display: flex;
   align-items: flex-start;
@@ -1364,6 +1373,17 @@ button {
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
+}
+
+.toast.toast-success {
+  border-color: var(--border);
+  border-left-color: var(--accent);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.toast-success .toast-close {
+  color: var(--text-sub);
 }
 
 /* One line: a long message (a path in an error) ends in "…"; its tooltip,

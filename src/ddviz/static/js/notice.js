@@ -1,7 +1,9 @@
 // The status bar's message, with an icon for errors and warnings, and the
-// toasts at the top right that tell of an error (Issue #31).
+// toasts at the top right that tell of an error (Issue #31) or of the desktop
+// window's save of the plot's data (Issue #182).
 
-const TOAST_MS = 10000;
+// How long a toast stays: an error, and a notice that something went well.
+const TOAST_MS = { error: 10000, success: 7000 };
 const MAX_TOASTS = 3;
 // The exit of a closing toast; the same as `.toast-leaving` in app.css.
 const EXIT_MS = 150;
@@ -55,8 +57,10 @@ export class StatusLine {
   }
 }
 
-// The stack of error toasts at the top right. Each closes by its button or
-// by itself after a while; the same message again replaces its toast.
+// The stack of toasts at the top right: errors (`role="alert"`, with the
+// error's look) and plain notices of a success (`role="status"`). Each closes
+// by its button or by itself after a while (TOAST_MS); the same message again
+// replaces its toast.
 //
 // The timer stops while the pointer is on the toast or the window is hidden,
 // and goes on with the time left (Issue #46). A closing toast plays its exit
@@ -75,14 +79,14 @@ export class Toasts {
     return [...this.container.querySelectorAll(".toast:not(.toast-leaving)")];
   }
 
-  show(text) {
+  show(text, kind = "error") {
     for (const old of this.shown()) {
       if (old.dataset.text === text) this.close(old);
     }
     const toast = document.createElement("div");
-    toast.className = "toast notice-error";
+    toast.className = kind === "error" ? "toast notice-error" : "toast toast-success";
     toast.dataset.text = text;
-    toast.setAttribute("role", "alert");
+    toast.setAttribute("role", kind === "error" ? "alert" : "status");
     const message = document.createElement("span");
     message.className = "toast-text";
     message.textContent = text;
@@ -94,7 +98,7 @@ export class Toasts {
     close.textContent = "×";
     close.addEventListener("click", () => this.close(toast));
     toast.append(message, close);
-    toast.left = TOAST_MS;
+    toast.left = TOAST_MS[kind];
     toast.hovered = false;
     toast.addEventListener("mouseenter", () => {
       toast.hovered = true;
@@ -129,5 +133,16 @@ export class Toasts {
     toast.timer = undefined;
     toast.classList.add("toast-leaving");
     setTimeout(() => toast.remove(), EXIT_MS);
+  }
+}
+
+// Tells in a toast how the desktop window's save of the plot's data ended
+// (`ddviz.desktop.downloads`): `{saved: <the name saved under>}`, or
+// `{error: <why>}`.
+export function showSaveResult(toasts, result) {
+  if (result.saved !== undefined) {
+    toasts.show(`ダウンロードに保存しました（${result.saved}）`, "success");
+  } else {
+    toasts.show(`保存できませんでした：${result.error}`);
   }
 }
