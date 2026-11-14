@@ -750,7 +750,7 @@ button {
   min-width: 0;
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) 30px 170px;
-  grid-template-rows: 30px minmax(0, 1fr) 30px;
+  grid-template-rows: 34px minmax(0, 1fr) 30px;
   gap: 4px;
   padding: 6px;
 }
