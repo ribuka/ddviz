@@ -393,7 +393,9 @@ class TitleBar:
         # The system owns the region from here on.
         _user32.SetWindowRgn(self._control.Handle.ToInt64(), region, True)
         self._buttons_width = client.right - buttons.left
-        self._row_height = buttons.bottom - border
+        # Down to the buttons' bottom, from the control's top (the clipped
+        # resize edge is still part of the page).
+        self._row_height = buttons.bottom - pad
         self._tell_page()
 
     def _tell_page(self) -> None:
