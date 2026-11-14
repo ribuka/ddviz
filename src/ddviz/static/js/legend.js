@@ -322,18 +322,32 @@ export class Legend {
     return [...down.filter((s) => !this.inactive.has(s)), ...down.filter((s) => this.inactive.has(s))];
   }
 
-  // Returns the series of the points and of the lines joining them from the
-  // top drawn layer down: as `order`, but of the series of the same activity,
-  // those of the missing color level (`isMissingLevel`) sit behind the
-  // others, so that a gray point does not cover the colored ones. The box
-  // plots, the smoothing lines and the piles keep `order`.
+  // Returns the series of the points from the top drawn layer down: as
+  // `order`, but of the series of the same activity, those of the missing
+  // color level (`isMissingLevel`) sit behind the others, so that a gray
+  // point does not cover the colored ones. The box plots, the smoothing
+  // lines and the piles keep `order`.
   pointOrder(nSeries) {
+    return this.missingBehind(nSeries, (s) => this.inactive.has(s));
+  }
+
+  // Returns the series of the lines joining the points (each at its color
+  // level's first series) from the top drawn layer down, as `pointOrder`;
+  // a line is inactive by its color level alone, as `colorOpacity` fades it.
+  lineOrder(nSeries) {
+    const shapes = this.meta?.color.shapes ?? 1;
+    return this.missingBehind(nSeries, (s) => this.off.color.has(Math.floor(s / shapes)));
+  }
+
+  // Returns the series from the top drawn layer down: the active non-missing
+  // ones, the active missing ones, the inactive non-missing ones and the
+  // inactive missing ones (`inactive(s)`), each later series above earlier ones.
+  missingBehind(nSeries, inactive) {
     const shapes = this.meta?.color.shapes ?? 1;
     const missing = (s) => !!this.meta && isMissingLevel(this.meta, Math.floor(s / shapes));
-    const order = this.order(nSeries);
-    const group = (active, miss) =>
-      order.filter((s) => !this.inactive.has(s) === active && missing(s) === miss);
-    return [...group(true, false), ...group(true, true), ...group(false, false), ...group(false, true)];
+    const down = [...Array(nSeries).keys()].reverse();
+    const group = (off, miss) => down.filter((s) => inactive(s) === off && missing(s) === miss);
+    return [...group(false, false), ...group(false, true), ...group(true, false), ...group(true, true)];
   }
 }
 

@@ -44,7 +44,7 @@ def test_other_series_start_active_and_the_same_keep_their_state(js_page: Page) 
 
 
 def test_point_order_puts_the_missing_level_behind_the_series_of_the_same_activity(js_page: Page) -> None:
-    """`Legend.pointOrder` lists, from the top down, the active non-missing, active missing, inactive non-missing and inactive missing series."""
+    """`Legend.pointOrder` and `Legend.lineOrder` list, from the top down, the active non-missing, active missing, inactive non-missing and inactive missing series; a line is inactive by its color level alone."""
     result = js_page.evaluate(
         """async () => {
           const { Legend } = await import("/static/js/legend.js");
@@ -62,11 +62,15 @@ def test_point_order_puts_the_missing_level_behind_the_series_of_the_same_activi
             grid: { n_series: series.length * shapes },
           });
           const legend = new Legend(element, () => {}, () => {}, () => {});
-          const run = (m, off = []) => {
+          const run = (m, off = [], offShapes = []) => {
             legend.clear();
             legend.set(m);
             for (const i of off) legend.toggle("color", i);
-            return { points: legend.pointOrder(m.grid.n_series), order: legend.order(m.grid.n_series) };
+            for (const i of offShapes) legend.toggle("shape", i);
+            const n = m.grid.n_series;
+            // The lines lie at each color level's first series.
+            const lines = legend.lineOrder(n).filter((s) => s % m.color.shapes === 0);
+            return { points: legend.pointOrder(n), lines, order: legend.order(n) };
           };
           const out = {
             levels: run(meta(["a", MISSING, "b"], "levels")),
@@ -75,6 +79,7 @@ def test_point_order_puts_the_missing_level_behind_the_series_of_the_same_activi
             valueOff: run(meta(["", MISSING], "gradient"), [0]),
             bins: run(meta(["[0, 1)", "[1, 2]", MISSING], "bins"), [1]),
             symbol: run(meta(["a", MISSING], "levels", 2)),
+            symbolOff: run(meta(["a", MISSING], "levels", 2), [0], [0]),
             text: run(meta(["a", "(null)"], "levels")),
             none: run(meta(["a", "b", "c"], "levels"), [2]),
           };
@@ -90,6 +95,14 @@ def test_point_order_puts_the_missing_level_behind_the_series_of_the_same_activi
     assert result["bins"]["points"] == [0, 2, 1]
     # Series s is of color level s // 2: the missing level's series 2 and 3 sit behind.
     assert result["symbol"]["points"] == [1, 0, 3, 2]
+    assert result["symbol"]["lines"] == [0, 2]
+    # The first symbol level and "a" inactive: of the points, only the
+    # missing level's of the second symbol level is active. The lines are
+    # inactive by their color level alone: the missing level's is on top.
+    assert result["symbolOff"]["points"] == [3, 1, 0, 2]
+    assert result["symbolOff"]["lines"] == [2, 0]
+    assert result["levels"]["lines"] == result["levels"]["points"]
+    assert result["valueOff"]["lines"] == [1, 0]
     # A real "(null)" string is an ordinary level.
     assert result["text"]["points"] == result["text"]["order"] == [1, 0]
     assert result["none"]["points"] == result["none"]["order"] == [1, 0, 2]

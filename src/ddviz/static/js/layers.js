@@ -130,11 +130,11 @@ export class ImageLayers {
     const dim = selection ? SELECTION_DIM : 1;
     // The lines joining the points lie under them, and like the smoothing
     // lines stay at full opacity over a selection. Only the color legend
-    // fades them: the symbol levels do not split them.
+    // fades them, and orders them: the symbol levels do not split them.
     if (bitmaps.lines) {
       const shapes = meta.color.shapes;
       const lineAlpha = (s) => this.legend.colorOpacity(Math.floor(s / shapes));
-      this.drawLayer(ctx, full, dpr, meta, bitmaps.lines, lineAlpha);
+      this.drawLayer(ctx, full, dpr, meta, bitmaps.lines, lineAlpha, null, false, true);
     }
     // The points under box plots fade, so that the boxes stand out.
     this.drawLayer(ctx, full, dpr, meta, bitmaps, (s) => alpha(s) * dim, null, true);
@@ -166,12 +166,13 @@ export class ImageLayers {
 
   // Draws one layer: an image per series whose tiles are the panels that
   // `meta` places. With `box` ({panel, x_range, y_range}), only that panel,
-  // clipped to the box. With `fade`, the points under box plots fade.
-  drawLayer(ctx, full, dpr, meta, bitmaps, alpha, box = null, fade = false) {
+  // clipped to the box. With `fade`, the points under box plots fade. With
+  // `lines`, the layer is of the lines joining the points (`lineOrder`).
+  drawLayer(ctx, full, dpr, meta, bitmaps, alpha, box = null, fade = false, lines = false) {
     const nSeries = meta.grid.n_series;
     // Bottom layer first: inactive series behind, of the same activity the
     // missing color level behind the others, later series above earlier ones.
-    const order = this.legend.pointOrder(nSeries).reverse();
+    const order = (lines ? this.legend.lineOrder(nSeries) : this.legend.pointOrder(nSeries)).reverse();
     const { width: w, height: h } = meta.grid;
     meta.panels.forEach((panel, p) => {
       if (box && box.panel !== p) return;
