@@ -214,7 +214,7 @@ class LevelSearchTask:
 
 @dataclass(frozen=True)
 class PlotDataTask:
-    """Write the bins of a plot's result as a file to save (`ddviz.compute.tasks.plotdata`).
+    """Write the rows of a plot's result as a file to save (`ddviz.compute.tasks.plotdata`).
 
     Parameters
     ----------
@@ -222,11 +222,28 @@ class PlotDataTask:
         The plot task's output directory.
     file_format : str
         ``"csv"`` or ``"parquet"``.
+    rows : str
+        ``"drawn"``: the rows the plot draws; ``"filtered"``: the rows the
+        local filter keeps.
+    columns : list of str
+        The columns of the file, in order, after the row index.
+    parts : dict of str to list of str
+        The parts of the columns in the column cache; the other columns are
+        read from the source files.
+    source : SourceFiles
+        The source files.
+    export : str
+        Token the page gave, carried by the progress messages.
     """
 
     KIND: ClassVar[str] = "plot_data"
     result: str
     file_format: str
+    rows: str
+    columns: list[str]
+    parts: dict[str, list[str]]
+    source: SourceFiles
+    export: str
 
 
 Task = (

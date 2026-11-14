@@ -64,5 +64,5 @@ def run_task(data: dict, emit: Emit) -> None:
             run_level_index(parts, column, index, out, emit)
         case LevelSearchTask(index=index, query=query, order=order):
             run_level_search(index, query, order, out, emit)
-        case PlotDataTask(result=result, file_format=file_format):
-            run_plot_data(Path(result), file_format, out, emit)
+        case PlotDataTask():
+            run_plot_data(task, out, emit)

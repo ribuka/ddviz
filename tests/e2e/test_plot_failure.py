@@ -378,7 +378,7 @@ def test_a_failure_keeps_the_zoom_and_the_selection(app_page: Page) -> None:
     page.locator('#plot .modebar-btn[data-title^="データを保存"]').click()
     with page.expect_download() as download:
         page.locator(".data-menu").get_by_role("button", name="CSV").click()
-    assert pl.read_csv(download.value.path()).columns[:3] == ["x_column", "x_lo", "x_hi"]
+    assert pl.read_csv(download.value.path()).columns[0] == "index"
 
     # A filter narrows the drawn view.
     page.locator("#columns .column").filter(has=page.get_by_text("color", exact=True)).drag_to(

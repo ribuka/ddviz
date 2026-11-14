@@ -11,11 +11,12 @@ import polars as pl
 import pytest
 
 from ddviz.compute.tasks.plot import run_plot, run_selection
-from ddviz.compute.tasks.plotdata import bins_table
+from ddviz.compute.tasks.plotdata import run_plot_data
 from ddviz.server.derive import selection_spec
 from ddviz.server.hover import HoverIndex
-from ddviz.shared.manifest import SelectionManifest
+from ddviz.shared.manifest import SelectionManifest, read_manifest
 from ddviz.shared.scatter import ScatterSpec, Selection
+from ddviz.shared.tasks import PlotDataTask, SourceFiles
 
 
 @pytest.fixture
@@ -111,21 +112,26 @@ def test_a_gradient_pile_has_its_least_and_largest_color_by_shape(
         index.close()
 
 
-def test_the_plot_data_counts_the_rows_of_the_piles_once_in_their_series(
-    index: HoverIndex, pile_frame: pl.DataFrame
+def test_the_plot_data_holds_the_rows_of_the_piles_once(
+    tmp_path: Path, index: HoverIndex, pile_spec: ScatterSpec, pile_frame: pl.DataFrame
 ) -> None:
-    """The saved bins hold every drawn row once, by its color and shape, the piles' rows at their centers."""
-    table = bins_table(index.out)
-    assert table["count"].sum() == pile_frame.height
-    found = table.group_by("color", "symbol").agg(pl.col("count").sum())
-    expected = pile_frame.group_by("c", "s").len()
-    assert dict(
-        zip(
-            zip(found["color"], found["symbol"], strict=True),
-            found["count"],
-            strict=True,
-        )
-    ) == {(c, s): n for c, s, n in expected.iter_rows()}
+    """The drawn rows saved are every row once, those of the piles too, as the plot counts them."""
+    out = tmp_path / "data"
+    out.mkdir()
+    columns = list(pile_spec.files)
+    task = PlotDataTask(
+        str(index.out),
+        "parquet",
+        "drawn",
+        columns,
+        dict(pile_spec.files),
+        SourceFiles([], [], "", {}, {}),
+        "token",
+    )
+    run_plot_data(task, out, lambda _: None)
+    saved = pl.read_parquet(out / read_manifest(out)["file"])
+    assert saved.drop("index").equals(pile_frame)
+    assert saved.height == index.manifest.rows
 
 
 def test_the_pile_files_past_the_limit_fail_the_plot(

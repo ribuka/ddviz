@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import asdict, replace
 from datetime import datetime
@@ -25,13 +26,18 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
-from ddviz.server.broker import TaskBroker
+from ddviz.server.broker import TaskBroker, TaskEnd
 from ddviz.server.derive import resized_spec, unchanged
 from ddviz.server.encoding import Encoding
 from ddviz.server.errors import ensure_done
 from ddviz.server.figure import build_figure
 from ddviz.server.hover import HoverIndex
-from ddviz.server.models import PlotRequest, SizeRequest, ViewRequest
+from ddviz.server.models import (
+    PlotDataRequest,
+    PlotRequest,
+    SizeRequest,
+    ViewRequest,
+)
 from ddviz.server.plan import (
     drawable,
     drawn_columns,
@@ -355,33 +361,64 @@ def plot_router(
             return {"stale": True}
         return {"pile": index.pile(i)}
 
-    @router.get("/api/plot-data/{task}")
-    async def plot_data(task: int, format: str) -> FileResponse:
-        """Return the bins of the overview as a CSV or Parquet file (`ddviz.compute.tasks.plotdata`).
+    # Files of the plot's data written and not fetched yet, by their id.
+    exports: dict[str, tuple[TaskEnd, str]] = {}
+
+    @router.post("/api/plot-data/{task}")
+    async def plot_data(task: int, request: PlotDataRequest) -> dict:
+        """Write the rows of the overview as a CSV or Parquet file (`ddviz.compute.tasks.plotdata`) and return its id.
 
         The overview, not the view: the file holds the whole plot whatever
-        the zoom. A worker of the table's pool writes it; its name comes in
-        ``Content-Disposition``.
+        the zoom. A worker of the table's pool writes it, sending its progress
+        to ``/api/events`` with the page's ``export``; the page then fetches
+        it from ``/api/plot-data/file/{id}``. A file not fetched is removed
+        when the next one is written.
         """
-        if format not in FORMATS:
-            raise HTTPException(400, f"format: {format!r}")
         index = results.overview
         if index is None or index.out.name != str(task):
             raise HTTPException(404, "stale")
-        if not index.manifest.hover_files:
-            raise HTTPException(
-                409,
-                "ホバー用のファイルが上限を超えたため、この図のデータは残っていない",
-            )
-        # A newer overview may replace it while the worker reads it.
+        # A newer overview may replace it from the first await until the
+        # worker has read it: keep its directory from here.
         with results.hold(index):
-            end = await broker.run(PlotDataTask(str(index.out), format), "table")
+            spec = index.manifest.spec
+            names = [c["name"] for c in await source.schema()]
+            if request.columns == "all":
+                columns = names
+            else:
+                columns = [c for c in names if c in spec.files]
+            missing = await asyncio.to_thread(source.missing, columns)
+            parts = {c: source.parts(c) for c in columns if c not in missing}
+            data = PlotDataTask(
+                str(index.out),
+                request.format,
+                request.rows,
+                columns,
+                parts,
+                source.source_files([c for c in columns if c not in parts]),
+                request.export,
+            )
+            for end, _ in exports.values():
+                end.discard()
+            exports.clear()
+            end = await broker.run(data, "table")
         ensure_done(end)
-        file = read_manifest(end.out)["file"]
+        name = file_name(source.paths, request.format, datetime.now().astimezone())
+        key = uuid.uuid4().hex
+        exports[key] = (end, name)
+        return {"file": key}
+
+    @router.get("/api/plot-data/file/{key}")
+    async def plot_data_file(key: str) -> FileResponse:
+        """Return a file of the plot's data written by ``POST /api/plot-data/{task}``, once; its name comes in ``Content-Disposition``."""
+        found = exports.pop(key, None)
+        if found is None:
+            raise HTTPException(404, "unknown file")
+        end, name = found
+        file = end.out / read_manifest(end.out)["file"]
         return FileResponse(
-            end.out / file,
-            media_type=FORMATS[format],
-            filename=file_name(source.paths, format, datetime.now().astimezone()),
+            file,
+            media_type=FORMATS[file.suffix.removeprefix(".")],
+            filename=name,
             background=BackgroundTask(end.discard),
         )
 

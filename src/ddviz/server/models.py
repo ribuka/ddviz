@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, StrictBool
 
 from ddviz.shared.layout import MARGIN_BOTTOM, MARGIN_LEFT
@@ -43,6 +45,17 @@ class PlotRequest(BaseModel):
     show_null_rows: ShowNullRows = ShowNullRows()
     axis_scales: object = None
     keep_unfiltered_color_levels: StrictBool = False
+
+
+class PlotDataRequest(BaseModel):
+    """Body of ``POST /api/plot-data/{task}``: the file's format, its rows and columns (`ddviz.shared.tasks.PlotDataTask`), and the page's token for the progress."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: Literal["csv", "parquet"]
+    rows: Literal["drawn", "filtered"]
+    columns: Literal["drawn", "all"]
+    export: str
 
 
 class SizeRequest(BaseModel):
