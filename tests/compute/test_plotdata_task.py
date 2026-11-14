@@ -62,6 +62,11 @@ def _export(
     return pl.read_parquet(file)
 
 
+def _halved(file_format: str, value: int) -> int:
+    """Return a chunk's bytes or rows at most of a format: those of a CSV, half of them for Parquet."""
+    return value // 2 if file_format == "parquet" else value
+
+
 def _indexed(frame: pl.DataFrame) -> pl.DataFrame:
     """Return a frame with its row index first, as the file names it."""
     return frame.with_row_index("index")
@@ -222,9 +227,13 @@ def test_chunks_write_the_same_file_and_report_progress(
     monkeypatch: pytest.MonkeyPatch,
     file_format: str,
 ) -> None:
-    """Small chunks write the same rows and values as one, each chunk adding to ``done`` until ``total``."""
+    """Small chunks write the same rows and values as one; ``done`` adds up the rows of the chunks until ``total``.
+
+    A Parquet file's chunks take half the rows, and ``done`` counts those
+    the sink received: once for each chunk and at the end, as for a CSV.
+    """
     whole = _export(tmp_path, scatter_spec, file_format=file_format)
-    monkeypatch.setattr(plotdata, "MAX_CHUNK_ROWS", 7)
+    monkeypatch.setattr(plotdata, "MAX_CHUNK_ROWS", 14)
     messages: list[dict] = []
     chunked = _export(
         tmp_path, scatter_spec, file_format=file_format, messages=messages
@@ -233,17 +242,19 @@ def test_chunks_write_the_same_file_and_report_progress(
     assert all(m["export"] == "token" and m["stage"] == "export" for m in messages)
     assert "total" not in messages[0]
     done = [m["done"] for m in messages[1:]]
-    assert done[0] == 0
-    assert done == sorted(done)
-    assert len(done) == -(-whole.height // 7) + 1
-    assert done[-1] == messages[-1]["total"] == whole.height
+    rows = _halved(file_format, 14)
+    assert whole.height > 2 * rows
+    # One message when the rows are counted, then one for each chunk.
+    assert done == [*range(0, whole.height, rows), whole.height]
+    assert all(m["total"] == whole.height for m in messages[1:])
 
 
+@pytest.mark.parametrize("file_format", ["parquet", "csv"])
 @pytest.mark.parametrize("short", [0, 10])
 def test_long_texts_make_chunks_of_fewer_rows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, short: int
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, short: int, file_format: str
 ) -> None:
-    """A column of 1 KiB texts keeps every chunk within the bytes of a chunk, also after `short` rows of short texts."""
+    """A column of 1 KiB texts keeps every chunk within the bytes of a chunk (half for Parquet), also after `short` rows of short texts."""
     n = 2_000
     texts = [f"{i:04d}" + ("" if i < short else "w" * 1020) for i in range(n)]
     frame = pl.DataFrame(
@@ -262,10 +273,10 @@ def test_long_texts_make_chunks_of_fewer_rows(
         height=200,
         hover=list(frame.columns),
     )
-    budget = 64 * 2**10
-    monkeypatch.setattr(plotdata, "CHUNK_BYTES", budget)
+    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
+    budget = _halved(file_format, 64 * 2**10)
     messages: list[dict] = []
-    saved = _export(tmp_path, spec, messages=messages)
+    saved = _export(tmp_path, spec, file_format=file_format, messages=messages)
     assert saved.drop("index").equals(frame)
     done = [m["done"] for m in messages[1:]]
     row_bytes = [4 * plotdata.VALUE_BYTES + len(t) for t in texts]
@@ -288,7 +299,7 @@ def test_long_texts_make_chunks_of_fewer_rows(
 def test_texts_inside_nested_values_count_in_a_chunk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nested: Callable
 ) -> None:
-    """A column of all columns read from the source files, nesting 1 KiB texts in lists or structs, keeps every chunk within the bytes of a chunk."""
+    """A column of all columns read from the source files, nesting 1 KiB texts in lists or structs, keeps every chunk of a Parquet file within half the bytes of a chunk."""
     n = 2_000
     frame = pl.DataFrame(
         {
@@ -318,8 +329,7 @@ def test_texts_inside_nested_values_count_in_a_chunk(
     source = SourceFiles(
         [str(path)], found["rows"], str(schema_dir / SCHEMA), {"t": dtypes["t"]}, {}
     )
-    budget = 64 * 2**10
-    monkeypatch.setattr(plotdata, "CHUNK_BYTES", budget)
+    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
     messages: list[dict] = []
     saved = _export(
         tmp_path, spec, columns=["x", "y", "t"], source=source, messages=messages
@@ -328,8 +338,9 @@ def test_texts_inside_nested_values_count_in_a_chunk(
     done = [m["done"] for m in messages[1:]]
     sizes = [b - a for a, b in itertools.pairwise(done)]
     assert sum(sizes) == n
-    # A row holds more than 1 KiB of text: 64 KiB holds fewer than 64.
-    assert 0 < max(sizes) < 64
+    # A row holds more than 1 KiB of text: half of 64 KiB holds fewer than
+    # 32, and more than 1 KiB and 64 bytes at least 30.
+    assert 30 <= max(sizes) < 32
 
 
 def test_no_rows_give_the_columns_alone(
@@ -341,3 +352,25 @@ def test_no_rows_give_the_columns_alone(
         saved = _export(tmp_path, spec, rows="filtered", file_format=file_format)
         assert saved.height == 0
         assert saved.columns == ["index", *scatter_spec.files]
+
+
+def test_an_error_reading_a_chunk_comes_out_as_it_is(
+    tmp_path: Path, scatter_spec: ScatterSpec, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An error reading the second chunk of a Parquet file comes out of the task with its own type."""
+    monkeypatch.setattr(plotdata, "MAX_CHUNK_ROWS", 14)
+    cached = plotdata._cached
+    calls: list[int] = []
+
+    def failing(*args: object, measure: bool = False) -> pl.DataFrame:
+        """Read the first chunk's values, then fail."""
+        if not measure:
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("out of memory")
+        return cached(*args, measure=measure)
+
+    monkeypatch.setattr(plotdata, "_cached", failing)
+    with pytest.raises(RuntimeError, match="out of memory"):
+        _export(tmp_path, scatter_spec)
+    assert len(calls) == 2
