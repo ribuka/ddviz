@@ -3,9 +3,16 @@
 - A repository for ddviz: a drag-and-drop graph builder app for very large Parquet data, shipped as a standalone exe that runs offline.
 - Always respond in Japanese.
 - `docs/spec.md` holds design decisions (with their reasons) and verified facts. Read the relevant sections before changing code.
-  - When a decision is made or a fact is verified (including measurement results), update `docs/spec.md` in the same change.
+  - When you are making a change on a branch and a decision is made or a fact is verified (including measurement results), update `docs/spec.md` in the same change.
+  - For investigation, questions, or review requests, do NOT edit `docs/spec.md`. Report findings in your reply (or an Issue comment) instead.
 - This repository is in development (0.x); backward compatibility is NOT required.
   - NEVER add or keep compatibility layers, deprecated aliases, or re-exports for old import paths.
+
+## Working tree
+
+- NEVER edit, create, or delete tracked files on the local `main` branch unless the user explicitly asks for that edit on `main`.
+  - Investigation-only requests are read-only: no file edits at all, except scratch files under `tmp/<task-name>/`.
+  - If a code or doc change seems necessary, propose it and wait for instructions, or create a branch or worktree first.
 
 ## Python
 
