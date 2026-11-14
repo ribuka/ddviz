@@ -25,6 +25,7 @@ from ddviz.server.settings import (
     PlotSettings,
     Settings,
 )
+from ddviz.server.source import Source
 from ddviz.shared.missing import MISSING, MISSING_COLOR
 from ddviz.shared.scatter import POINT_SIZE, SHAPE_SIZE
 from ddviz.shared.shapes import SHAPES, kernel
@@ -901,6 +902,31 @@ def test_plot_data_refuses_bad_requests(client: TestClient) -> None:
         response = client.post(f"/api/plot-data/{task}", json=bad)
         assert response.status_code == 422, bad
     assert client.post(f"/api/plot-data/{task + 99}", json=good).status_code == 404
+
+
+def test_plot_data_keeps_an_overview_replaced_while_it_prepares(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An overview replaced while the save looks up its columns keeps its directory until the worker has read it."""
+    meta = _plot(client)["meta"]
+    missing = Source.missing
+    replaced: list[int] = []
+
+    def replace_first(self: Source, columns: list[str]) -> dict[str, list[int]]:
+        if not replaced:
+            # A new size draws a new overview, which replaces the one saved;
+            # its own lookups pass through.
+            replaced.append(None)
+            response = client.post("/api/overview", json={"width": 500, "height": 350})
+            assert response.status_code == 200, response.text
+            replaced[0] = response.json()["meta"]["task"]
+        return missing(self, columns)
+
+    monkeypatch.setattr(Source, "missing", replace_first)
+    response = _save(client, meta["task"])
+    assert replaced and replaced[0] != meta["task"]
+    assert response.status_code == 200, response.text
+    assert pl.read_parquet(io.BytesIO(response.content)).height == meta["rows"]
 
 
 def test_plot_data_needs_no_hover_files(tmp_path: Path, scatter_path: Path) -> None:

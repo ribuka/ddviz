@@ -31,9 +31,10 @@ from ddviz.shared.tasks import PlotDataTask, SourceFiles
 # Name of the row index column of the file, unless a column has it
 # (`index_name`).
 INDEX_NAME = "index"
-# Bytes of values a chunk holds at most, counting 8 per value, and its rows
-# at most: 10M rows of 6 columns.
+# Bytes of values a chunk holds at most (`chunk_rows`), the rows of the first
+# chunk, which measures them, and the rows of a chunk at most.
 CHUNK_BYTES = 512 * 2**20
+FIRST_CHUNK_ROWS = 10_000
 MAX_CHUNK_ROWS = 10_000_000
 
 
@@ -46,9 +47,15 @@ def index_name(columns: list[str]) -> str:
     return name
 
 
-def chunk_rows(n_columns: int) -> int:
-    """Return the rows of a chunk of `n_columns` columns and the row index."""
-    return max(1, min(MAX_CHUNK_ROWS, CHUNK_BYTES // (8 * (n_columns + 1))))
+def chunk_rows(row_bytes: float) -> int:
+    """Return the rows of the next chunk, from the most bytes a row of the chunks written took.
+
+    Text values have no fixed size, so the chunks measure them: the first
+    chunk has `FIRST_CHUNK_ROWS` rows, and each next one as many rows as
+    `CHUNK_BYTES` holds at the largest bytes per row so far (a column of
+    long texts makes chunks of fewer rows).
+    """
+    return max(1, min(MAX_CHUNK_ROWS, int(CHUNK_BYTES // max(row_bytes, 1))))
 
 
 def _on_axis(spec: ScatterSpec, column: str, log: list[str]) -> pl.Expr:
@@ -239,9 +246,9 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
     name = index_name(task.columns)
     file = f"data.{task.file_format}"
     writer = _Writer(out / file, task.file_format)
-    step = chunk_rows(len(task.columns))
+    step, start, row_bytes = FIRST_CHUNK_ROWS, 0, 0.0
     try:
-        for start in range(0, max(total, 1), step):
+        while True:
             chunk = indices.slice(start, step).collect()[INDEX]
             lo, hi = (chunk.min(), chunk.max()) if len(chunk) else (0, -1)
             frames = [chunk.to_frame()]
@@ -253,7 +260,12 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
                 )
             table = pl.concat(frames, how="horizontal")
             writer.write(table.select(pl.col(INDEX).alias(name), *task.columns))
-            emit({**progress, "done": min(start + step, total), "total": total})
+            start += len(chunk)
+            emit({**progress, "done": start, "total": total})
+            if start >= total:
+                break
+            row_bytes = max(row_bytes, table.estimated_size() / len(chunk))
+            step = chunk_rows(row_bytes)
     finally:
         writer.close()
     (out / "rows.parquet").unlink(missing_ok=True)

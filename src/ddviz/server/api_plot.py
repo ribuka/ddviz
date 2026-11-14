@@ -377,28 +377,29 @@ def plot_router(
         index = results.overview
         if index is None or index.out.name != str(task):
             raise HTTPException(404, "stale")
-        spec = index.manifest.spec
-        names = [c["name"] for c in await source.schema()]
-        if request.columns == "all":
-            columns = names
-        else:
-            columns = [c for c in names if c in spec.files]
-        missing = await asyncio.to_thread(source.missing, columns)
-        parts = {c: source.parts(c) for c in columns if c not in missing}
-        data = PlotDataTask(
-            str(index.out),
-            request.format,
-            request.rows,
-            columns,
-            parts,
-            source.source_files([c for c in columns if c not in parts]),
-            request.export,
-        )
-        for end, _ in exports.values():
-            end.discard()
-        exports.clear()
-        # A newer overview may replace it while the worker reads it.
+        # A newer overview may replace it from the first await until the
+        # worker has read it: keep its directory from here.
         with results.hold(index):
+            spec = index.manifest.spec
+            names = [c["name"] for c in await source.schema()]
+            if request.columns == "all":
+                columns = names
+            else:
+                columns = [c for c in names if c in spec.files]
+            missing = await asyncio.to_thread(source.missing, columns)
+            parts = {c: source.parts(c) for c in columns if c not in missing}
+            data = PlotDataTask(
+                str(index.out),
+                request.format,
+                request.rows,
+                columns,
+                parts,
+                source.source_files([c for c in columns if c not in parts]),
+                request.export,
+            )
+            for end, _ in exports.values():
+                end.discard()
+            exports.clear()
             end = await broker.run(data, "table")
         ensure_done(end)
         name = file_name(source.paths, request.format, datetime.now().astimezone())
