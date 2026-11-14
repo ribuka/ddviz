@@ -338,7 +338,7 @@ E2E テスト（2026-10-30 決定）：
 
 - 版はリポジトリの直下の `VERSION` の 1 か所にだけ書く。`pyproject.toml` は `dynamic = ["version"]` にし、hatch が `VERSION` から読む。
 - 理由：リリースのワークフロー（`.github/workflows/release.yml`）と版を上げる手順は `VERSION` だけを書き換える。`pyproject.toml` にも版を書くと、2 つがずれる。
-- main で `VERSION` が変わると、リリースのワークフローがタグ `v<版>` と GitHub のリリースを作り、exe を添付する（「リリースの exe」）。
+- main で `VERSION` が変わると、リリースのワークフローがタグ `v<版>` を付け、exe を添付してから GitHub のリリースを公開する（「リリースの exe」）。
 - リモートは GitHub の private のリポジトリ `ribuka/ddviz`（2026-10-30 作成）。main への push とプルリクエストで CI（`.github/workflows/ci.yml`）が動く。
 
 #### リリースの exe（2026-11-02 決定。Issue #71。計測は「CI での exe のビルド」）
@@ -346,8 +346,13 @@ E2E テスト（2026-10-30 決定）：
 - リリースには、配布フォルダ（`dist\ddviz`）の zip `ddviz-<版>-win-x64.zip` を 1 つ添付する。中の一番上は `ddviz\` のフォルダ。zip は Windows の `tar -a`（`%SystemRoot%\System32\tar.exe`。Git の GNU tar ではない）で作る。GitHub Releases の添付は 1 ファイル 2 GiB までなので、分けない。
 - ワークフローは 2 つに分ける。
   - `.github/workflows/exe.yml`：windows-latest で `packaging/build.py` を動かし、`packaging/smoke.py` で確かめ、zip を run の artifact（1 日で消える。圧縮し直さない `compression-level: 0`）に置く。権限は読み取りだけ。`workflow_call`（`ref` を受け取り、zip の名前を返す）で `release.yml` から呼ぶほか、`packaging/**`・`exe.yml`・`release.yml` を変えたプルリクエストでも動かし、リリースの前にビルドが壊れていないことを見る。
-  - `.github/workflows/release.yml`：今までどおりタグとリリースを作った後、`exe.yml` にタグを渡してビルドし、別のジョブ（ubuntu-latest、`contents: write`）が artifact を受け取って `gh release upload --clobber` で添付する。理由：書き込みの権限を、外から取ってきたもの（WebView2、PyPI の依存）を動かすビルドのジョブに渡さない。
-- タグが既にあるとき、push では今までどおり何もしない。手動の実行（`workflow_dispatch`）では、タグ（`v<VERSION>`）からビルドし直して zip を差し替える。ビルドに失敗して zip の無いリリースができたときや、添付し直したいときに使う。タグの無い版を手動で実行すると、push と同じくタグとリリースを作って添付する。
+  - `.github/workflows/release.yml`：3 つのジョブを順に動かす（2026-11-14 決定。Issue #190）。
+    1. `tag`（ubuntu-latest、`contents: write`）：`VERSION` を確かめ、タグ `v<VERSION>` が無ければ対象のコミットに付けて push する。あるタグは動かさないので、再試行でも同じコミットをビルドする。続いて `packaging/release.py state` でリリースの状態（`none`・`draft`・`published`）を読み、ビルドするかを決める。
+    2. `exe`：`exe.yml` にタグを渡してビルドとスモークテストをする。
+    3. `publish`（ubuntu-latest、`contents: write`）：`needs: [tag, exe]` で、`if:` を付けない。前のジョブのどれかが失敗か省略なら動かない。`packaging/release.py publish` が、リリースが無ければ下書き（`gh release create --draft --verify-tag --generate-notes`）を作り、`gh release upload --clobber` で zip を添付し、成功した後で下書きを公開する（`gh release edit --draft=false`）。どこかで失敗すると終了コード 1 で、公開しない。
+    - 理由：v0.1.1 では、先にリリースを公開してから exe をビルドしたので、スモークテストが落ちた（`KeyError: 'generated'`。テストの入力は 0024a88 で直した）ときに、ソースのアーカイブだけのリリースが公開された。書き込みの権限は、今までどおり外から取ってきたもの（PyPI の依存）を動かすビルドのジョブに渡さない。
+    - リリースの操作は `packaging/release.py`（標準ライブラリだけ。`uv run --no-project` で動かす）にまとめ、`gh` を差し替えてテストする（`tests/test_packaging_release.py`）。`gh release view <タグ>` は下書きも探し、無いときは `release not found` で終わるので、それだけを「無い」とみなし、他の失敗では止める。
+- 状態ごとの動き：タグだけがある（前の実行が下書きを作る前に落ちた）なら下書きを作るところから、下書きがあればそれを使い添付から進む。公開済みのとき、push では何もしない（ビルドもしない）。手動の実行（`workflow_dispatch`）では、タグからビルドし直して zip を差し替える。タグの無い版を手動で実行すると、push と同じくタグを付けて下書き・添付・公開まで進む。
 - GitHub がリリースに自動で付けるソースのアーカイブ（Source code の zip・tar.gz。`git archive` で作られる）からは、開発にだけ使うものを `.gitattributes` の `export-ignore` で外す（2026-11-13 ユーザー判断。flat-pca にならい、使う人に要らない開発の文書も外す）。外すのは `.github/`、`.agents/`、`.claude/`、`AGENTS.md`、`CLAUDE.md`、`tests/`、`docs/benchmarks/`、`docs/spec.md`、`.gitattributes`。exe の zip（`ddviz-<版>-win-x64.zip`）は `dist\ddviz` から作るので、この設定に左右されない。
   - 残すもの：`src/`、`config/`、`packaging/`、`scripts/`、`pyproject.toml`、`uv.lock`、`.python-version`、`VERSION`、`README.md`、`docs/shared-install.md`、`.gitignore`。理由：ソースのアーカイブを展開して `scripts\build.bat`（`uv run --group build packaging/build.py`）で exe を作れるようにする。`docs/shared-install.md` は README が参照する、使う人向けの手順。`docs/spec.md`（設計の決定と理由）と `docs/benchmarks/`（開発中の計測の記録）は開発者向けで、使う人には要らない（flat-pca は `docs/` を残すが、ddviz では外す）。
 - 2 つのリリースの実行が重ならないよう、`release.yml` に `concurrency: release`（取り消さない）を付ける。
@@ -1970,7 +1975,7 @@ B の細かい集約（全体図の集約に足す分。代表行の値は含め
 - zip は `ddviz-0.1.0-win-x64.zip`、425,221,782 バイト（405.5 MiB）。2 GiB の上限の約 1/5。「最小構成の exe」（2026-10-28）の 375MB より約 30MB 大きい（その後に足した依存とコードの分と見ているが、内訳は測っていない）。展開すると 991 MiB（`du -sm`）。
 - 手元（Windows 11 Pro 26200）で、WebView2 を取得済みのときの `packaging/build.py` は 43 秒。
 - artifact の zip を手元に落とし、Windows の `tar -x` で展開して確かめた：`packaging/smoke.py <展開した exe>` が通った。展開した `ddviz.exe` を Parquet ファイルを引数に窓付きで起動し、WebView2 のリモートデバッグ（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=…`）で見ると、起動から 2.0 秒でページが開き、2.4 秒で列の欄にファイルの列名が出た。WebView2 は展開したフォルダの `webview2\msedgewebview2.exe`（7 プロセス）で動いた。窓を閉じる（`CloseMainWindow`）と終了コード 0 で終わり、展開したフォルダから動くプロセスは残らなかった。
-- リリースへの添付そのもの（`release.yml` の attach のジョブ）は、タグとリリースを作らないと動かないため、まだ動かしていない。最初の版のリリースで確かめる。
+- リリースへの添付そのもの（`release.yml` の publish のジョブ）は、タグを付けないと動かないため、プルリクエストでは動かさない。v0.1.1 では添付の前のスモークテストで落ちた（Issue #190）。次の版のリリースで確かめる。
 
 ### 画像の層の持ち方の比較（2026-10-28）
 

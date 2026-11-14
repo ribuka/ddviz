@@ -9,6 +9,13 @@ Parquet データからグラフを組み立てて可視化するアプリです
 - 省メモリ指向
   - 巨大なデータをメモリに載せません。
 
+## 入手方法
+
+[GitHub の Releases](https://github.com/ribuka/ddviz/releases) の各版の Assets から取ります。
+
+- exe で使うとき：`ddviz-<版>-win-x64.zip` をダウンロードして展開し、`ddviz\ddviz.exe` を起動します（Windows x64）。Python や uv は要りません。
+- ソースから使うとき：GitHub が自動で付ける Source code（zip・tar.gz）を展開し、下の「起動方法」か「exe の作成方法」の手順で動かします。
+
 ## 起動方法
 
 [uv](https://docs.astral.sh/uv/) を使います。リポジトリのルートで実行してください。
