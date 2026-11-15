@@ -93,9 +93,11 @@ def bundled_dlls(root: Path) -> Iterator[Path]:
     folders = [root]
     while folders:
         folder = folders.pop()
+        # The whole folder is read before its DLLs are handed out: removing a
+        # mark must not change what is being listed.
+        dlls = []
         try:
-            entries = _scan(folder)
-            for entry in entries:
+            for entry in _scan(folder):
                 if _is_reparse_point(entry):
                     continue
                 if entry.is_dir(follow_symlinks=False):
@@ -103,9 +105,10 @@ def bundled_dlls(root: Path) -> Iterator[Path]:
                 elif entry.is_file(follow_symlinks=False) and entry.name.lower().endswith(
                     ".dll"
                 ):
-                    yield Path(entry.path)
+                    dlls.append(Path(entry.path))
         except OSError as error:
             raise UnblockError(folder, "list", error) from error
+        yield from dlls
 
 
 def _zone_stream(dll: Path) -> str:
