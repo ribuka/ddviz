@@ -9,6 +9,7 @@
 // While the plot's data is written in the same pool, the server refuses the
 // pages (409 `exporting`): the table says so, and fetches them once the
 // export has ended (`exportEnded`, Issue #194).
+import { attachDrag } from "./dragresize.js";
 
 const COLUMN_WIDTH = 120;
 const INDEX_WIDTH = 90;
@@ -74,27 +75,22 @@ export class SelectionTable {
 
   // Drags the drawer's top edge; the drawer covers more or less of the plot.
   attachResize(handle) {
-    handle.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      handle.setPointerCapture(event.pointerId);
+    attachDrag(handle, (event) => {
       const startY = event.clientY;
       const startHeight = this.root.offsetHeight;
       // Dragging the edge of a maximized table sizes it from there.
       this.root.style.height = `${startHeight}px`;
       this.setState("open");
       const limit = this.root.parentElement.clientHeight;
-      const move = (e) => {
-        const height = Math.min(Math.max(startHeight + startY - e.clientY, MIN_HEIGHT), limit);
-        this.root.style.height = `${height}px`;
-        this.render();
+      return {
+        move: (e) => {
+          const height = Math.min(Math.max(startHeight + startY - e.clientY, MIN_HEIGHT), limit);
+          this.root.style.height = `${height}px`;
+          this.render();
+        },
+        // A cancelled drag leaves the size where it was dragged to.
+        end: () => this.fetchInView(),
       };
-      const up = () => {
-        handle.removeEventListener("pointermove", move);
-        handle.removeEventListener("pointerup", up);
-        this.fetchInView();
-      };
-      handle.addEventListener("pointermove", move);
-      handle.addEventListener("pointerup", up);
     });
   }
 

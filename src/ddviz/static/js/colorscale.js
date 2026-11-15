@@ -33,7 +33,8 @@ export const COLOR_SETS = {
 // The page's choice of color set and direction, kept across plots.
 export const scale = { set: "viridis", reverse: false };
 
-function rgb(hex) {
+// Returns a color `#rrggbb` as [r, g, b].
+export function rgb(hex) {
   return [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
 }
 

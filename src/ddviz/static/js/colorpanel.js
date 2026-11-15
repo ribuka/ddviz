@@ -3,6 +3,7 @@
 // columns are hues and whose rows are lightnesses (the hues, then lighter
 // and darker ones, then grays from white to black), a native picker for any
 // other color, and the palette's color again.
+import { rgb } from "./colorscale.js";
 
 // The hues of the first row: the palette's colors (`ddviz.shared.palette.DEFAULT_COLORS`).
 const HUES = [
@@ -19,10 +20,6 @@ const HUES = [
 ];
 // Rows under the hues: a share of white (> 0) or of black (< 0) mixed in.
 const SHADES = [0.75, 0.5, 0.25, -0.25, -0.5];
-
-function rgb(hex) {
-  return [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
-}
 
 function hex(values) {
   return `#${values.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;

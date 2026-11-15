@@ -11,6 +11,7 @@
 // The ticks are made again for each range shown (`bandTickUpdate`): zoomed
 // in to bands that each hold their label, every level shown is named.
 
+import { axisKey } from "./axiskey.js";
 import { MARGIN_LEFT } from "./leftmargin.js";
 import { levelText } from "./names.js";
 
@@ -97,10 +98,6 @@ export function bandTicks(levels, range, length, across, room) {
   const tickvals = shown(step);
   const ticktext = tickvals.map((i) => plotlyText(fitText(levelText(levels[i]), room)));
   return { tickvals, ticktext };
-}
-
-function axisKey(id) {
-  return id.replace(/^([xy])/, "$1axis");
 }
 
 // Yields `[key, levels, across]` for each categorical axis of `meta`'s

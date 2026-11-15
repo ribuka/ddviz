@@ -131,3 +131,24 @@ def test_a_success_closes_by_its_button(js_page: Page) -> None:
     js_page.evaluate(SAVED, [{"saved": "a.csv"}])
     js_page.evaluate("() => window.box.querySelector('.toast-success .toast-close').click()")
     assert js_page.evaluate(LOOKS) == []
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (['{"detail":"bad"}', 400], "bad"),
+        (["oops", 500], "oops"),
+        (["", 502], "HTTP 502"),
+        ([""], ""),
+    ],
+)
+def test_error_text(js_page: Page, args: list, expected: str) -> None:
+    """`errorText` takes the JSON's `detail`, else the text; an empty text is `HTTP <status>` when a status is given."""
+    text = js_page.evaluate(
+        """async (args) => {
+          const { errorText } = await import("/static/js/notice.js");
+          return errorText(...args);
+        }""",
+        args,
+    )
+    assert text == expected

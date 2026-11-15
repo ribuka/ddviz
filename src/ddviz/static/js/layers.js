@@ -1,6 +1,7 @@
 // Series image layers drawn on one canvas from plotly's axes, instead of an
 // image trace per panel and series: plotly then only draws the axes, and a
 // legend click redraws the canvas instead of the figure.
+import { axisKey } from "./axiskey.js";
 import { POINTS_UNDER_BOXES, drawBoxes } from "./boxes.js";
 import { colorsNow, decode, seriesColors } from "./colorscale.js";
 import { drawPiles } from "./piles.js";
@@ -11,10 +12,6 @@ import { drawSmooths } from "./smooth.js";
 // so that a faded series still differs from an inactive one; an inactive
 // opacity set at 0.25 or above blurs the two, as the user chose.
 const SELECTION_DIM = 0.25;
-
-function axisKey(id) {
-  return id.replace(/^([xy])/, "$1axis");
-}
 
 // Fetches the PNGs of a result or layer (`source`: one file of task
 // `source.task`, sliced by `source.images`) and decodes them in the colors of

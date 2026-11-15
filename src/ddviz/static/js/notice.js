@@ -9,15 +9,16 @@ const MAX_TOASTS = 3;
 const EXIT_MS = 150;
 
 // Returns the message of an error response: its `detail` when it is JSON
-// (FastAPI's errors), else the text itself.
-export function errorText(text) {
+// (FastAPI's errors), else the text itself; an empty text is `HTTP <status>`
+// when `status` is given.
+export function errorText(text, status) {
   try {
     const detail = JSON.parse(text).detail;
     if (typeof detail === "string") return detail;
   } catch {
     // Not JSON: the text itself.
   }
-  return text;
+  return text === "" && status !== undefined ? `HTTP ${status}` : text;
 }
 
 // The status bar's message: plain, or an error with its icon and a toast.

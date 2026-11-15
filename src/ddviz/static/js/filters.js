@@ -21,7 +21,9 @@
 // (`部分一致`); only the mode shown sets its condition. A search or an order
 // only fetches the candidates: the plot is not aggregated again.
 import { draggedColumn } from "./builder.js";
+import { attachDrag } from "./dragresize.js";
 import { levelText } from "./names.js";
+import { errorText } from "./notice.js";
 import { formatTemporal, isDateKind, parseTemporal } from "./temporal.js";
 
 const TICK_SETTLE_MS = 400;
@@ -115,17 +117,6 @@ function openLevelMenu(button, order, pick) {
   menu.style.top = `${Math.max(4, Math.min(top, window.innerHeight - height - 4))}px`;
   levelMenu = menu;
   levelMenuButton = button;
-}
-
-// Returns the text of an error answer: its `detail`, or the text itself.
-function errorText(text, status) {
-  try {
-    const { detail } = JSON.parse(text);
-    if (typeof detail === "string") return detail;
-  } catch {
-    // Not JSON: the text as it is.
-  }
-  return text || `HTTP ${status}`;
 }
 
 // Returns the row of a level to tick: its box, its name and its rows (none
@@ -232,10 +223,7 @@ export class FilterPane {
   // it from either end; CSS fits it into a shorter left pane. A drag down from
   // the maximized pane brings it back to open; a click alone changes nothing.
   attachResize(handle) {
-    handle.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      handle.setPointerCapture(event.pointerId);
+    attachDrag(handle, (event) => {
       const startY = event.clientY;
       const startHeight = this.root.offsetHeight;
       // The head and the handle always fit.
@@ -243,23 +231,18 @@ export class FilterPane {
       const limit = Math.max(this.root.parentElement.clientHeight - MIN_COLUMNS_HEIGHT, floor);
       const lowest = Math.min(MIN_HEIGHT, limit);
       this.root.style.setProperty("--filter-floor", `${floor}px`);
-      const move = (e) => {
-        if (this.state === "maximized") {
-          if (e.clientY <= startY) return;
-          this.setState("open");
-        }
-        const height = Math.min(Math.max(startHeight + startY - e.clientY, lowest), limit);
-        this.root.style.setProperty("--filter-height", `${height}px`);
-        this.root.classList.add("sized");
+      return {
+        move: (e) => {
+          if (this.state === "maximized") {
+            if (e.clientY <= startY) return;
+            this.setState("open");
+          }
+          const height = Math.min(Math.max(startHeight + startY - e.clientY, lowest), limit);
+          this.root.style.setProperty("--filter-height", `${height}px`);
+          this.root.classList.add("sized");
+        },
+        end: () => {},
       };
-      const end = () => {
-        handle.removeEventListener("pointermove", move);
-        handle.removeEventListener("pointerup", end);
-        handle.removeEventListener("pointercancel", end);
-      };
-      handle.addEventListener("pointermove", move);
-      handle.addEventListener("pointerup", end);
-      handle.addEventListener("pointercancel", end);
     });
   }
 
