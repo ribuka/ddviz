@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import polars as pl
+
 from ddviz.shared.layout import (
     GAP,
     MARGIN_BOTTOM,
@@ -86,6 +88,36 @@ def test_axis_grid_nests_axis_columns_in_facet_cells() -> None:
                     assert axes.axes(panel) == (xi, yj)
                     seen.add(panel)
     assert seen == set(range(36))
+
+
+def test_place_lays_wrapped_levels_ncol_to_a_row() -> None:
+    """A wrapped grid places the cell of a col level at its row and col of `ncol` to a row."""
+    assert AxisGrid(nrow=2, ncol=3, wrap=5).place(0, 4) == (1, 1)
+
+
+def test_place_keeps_the_cell_of_a_grid() -> None:
+    """A grid of row and col levels places a cell at its own row and col."""
+    assert AxisGrid(nrow=2, ncol=3).place(1, 2) == (1, 2)
+
+
+def test_place_works_on_polars_expressions() -> None:
+    """The place of polars expressions is that of the ints."""
+    row, col = AxisGrid(nrow=2, ncol=3, wrap=5).place(pl.col("row"), pl.col("col"))
+    frame = pl.DataFrame({"row": [0, 0], "col": [0, 4]}).select(
+        row.alias("r"), col.alias("c")
+    )
+    assert frame["r"].to_list() == [0, 1]
+    assert frame["c"].to_list() == [0, 1]
+
+
+def test_place_is_the_inverse_of_facet() -> None:
+    """`facet` gives back the cell `place` put in a panel."""
+    for axes, cells in [
+        (AxisGrid(nrow=2, ncol=3, wrap=5), [(0, c) for c in range(5)]),
+        (AxisGrid(nrow=2, ncol=3), [(r, c) for r in range(2) for c in range(3)]),
+    ]:
+        for cell in cells:
+            assert axes.facet(axes.panel(*axes.place(*cell), 0, 0)) == cell
 
 
 def test_axis_columns_and_facets_share_one_gap() -> None:

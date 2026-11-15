@@ -12,6 +12,7 @@ from ddviz.compute.bands import JITTER_X, band_range, jitter, level_index
 from ddviz.compute.boxes import (
     GROUP,
     VALUE,
+    BoxGroups,
     box_stats,
     fences,
     is_outlier,
@@ -726,16 +727,23 @@ def aggregate(
     series = index("color") * len(levels["symbol"]) + index("symbol")
     # The facet cell of a box: the drawn row and col levels.
     row_level, col_level = row, col
-    if spec.wrap:
-        # The panel of a wrapped level is its index (`AxisGrid`).
-        row, col = col // axes.ncol, col % axes.ncol
+    # The panel of a wrapped level is its index (`AxisGrid`).
+    row, col = axes.place(row, col)
     valid = drawn_conditions(spec)
+
+    def box_groups(x_col: str) -> BoxGroups:
+        """Return the boxes of the pairs of an x column."""
+        return BoxGroups(
+            len(levels["row"]),
+            len(levels["col"]),
+            len(axis_levels[x_col]),
+            grid.n_series,
+        )
 
     def group(x_col: str) -> pl.Expr:
         """Return each row's box among those of a pair: its facet cell, x level and series."""
-        cell = row_level * len(levels["col"]) + col_level
         level = level_index(x_col, axis_levels[x_col])
-        return (cell * len(axis_levels[x_col]) + level) * grid.n_series + series
+        return box_groups(x_col).key(row_level, col_level, level, series)
 
     known_boxes_of = {(b.x, b.y): b for b in known_boxes}
     boxes = []
@@ -751,19 +759,16 @@ def aggregate(
                 continue
             value = pl.col(y_col).cast(pl.Float64)
             frame = (
-                _scan(spec, [x_col, y_col, *used, *filter_columns(spec.filters)])
+                _scan(spec, _kept_columns(spec, [x_col, y_col, *used]))
                 .filter(
                     pl.col(x_col).is_not_null(),
                     # On a log axis, the box of the positive values.
                     on_axis(value, y_col in spec.log_y),
-                    *valid,
-                    *filter_conditions(spec.filters),
+                    *_kept(spec),
                 )
                 .select(group(x_col).alias(GROUP), value.alias(VALUE))
             )
-            boxes.append(
-                _boxes(x_col, y_col, box_stats(frame), levels, axis_levels, grid)
-            )
+            boxes.append(_boxes(x_col, y_col, box_stats(frame), box_groups(x_col)))
     boxes_of = {(b.x, b.y): b for b in boxes}
 
     known_smooths_of = {(k.x, k.y): k for k in known_smooths}
@@ -797,7 +802,6 @@ def aggregate(
                     x_col,
                     y_col,
                     used,
-                    valid,
                     row_level,
                     col_level,
                     series,
@@ -813,7 +817,6 @@ def aggregate(
             spec,
             pairs_with_lines,
             used,
-            valid,
             lambda xi, yj: axes.panel(row, col, xi, yj),
             index("color"),
             len(levels["color"]),
@@ -851,10 +854,9 @@ def aggregate(
                 grid.n_series,
                 jitter(INDEX, JITTER_X),
             )
-            n_groups = len(levels["row"]) * len(levels["col"])
-            n_groups *= len(axis_levels[x_col]) * grid.n_series
-            stats = _group_stats(boxes_of[x_col, y_col], levels, axis_levels, grid)
-            outlier = is_outlier(y, group(x_col), fences(stats, n_groups))
+            groups = box_groups(x_col)
+            stats = _group_stats(boxes_of[x_col, y_col], groups)
+            outlier = is_outlier(y, group(x_col), fences(stats, groups.size))
         # Positions on the axes: the log10 of a value on a log axis; the
         # outliers above are of the values themselves.
         x = position(x, x_col in spec.log_x)
@@ -912,14 +914,11 @@ def aggregate(
         x_col, y_col = spec.x[xi], spec.y[yj]
         x = Axis(x_col in categorical, *x_ranges[xi], grid.width, x_col in spec.log_x)
         y = Axis(y_col in categorical, *y_ranges[yj], grid.height, y_col in spec.log_y)
-        columns = [x_col, y_col, *used, *extra_columns, *filter_columns(spec.filters)]
+        columns = _kept_columns(spec, [x_col, y_col, *used, *extra_columns])
         n_col = len(levels["col"])
         panels = []
         for cell in range(len(levels["row"]) * n_col):
-            r, c = divmod(cell, n_col)
-            if spec.wrap:
-                # The panel of a wrapped level is its index (`AxisGrid`).
-                r, c = divmod(c, axes.ncol)
+            r, c = axes.place(*divmod(cell, n_col))
             panels.append(axes.panel(r, c, xi, yj))
         frame, coordinates = stack_frame(
             {c: spec.files[c] for c in dict.fromkeys(columns)},
@@ -929,7 +928,7 @@ def aggregate(
             x,
             y,
             axis_levels,
-            [*valid, *filter_conditions(spec.filters)],
+            _kept(spec),
             row_level * n_col + col_level,
             panels,
             series,
@@ -1065,11 +1064,20 @@ def _overview_range(spec: ScatterSpec, column: str) -> tuple[float, float]:
     return _padded(*_range_query(spec, column).collect(engine="streaming").row(0))
 
 
+def _kept(spec: ScatterSpec) -> list[pl.Expr]:
+    """Return the conditions of the rows drawn that pass the local filter: `drawn_conditions` then `filter_conditions`."""
+    return [*drawn_conditions(spec), *filter_conditions(spec.filters)]
+
+
+def _kept_columns(spec: ScatterSpec, columns: list[str]) -> list[str]:
+    """Return `columns` then the columns the local filter reads."""
+    return [*columns, *filter_columns(spec.filters)]
+
+
 def _lines(
     spec: ScatterSpec,
     pairs: set[tuple[str, str]],
     used: list[str],
-    valid: list[pl.Expr],
     panel: Callable[[int, int], pl.Expr],
     color: pl.Expr,
     n_colors: int,
@@ -1095,8 +1103,8 @@ def _lines(
             if (x_col, y_col) not in pairs:
                 continue
             rows = _scan(
-                spec, [x_col, y_col, *used, *filter_columns(spec.filters)], INDEX
-            ).filter(*valid, *filter_conditions(spec.filters))
+                spec, _kept_columns(spec, [x_col, y_col, *used]), INDEX
+            ).filter(*_kept(spec))
             frame = line_frame(
                 rows,
                 x_col,
@@ -1132,7 +1140,6 @@ def _smooths(
     x_col: str,
     y_col: str,
     used: list[str],
-    valid: list[pl.Expr],
     row: pl.Expr,
     col: pl.Expr,
     series: pl.Expr,
@@ -1143,11 +1150,10 @@ def _smooths(
     x = pl.col(x_col).cast(pl.Float64)
     y = pl.col(y_col).cast(pl.Float64)
     # On a log axis, only the positive values have a place to be drawn.
-    frame = _scan(spec, [x_col, y_col, *used, *filter_columns(spec.filters)]).filter(
+    frame = _scan(spec, _kept_columns(spec, [x_col, y_col, *used])).filter(
         on_axis(x, x_col in spec.log_x),
         on_axis(y, y_col in spec.log_y),
-        *valid,
-        *filter_conditions(spec.filters),
+        *_kept(spec),
     )
     n_col = len(levels["col"])
     bins = bin_query(frame, x, y, row * n_col + col, series, bounds).collect(
@@ -1160,39 +1166,16 @@ def _smooths(
     return Smooths(x=x_col, y=y_col, lines=lines)
 
 
-def _boxes(
-    x: str,
-    y: str,
-    stats: dict[int, list[float]],
-    levels: dict[str, list],
-    axis_levels: dict[str, list[str]],
-    grid: BinGrid,
-) -> Boxes:
+def _boxes(x: str, y: str, stats: dict[int, list[float]], groups: BoxGroups) -> Boxes:
     """Return the box plots of a pair from the boxes of its groups (`aggregate`'s ``group``)."""
-    n_levels, n_series, n_col = len(axis_levels[x]), grid.n_series, len(levels["col"])
-    rows = []
-    for g in sorted(stats):
-        cell, rest = divmod(g, n_levels * n_series)
-        level, series = divmod(rest, n_series)
-        row, col = divmod(cell, n_col)
-        rows.append([row, col, level, series, *stats[g]])
+    rows = [[*groups.parts(g), *stats[g]] for g in sorted(stats)]
     return Boxes(x=x, y=y, stats=rows)
 
 
-def _group_stats(
-    boxes: Boxes,
-    levels: dict[str, list],
-    axis_levels: dict[str, list[str]],
-    grid: BinGrid,
-) -> dict[int, list[float]]:
+def _group_stats(boxes: Boxes, groups: BoxGroups) -> dict[int, list[float]]:
     """Return the boxes of a pair by their group, as `ddviz.compute.boxes.box_stats` gives them."""
-    n_levels, n_series, n_col = (
-        len(axis_levels[boxes.x]),
-        grid.n_series,
-        len(levels["col"]),
-    )
     return {
-        ((row * n_col + col) * n_levels + level) * n_series + series: stats
+        groups.key(row, col, level, series): stats
         for row, col, level, series, *stats in (
             [int(v) for v in b[:4]] + b[4:] for b in boxes.stats
         )

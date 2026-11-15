@@ -218,6 +218,27 @@ class AxisGrid:
         """
         return (row * self.ny + yj) * self.cols + col * self.nx + xi
 
+    def place(self, row: T, col: T) -> tuple[T, T]:
+        """Return the facet row and col of the panels of a facet cell; works on ints or polars expressions.
+
+        A wrapped grid lays the col levels out `ncol` to a row: the cell of
+        level ``col`` is at ``(col // ncol, col % ncol)``. Otherwise the cell
+        is at ``(row, col)``. `facet` is the inverse.
+
+        Parameters
+        ----------
+        row, col : int or polars.Expr
+            Indices of the row and the col level of the cell.
+
+        Returns
+        -------
+        tuple of int or polars.Expr
+            The facet row and col to pass to `panel`.
+        """
+        if self.wrap:
+            return col // self.ncol, col % self.ncol
+        return row, col
+
     def axes(self, panel: int) -> tuple[int, int]:
         """Return the indices of the x and the y column of a panel.
 
@@ -246,7 +267,7 @@ class AxisGrid:
         -------
         tuple of int
             ``(row, col)``; in a wrapped grid, the row is 0 and the col is
-            the panel's facet cell.
+            the panel's facet cell. The inverse of `place`.
         """
         prow, pcol = divmod(panel, self.cols)
         row, col = prow // self.ny, pcol // self.nx
