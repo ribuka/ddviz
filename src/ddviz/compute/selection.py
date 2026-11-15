@@ -11,15 +11,15 @@ import math
 
 import polars as pl
 
-from ddviz.compute.axisposition import position
-from ddviz.compute.bands import BAND, level_index
+from ddviz.compute.axisposition import position, within
+from ddviz.compute.bands import band_center, level_index
 from ddviz.compute.cuts import in_level
 from ddviz.compute.missing import drawn_conditions, role_index
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.stacked import marker_boxes, stack_frame
 from ddviz.compute.stacks import DX, DY, PX, PY, Axis, ranked, stack_groups
 from ddviz.shared.layout import GAP, WRAP_GAP, facet_grid, grid_layout
-from ddviz.shared.scatter import ScatterSpec
+from ddviz.shared.scatter import BAND, ScatterSpec
 
 # Whether a row's center is in the box along x and along y (`_stacked`).
 _IN_X = "__in_x"
@@ -60,8 +60,14 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
     cell = _cell_conditions(spec)
     if spec.points or (selection.x, selection.y) not in spec.box_pairs():
         # Positions on the axes: the log10 of a value on a log axis.
-        x = position(_center(selection.x, axis_levels), selection.x in spec.log_x)
-        y = position(_center(selection.y, axis_levels), selection.y in spec.log_y)
+        x = position(
+            band_center(selection.x, axis_levels.get(selection.x)),
+            selection.x in spec.log_x,
+        )
+        y = position(
+            band_center(selection.y, axis_levels.get(selection.y)),
+            selection.y in spec.log_y,
+        )
         if {selection.x, selection.y} & set(spec.categorical):
             return [
                 x.is_finite(),
@@ -69,12 +75,7 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
                 _stacked(spec, index, cell, x, y),
                 *cell,
             ]
-        conditions = [
-            x.is_finite(),
-            y.is_finite(),
-            x.is_between(*selection.x_range),
-            y.is_between(*selection.y_range),
-        ]
+        conditions = [within(x, *selection.x_range), within(y, *selection.y_range)]
     else:
         lo, hi = selection.x_range
         level = level_index(selection.x, axis_levels[selection.x])
@@ -85,13 +86,6 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
             y.is_between(*selection.y_range),
         ]
     return conditions + cell
-
-
-def _center(column: str, axis_levels: dict[str, list[str]]) -> pl.Expr:
-    """Return where a row's center lies along an axis: its level's index, or its number."""
-    if column in axis_levels:
-        return level_index(column, axis_levels[column], strict=False).cast(pl.Float64)
-    return pl.col(column).cast(pl.Float64)
 
 
 def _cell_conditions(spec: ScatterSpec) -> list[pl.Expr]:

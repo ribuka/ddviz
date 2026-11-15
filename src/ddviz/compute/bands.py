@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import polars as pl
 
-# Half the width of a band, as a part of the step between levels.
-BAND = 0.4
 # Step of the jitter by row index: the golden ratio's, so that consecutive
 # rows spread evenly.
 JITTER_X = 0.6180339887498949
@@ -33,6 +31,26 @@ def band_range(levels: list) -> tuple[float, float]:
         ``(-0.5, n - 0.5)``; ``(-0.5, 0.5)`` without levels.
     """
     return (-0.5, max(len(levels), 1) - 0.5)
+
+
+def band_center(column: str, levels: list[str] | None) -> pl.Expr:
+    """Return where a row's center lies along an axis, as a float: its level's index among `levels`, or its value without levels.
+
+    Parameters
+    ----------
+    column : str
+        The axis column.
+    levels : list of str or None
+        The column's levels on a categorical axis; None on a numeric axis.
+
+    Returns
+    -------
+    polars.Expr
+        The centers: null for a value that is not among the levels.
+    """
+    if levels is not None:
+        return level_index(column, levels, strict=False).cast(pl.Float64)
+    return pl.col(column).cast(pl.Float64)
 
 
 def level_index(column: str, levels: list[str], strict: bool = True) -> pl.Expr:

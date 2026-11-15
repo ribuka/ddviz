@@ -22,7 +22,7 @@ from ddviz.shared.layout import (
 )
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.missing import shown_level
-from ddviz.shared.scatter import ONE_BAND, ScatterSpec
+from ddviz.shared.scatter import BAND, ONE_BAND, ScatterSpec
 from ddviz.shared.shapes import SHAPES, kernel
 from ddviz.shared.temporal import DATE_KINDS
 
@@ -34,8 +34,6 @@ FRAME_COLOR = "#aaa"
 PAPER_COLOR = "#f5f5f5"
 PLOT_COLOR = "#fff"
 _FRAME = {"showline": True, "mirror": True, "linecolor": FRAME_COLOR, "linewidth": 1}
-# Half the width of a band of a categorical axis (`ddviz.compute.bands.BAND`).
-BAND = 0.4
 # Room between the tick labels of a categorical axis, and from a y tick label
 # to the left edge, in pixels.
 TICK_PAD = 6

@@ -17,8 +17,8 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 
-from ddviz.compute.axisposition import position
-from ddviz.compute.bands import level_index
+from ddviz.compute.axisposition import position, within
+from ddviz.compute.bands import band_center, level_index
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.stacks import (
     DX,
@@ -130,13 +130,6 @@ def _key(column: str, levels: list[str] | None, dtype: pl.DataType) -> pl.Expr:
     return key_value(pl.col(column), dtype)
 
 
-def _center(column: str, levels: list[str] | None) -> pl.Expr:
-    """Return the position of a row's center along an axis: its level's index or its number."""
-    if levels is not None:
-        return level_index(column, levels, strict=False).cast(pl.Float64)
-    return pl.col(column).cast(pl.Float64)
-
-
 def stack_frame(
     files: dict[str, list[str]],
     index: str,
@@ -200,8 +193,8 @@ def stack_frame(
         )
     )
     # The center of a row on a log axis is the log10 of its value.
-    cx = position(_center(x_col, levels_of[x_col]), x.log)
-    cy = position(_center(y_col, levels_of[y_col]), y.log)
+    cx = position(band_center(x_col, levels_of[x_col]), x.log)
+    cy = position(band_center(y_col, levels_of[y_col]), y.log)
     widths, heights = boxes
     packed = cell.cast(pl.Int64)
     value, dtype = pl.lit(0, pl.Int64), None
@@ -223,10 +216,8 @@ def stack_frame(
     )
     frame = (
         frame.filter(
-            cx.is_finite(),
-            cy.is_finite(),
-            cx.is_between(x.lo, x.hi),
-            cy.is_between(y.lo, y.hi),
+            within(cx, x.lo, x.hi),
+            within(cy, y.lo, y.hi),
             *conditions,
         )
         .with_columns(packed.alias(KC), value.alias(KV))

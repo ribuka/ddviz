@@ -13,12 +13,11 @@ import pytest
 
 from ddviz.compute import stacks
 from ddviz.compute.aggregate import COUNT, INDEX, KEY, Aggregation, aggregate
-from ddviz.compute.bands import BAND
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.selection import selection_columns, selection_filter
 from ddviz.compute.stacked import ROWS
 from ddviz.compute.stacks import KEYS, N
-from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
+from ddviz.shared.scatter import BAND, Filter, ScatterSpec, Selection, View
 
 
 def _spec(tmp_path: Path, frame: pl.DataFrame, **fields: object) -> ScatterSpec:

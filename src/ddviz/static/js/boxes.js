@@ -5,7 +5,7 @@
 // values: on a log y axis, at their exponents (`axisscale.js`).
 import { isLogAxis, toPosition } from "./axisscale.js";
 
-// Half the width of a band (`ddviz.compute.bands.BAND`), and the width of a
+// Half the width of a band (`ddviz.shared.scatter.BAND`), and the width of a
 // box as a part of its series' slot (`ddviz.compute.boxes.BOX`).
 const BAND = 0.4;
 const BOX = 0.8;
