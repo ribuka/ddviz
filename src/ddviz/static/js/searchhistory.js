@@ -8,6 +8,8 @@
 // ↓ and ↑ move through the keywords and Enter picks one; typing or Escape
 // closes the list, and ↓ opens it again.
 
+import { plainEnter } from "./keys.js";
+
 export function attachSearchHistory(input, onPick) {
   let menu = null;
   let words = [];
@@ -137,7 +139,7 @@ export function attachSearchHistory(input, onPick) {
       active = (active + step + words.length + 1) % (words.length + 1);
       if (active === words.length) active = -1;
       showActive();
-    } else if (event.key === "Enter" && menu && active >= 0) {
+    } else if (plainEnter(event) && menu && active >= 0) {
       event.preventDefault();
       pick(words[active]);
     }

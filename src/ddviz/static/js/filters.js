@@ -22,6 +22,7 @@
 // only fetches the candidates: the plot is not aggregated again.
 import { draggedColumn } from "./builder.js";
 import { attachDrag } from "./dragresize.js";
+import { plainEnter } from "./keys.js";
 import { levelText } from "./names.js";
 import { errorText } from "./notice.js";
 import { formatTemporal, isDateKind, parseTemporal } from "./temporal.js";
@@ -208,11 +209,6 @@ function clearBar(title) {
   clear.title = title;
   bar.append(counter, clear);
   return { bar, counter, clear };
-}
-
-// Whether a key is an Enter that does not commit an IME conversion.
-export function plainEnter(event) {
-  return event.key === "Enter" && !event.isComposing && event.keyCode !== 229;
 }
 
 export class FilterPane {
@@ -746,7 +742,7 @@ export class FilterPane {
         this.commit();
       });
       input.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") input.blur();
+        if (plainEnter(event)) input.blur();
       });
     });
     const reset = document.createElement("button");

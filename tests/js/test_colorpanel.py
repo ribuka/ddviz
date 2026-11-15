@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page
 
+from tests.js.test_keys import press_conversion_enters, press_plain_enter
+
 pytestmark = pytest.mark.js
 
 
@@ -30,3 +32,20 @@ def test_a_code_takes_3_or_6_digits_with_or_without_its_hash(js_page: Page) -> N
         list(cases),
     )
     assert result == list(cases.values())
+
+
+def test_enter_in_the_code_picks_it_unless_it_commits_a_conversion(js_page: Page) -> None:
+    """Enter in the HEX field picks its color; the Enter of an IME conversion does not."""
+    js_page.evaluate(
+        """async () => {
+          const { colorPanel } = await import("/static/js/colorpanel.js");
+          window.picked = [];
+          document.body.replaceChildren(colorPanel("#1f77b4", (color) => window.picked.push(color)));
+        }"""
+    )
+    code = js_page.locator(".color-hex-input")
+    code.fill("#ff0000")
+    press_conversion_enters(code)
+    assert js_page.evaluate("window.picked") == []
+    press_plain_enter(code)
+    assert js_page.evaluate("window.picked") == ["#ff0000"]

@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page
 
+from tests.js.test_keys import press_conversion_enters, press_plain_enter
+
 pytestmark = pytest.mark.js
 
 
@@ -696,17 +698,15 @@ def test_the_four_kinds_of_cards_give_their_conditions_and_summary(js_page: Page
     assert got["summary"] == "n: 2〜7、g: 2/3、id: 2/5000、t: 「ab」を含む"
 
 
-def test_plain_enter_leaves_out_the_enter_of_a_conversion(js_page: Page) -> None:
-    """Only an Enter that does not commit an IME conversion is plain."""
-    got = js_page.evaluate(
-        """async () => {
-          const { plainEnter } = await import("/static/js/filters.js");
-          return [
-            { key: "Enter" },
-            { key: "Enter", isComposing: true },
-            { key: "Enter", keyCode: 229 },
-            { key: "a" },
-          ].map(plainEnter);
-        }"""
-    )
-    assert got == [True, False, False, False]
+def test_enter_in_an_end_of_a_numeric_card_leaves_it_unless_it_commits_a_conversion(
+    js_page: Page,
+) -> None:
+    """Enter in the lower end of a numeric card leaves the field; the Enter of an IME conversion does not."""
+    page = js_page
+    page.evaluate(PANE)
+    low = page.locator(".filter-range input").first
+    low.focus()
+    press_conversion_enters(low)
+    assert low.evaluate("(field) => document.activeElement === field")
+    press_plain_enter(low)
+    assert not low.evaluate("(field) => document.activeElement === field")

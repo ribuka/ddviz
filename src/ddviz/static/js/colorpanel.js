@@ -4,6 +4,7 @@
 // and darker ones, then grays from white to black), a native picker for any
 // other color, and the palette's color again.
 import { rgb } from "./colorscale.js";
+import { plainEnter } from "./keys.js";
 
 // The hues of the first row: the palette's colors (`ddviz.shared.palette.DEFAULT_COLORS`).
 const HUES = [
@@ -115,7 +116,7 @@ function hexField(current, onPick) {
   };
   text.addEventListener("input", () => text.classList.remove("invalid"));
   text.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
+    if (!plainEnter(event)) return;
     event.preventDefault();
     pick();
   });
