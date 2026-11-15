@@ -337,6 +337,8 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 - UI のサーバーが自分で読む manifest だけ型にする：plot（`PlotManifest`。spec、`BinGrid`、`GridLayout`、`AxisGrid`、ホバーの列 `HoverColumn` などを型で持つ）と selection（`SelectionManifest`）。`write` と `read` で JSON にする。読み手は `figure.py`、`derive.py`、`hover.py` と API。
 - schema、nonnull、summary、table の manifest は dict のまま。UI のサーバーはほとんど中身を見ずに画面へ渡すため、型にしても得るものが少ない。
 - 理由：以前は manifest もタスクも文字列のキーで読み書きしていて（plot の manifest だけで約 36 か所）、キーの書き間違いが実行するまで分からなかった。
+- 画面に渡す図の meta は、`ddviz.server.figure.FigureMeta`（`TypedDict`）に、キーと型と意味を書く（2026-11-15 決定。Issue #237）。dict のまま JSON にする。`api_plot.py` が足すキー（`task`・`piles`・`filters`・`hover` と時間の値など）は入れず、`api_plot.py` の `figure` の docstring に書く。理由：キーの意味が `build_figure` の docstring と dict の中のコメントに散り、型も無かった。dict のままなら `JSONResponse` の作り方と値を変えずに済む。
+- 画面との文字列の取り決めは、テストで照らし合わせる（2026-11-15 決定。Issue #237）。meta のキーは `FigureMeta` と一致すること（`tests/server/test_figure.py`）、`static/js/*.js` が `meta.key` と ``meta[`${…}_key`]`` の形で読むキーが実際の `/api/plot` の応答の meta にあること（`tests/server/test_app.py`。別の名前の変数から読む所は集めない）、計算側が送る進捗の段の名前が `app.js` の `STAGES` のキーか、テストの `NOT_IN_STAGES`（理由つき）にあること（`tests/compute/test_progress_stages.py`）。理由：画面が読むキーを消したり、段を足して `STAGES` に足し忘れたりしても、エラーにならず（段は「処理中…」が出るだけ）テストでも分からなかった。
 - 型にする前と後で、画面が受け取る JSON（描画、ズーム、大きさの変更、範囲選択、表、ホバー。カテゴリの色・第 2 の Y・グラデーション・数値の facet・ローカルフィルタの 4 通り）が、時間の値を除いてバイト単位で同じことを確かめた（2026-10-30）。
 
 E2E テスト（2026-10-30 決定）：

@@ -10,7 +10,13 @@ import polars as pl
 import pytest
 
 from ddviz.compute.tasks.plot import run_plot
-from ddviz.server.figure import FRAME_COLOR, PAPER_COLOR, PLOT_COLOR, build_figure
+from ddviz.server.figure import (
+    FRAME_COLOR,
+    PAPER_COLOR,
+    PLOT_COLOR,
+    FigureMeta,
+    build_figure,
+)
 from ddviz.shared.manifest import IMAGES, PlotManifest
 from ddviz.shared.scatter import ONE_BAND, ScatterSpec, View
 
@@ -548,3 +554,11 @@ def test_categorical_levels_go_as_they_are_and_numbers_write_e(tmp_path: Path) -
     assert "<b>bold</b>" in levels
     assert any(v.startswith("level_") and not v.endswith("…") for v in levels)
     assert result["figure"]["layout"]["yaxis"]["exponentformat"] == "e"
+
+
+def test_the_meta_has_the_keys_of_figure_meta(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """The meta has every key `FigureMeta` writes down, and no other."""
+    result = _figure(scatter_spec, tmp_path / "task")
+    assert set(result["meta"]) == set(FigureMeta.__annotations__)

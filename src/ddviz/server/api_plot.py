@@ -131,7 +131,16 @@ def plot_router(
         return index, timing
 
     def figure(index: HoverIndex, timing: dict) -> JSONResponse:
-        """Return the figure of a result; the page fetches its images on their own."""
+        """Return the figure of a result; the page fetches its images on their own.
+
+        To the meta of `build_figure` (`ddviz.server.figure.FigureMeta`) it
+        adds the task (``task``), the piles the page draws (``piles``), the local
+        filters drawn (``filters``), what the hover holds (``hover``:
+        ``files``, ``dropped``, ``bytes``, ``kept``, ``limit_gb``), and
+        ``timing``: the seconds of the task (``task_seconds``) and, for
+        ``/api/plot``, of the conversion (``convert_seconds``), the encoding
+        (``encoding``) and the roles placed but not drawn (``undrawn``).
+        """
         result = build_figure(index.manifest)
         result["meta"]["task"] = int(index.out.name)
         result["meta"]["piles"] = index.piles()
