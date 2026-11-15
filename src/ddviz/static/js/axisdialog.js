@@ -448,46 +448,45 @@ function numberText(value) {
 
 let open = null;
 
-// Opens the dialog of an axis column of `kind` (`dialogKind`). `title` heads
-// it ("X 軸: x"), `range` is the range shown (ascending), `settings` the
-// column's (`emptySettings` for none), `drawn` plotly's interval of the
-// drawn axis (`drawnUnit`), `angle` that of its tick labels (null for
-// plotly's own). `onApply(settings, range, angle)` draws them, on OK
-// (which closes the dialog) and on Apply (which keeps it open); Cancel and
-// Esc close it, keeping what was applied. An end left as written is the
-// very value it was written from, so that applying a range left alone
-// moves no axis. A categorical axis shows the fields of a numeric one
-// disabled: only the angle is checked and applied (`onApply(null, null,
-// angle)`). A temporal axis has no angle (`angle` undefined to `onApply`).
-export function openAxisDialog({ title, kind = "number", range, settings, drawn = null, angle = null, onApply }) {
-  const category = kind === "category";
-  if (category) kind = "number";
-  const temporal = kind !== "number";
-  open?.close();
-  const dialog = document.createElement("dialog");
-  dialog.className = "axis-dialog";
-  const head = document.createElement("h2");
-  head.className = "axis-dialog-title";
-  head.textContent = title;
-  dialog.append(head);
+// The dialog being built: the <dialog>, the kind of its axis ("number",
+// a temporal kind; a categorical axis builds a numeric one), and the error
+// line of each field by name. `section(heading)` appends a section;
+// `field(section, label, value, name, placeholder)` appends a labeled text
+// field with its error line (and "秒" for a duration's values) and returns its input.
+class DialogForm {
+  constructor(kind) {
+    this.kind = kind;
+    this.dialog = document.createElement("dialog");
+    this.dialog.className = "axis-dialog";
+    this.errors = new Map();
+  }
 
-  const errors = new Map();
-  const field = (section, label, value, name, placeholder = "") => {
+  section(heading) {
+    const box = document.createElement("section");
+    box.className = "axis-dialog-section";
+    const h = document.createElement("h3");
+    h.textContent = heading;
+    box.append(h);
+    this.dialog.append(box);
+    return box;
+  }
+
+  field(section, label, value, name, placeholder = "") {
     const row = document.createElement("label");
     row.className = "axis-dialog-field";
     const text = document.createElement("span");
     text.className = "axis-dialog-label";
     text.textContent = label;
     const input = document.createElement("input");
-    const typed = isDateKind(kind) && ["min", "max", "line"].includes(name) ? "text" : "decimal";
+    const typed = isDateKind(this.kind) && ["min", "max", "line"].includes(name) ? "text" : "decimal";
     Object.assign(input, { type: "text", inputMode: typed, value, placeholder, name });
     input.spellcheck = false;
     const error = document.createElement("span");
     error.className = "axis-dialog-error";
-    errors.set(name, error);
+    this.errors.set(name, error);
     row.append(text, input);
     // The values of a duration are seconds.
-    if (kind === "duration" && ["min", "max", "line"].includes(name)) {
+    if (this.kind === "duration" && ["min", "max", "line"].includes(name)) {
       const unit = document.createElement("span");
       unit.className = "axis-dialog-unit";
       unit.textContent = "秒";
@@ -496,27 +495,39 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
     row.append(error);
     section.append(row);
     return input;
-  };
-  const section = (heading) => {
-    const box = document.createElement("section");
-    box.className = "axis-dialog-section";
-    const h = document.createElement("h3");
-    h.textContent = heading;
-    box.append(h);
-    dialog.append(box);
-    return box;
-  };
+  }
+}
 
-  const rangeBox = section("範囲");
-  const min = field(rangeBox, "最小値", valueText(kind, range[0]), "min");
-  const max = field(rangeBox, "最大値", valueText(kind, range[1]), "max");
+// The range's fields: {min, max, known()}; `known()` is the ends as written
+// and the values they stand for (`readFields`), `remember(range)` sets it
+// after an apply.
+function rangeFields(form, range) {
+  const box = form.section("範囲");
+  const min = form.field(box, "最小値", valueText(form.kind, range[0]), "min");
+  const max = form.field(box, "最大値", valueText(form.kind, range[1]), "max");
   // The ends as written, and the values they stand for (`readFields`).
-  let known = {
-    min: { text: min.value, value: range[0] },
-    max: { text: max.value, value: range[1] },
+  const written = (values) => ({
+    min: { text: min.value, value: values[0] },
+    max: { text: max.value, value: values[1] },
+  });
+  let known = written(range);
+  return {
+    min,
+    max,
+    known: () => known,
+    remember: (applied) => {
+      known = written(applied);
+    },
   };
-  const ticksBox = section("目盛り");
-  const dtick = field(ticksBox, "間隔", numberText(settings.dtick), "dtick", "自動");
+}
+
+// The ticks' fields: {dtick, unit, minor, monthly, format, digits,
+// separators, turn, calendarFields}; `turn` is null on a temporal axis.
+function tickFields(form, settings, drawn, angle) {
+  const { kind, errors } = form;
+  const temporal = kind !== "number";
+  const box = form.section("目盛り");
+  const dtick = form.field(box, "間隔", numberText(settings.dtick), "dtick", "自動");
   // The unit of a temporal interval: the one set, else that of plotly's ticks.
   const calendar = hasCalendar(kind);
   const unit = document.createElement("select");
@@ -530,7 +541,7 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
   // The minor splits of a fixed interval, and in their place the check of
   // the minor ticks of a calendar one: two inputs, neither turned into the other.
   const setCalendar = isCalendar(settings.unit);
-  const minor = field(ticksBox, "補助目盛りの数", setCalendar ? "" : numberText(settings.minor), "minor", "なし");
+  const minor = form.field(box, "補助目盛りの数", setCalendar ? "" : numberText(settings.minor), "minor", "なし");
   minor.inputMode = "numeric";
   const most = temporal ? MAX_TEMPORAL_MINOR : MAX_MINOR;
   minor.title = `主目盛りの 1 間隔を何分割するか（2〜${most}）。間隔を入れたときだけ使える`;
@@ -567,15 +578,15 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
   formatLabel.className = "axis-dialog-label";
   formatLabel.textContent = "表示形式";
   formatRow.append(formatLabel, format);
-  ticksBox.append(formatRow);
-  const digits = field(ticksBox, "小数桁数", numberText(settings.digits ?? DEFAULT_DIGITS), "digits");
+  box.append(formatRow);
+  const digits = form.field(box, "小数桁数", numberText(settings.digits ?? DEFAULT_DIGITS), "digits");
   digits.inputMode = "numeric";
   const separators = document.createElement("input");
   Object.assign(separators, { type: "checkbox", name: "separators", checked: settings.separators });
   const separatorsRow = document.createElement("label");
   separatorsRow.className = "axis-dialog-field axis-dialog-check";
   separatorsRow.append(separators, "3 桁区切り (,)");
-  ticksBox.append(separatorsRow);
+  box.append(separatorsRow);
   const usable = () => {
     digits.disabled = !USES_DIGITS.has(format.value);
     separators.disabled = !USES_SEPARATORS.has(format.value);
@@ -587,24 +598,26 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
   if (temporal) {
     for (const row of [formatRow, digits.parentElement, separatorsRow]) row.remove();
   }
-  const turn = temporal ? null : field(ticksBox, "ラベルの角度 (°)", angle === null ? "" : String(angle), "angle", "自動");
+  const turn = temporal ? null : form.field(box, "ラベルの角度 (°)", angle === null ? "" : String(angle), "angle", "自動");
   if (turn) {
     turn.inputMode = "numeric";
     turn.title = "−90〜90 の整数。0 は水平、正は時計回り。空欄は自動";
     turn.parentElement.classList.add("axis-dialog-angle");
   }
+  return { dtick, unit, minor, monthly, format, digits, separators, turn, calendarFields };
+}
 
-  const linesBox = section("参照線");
-  const value = field(linesBox, "値", "", "line");
-  const add = document.createElement("button");
-  add.type = "button";
-  add.textContent = "追加";
+// The reference lines: {value, lines()}; `lines()` returns copies of the lines listed.
+function lineFields(form, settings) {
+  const { kind, errors } = form;
+  const box = form.section("参照線");
+  const value = form.field(box, "値", "", "line");
+  const add = Object.assign(document.createElement("button"), { type: "button", textContent: "追加" });
   value.parentElement.insertBefore(add, errors.get("line"));
   const list = document.createElement("div");
   list.className = "axis-dialog-lines";
-  linesBox.append(list);
+  box.append(list);
   let lines = settings.lines.map((line) => ({ ...line }));
-
   const renderLines = () => {
     list.replaceChildren(
       ...lines.map((line, i) => {
@@ -638,7 +651,6 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
     list.hidden = !lines.length;
   };
   renderLines();
-
   const addLine = () => {
     const read = readValue(kind, value.value);
     errors.get("line").textContent = read.error ?? "";
@@ -653,16 +665,46 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
     event.preventDefault();
     addLine();
   });
+  return { value, lines: () => lines.map((line) => ({ ...line })) };
+}
 
-  // A categorical axis takes the angle alone: the other fields show, but
-  // can be neither edited nor focused.
-  if (category) {
-    for (const control of dialog.querySelectorAll("input, select, button")) {
-      if (control === turn) continue;
-      control.disabled = true;
-      control.closest(".axis-dialog-field, .axis-dialog-line")?.classList.add("off");
-    }
+// Disables every control but `turn`, as a categorical axis has only its
+// angle: the other fields show, but can be neither edited nor focused.
+function angleOnly(dialog, turn) {
+  for (const control of dialog.querySelectorAll("input, select, button")) {
+    if (control === turn) continue;
+    control.disabled = true;
+    control.closest(".axis-dialog-field, .axis-dialog-line")?.classList.add("off");
   }
+}
+
+// Opens the dialog of an axis column of `kind` (`dialogKind`). `title` heads
+// it ("X 軸: x"), `range` is the range shown (ascending), `settings` the
+// column's (`emptySettings` for none), `drawn` plotly's interval of the
+// drawn axis (`drawnUnit`), `angle` that of its tick labels (null for
+// plotly's own). `onApply(settings, range, angle)` draws them, on OK
+// (which closes the dialog) and on Apply (which keeps it open); Cancel and
+// Esc close it, keeping what was applied. An end left as written is the
+// very value it was written from, so that applying a range left alone
+// moves no axis. A categorical axis shows the fields of a numeric one
+// disabled: only the angle is checked and applied (`onApply(null, null,
+// angle)`). A temporal axis has no angle (`angle` undefined to `onApply`).
+export function openAxisDialog({ title, kind = "number", range, settings, drawn = null, angle = null, onApply }) {
+  const category = kind === "category";
+  if (category) kind = "number";
+  open?.close();
+  const form = new DialogForm(kind);
+  const { dialog, errors } = form;
+  const head = document.createElement("h2");
+  head.className = "axis-dialog-title";
+  head.textContent = title;
+  dialog.append(head);
+
+  const ends = rangeFields(form, range);
+  const ticks = tickFields(form, settings, drawn, angle);
+  const { turn } = ticks;
+  const lines = lineFields(form, settings);
+  if (category) angleOnly(dialog, turn);
 
   // Applies the fields, or shows why not; returns whether they were applied.
   const apply = () => {
@@ -675,52 +717,36 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
     }
     const read = readFields({
       kind,
-      min: min.value,
-      max: max.value,
-      dtick: dtick.value,
-      unit: unit.value,
-      minor: minor.value,
-      calendarMinor: monthly.checked,
-      format: format.value,
-      digits: digits.value,
-      separators: separators.checked,
-      known,
+      min: ends.min.value,
+      max: ends.max.value,
+      dtick: ticks.dtick.value,
+      unit: ticks.unit.value,
+      minor: ticks.minor.value,
+      calendarMinor: ticks.monthly.checked,
+      format: ticks.format.value,
+      digits: ticks.digits.value,
+      separators: ticks.separators.checked,
+      known: ends.known(),
     });
     for (const name of ["min", "max", "dtick", "minor", "digits"]) {
       errors.get(name).textContent = read.errors?.[name] ?? "";
     }
     if (read.errors || turned.error) return false;
-    known = {
-      min: { text: min.value, value: read.range[0] },
-      max: { text: max.value, value: read.range[1] },
-    };
+    ends.remember(read.range);
     // An empty interval or one of 1 applied takes the minor ticks off.
-    if (calendar && isCalendar(unit.value) && read.minor === null) {
-      monthly.checked = false;
-      calendarFields();
+    if (hasCalendar(kind) && isCalendar(ticks.unit.value) && read.minor === null) {
+      ticks.monthly.checked = false;
+      ticks.calendarFields();
     }
-    onApply(
-      {
-        dtick: read.dtick,
-        unit: read.unit,
-        minor: read.minor,
-        lines: lines.map((line) => ({ ...line })),
-        format: read.format,
-        digits: read.digits,
-        separators: read.separators,
-      },
-      read.range,
-      turned.value,
-    );
+    const { dtick, unit, minor, format, digits, separators } = read;
+    onApply({ dtick, unit, minor, lines: lines.lines(), format, digits, separators }, read.range, turned.value);
     return true;
   };
 
   const buttons = document.createElement("div");
   buttons.className = "axis-dialog-buttons";
   const button = (text, run) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.textContent = text;
+    const b = Object.assign(document.createElement("button"), { type: "button", textContent: text });
     b.addEventListener("click", run);
     buttons.append(b);
     return b;
@@ -734,7 +760,7 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
 
   // Enter in a field of the range or ticks, or in the angle, is OK; Esc is
   // Cancel (the dialog's own).
-  for (const input of [min, max, dtick, minor, digits, turn].filter(Boolean)) {
+  for (const input of [ends.min, ends.max, ticks.dtick, ticks.minor, ticks.digits, turn].filter(Boolean)) {
     input.addEventListener("keydown", (event) => {
       if (!plainEnter(event)) return;
       event.preventDefault();
@@ -748,7 +774,7 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
   document.body.append(dialog);
   open = dialog;
   dialog.showModal();
-  const first = category ? turn : min;
+  const first = category ? turn : ends.min;
   first.focus();
   first.select();
   return dialog;
