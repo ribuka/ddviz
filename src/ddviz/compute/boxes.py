@@ -17,6 +17,8 @@ side by side: the band's width split evenly into a slot per series, each box
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from typing import TypeVar
 
 import numpy as np
 import polars as pl
@@ -30,6 +32,72 @@ VALUE = "__value"
 _REGION = "__region"
 _CELL = "__cell"
 _KEY = "__cellkey"
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class BoxGroups:
+    """The boxes of a pair: one per facet cell, level of its categorical x and series.
+
+    Parameters
+    ----------
+    n_row, n_col : int
+        Drawn row and col levels.
+    n_levels : int
+        Levels of the x column.
+    n_series : int
+        Series.
+    """
+
+    n_row: int
+    n_col: int
+    n_levels: int
+    n_series: int
+
+    @property
+    def size(self) -> int:
+        """Number of groups."""
+        return self.n_row * self.n_col * self.n_levels * self.n_series
+
+    def key(self, row: T, col: T, level: T, series: T) -> T:
+        """Return the group of a box; works on ints or polars expressions.
+
+        Parameters
+        ----------
+        row, col : int or polars.Expr
+            Indices of the drawn row and col level.
+        level : int or polars.Expr
+            Index of the x level.
+        series : int or polars.Expr
+            Series.
+
+        Returns
+        -------
+        int or polars.Expr
+            The group, from 0 to ``size - 1``.
+        """
+        cell = row * self.n_col + col
+        return (cell * self.n_levels + level) * self.n_series + series
+
+    def parts(self, key: int) -> tuple[int, int, int, int]:
+        """Return ``(row, col, level, series)`` of a group, as `key` built it.
+
+        Parameters
+        ----------
+        key : int
+            Group.
+
+        Returns
+        -------
+        tuple of int
+            ``(row, col, level, series)``.
+        """
+        rest, series = divmod(key, self.n_series)
+        cell, level = divmod(rest, self.n_levels)
+        row, col = divmod(cell, self.n_col)
+        return row, col, level, series
+
 
 # Cells of a group's value range counted at a time.
 CELLS = 65536

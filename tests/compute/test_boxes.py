@@ -11,7 +11,7 @@ import pytest
 
 from ddviz.compute import boxes
 from ddviz.compute.aggregate import COUNT, INDEX, aggregate
-from ddviz.compute.boxes import GROUP, VALUE, box_stats
+from ddviz.compute.boxes import GROUP, VALUE, BoxGroups, box_stats
 from ddviz.compute.selection import selection_filter
 from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
 
@@ -205,7 +205,10 @@ def _months(tmp_path: Path) -> ScatterSpec:
     rng = np.random.default_rng(0)
     path = tmp_path / "months.parquet"
     pl.DataFrame(
-        {"month": [months[i % 420] for i in range(4200)][::-1], "y": rng.normal(size=4200)}
+        {
+            "month": [months[i % 420] for i in range(4200)][::-1],
+            "y": rng.normal(size=4200),
+        }
     ).write_parquet(path)
     return ScatterSpec(
         files={c: [str(path)] for c in ("month", "y")},
@@ -235,5 +238,31 @@ def test_box_plots_of_420_levels_draw_past_the_series_limit(tmp_path: Path) -> N
 def test_the_box_column_on_color_too_meets_the_series_limit(tmp_path: Path) -> None:
     """The same 420 levels on x and color are refused by color's limit of 100, kept over every row."""
     spec = replace(_months(tmp_path), color="month", keep_unfiltered_color_levels=True)
-    with pytest.raises(ValueError, match="month は 420 個で、Color・Symbol・Group・Wrap の上限は 100 個"):
+    with pytest.raises(
+        ValueError,
+        match="month は 420 個で、Color・Symbol・Group・Wrap の上限は 100 個",
+    ):
         aggregate(spec)
+
+
+def test_box_groups_number_each_box_once() -> None:
+    """Each box has its own group from 0 to the last, and its parts come back from it."""
+    groups = BoxGroups(2, 3, 4, 5)
+    keys = []
+    for row in range(2):
+        for col in range(3):
+            for level in range(4):
+                for series in range(5):
+                    key = groups.key(row, col, level, series)
+                    assert groups.parts(key) == (row, col, level, series)
+                    keys.append(key)
+    assert groups.size == 120
+    assert sorted(keys) == list(range(groups.size))
+
+
+def test_box_groups_key_works_on_polars_expressions() -> None:
+    """The group of polars expressions is that of the ints."""
+    groups = BoxGroups(2, 3, 4, 5)
+    frame = pl.DataFrame({"r": [1], "c": [2], "l": [3], "s": [4]})
+    key = groups.key(pl.col("r"), pl.col("c"), pl.col("l"), pl.col("s"))
+    assert frame.select(key).item() == groups.key(1, 2, 3, 4) == 119
