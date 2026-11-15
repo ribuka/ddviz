@@ -63,7 +63,7 @@ export function attachColumnList(root, onMenu) {
     count.textContent = `${found.total.toLocaleString()} 列中 ${found.matched.toLocaleString()} 件${shown}${shares}`;
     sharesDone = found.shares === "done";
     for (const control of [hideEmpty, minShare]) control.disabled = !sharesDone;
-    const countItem = sortMenu?.querySelector('[data-order="count"]');
+    const countItem = sortMenu.element?.querySelector('[data-order="count"]');
     if (countItem) countItem.disabled = !sharesDone;
     showColumns(list, found, remember, onMenu);
     closeColumnMenuIfGone(found.columns.map((column) => column.name));
