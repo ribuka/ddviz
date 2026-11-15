@@ -1,17 +1,15 @@
 // The settings of the axis columns kept while the page is open, and the
 // axes' right-click menu and double click.
 import {
-  axisAt,
   axisKind,
   decorationUpdate,
   dialogKind,
   emptySettings,
   hasAngle,
   isEmpty,
-  labelAt,
   openAxisDialog,
-  yMarginAt,
 } from "./axisdialog.js";
+import { axisAt, labelAt, yMarginAt } from "./axishit.js";
 import { AxisDirections, ascending, oriented } from "./axisdirection.js";
 import { axisKey } from "./axiskey.js";
 import { openAxisMenu } from "./axismenu.js";
