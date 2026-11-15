@@ -5,6 +5,7 @@
 // `meta.piles` holds lists of the same length: each pile's `panel`, its bins
 // `bx` and `by`, its rows `n` and the `series` of its rows.
 import { axisKey } from "./axiskey.js";
+import { areaOf, inArea } from "./panelarea.js";
 
 // Room between a pile's marker and its label, and the label's font.
 const LABEL_GAP = 3;
@@ -132,8 +133,7 @@ export function pileAt(full, meta, px, py, alpha) {
     const at = place(full, meta, i);
     if (!at || pileOpacity(meta, i, alpha) <= 0) continue;
     const { xa, ya, cx, cy, radius, label } = at;
-    if (px < xa._offset || px > xa._offset + xa._length) continue;
-    if (py < ya._offset || py > ya._offset + ya._length) continue;
+    if (!inArea(areaOf(xa, ya), px, py)) continue;
     const onMarker = (px - cx) ** 2 + (py - cy) ** 2 <= radius ** 2;
     const onLabel =
       px >= label.left &&
