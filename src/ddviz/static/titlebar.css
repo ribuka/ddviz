@@ -97,7 +97,7 @@ html.desktop:not(.caption-known) body {
   visibility: hidden;
 }
 
-#titlebar .saves-ring.running {
+#titlebar .titlebar-saves > svg.saves-ring.running {
   visibility: visible;
 }
 
@@ -110,7 +110,7 @@ html.desktop:not(.caption-known) body {
   stroke-dasharray: 0 100;
 }
 
-#titlebar .saves-ring.spinning {
+#titlebar .titlebar-saves > svg.saves-ring.spinning {
   animation: saves-ring-spin 1s linear infinite;
 }
 

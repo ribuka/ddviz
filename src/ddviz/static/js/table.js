@@ -16,6 +16,8 @@ const INDEX_WIDTH = 90;
 const CHUNK = 50;
 const SCROLL_SETTLE_MS = 120;
 const MIN_HEIGHT = 80;
+// Wait before fetching again a page refused for an export that has ended.
+const EXPORT_RETRY_MS = 1000;
 // Heights of the drawer, lowest first: its header only, the height it was
 // given (by dragging its edge), and the whole plot area. ▲ and ▼ step
 // through them.
@@ -44,6 +46,8 @@ export class SelectionTable {
     // Shown while the server refuses the pages: the plot's data is being
     // written in the table's pool (409 `exporting`), until `exportEnded`.
     this.wait = root.querySelector(".table-wait");
+    // Whether the page's export runs (`Saves.running`); set by the app.
+    this.exporting = () => false;
     this.state = "open";
     this.rows = 0;
     this.offset = 0;
@@ -193,7 +197,13 @@ export class SelectionTable {
     } catch (error) {
       if (mine === this.generation) {
         this.chunks.delete(chunk);
-        if (String(error).includes('"exporting"')) this.wait.hidden = false;
+        if (String(error).includes('"exporting"')) {
+          this.wait.hidden = false;
+          // The export may have ended before this answer came, and told
+          // so already: fetch again (later, in case another page's export
+          // still runs).
+          if (!this.exporting()) setTimeout(() => this.exportEnded(), EXPORT_RETRY_MS);
+        }
       }
       // A newer page or column chunk killed the worker of this one.
       if (!String(error).startsWith("Error: 409")) console.error(error);

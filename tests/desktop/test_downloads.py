@@ -318,6 +318,12 @@ def test_the_progress_is_told_at_most_every_quarter_second(tmp_path: Path) -> No
         operation.BytesReceivedChanged.fire(operation, None)
     assert core.progress[0] == {"file": "abc", "received": 0, "total": 1000}
     assert [p["received"] for p in core.progress] == [0, 250, 500, 750]
+    # A size WebView2 does not know (negative) goes as 0.
+    operation.TotalBytesToReceive = -1
+    now[0] = 2.0
+    operation.BytesReceivedChanged.fire(operation, None)
+    assert core.progress[-1]["total"] == 0
+    del core.progress[-1]
     # Not to a page left.
     core.Source = "http://127.0.0.1:50999/"
     now[0] = 10.0

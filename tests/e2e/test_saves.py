@@ -179,6 +179,35 @@ def test_the_table_waits_for_an_export(app_page: Page) -> None:
     page.unroute(PLOT_DATA)
 
 
+def test_a_table_page_refused_after_the_export_ended_is_fetched_again(app_page: Page) -> None:
+    """A 409 ``exporting`` that comes once the page's export has ended (its end told already) is fetched again by itself."""
+    page = app_page
+    draw(page)
+    refused: list[str] = []
+
+    def table(route: Route) -> None:
+        if not refused:
+            refused.append(route.request.url)
+            route.fulfill(status=409, content_type="application/json", body='{"detail": "exporting"}')
+        else:
+            route.continue_()
+
+    page.route("**/api/table*", table)
+    # A Box Select drag; the table stays open (`box_select` folds it).
+    page.evaluate("Plotly.relayout('plot', {dragmode: 'select'})")
+    stage = page.locator("#stage").bounding_box()
+    x, y = stage["x"] + stage["width"] / 2, stage["y"] + stage["height"] / 2
+    page.mouse.move(x - 30, y - 30)
+    page.mouse.down()
+    page.mouse.move(x + 30, y + 30, steps=5)
+    page.mouse.up()
+    wait = page.locator("#table .table-wait")
+    expect(wait).to_be_visible()
+    expect(page.locator("#table .table-grid .tc.num").first).to_be_visible()
+    expect(wait).to_be_hidden()
+    assert len(refused) == 1
+
+
 def test_the_history_in_a_browser(app_page: Page) -> None:
     """The save menu's last item opens the history once a save started: the browser's downloads, newest first; Esc and a click outside close it."""
     page = app_page
@@ -252,6 +281,12 @@ def test_the_windows_saves(app_page: Page) -> None:
     value = float(toast.locator("progress").get_attribute("value"))
     assert 90 < value < 100
     expect(button).to_have_attribute("data-percent", str(round(value)))
+    ring = button.locator(".saves-ring")
+    expect(ring).to_be_visible()
+    dash = ring.locator(".saves-ring-value").evaluate(
+        "e => parseFloat(getComputedStyle(e).strokeDasharray)"
+    )
+    assert dash == pytest.approx(value, abs=0.01)
 
     with page.expect_request("**/api/saves/*/cancel"):
         toast.get_by_role("button", name="中止").click()

@@ -360,8 +360,8 @@ class Downloads:
         progress = {
             "file": save.file,
             "received": int(operation.BytesReceived or 0),
-            # Unknown when WebView2 does not know the size.
-            "total": int(operation.TotalBytesToReceive or 0),
+            # 0 when WebView2 does not know the size (it may give a negative).
+            "total": max(int(operation.TotalBytesToReceive or 0), 0),
         }
         self._run(sender, f"window.ddvizSaveProgress?.({json.dumps(progress)});")
 

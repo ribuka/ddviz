@@ -57,7 +57,7 @@ function clock(date) {
 export function savePercent(save) {
   if (save.state === "counting") return null;
   if (save.state === "writing") return save.total ? (EXPORT_SHARE * save.done) / save.total : EXPORT_SHARE;
-  return EXPORT_SHARE + (save.transferTotal ? ((100 - EXPORT_SHARE) * save.received) / save.transferTotal : 0);
+  return EXPORT_SHARE + (save.transferTotal > 0 ? ((100 - EXPORT_SHARE) * save.received) / save.transferTotal : 0);
 }
 
 const RUNNING = new Set(["counting", "writing", "transfer"]);
@@ -72,7 +72,8 @@ export function saveText(save, toast) {
     case "writing":
       return `データを書き出しています（${save.done.toLocaleString()} / ${save.total.toLocaleString()} 行）`;
     case "transfer":
-      if (save.transferTotal) return `保存しています（${formatSizes(save.received, save.transferTotal)}）`;
+      // A size of 0 or less is not known (WebView2 may send -1).
+      if (save.transferTotal > 0) return `保存しています（${formatSizes(save.received, save.transferTotal)}）`;
       return save.received ? `保存しています（${formatSize(save.received)}）` : "保存しています…";
     case "saved":
     case "missing":
@@ -234,7 +235,7 @@ export class Saves {
     const save = this.find(progress.file);
     if (save?.state !== "transfer") return;
     save.received = progress.received;
-    save.transferTotal = progress.total;
+    save.transferTotal = Math.max(progress.total, 0);
     this.update(save);
   }
 

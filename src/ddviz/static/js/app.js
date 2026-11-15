@@ -1239,6 +1239,7 @@ function markPending() {
 let selection = null;
 let selectionGeneration = 0;
 const table = new SelectionTable(document.getElementById("table"));
+table.exporting = () => saves.running;
 
 // Returns the panel of a box from plotly's `range` (keyed by axis id), its
 // bounds as numbers (a date axis gives dates).

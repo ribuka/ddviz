@@ -31,6 +31,7 @@ def test_a_saves_state_in_words_and_its_bar(js_page: Page) -> None:
             {"state": "transfer", "received": 1_200_000_000, "transferTotal": 1_400_000_000},
             {"state": "transfer", "received": 1_200_000_000},
             {"state": "transfer", "received": 512, "transferTotal": 900, "cancelling": True},
+            {"state": "transfer", "received": 500_000, "transferTotal": -1},
             {"state": "saved", "name": "a.csv", "size": 1_234_567, "ended": True},
             {"state": "saved", "name": "a.csv", "size": 999, "ended": True},
             {"state": "browser", "name": "a.csv", "ended": True},
@@ -41,7 +42,7 @@ def test_a_saves_state_in_words_and_its_bar(js_page: Page) -> None:
         ],
     )
     toast, row, bar = zip(*states, strict=True)
-    assert list(toast[:8]) == [
+    assert list(toast[:9]) == [
         "書き出す行を数えています…",
         "データを書き出しています（12,000,000 / 100,000,000 行）",
         "データを書き出しています（0 / 0 行）",
@@ -50,6 +51,8 @@ def test_a_saves_state_in_words_and_its_bar(js_page: Page) -> None:
         "保存しています（1.2 / 1.4 GB）",
         "保存しています（1.2 GB）",
         "中止しています…",
+        # A negative size is not known.
+        "保存しています（500.0 KB）",
     ]
     assert bar[0] is None
     assert bar[1] == pytest.approx(10.8)
@@ -57,7 +60,8 @@ def test_a_saves_state_in_words_and_its_bar(js_page: Page) -> None:
     assert bar[3] == 90
     assert bar[4] == pytest.approx(90 + 10 * 500 / 1400)
     assert bar[6] == 90
-    assert list(toast[8:]) == [
+    assert bar[8] == 90
+    assert list(toast[9:]) == [
         "ダウンロードに保存しました（a.csv）",
         "ダウンロードに保存しました（a.csv）",
         "ダウンロードを開始しました（a.csv）",
@@ -66,7 +70,7 @@ def test_a_saves_state_in_words_and_its_bar(js_page: Page) -> None:
         "保存を中止しました（a.csv）",
         "ダウンロードに保存しました（a.csv）",
     ]
-    assert list(row[8:]) == [
+    assert list(row[9:]) == [
         "1.2 MB · 09:05",
         "999 B · 09:05",
         "ブラウザーのダウンロード · 09:05",
