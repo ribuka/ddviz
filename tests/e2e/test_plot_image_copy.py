@@ -407,6 +407,57 @@ def test_a_scrolled_grid_and_legend_are_copied_whole_as_shown(page: Page) -> Non
     assert page.evaluate("([s, r, c]) => countIn(s, r, (p) => near(p, c, 0))", [scale, whole, accent]) == 0
 
 
+def test_a_selection_panned_out_of_sight_is_cut_at_its_panel(page: Page) -> None:
+    """A box selected, then moved partly above its panel by a pan, is cut at the panel's top edge: nothing of it in the top margin."""
+    place(page, "x", "x")
+    place(page, "y", "y")
+    box = page.evaluate(
+        """() => {
+          const gd = document.getElementById("plot");
+          const { xaxis, yaxis } = gd._fullLayout;
+          const rect = gd.getBoundingClientRect();
+          return { x: rect.left + xaxis._offset, y: rect.top + yaxis._offset, w: xaxis._length, h: yaxis._length };
+        }"""
+    )
+    open_menu(page)
+    page.locator(".plot-menu .scale-menu-item", has_text="Box Select").click()
+    page.mouse.move(box["x"] + box["w"] * 0.3, box["y"] + box["h"] * 0.15)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["w"] * 0.7, box["y"] + box["h"] * 0.45, steps=5)
+    page.mouse.up()
+    wait_idle(page)
+    expect(page.locator("#plot .selectionlayer path").first).to_be_attached()
+    # Move the view down by a quarter (a pan, as plotly's relayout): the
+    # box's top leaves the panel.
+    page.evaluate(
+        """() => {
+          const gd = document.getElementById("plot");
+          const [y0, y1] = gd._fullLayout.yaxis.range;
+          const d = (y1 - y0) / 4;
+          return Plotly.relayout(gd, { "yaxis.range": [y0 - d, y1 - d] });
+        }"""
+    )
+    wait_idle(page)
+    page.wait_for_function("() => !document.querySelector('#plot').classList.contains('busy')")
+    top = page.evaluate(
+        "() => Math.min(...[...document.querySelectorAll('#plot .selectionlayer path')].map((p) => p.getBBox().y))"
+    )
+    fig = page.evaluate(FIGURE)
+    panel = fig["panels"][0]
+    assert top < panel["top"] - 5
+    copy_image(page)
+    scale = 300 / 96
+    m = layout_of(page)
+    ox, oy = m["pad"] + m["band"], m["pad"]
+    # The outline's gray: plotly's #444 at half opacity on white, and darker.
+    gray = "(p) => Math.max(p[0], p[1], p[2]) < 200 && Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]) < 24"
+    margin = [ox + panel["left"], oy, ox + panel["right"], oy + panel["top"] - 2]
+    assert page.evaluate(f"([s, r]) => countIn(s, r, {gray})", [scale, margin]) == 0
+    # The outline still shows inside the panel.
+    inside = [ox + panel["left"] + 3, oy + panel["top"] + 3, ox + panel["right"] - 3, oy + panel["bottom"] - 3]
+    assert page.evaluate(f"([s, r]) => countIn(s, r, {gray})", [scale, inside]) > 20
+
+
 def test_a_wrapped_grid_names_its_wrap_column(page: Page) -> None:
     """A wrapped grid has its levels over the panels and the Wrap column's name over the grid."""
     place(page, "x", "x")

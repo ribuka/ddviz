@@ -75,13 +75,39 @@ export function captureScene({ gd, meta, layers, legend }) {
     width: full.width,
     height: full.height,
     figure: outputFigure(gd, meta),
-    selection: selection ? new XMLSerializer().serializeToString(selection) : null,
+    selection: selection ? selectionSvg(gd, selection) : null,
     names: axisNames(full, meta),
     wrap: meta.wrap_column,
     font: { family: full.font.family, color: full.font.color },
     entries: legend.entries(),
     paint: (ctx, base) => paintLayers(ctx, full, base, layers),
   };
+}
+
+// Returns the selection's outline (plotly's `.selectionlayer`) as SVG text,
+// with the clip paths of the panels it is clipped to, which it names: a box
+// zoomed or panned partly out of sight is cut at its panel's edges, as on
+// screen.
+function selectionSvg(gd, layer) {
+  const copy = layer.cloneNode(true);
+  const ids = new Set();
+  const clipOf = (element) => /url\(["']?#([^"')]+)["']?\)/.exec(element.getAttribute("clip-path"))?.[1];
+  for (const clipped of copy.querySelectorAll("[clip-path]")) {
+    const id = clipOf(clipped);
+    if (id) ids.add(id);
+  }
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  for (const id of ids) {
+    const clip = [...gd.querySelectorAll("clipPath")].find((c) => c.id === id);
+    if (clip) defs.append(clip.cloneNode(true));
+  }
+  // A path whose clip is not found would show whole: it is dropped.
+  for (const clipped of copy.querySelectorAll("[clip-path]")) {
+    const id = clipOf(clipped);
+    if (!id || !defs.querySelector(`[id="${CSS.escape(id)}"]`)) clipped.remove();
+  }
+  copy.prepend(defs);
+  return new XMLSerializer().serializeToString(copy);
 }
 
 // Returns plotly's figure of the image: the page's, on white, with the
@@ -228,9 +254,6 @@ export function splitSvg(text, selection, scale) {
   if (selection) {
     const layer = parse(selection);
     for (const control of layer.querySelectorAll(".outline-controllers")) control.remove();
-    // Its clip paths are the page's figure's, which plotly's copy names
-    // otherwise; the box lies in its panel.
-    for (const clipped of layer.querySelectorAll("[clip-path]")) clipped.removeAttribute("clip-path");
     above.append(above.ownerDocument.importNode(layer, true));
   }
   const out = new XMLSerializer();
