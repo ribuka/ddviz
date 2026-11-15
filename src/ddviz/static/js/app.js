@@ -1421,77 +1421,24 @@ function isDrawn(meta, layout) {
   );
 }
 
-// Aggregates the overview again for the current size of the plot area. The
-// drawn images stand in, stretched and faded, until the result comes.
-async function requestOverview() {
+// Aggregates the drawn plot again, at the stage's size with the page's
+// filters, and draws the result: the overview (`whole`) or the view of
+// `ranges` (`{x, y}`, as the axes show them). `path` is the endpoint,
+// `body` what it takes besides the size and the filters, `status` the
+// text shown meanwhile.
+async function requestAgain({ path, body, ranges, whole, status }) {
   const mine = ++generation;
   const size = stageSize();
   requestedSize = size;
-  requested = { x: [], y: [] };
-  statusLine.show("大きさに合わせて集約中…");
+  requested = ranges;
+  statusLine.show(status);
   setPending(true);
   const filterCandidate = restorePoint.propose(filterPane.sent);
   const started = performance.now();
-  const response = await fetch("/api/overview", {
+  const response = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...size, filters }),
-  });
-  if (response.status === 409 || mine !== generation) return; // superseded
-  if (!response.ok) {
-    const text = await response.text();
-    // A newer request may have come while the answer was read.
-    if (mine === generation) viewFailed(text);
-    return;
-  }
-  const { figure, meta } = await response.json();
-  const drawn = isDrawn(meta, figure.layout);
-  const images = drawn ? Promise.resolve(shownImages) : fetchImages(meta);
-  await noDrag();
-  // A pan or zoom during the request or the drag supersedes it.
-  await new Promise((resolve) => setTimeout(resolve));
-  const bitmaps = await images;
-  if (mine !== generation || !bitmaps) {
-    if (!drawn) closeImages(bitmaps);
-    return;
-  }
-  timings.viewFetch = Math.round(performance.now() - started);
-  timings.viewTask = Number(meta.task_seconds.toFixed(2));
-  setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
-  setCurrent(meta);
-  shownSize = size;
-  hideHover();
-  if (!drawn) await draw(figure.data, figure.layout, meta, bitmaps);
-  restorePoint.confirm(filterCandidate);
-  if (mine === generation) setPending(false);
-  showRows(meta);
-  setInfo();
-  if (mine === generation) followMargin(true);
-}
-
-// Aggregates the shown ranges again. Until the result comes, plotly keeps
-// drawing the current images stretched to the new axes, faded, and the area
-// they do not cover stays blank.
-async function requestView({ x: xRanges, y: yRanges }) {
-  const mine = ++generation;
-  const size = stageSize();
-  requestedSize = size;
-  requested = { x: xRanges, y: yRanges };
-  statusLine.show("表示範囲を集約中…");
-  setPending(true);
-  // The server takes values, ascending: the powers of 10 of the exponents of
-  // a log axis (`axisscale.js`).
-  const logs = overview.meta;
-  const values = {
-    x: xRanges.map((range, i) => toValues(logs.x_log[i], range)),
-    y: yRanges.map((range, i) => toValues(logs.y_log[i], range)),
-  };
-  const filterCandidate = restorePoint.propose(filterPane.sent);
-  const started = performance.now();
-  const response = await fetch("/api/view", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ x_ranges: values.x, y_ranges: values.y, ...size, filters }),
+    body: JSON.stringify({ ...body, ...size, filters }),
   });
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
@@ -1514,16 +1461,51 @@ async function requestView({ x: xRanges, y: yRanges }) {
   }
   timings.viewFetch = Math.round(performance.now() - started);
   timings.viewTask = Number(meta.task_seconds.toFixed(2));
+  if (whole) setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
   setCurrent(meta);
   shownSize = size;
   hideHover();
-  // The images and the panels' placement change; the axes stay where the user put them.
-  if (!drawn) await draw(figure.data, withShownRanges(figure.layout, meta), meta, bitmaps);
+  // The images and the panels' placement change; the axes of a view stay
+  // where the user put them.
+  const layout = whole ? figure.layout : withShownRanges(figure.layout, meta);
+  if (!drawn) await draw(figure.data, layout, meta, bitmaps);
   restorePoint.confirm(filterCandidate);
   if (mine === generation) setPending(false);
-  showRows(meta, "表示範囲に ");
+  showRows(meta, whole ? "" : "表示範囲に ");
   setInfo();
   if (mine === generation) followMargin(true);
+}
+
+// Aggregates the overview again for the current size of the plot area. The
+// drawn images stand in, stretched and faded, until the result comes.
+async function requestOverview() {
+  return requestAgain({
+    path: "/api/overview",
+    body: {},
+    ranges: { x: [], y: [] },
+    whole: true,
+    status: "大きさに合わせて集約中…",
+  });
+}
+
+// Aggregates the shown ranges again. Until the result comes, plotly keeps
+// drawing the current images stretched to the new axes, faded, and the area
+// they do not cover stays blank.
+async function requestView({ x: xRanges, y: yRanges }) {
+  // The server takes values, ascending: the powers of 10 of the exponents of
+  // a log axis (`axisscale.js`).
+  const logs = overview.meta;
+  const values = {
+    x: xRanges.map((range, i) => toValues(logs.x_log[i], range)),
+    y: yRanges.map((range, i) => toValues(logs.y_log[i], range)),
+  };
+  return requestAgain({
+    path: "/api/view",
+    body: { x_ranges: values.x, y_ranges: values.y },
+    ranges: { x: xRanges, y: yRanges },
+    whole: false,
+    status: "表示範囲を集約中…",
+  });
 }
 
 // Tells of a failed view or overview (the latest request), whose answer is
