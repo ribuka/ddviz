@@ -134,9 +134,10 @@ def create_app(
 
     @app.get("/api/settings")
     async def page_settings() -> dict:
-        """Return the settings the page draws with: the opacity of the legend's inactive series and the DPI of the copied graph image."""
+        """Return the settings the page draws with: the opacity of the legend's inactive series, the DPI of the copied graph image and the most intervals of a numeric color column."""
         return {
             "inactive_opacity": settings.plot.legend.inactive_opacity,
+            "max_levels": settings.plot.max_levels,
             "image_copy_dpi": settings.plot.image_copy.dpi,
         }
 

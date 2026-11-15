@@ -215,7 +215,7 @@ def plot_router(
             raise HTTPException(400, str(error)) from error
         filters = await source.filters(request.filters)
         try:
-            color_bins = parse_color_bins(request.color_bins)
+            color_bins = parse_color_bins(request.color_bins, max_levels)
             wrap_cols = parse_wrap_cols(request.wrap_cols)
             smoothing = parse_smoothing(request.smooth)
             shape_size = parse_shape_size(request.shape_size)

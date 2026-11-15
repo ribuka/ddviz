@@ -19,6 +19,7 @@ from tests.e2e.test_plot_failure import LAYOUT, X_RANGE, move
 from tests.e2e.test_scatter import (
     HAS_COLOR,
     SETTLED,
+    apply_color_bins,
     place,
     wait_idle,
     watch_errors,
@@ -207,8 +208,7 @@ def test_the_levels_of_the_filter_and_the_menu_item(app_page: Page) -> None:
     expect(page.locator(KEEP)).to_have_count(0)
     page.keyboard.press("Escape")
     # Cut into intervals, neither.
-    page.locator("#legend .colorbar").click(button="right")
-    page.locator(".scale-menu").get_by_text("3 個", exact=True).click()
+    apply_color_bins(page, page.locator("#legend .colorbar"), "3")
     page.wait_for_function(SETTLED)
     expect(page.locator("#legend .legend-item")).to_have_count(3)
     open_color_menu(page)
