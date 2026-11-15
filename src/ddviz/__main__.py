@@ -4,7 +4,9 @@
 them (``--recursive`` also reads its subfolders) or several Parquet files
 read one after another as one table; ``ddviz <path ...> --port N`` only
 serves the UI on that port, for a browser in development, and prints the URL
-with the token to open; ``--worker`` runs a worker.
+with the token to open; ``--worker`` runs a worker. ``--check-desktop-runtime``
+(not in ``--help``) checks, in the exe, that the DLLs of the window load:
+packaging/smoke.py runs it.
 """
 
 from __future__ import annotations
@@ -84,7 +86,8 @@ def main() -> int:
     int
         Exit code.
     """
-    if "--worker" in sys.argv[1:]:
+    # With the check, ``--worker`` is left to argparse, which refuses it.
+    if "--worker" in sys.argv[1:] and "--check-desktop-runtime" not in sys.argv[1:]:
         from ddviz.workers.worker import main as worker_main
 
         return worker_main()
@@ -104,12 +107,27 @@ def main() -> int:
     parser.add_argument(
         "--port", type=int, help="serve on this port for a browser, without a window"
     )
+    parser.add_argument(
+        "--check-desktop-runtime", action="store_true", help=argparse.SUPPRESS
+    )
     args = parser.parse_args()
+    if args.check_desktop_runtime:
+        if args.paths or args.recursive or args.port is not None:
+            parser.error("--check-desktop-runtime takes no other arguments")
+        from ddviz.desktop.runtime_check import check_desktop_runtime
+
+        return check_desktop_runtime()
     # Several paths with a folder among them fail at Load, on the page: the
     # exe has no console to print an error to.
     paths = [str(Path(p).resolve()) for p in args.paths]
 
     if args.port is None:
+        from ddviz.desktop.dll_access import unblock_or_warn
+        from ddviz.desktop.messages import show_warning
+
+        # Before the window module: pywebview loads pythonnet's DLLs.
+        if not unblock_or_warn(show_warning):
+            return 1
         from ddviz.desktop.window import run_window
         from ddviz.shared.inputs import input_label
 
