@@ -360,7 +360,7 @@ def build_figure(manifest: PlotManifest) -> dict:
         the bottom margin (``margin_bottom``, `ddviz.shared.layout.bottom_margin`),
         the panels a wrapped grid would put to a row with no number set
         (``wrap_auto_cols``, `ddviz.shared.layout.wrap_columns`; None
-        without wrapping),
+        without wrapping), the Wrap column (``wrap_column``, or None),
         whether the grid scrolls, its facet labels (plotly annotations in
         paper coordinates; the figure has them only when the grid fits, and
         a wrapped grid has them in the figure only), and
@@ -542,6 +542,9 @@ def build_figure(manifest: PlotManifest) -> dict:
             if axes.wrap
             else None
         ),
+        # The Wrap column, whose panels' labels hold its levels alone; the
+        # copied graph image names it (``static/js/plotimage.js``).
+        "wrap_column": spec.col if spec.wrap else None,
         "rows": manifest.rows,
         "scroll": layout.scroll,
         "facet_labels": labels,

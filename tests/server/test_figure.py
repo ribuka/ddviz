@@ -274,6 +274,7 @@ def test_a_wrapped_grid_tells_its_automatic_number_to_a_row(
     )
     meta = _figure(wrapped, tmp_path / "task")["meta"]
     assert (meta["ncol"], meta["wrap_auto_cols"]) == (ncol, auto)
+    assert meta["wrap_column"] == "color"
 
 
 def test_a_grid_not_wrapped_has_no_automatic_number_to_a_row(
@@ -281,7 +282,9 @@ def test_a_grid_not_wrapped_has_no_automatic_number_to_a_row(
 ) -> None:
     """Without wrapping, there is no number to a row to set."""
     gridded = replace(scatter_spec, col="color", width=800, height=600)
-    assert _figure(gridded, tmp_path / "task")["meta"]["wrap_auto_cols"] is None
+    meta = _figure(gridded, tmp_path / "task")["meta"]
+    assert meta["wrap_auto_cols"] is None
+    assert meta["wrap_column"] is None
 
 
 def test_a_scrolled_wrapped_grid_keeps_its_labels_in_the_figure(

@@ -23,6 +23,7 @@ import { levelText } from "./names.js";
 import { MemoryMeter } from "./memory.js";
 import { showSaveResult, StatusLine, Toasts, errorText } from "./notice.js";
 import { openPlotMenu } from "./plotmenu.js";
+import { PlotImageCopy } from "./plotimage.js";
 import { PlotOptions } from "./plotoptions.js";
 import {
   axisCoordinates,
@@ -170,12 +171,15 @@ const legend = new Legend(
   },
 );
 const layers = new ImageLayers(gd, legend);
+// The DPI of the copied graph image (`plot.image_copy.dpi`); the copy waits for it.
+let imageCopyDpi = null;
 // The opacity of the legend's inactive series (`plot.legend.inactive_opacity`).
 fetch("/api/settings")
   .then((response) => (response.ok ? response.json() : null))
   .then((settings) => {
     if (!settings) return;
     legend.inactiveOpacity = settings.inactive_opacity;
+    imageCopyDpi = settings.image_copy_dpi;
     layers.draw();
   });
 const sticky = new StickyLabels(document.getElementById("scroller"), gd, (meta, role, index) =>
@@ -195,7 +199,7 @@ const axes = new AxisControls({
   plotted: () => plottedEncoding !== null,
   replot: () => plot(plottedEncoding),
   followMargin,
-  openPlotMenu: (event) => openPlotMenu(event, gd),
+  openPlotMenu: (event) => openPlotMenu(event, gd, imageCopy),
 });
 axes.attach();
 const empty = document.getElementById("empty");
@@ -832,6 +836,22 @@ const boxSelection = new BoxSelection({
   current: () => current,
   busy: () => ({ plotting: plotting !== 0, waiting }),
   showRows,
+});
+
+// "Copy graph image" of the plot's menu (plotimage.js). The figure must be
+// settled: no plot, view or size pending (`markBusy`), the drawn result's
+// images on the canvas, and no selected rows' layer being asked for.
+const imageCopy = new PlotImageCopy({
+  capture: () => ({ gd, meta: current, layers, legend }),
+  ready: () =>
+    current !== null &&
+    layers.meta === current &&
+    layers.bitmaps !== null &&
+    !waiting &&
+    plotting === 0 &&
+    !boxSelection.asking,
+  dpi: () => imageCopyDpi,
+  toasts,
 });
 
 // Goes back to the overview's images and ranges; no worker runs, unless the

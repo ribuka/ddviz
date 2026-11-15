@@ -12,11 +12,13 @@ const MODES = [
   ["select", "Box Select"],
 ];
 const RESET = '.modebar-btn[data-attr="zoom"][data-val="reset"]';
+const COPY_IMAGE = "Copy graph image";
 
 const popup = new Popup();
 
-// Opens the menu at a right click on `gd`, a plot drawn with the mode bar.
-export function openPlotMenu(event, gd) {
+// Opens the menu at a right click on `gd`, a plot drawn with the mode bar;
+// `imageCopy` is the page's `PlotImageCopy`.
+export function openPlotMenu(event, gd, imageCopy) {
   const menu = document.createElement("div");
   menu.className = "scale-menu plot-menu";
   const item = (text, checked, selector) => {
@@ -32,5 +34,11 @@ export function openPlotMenu(event, gd) {
   }
   menu.append(menuSeparator());
   item("Reset axes", false, RESET);
+  menu.append(menuSeparator());
+  const copy = () => {
+    popup.close();
+    imageCopy.copy();
+  };
+  menu.append(menuItem(COPY_IMAGE, copy, { disabled: !imageCopy.available() }));
   popup.open(menu, event);
 }

@@ -10,6 +10,7 @@ from ddviz.server.settings import (
     CacheSettings,
     ColumnsSettings,
     HoverSettings,
+    ImageCopySettings,
     LegendSettings,
     PlotSettings,
     load_settings,
@@ -150,4 +151,26 @@ def test_inactive_opacity_must_be_from_0_to_1(tmp_path: Path, value: str) -> Non
     path = tmp_path / "settings.toml"
     path.write_text(f"[plot.legend]\ninactive_opacity = {value}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="plot.legend.inactive_opacity"):
+        load_settings(path)
+
+
+@pytest.mark.parametrize("value", [96, 300])
+def test_image_copy_dpi_is_read(tmp_path: Path, value: int) -> None:
+    """``plot.image_copy.dpi`` of 96 or 300 is read; without it the default is 300."""
+    path = tmp_path / "settings.toml"
+    path.write_text(f"[plot.image_copy]\ndpi = {value}\n", encoding="utf-8")
+    assert load_settings(path).plot.image_copy.dpi == value
+    assert load_settings(tmp_path / "none.toml").plot.image_copy.dpi == 300
+    path.write_text("[plot]\nmax_levels = 80\n", encoding="utf-8")
+    assert load_settings(path).plot.image_copy == ImageCopySettings(dpi=300)
+
+
+@pytest.mark.parametrize(
+    "value", ["true", '"300"', "300.0", "96.0", "72", "0", "-96", "600"]
+)
+def test_image_copy_dpi_must_be_96_or_300(tmp_path: Path, value: str) -> None:
+    """A dpi that is not the integer 96 or 300 is refused with the key and the allowed values."""
+    path = tmp_path / "settings.toml"
+    path.write_text(f"[plot.image_copy]\ndpi = {value}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"plot\.image_copy\.dpi needs the integer 96 or 300"):
         load_settings(path)

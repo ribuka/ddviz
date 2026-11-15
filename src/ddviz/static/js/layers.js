@@ -118,95 +118,107 @@ export class ImageLayers {
     const ctx = this.canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, full.width, full.height);
-    const { meta, bitmaps, selection } = this;
-    if (!meta || !bitmaps) return;
-    ctx.imageSmoothingEnabled = false;
-    const alpha = (s) => this.legend.opacity(s);
-    // With a selection every row fades, and the selected rows are drawn
-    // again on top, in every panel.
-    const dim = selection ? SELECTION_DIM : 1;
-    // The lines joining the points lie under them, and like the smoothing
-    // lines stay at full opacity over a selection. Only the color legend
-    // fades them, and orders them: the symbol levels do not split them.
-    if (bitmaps.lines) {
-      const shapes = meta.color.shapes;
-      const lineAlpha = (s) => this.legend.colorOpacity(Math.floor(s / shapes));
-      this.drawLayer(ctx, full, dpr, meta, bitmaps.lines, lineAlpha, null, false, true);
-    }
-    // The points under box plots fade, so that the boxes stand out.
-    this.drawLayer(ctx, full, dpr, meta, bitmaps, (s) => alpha(s) * dim, null, true);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const order = this.legend.order(meta.grid.n_series).reverse();
-    drawBoxes(ctx, full, meta, seriesColors(meta), alpha, order);
-    if (selection?.bitmaps) {
-      this.drawLayer(ctx, full, dpr, selection.meta, selection.bitmaps, alpha);
-    } else if (selection?.box) {
-      // Until the selected rows' layer comes, the box shows them in its panel.
-      this.drawLayer(ctx, full, dpr, meta, bitmaps, alpha, selection.box);
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // The piles lie over the points; with a selection, those without
-    // selected rows fade as the points do.
-    const { width: w, height: h } = meta.grid;
-    const piles = meta.piles;
-    const faded = (i) =>
-      !selection?.piles?.has((piles.panel[i] * h + piles.by[i]) * w + piles.bx[i]);
-    drawPiles(ctx, full, meta, alpha, selection ? faded : undefined, dim);
-    // The smoothing lines lie over every marker, the selected rows' too, and
-    // like the boxes stay at full opacity over a selection. Drawing the
-    // layers leaves transforms and opacities behind; start from CSS pixels.
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    paintLayers(ctx, full, new DOMMatrix([dpr, 0, 0, dpr, 0, 0]), this);
+  }
+}
+
+// Paints the layers of `state` ({meta, bitmaps, selection, legend}, as
+// ImageLayers holds them) on `ctx`, whose pixels are the figure's CSS pixels
+// (`full`: `gd._fullLayout`) through `base` (a DOMMatrix): the device pixel
+// ratio on screen, the output's scale and offset in a copied image
+// (`plotimage.js`). The canvas is left with `base` and full opacity.
+export function paintLayers(ctx, full, base, { meta, bitmaps, selection, legend }) {
+  const reset = () => {
+    ctx.setTransform(base);
     ctx.globalAlpha = 1;
-    drawSmooths(ctx, full, meta, seriesColors(meta), alpha, order);
+  };
+  reset();
+  if (!meta || !bitmaps) return;
+  ctx.imageSmoothingEnabled = false;
+  const alpha = (s) => legend.opacity(s);
+  // With a selection every row fades, and the selected rows are drawn
+  // again on top, in every panel.
+  const dim = selection ? SELECTION_DIM : 1;
+  // The lines joining the points lie under them, and like the smoothing
+  // lines stay at full opacity over a selection. Only the color legend
+  // fades them, and orders them: the symbol levels do not split them.
+  if (bitmaps.lines) {
+    const shapes = meta.color.shapes;
+    const lineAlpha = (s) => legend.colorOpacity(Math.floor(s / shapes));
+    drawLayer(ctx, full, base, legend, meta, bitmaps.lines, lineAlpha, null, false, true);
   }
+  // The points under box plots fade, so that the boxes stand out.
+  drawLayer(ctx, full, base, legend, meta, bitmaps, (s) => alpha(s) * dim, null, true);
+  reset();
+  const order = legend.order(meta.grid.n_series).reverse();
+  drawBoxes(ctx, full, meta, seriesColors(meta), alpha, order);
+  if (selection?.bitmaps) {
+    drawLayer(ctx, full, base, legend, selection.meta, selection.bitmaps, alpha);
+  } else if (selection?.box) {
+    // Until the selected rows' layer comes, the box shows them in its panel.
+    drawLayer(ctx, full, base, legend, meta, bitmaps, alpha, selection.box);
+  }
+  reset();
+  // The piles lie over the points; with a selection, those without
+  // selected rows fade as the points do.
+  const { width: w, height: h } = meta.grid;
+  const piles = meta.piles;
+  const faded = (i) =>
+    !selection?.piles?.has((piles.panel[i] * h + piles.by[i]) * w + piles.bx[i]);
+  drawPiles(ctx, full, meta, alpha, selection ? faded : undefined, dim);
+  // The smoothing lines lie over every marker, the selected rows' too, and
+  // like the boxes stay at full opacity over a selection. Drawing the
+  // layers leaves transforms and opacities behind; start from CSS pixels.
+  reset();
+  drawSmooths(ctx, full, meta, seriesColors(meta), alpha, order);
+  reset();
+}
 
-
-  // Draws one layer: an image per series whose tiles are the panels that
-  // `meta` places. With `box` ({panel, x_range, y_range}), only that panel,
-  // clipped to the box. With `fade`, the points under box plots fade. With
-  // `lines`, the layer is of the lines joining the points (`lineOrder`).
-  drawLayer(ctx, full, dpr, meta, bitmaps, alpha, box = null, fade = false, lines = false) {
-    const nSeries = meta.grid.n_series;
-    // Bottom layer first: inactive series behind, of the same activity the
-    // missing color level behind the others, later series above earlier ones.
-    const order = (lines ? this.legend.lineOrder(nSeries) : this.legend.pointOrder(nSeries)).reverse();
-    const { width: w, height: h } = meta.grid;
-    meta.panels.forEach((panel, p) => {
-      if (box && box.panel !== p) return;
-      const xa = full[axisKey(panel.xaxis)];
-      const ya = full[axisKey(panel.yaxis)];
-      if (!xa || !ya) return;
-      const [x0, x1] = meta.x_ranges[panel.x];
-      const [y0, y1] = meta.y_ranges[panel.y];
-      const left = xa._offset + xa.l2p(x0);
-      const right = xa._offset + xa.l2p(x1);
-      const bottom = ya._offset + ya.l2p(y0);
-      const top = ya._offset + ya.l2p(y1);
-      ctx.save();
+// Draws one layer: an image per series whose tiles are the panels that
+// `meta` places. With `box` ({panel, x_range, y_range}), only that panel,
+// clipped to the box. With `fade`, the points under box plots fade. With
+// `lines`, the layer is of the lines joining the points (`lineOrder`).
+function drawLayer(ctx, full, base, legend, meta, bitmaps, alpha, box = null, fade = false, lines = false) {
+  const nSeries = meta.grid.n_series;
+  // Bottom layer first: inactive series behind, of the same activity the
+  // missing color level behind the others, later series above earlier ones.
+  const order = (lines ? legend.lineOrder(nSeries) : legend.pointOrder(nSeries)).reverse();
+  const { width: w, height: h } = meta.grid;
+  meta.panels.forEach((panel, p) => {
+    if (box && box.panel !== p) return;
+    const xa = full[axisKey(panel.xaxis)];
+    const ya = full[axisKey(panel.yaxis)];
+    if (!xa || !ya) return;
+    const [x0, x1] = meta.x_ranges[panel.x];
+    const [y0, y1] = meta.y_ranges[panel.y];
+    const left = xa._offset + xa.l2p(x0);
+    const right = xa._offset + xa.l2p(x1);
+    const bottom = ya._offset + ya.l2p(y0);
+    const top = ya._offset + ya.l2p(y1);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(xa._offset, ya._offset, xa._length, ya._length);
+    ctx.clip();
+    if (box) {
+      const bx = box.x_range.map((v) => xa._offset + xa.l2p(v));
+      const by = box.y_range.map((v) => ya._offset + ya.l2p(v));
       ctx.beginPath();
-      ctx.rect(xa._offset, ya._offset, xa._length, ya._length);
+      ctx.rect(Math.min(...bx), Math.min(...by), Math.abs(bx[1] - bx[0]), Math.abs(by[1] - by[0]));
       ctx.clip();
-      if (box) {
-        const bx = box.x_range.map((v) => xa._offset + xa.l2p(v));
-        const by = box.y_range.map((v) => ya._offset + ya.l2p(v));
-        ctx.beginPath();
-        ctx.rect(Math.min(...bx), Math.min(...by), Math.abs(bx[1] - bx[0]), Math.abs(by[1] - by[0]));
-        ctx.clip();
-      }
-      const sx = (p % meta.ncol) * w;
-      const sy = Math.floor(p / meta.ncol) * h;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.translate(left, bottom);
-      // Row 0 of a tile is the bottom bin.
-      ctx.scale((right - left) / w, (top - bottom) / h);
-      const under = fade && panel.points && panel.boxes?.length ? POINTS_UNDER_BOXES : 1;
-      for (const s of order) {
-        const bitmap = bitmaps[s];
-        if (!bitmap) continue;
-        ctx.globalAlpha = alpha(s) * under;
-        ctx.drawImage(bitmap, sx, sy, w, h, 0, 0, w, h);
-      }
-      ctx.restore();
-    });
-  }
+    }
+    const sx = (p % meta.ncol) * w;
+    const sy = Math.floor(p / meta.ncol) * h;
+    ctx.setTransform(base);
+    ctx.translate(left, bottom);
+    // Row 0 of a tile is the bottom bin.
+    ctx.scale((right - left) / w, (top - bottom) / h);
+    const under = fade && panel.points && panel.boxes?.length ? POINTS_UNDER_BOXES : 1;
+    for (const s of order) {
+      const bitmap = bitmaps[s];
+      if (!bitmap) continue;
+      ctx.globalAlpha = alpha(s) * under;
+      ctx.drawImage(bitmap, sx, sy, w, h, 0, 0, w, h);
+    }
+    ctx.restore();
+  });
 }
