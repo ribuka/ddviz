@@ -8,7 +8,7 @@ import { COLOR_SETS, scale } from "./colorscale.js";
 import { menuHeading, menuItem, Popup } from "./popup.js";
 import { SIZE_HEADING, SIZES } from "./shapemenu.js";
 
-// Numbers of intervals offered (`ddviz.server.plan.COLOR_BINS`).
+// Numbers of intervals offered (`ddviz.server.plotoptions.COLOR_BINS`).
 const COUNTS = [2, 3, 5, 10];
 const BY = [
   ["values", "値の幅で等分"],

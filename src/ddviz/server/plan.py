@@ -19,21 +19,11 @@ from ddviz.shared.scatter import (
     ScatterSpec,
     Smoothing,
 )
-from ddviz.shared.shapes import SHAPES
 
 # A numeric column on Group X or Group Y is cut into this many intervals of
 # about the same number of rows, unless it has at most this many values,
 # each then a level of its own.
 FACET_BINS = 5
-# Numbers of intervals a numeric color column can be cut into.
-COLOR_BINS = (2, 3, 5, 10)
-# Methods of the smoothing lines (`ddviz.compute.smooth`).
-SMOOTH_METHODS = ("gcv", "csaps", "lowess")
-# Sizes in pixels the markers can take: the shapes of the symbol levels, or
-# the circles without a symbol.
-SHAPE_SIZES = (3, 5, 7, 9, 11, 15)
-# Widths in pixels the lines joining the points can take.
-LINE_WIDTHS = (1, 2, 3, 4, 5)
 
 
 def one_band(encoding: Encoding, numeric: dict[str, bool]) -> bool:
@@ -331,13 +321,15 @@ def scatter_spec(
     max_axis_levels : int, optional
         Most levels a categorical x or y column may have.
     wrap_cols : int, optional
-        Wrapped panels to a row (`parse_wrap_cols`); None to make them
+        Wrapped panels to a row
+        (`ddviz.server.plotoptions.parse_wrap_cols`); None to make them
         closest to square.
     smoothing : Smoothing, optional
-        How to fit the smoothing lines (`parse_smoothing`); None for the
-        default.
+        How to fit the smoothing lines
+        (`ddviz.server.plotoptions.parse_smoothing`); None for the default.
     shape_size : int, optional
-        Size of the markers in pixels (`parse_shape_size`); None for the
+        Size of the markers in pixels
+        (`ddviz.server.plotoptions.parse_shape_size`); None for the
         default, `SHAPE_SIZE` for the symbol's shapes and `POINT_SIZE` for
         the circles without a symbol.
     temporal : dict of str to str, optional
@@ -345,12 +337,13 @@ def scatter_spec(
         such a column is numeric in `numeric` too.
     shape_sizes : dict of str to int, optional
         Size of the shapes of single symbol levels, by the level's name
-        (`parse_shape_sizes`), in place of `shape_size`; dropped without
-        a symbol.
+        (`ddviz.server.plotoptions.parse_shape_sizes`), in place of
+        `shape_size`; dropped without a symbol.
     level_shapes : dict of str to str, optional
         Shape of single symbol levels, by the level's name
-        (`parse_level_shapes`), in place of the shape of the level's place;
-        dropped without shapes, as `shape_sizes`.
+        (`ddviz.server.plotoptions.parse_level_shapes`), in place of the
+        shape of the level's place; dropped without shapes, as
+        `shape_sizes`.
     show_null_rows : dict of str to bool, optional
         Whether the ``"color"`` and the ``"symbol"`` of the graph draw
         their rows with a null or NaN value (`ScatterSpec.null_roles`); a
@@ -366,9 +359,10 @@ def scatter_spec(
         (`ddviz.shared.layout.bottom_margin`).
     line_width : int, optional
         Width of the lines joining the points in pixels
-        (`parse_line_width`); None for the default, `LINE_WIDTH`. The lines
-        are drawn with the ``"line"`` element, in the panels of a numeric x
-        and a numeric y (`ScatterSpec.line_width`).
+        (`ddviz.server.plotoptions.parse_line_width`); None for the
+        default, `LINE_WIDTH`. The lines are drawn with the ``"line"``
+        element, in the panels of a numeric x and a numeric y
+        (`ScatterSpec.line_width`).
 
     Returns
     -------
@@ -457,209 +451,3 @@ def scatter_spec(
         margin_bottom=bottom_margin(margin_bottom, height),
         keep_unfiltered_color_levels=keep_unfiltered_color_levels,
     )
-
-
-def parse_color_bins(raw: dict | None) -> Binning | None:
-    """Return how the page asks to cut a numeric color column, checked.
-
-    Parameters
-    ----------
-    raw : dict or None
-        ``{"n": int, "by": "rows" | "values"}``, or None for a gradient.
-
-    Returns
-    -------
-    Binning or None
-        The binning.
-
-    Raises
-    ------
-    ValueError
-        When `raw` has another form, or `n` is not one of `COLOR_BINS`.
-    """
-    if raw is None:
-        return None
-    if (
-        not isinstance(raw, dict)
-        or set(raw) != {"n", "by"}
-        or raw["n"] not in COLOR_BINS
-        or raw["by"] not in ("rows", "values")
-    ):
-        raise ValueError(
-            f"color bins are n in {COLOR_BINS} and by rows or values: {raw}"
-        )
-    return Binning(raw["n"], raw["by"])
-
-
-def parse_smoothing(raw: dict | None) -> Smoothing | None:
-    """Return how the page asks to fit the smoothing lines, checked.
-
-    Parameters
-    ----------
-    raw : dict or None
-        ``{"method": "gcv"}``, ``{"method": "csaps", "p": float | None}``
-        or ``{"method": "lowess", "frac": float}``; None for the default.
-
-    Returns
-    -------
-    Smoothing or None
-        The smoothing.
-
-    Raises
-    ------
-    ValueError
-        When `raw` has another form, ``p`` is not from 0 to 1 or ``frac``
-        not above 0 and at most 1.
-    """
-    if raw is None:
-        return None
-    if not isinstance(raw, dict) or raw.get("method") not in SMOOTH_METHODS:
-        raise ValueError(f"smooth needs a method in {SMOOTH_METHODS}: {raw}")
-    method = raw["method"]
-    allowed = {"gcv": set(), "csaps": {"p"}, "lowess": {"frac"}}[method]
-    if not set(raw) - {"method"} <= allowed:
-        raise ValueError(f"{method} takes only {sorted(allowed)}: {raw}")
-    p, frac = raw.get("p"), raw.get("frac", Smoothing.frac)
-
-    def number(v: object) -> bool:
-        return (
-            isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
-        )
-
-    if p is not None and not (number(p) and 0 <= p <= 1):
-        raise ValueError(f"p is from 0 to 1 or null: {p}")
-    if not (number(frac) and 0 < frac <= 1):
-        raise ValueError(f"frac is above 0 and at most 1: {frac}")
-    return Smoothing(method, None if p is None else float(p), float(frac))
-
-
-def parse_shape_size(raw: object) -> int | None:
-    """Return the size of the markers the page asks for, checked.
-
-    Parameters
-    ----------
-    raw : object
-        One of `SHAPE_SIZES`, or None for the default.
-
-    Returns
-    -------
-    int or None
-        The size in pixels, or None for the default (`scatter_spec`).
-
-    Raises
-    ------
-    ValueError
-        For anything else.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, bool) or raw not in SHAPE_SIZES:
-        raise ValueError(f"shape_size is one of {SHAPE_SIZES} or null: {raw}")
-    return int(raw)
-
-
-def parse_line_width(raw: object) -> int | None:
-    """Return the width of the lines the page asks for, checked.
-
-    Parameters
-    ----------
-    raw : object
-        One of `LINE_WIDTHS`, or None for the default.
-
-    Returns
-    -------
-    int or None
-        The width in pixels, or None for the default (`scatter_spec`).
-
-    Raises
-    ------
-    ValueError
-        For anything else.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw not in LINE_WIDTHS:
-        raise ValueError(f"line_width is one of {LINE_WIDTHS} or null: {raw}")
-    return raw
-
-
-def parse_shape_sizes(raw: dict[str, object] | None) -> dict[str, int]:
-    """Return the sizes the page asks for the shapes of single symbol levels, checked.
-
-    Parameters
-    ----------
-    raw : dict of str to object, or None
-        A level's name to one of `SHAPE_SIZES`, or None for none.
-
-    Returns
-    -------
-    dict of str to int
-        The size in pixels of each level named.
-
-    Raises
-    ------
-    ValueError
-        For anything else.
-    """
-    if raw is None:
-        return {}
-    sizes = {}
-    for level, size in raw.items():
-        sizes[level] = parse_shape_size(size)
-        if sizes[level] is None:
-            raise ValueError(f"shape_sizes has no size for {level!r}")
-    return sizes
-
-
-def parse_level_shapes(raw: dict[str, object] | None) -> dict[str, str]:
-    """Return the shapes the page asks for single symbol levels, checked.
-
-    Parameters
-    ----------
-    raw : dict of str to object, or None
-        A level's name to one of `ddviz.shared.shapes.SHAPES`, or None for
-        none.
-
-    Returns
-    -------
-    dict of str to str
-        The shape of each level named.
-
-    Raises
-    ------
-    ValueError
-        For anything else.
-    """
-    if raw is None:
-        return {}
-    for level, shape in raw.items():
-        if not isinstance(shape, str) or shape not in SHAPES:
-            raise ValueError(
-                f"level_shapes has no shape of {SHAPES} for {level!r}: {shape}"
-            )
-    return dict(raw)
-
-
-def parse_wrap_cols(raw: object) -> int | None:
-    """Return how many wrapped panels the page asks to put in a row, checked.
-
-    Parameters
-    ----------
-    raw : object
-        A positive int, or None to make the panels closest to square.
-
-    Returns
-    -------
-    int or None
-        The number.
-
-    Raises
-    ------
-    ValueError
-        For anything else.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
-        raise ValueError(f"wrap_cols is a positive int or null: {raw}")
-    return raw

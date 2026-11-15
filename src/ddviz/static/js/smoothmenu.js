@@ -1,6 +1,6 @@
 // The menu of the smoothing lines, opened by a right click on their element
-// icon (elements.js): the method (`ddviz.server.plan.SMOOTH_METHODS`) and
-// its parameter, csaps' p or lowess' frac (`ddviz.server.plan.parse_smoothing`).
+// icon (elements.js): the method (`ddviz.server.plotoptions.SMOOTH_METHODS`) and
+// its parameter, csaps' p or lowess' frac (`ddviz.server.plotoptions.parse_smoothing`).
 import { menuHeading, menuItem, Popup } from "./popup.js";
 
 export const METHODS = [

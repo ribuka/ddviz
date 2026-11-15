@@ -1,4 +1,4 @@
-// The menus of the size of the markers (`ddviz.server.plan.SHAPE_SIZES`):
+// The menus of the size of the markers (`ddviz.server.plotoptions.SHAPE_SIZES`):
 // of every series, opened by a right click on the points' element icon
 // (elements.js), on a color item's marker of the legend (legend.js) or, for
 // a gradient, from its scale's menu (scalemenu.js); of one symbol level's
@@ -14,7 +14,7 @@ import { shapeCanvas, shapePanel } from "./shapepanel.js";
 
 export const SIZES = [3, 5, 7, 9, 11, 15];
 export const SIZE_HEADING = "点の大きさ（全系列）";
-// Widths of the lines joining the points (`ddviz.server.plan.LINE_WIDTHS`),
+// Widths of the lines joining the points (`ddviz.server.plotoptions.LINE_WIDTHS`),
 // in the menu of the lines' element icon, which this menu also is.
 export const LINE_WIDTHS = [1, 2, 3, 4, 5];
 export const LINE_HEADING = "線の太さ（全系列）";

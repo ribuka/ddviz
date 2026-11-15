@@ -29,9 +29,8 @@ from ddviz.server.errors import ensure_done
 from ddviz.server.figure import build_figure
 from ddviz.server.hover import HoverIndex
 from ddviz.server.models import PlotRequest, SizeRequest, ViewRequest
-from ddviz.server.plan import (
-    drawable,
-    drawn_columns,
+from ddviz.server.plan import drawable, drawn_columns, scatter_spec, undrawn
+from ddviz.server.plotoptions import (
     parse_color_bins,
     parse_level_shapes,
     parse_line_width,
@@ -39,8 +38,6 @@ from ddviz.server.plan import (
     parse_shape_sizes,
     parse_smoothing,
     parse_wrap_cols,
-    scatter_spec,
-    undrawn,
 )
 from ddviz.server.results import Results, drop
 from ddviz.server.source import Source

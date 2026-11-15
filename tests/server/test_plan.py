@@ -11,12 +11,6 @@ from ddviz.server.plan import (
     drawn_columns,
     has_box_pair,
     parse_filters,
-    parse_level_shapes,
-    parse_line_width,
-    parse_shape_size,
-    parse_shape_sizes,
-    parse_smoothing,
-    parse_wrap_cols,
     scatter_spec,
     undrawn,
 )
@@ -115,25 +109,6 @@ def test_a_numeric_symbol_beside_color_is_cut_into_intervals() -> None:
     assert spec.binned == {
         "symbol": Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
     }
-
-
-def test_parse_shape_size() -> None:
-    """The size is one of `SHAPE_SIZES`, or null for the default."""
-    assert parse_shape_size(None) is None
-    assert parse_shape_size(11) == 11
-    for bad in (4, 0, True, "7", 7.5):
-        with pytest.raises(ValueError, match="shape_size"):
-            parse_shape_size(bad)
-
-
-def test_parse_line_width() -> None:
-    """The width is an integer from 1 to 5, or null for the default."""
-    assert parse_line_width(None) is None
-    assert parse_line_width(1) == 1
-    assert parse_line_width(5) == 5
-    for bad in (0, 6, True, "2", 2.0, 2.5):
-        with pytest.raises(ValueError, match="line_width"):
-            parse_line_width(bad)
 
 
 def test_lines_need_a_numeric_x_and_a_numeric_y() -> None:
@@ -283,15 +258,6 @@ def test_wrap_is_refused_beside_facets_and_nth_axes(
         scatter_spec(encoding, files, 400, 300, ["#000000"])
 
 
-def test_parse_wrap_cols() -> None:
-    """The number to a row is a positive int, or None for square panels."""
-    assert parse_wrap_cols(None) is None
-    assert parse_wrap_cols(4) == 4
-    for raw in (0, -1, 1.5, "2", True):
-        with pytest.raises(ValueError, match="wrap_cols"):
-            parse_wrap_cols(raw)
-
-
 def test_categorical_axis_columns_are_drawn_in_bands() -> None:
     """A text column on x or y is categorical; a column missing from numeric stays numeric."""
     encoding = Encoding(x=("g", "a"), y=("b",), color="h")
@@ -326,40 +292,6 @@ def test_smoothing_lines_need_a_numeric_x_and_a_numeric_y() -> None:
     spec = scatter_spec(both, files, 400, 300, ["#000000"], numeric=numeric)
     assert spec.smooth_pairs() == {("a", "b")}
     assert spec.draws_points("g", "b")
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        (None, None),
-        ({"method": "gcv"}, Smoothing("gcv")),
-        ({"method": "csaps", "p": 0.9}, Smoothing("csaps", p=0.9)),
-        ({"method": "csaps", "p": None}, Smoothing("csaps")),
-        ({"method": "lowess", "frac": 0.25}, Smoothing("lowess", frac=0.25)),
-    ],
-)
-def test_parse_smoothing(raw: dict | None, expected: Smoothing | None) -> None:
-    """The page's smoothing is a method with its own parameter."""
-    assert parse_smoothing(raw) == expected
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        {"method": "spline"},
-        {"p": 0.5},
-        {"method": "gcv", "p": 0.5},
-        {"method": "csaps", "p": 1.5},
-        {"method": "csaps", "p": True},
-        {"method": "lowess", "frac": 0},
-        {"method": "lowess", "frac": 1.2},
-        [],
-    ],
-)
-def test_parse_smoothing_refuses_bad_values(raw: object) -> None:
-    """An unknown method, a parameter of another method, or one out of range is refused."""
-    with pytest.raises(ValueError):
-        parse_smoothing(raw)
 
 
 def test_box_plots_need_a_categorical_x_and_a_numeric_y() -> None:
@@ -431,16 +363,6 @@ def test_scatter_keeps_the_kinds_of_the_temporal_columns_it_reads() -> None:
     assert "row" in spec.binned
 
 
-def test_parse_shape_sizes() -> None:
-    """Each symbol level named takes one of `SHAPE_SIZES`; null is none."""
-    assert parse_shape_sizes(None) == {}
-    assert parse_shape_sizes({"p": 3, "q": 15}) == {"p": 3, "q": 15}
-    assert parse_shape_sizes({"__proto__": 9}) == {"__proto__": 9}
-    for bad in ({"p": 4}, {"p": None}, {"p": "7"}):
-        with pytest.raises(ValueError, match="shape_size"):
-            parse_shape_sizes(bad)
-
-
 def test_symbol_levels_take_their_own_sizes() -> None:
     """A level named in `shape_sizes` takes its size, the others `shape_size`; without shapes, none."""
     files = {c: [f"{c}.parquet"] for c in ("a", "b", "g", "o")}
@@ -454,16 +376,6 @@ def test_symbol_levels_take_their_own_sizes() -> None:
     spec = scatter_spec(circles, files, 400, 300, ["#000000"], shape_sizes={"q": 3})
     assert spec.shape_sizes == {}
     assert spec.marker_sizes(["q"]) == [POINT_SIZE]
-
-
-def test_parse_level_shapes() -> None:
-    """Each symbol level named takes one of `SHAPES`; two levels may take the same."""
-    assert parse_level_shapes(None) == {}
-    assert parse_level_shapes({"p": "x", "q": "x"}) == {"p": "x", "q": "x"}
-    assert parse_level_shapes({"__proto__": "circle"}) == {"__proto__": "circle"}
-    for bad in ({"p": "star"}, {"p": None}, {"p": 3}):
-        with pytest.raises(ValueError, match="level_shapes"):
-            parse_level_shapes(bad)
 
 
 def test_symbol_levels_take_their_own_shapes() -> None:
