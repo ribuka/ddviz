@@ -285,6 +285,8 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 | `results.py` | いま描いている結果：全体図、ズームした表示、範囲選択の層（`Results`、`Layer`） |
 | `derive.py` | 描いた結果の manifest から次のタスクの spec を作る純粋な関数（表示範囲・大きさ・フィルタを変えた spec、範囲選択） |
 | `api_source.py`、`api_plot.py`、`api_selection.py` | エンドポイント（列、描画とホバー、範囲選択と表）。部品を引数に取って `APIRouter` を返す |
+| `api_export.py` | データの保存の書き出しとファイルの受け渡し（`/api/plot-data/*`）。`api_plot.py` から分けた（2026-11-15。Issue #203） |
+| `api_events.py` | タスクの進捗の SSE（`/api/events`）。描画と保存の両方の進捗を流すので、保存とは別のモジュールにした（2026-11-15。Issue #203） |
 | `exporting.py` | 走っているデータの保存の書き出し（`Exporting`）：表のページを断るか、中止をプールの kill にするか（2026-11-15。Issue #194） |
 | `api_saves.py` | 窓が保存したファイルの操作（開く、フォルダーに表示、転送の中止）のエンドポイントと、窓が渡す `SaveActions` の型。窓のサーバーだけ（2026-11-15。Issue #194） |
 | `models.py`、`errors.py` | リクエストの型、終わらなかったタスクの HTTP エラー（取り消しは 409、失敗は 500） |
