@@ -603,7 +603,7 @@ def test_restore_gives_back_the_mode_ticks_query_and_order(js_page: Page) -> Non
 
 
 def test_filters_key_follows_the_conditions(js_page: Page) -> None:
-    """Conditions of the same order and values have one key; another range, levels or contains gives another."""
+    """Conditions of the same values have one key in any order of the cards; another range, levels or contains gives another."""
     result = js_page.evaluate(
         """async () => {
           const { filtersKey } = await import("/static/js/filters.js");
@@ -617,15 +617,15 @@ def test_filters_key_follows_the_conditions(js_page: Page) -> None:
             [{ ...list[0], range: [0, 2] }, list[1], list[2]],
             [list[0], { ...list[1], levels: ["p", "q"] }, list[2]],
             [list[0], list[1], { ...list[2], contains: "y" }],
-            [list[1], list[0], list[2]],
           ];
           return {
             same: filtersKey(list) === filtersKey(copy),
+            reordered: filtersKey(list) === filtersKey([list[2], list[0], list[1]]),
             changed: changed.map((other) => filtersKey(list) !== filtersKey(other)),
           };
         }"""
     )
-    assert result == {"same": True, "changed": [True, True, True, True]}
+    assert result == {"same": True, "reordered": True, "changed": [True, True, True]}
 
 
 def test_card_kind_tells_how_a_card_sets_its_condition(js_page: Page) -> None:
@@ -687,12 +687,12 @@ FOUR_KINDS = """async () => {
 
 
 def test_the_four_kinds_of_cards_give_their_conditions_and_summary(js_page: Page) -> None:
-    """Each kind of card sends its own condition and says it in its own words."""
+    """Each kind of card sends its own condition, in the order of the columns, and says it in its own words, in the order of the cards."""
     got = js_page.evaluate(FOUR_KINDS)
     assert got["conditions"] == [
-        {"column": "n", "range": [2, 7]},
         {"column": "g", "levels": ["a", "b"]},
         {"column": "id", "levels": ["v1", "v2"]},
+        {"column": "n", "range": [2, 7]},
         {"column": "t", "contains": "ab"},
     ]
     assert got["summary"] == "n: 2〜7、g: 2/3、id: 2/5000、t: 「ab」を含む"
