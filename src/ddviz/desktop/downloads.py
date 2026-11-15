@@ -44,6 +44,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ddviz.desktop.fileshell import open_file, show_in_folder
+from ddviz.desktop.webview2 import on_ui, when_ready
 
 _log = logging.getLogger(__name__)
 
@@ -265,28 +266,15 @@ class Downloads:
 
     def _before_show(self) -> None:
         """Take over WebView2 on the UI thread; pywebview calls this in a thread of its own."""
-        try:
-            from System import Action
-
-            self._window.native.Invoke(Action(self._hook))
-        except Exception:  # noqa: BLE001 - logged; downloads then go to pywebview
-            _log.exception("cannot take over the downloads")
+        # On a failure, logged, downloads go to pywebview.
+        on_ui(self._window, self._hook, _log, "cannot take over the downloads")
 
     def _hook(self) -> None:
         """Replace pywebview's handler, now or once WebView2 is ready; on the UI thread."""
         browser = self._window.native.browser
-        control = browser.webview
-        if control.CoreWebView2 is not None:
-            self.replace(control.CoreWebView2, browser.on_download_starting)
-        else:
-
-            def initialized(sender: object, args: object) -> None:
-                if args.IsSuccess:
-                    self.replace(sender.CoreWebView2, browser.on_download_starting)
-
-            # After pywebview's own handler of this event, which subscribes
-            # the handler replaced here.
-            control.CoreWebView2InitializationCompleted += initialized
+        # After pywebview's own handler of the initialization, which
+        # subscribes the handler replaced here.
+        when_ready(browser.webview, lambda core: self.replace(core, browser.on_download_starting))
 
     def replace(self, core: object, previous: object) -> None:
         """Unsubscribe `previous` from ``DownloadStarting`` and subscribe `starting`.

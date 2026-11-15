@@ -17,6 +17,8 @@ import logging
 import sys
 from ctypes import wintypes
 
+from ddviz.desktop.webview2 import on_ui, when_ready
+
 _log = logging.getLogger(__name__)
 
 LRESULT = ctypes.c_ssize_t
@@ -296,25 +298,15 @@ class TitleBar:
 
     def _invoke(self, action: object) -> None:
         """Run `action` on the UI thread; log what fails."""
-        try:
-            from System import Action
-
-            self._window.native.Invoke(Action(action))
-        except Exception:  # noqa: BLE001 - logged; the window keeps working without it
-            _log.exception("title bar")
+        on_ui(self._window, action, _log, "title bar")
 
     def _allow_regions(self) -> None:
         """Turn on ``IsNonClientRegionSupportEnabled``, now or once WebView2 is ready."""
-        control = self._window.native.browser.webview
-        if control.CoreWebView2 is not None:
-            control.CoreWebView2.Settings.IsNonClientRegionSupportEnabled = True
-        else:
-            control.CoreWebView2InitializationCompleted += self._on_initialized
+        when_ready(self._window.native.browser.webview, self._allow_core)
 
-    def _on_initialized(self, sender: object, args: object) -> None:
-        """Turn on ``IsNonClientRegionSupportEnabled`` once WebView2 is ready."""
-        if args.IsSuccess:
-            sender.CoreWebView2.Settings.IsNonClientRegionSupportEnabled = True
+    def _allow_core(self, core: object) -> None:
+        """Turn on ``IsNonClientRegionSupportEnabled`` of a ready WebView2."""
+        core.Settings.IsNonClientRegionSupportEnabled = True
 
     def _install(self) -> None:
         """Subclass the form and lay the caption over the page; on the UI thread."""

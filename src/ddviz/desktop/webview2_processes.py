@@ -14,6 +14,8 @@ from __future__ import annotations
 import logging
 import threading
 
+from ddviz.desktop.webview2 import on_ui, when_ready
+
 _log = logging.getLogger(__name__)
 
 
@@ -59,13 +61,8 @@ class FrontendProcesses:
 
     def _on_shown(self, window: object) -> None:
         """Follow WebView2 from the UI thread; pywebview calls this in a thread of its own."""
-        try:
-            from System import Func, Type
-
-            form = window.native
-            form.Invoke(Func[Type](lambda: self.hook(form.browser.webview)))
-        except Exception:  # noqa: BLE001 - logged; the frontend's memory stays unknown
-            _log.exception("cannot follow the WebView2 processes")
+        # On a failure, logged, the frontend's memory stays unknown.
+        on_ui(window, lambda: self.hook(window.native.browser.webview), _log, "cannot follow the WebView2 processes")
 
     def hook(self, control: object) -> None:
         """Follow a WebView2 control's processes; on the UI thread.
@@ -75,15 +72,7 @@ class FrontendProcesses:
         control : Microsoft.Web.WebView2.WinForms.WebView2
             The window's control, ready or not.
         """
-        if control.CoreWebView2 is not None:
-            self._ready(control.CoreWebView2)
-        else:
-            control.CoreWebView2InitializationCompleted += self._on_initialized
-
-    def _on_initialized(self, sender: object, args: object) -> None:
-        """Follow the processes once WebView2 is ready."""
-        if args.IsSuccess:
-            self._ready(sender.CoreWebView2)
+        when_ready(control, self._ready)
 
     def _ready(self, core: object) -> None:
         """Subscribe to the environment's process changes and list them now."""
