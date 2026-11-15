@@ -21,6 +21,7 @@ from ddviz.server.broker import TaskBroker
 from ddviz.server.settings import (
     ColumnsSettings,
     HoverSettings,
+    ImageCopySettings,
     LegendSettings,
     PlotSettings,
     Settings,
@@ -139,8 +140,13 @@ def test_columns_carry_their_non_null_rows(
 def test_the_page_reads_the_inactive_opacity(
     tmp_path: Path, scatter_path: Path
 ) -> None:
-    """``GET /api/settings`` gives the page ``plot.legend.inactive_opacity``."""
-    settings = Settings(plot=PlotSettings(legend=LegendSettings(inactive_opacity=0.0)))
+    """``GET /api/settings`` gives the page ``plot.legend.inactive_opacity`` and ``plot.image_copy.dpi``."""
+    settings = Settings(
+        plot=PlotSettings(
+            legend=LegendSettings(inactive_opacity=0.0),
+            image_copy=ImageCopySettings(dpi=96),
+        )
+    )
     app = create_app(
         [str(scatter_path)],
         False,
@@ -154,7 +160,10 @@ def test_the_page_reads_the_inactive_opacity(
     with TestClient(app) as client:
         assert client.get("/api/settings").status_code == 403
         client.get("/", params={"token": TOKEN})
-        assert client.get("/api/settings").json() == {"inactive_opacity": 0.0}
+        assert client.get("/api/settings").json() == {
+            "inactive_opacity": 0.0,
+            "image_copy_dpi": 96,
+        }
 
 
 def test_columns_list_as_many_as_the_settings_allow(

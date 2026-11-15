@@ -134,8 +134,11 @@ def create_app(
 
     @app.get("/api/settings")
     async def page_settings() -> dict:
-        """Return the settings the page draws with: the opacity of the legend's inactive series."""
-        return {"inactive_opacity": settings.plot.legend.inactive_opacity}
+        """Return the settings the page draws with: the opacity of the legend's inactive series and the DPI of the copied graph image."""
+        return {
+            "inactive_opacity": settings.plot.legend.inactive_opacity,
+            "image_copy_dpi": settings.plot.image_copy.dpi,
+        }
 
     app.include_router(source_router(source, settings.columns.max_listed))
     app.include_router(history_router(history))

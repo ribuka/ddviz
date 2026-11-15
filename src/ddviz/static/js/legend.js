@@ -40,6 +40,8 @@ import { formatTemporal } from "./temporal.js";
 
 // Until the settings come.
 const INACTIVE_OPACITY = 0.1;
+// Beside a level without rows, and under a gradient's bar without them.
+export const EMPTY_NOTE = "（行なし）";
 
 export class Legend {
   // `element` holds the items; `onChange` runs after each click, `onMenu`
@@ -132,63 +134,133 @@ export class Legend {
   }
 
   render() {
-    if (!this.meta) {
-      this.element.replaceChildren();
-      return;
-    }
-    const nodes = this.color.kind === "gradient" ? this.barNodes() : this.colorNodes();
-    if (this.meta.symbol) nodes.push(...this.shapeNodes());
-    this.element.replaceChildren(...nodes);
+    this.element.replaceChildren(...this.entries().map((entry) => this.node(entry)));
+  }
+
+  // Returns what the legend shows, from the top: the page draws it as
+  // elements (`render`), a copied graph image on a canvas (`legendimage.js`).
+  // Each entry is one of
+  // - `{type: "title", text, legend: "color" | "shape", scale}`: a legend's
+  //   title; `scale` for a numeric color column's;
+  // - `{type: "item", legend, i, text, color, kernel, inactive, empty}`: a
+  //   level's item, its marker a disc of `color` or the shape `kernel`;
+  // - `{type: "bar", stops, ticks, inactive}`: a gradient's color bar, the
+  //   colors from its low end up and the ticks from the top down;
+  // - `{type: "note"}`: the gradient's level has no rows.
+  entries() {
+    if (!this.meta) return [];
+    const entries = this.color.kind === "gradient" ? this.barEntries() : this.colorEntries();
+    if (this.meta.symbol) entries.push(...this.shapeEntries());
+    return entries;
   }
 
   // The color legend: none for a single color (Color empty), whose one item
   // would tell nothing. The title is the column's name alone: the intervals'
   // items and the scale's menu tell how a numeric column is cut.
-  colorNodes() {
+  colorEntries() {
     if (this.title === null) return [];
     const colors = levelColors(this.meta);
     const items = this.series.map((name, i) =>
-      this.item("color", i, levelText(name, this.series), (swatch) => {
-        swatch.style.background = colors[i];
-      }),
+      this.itemEntry("color", i, levelText(name, this.series), { color: colors[i] }),
     );
-    return [this.titleElement(), ...items];
+    return [this.titleEntry(), ...items];
   }
 
-  shapeNodes() {
+  shapeEntries() {
     const { column, kernels } = this.meta.symbol;
-    const title = document.createElement("div");
-    title.className = "legend-title shapes";
-    title.textContent = column;
-    title.title = column;
     const items = this.shapes.map((name, i) =>
-      this.item("shape", i, levelText(name, this.shapes), (swatch) => {
-        swatch.classList.add("shape");
-        swatch.append(shapeCanvas(kernels[i]));
-      }),
+      this.itemEntry("shape", i, levelText(name, this.shapes), { kernel: kernels[i] }),
     );
-    return [title, ...items];
+    return [{ type: "title", text: column, legend: "shape", scale: false }, ...items];
   }
 
-  // One item of a legend (`kind` "color" or "shape"); `paint` draws its marker.
-  item(kind, i, text, paint) {
+  titleEntry() {
+    return { type: "title", text: this.title, legend: "color", scale: this.color.kind !== "levels" };
+  }
+
+  itemEntry(legend, i, text, marker) {
+    const inactive = this.off[legend].has(i);
+    const empty = this.empty[legend].has(i);
+    return { type: "item", legend, i, text, color: null, kernel: null, ...marker, inactive, empty };
+  }
+
+  // A gradient's color bar, high values at the top, and under it the missing
+  // level's item; only the item without a finite value.
+  barEntries() {
+    const missing = hasMissing(this.series);
+    const last = this.series.length - 1;
+    const missingEntries = () =>
+      missing
+        ? [this.itemEntry("color", last, levelText(this.series[last]), { color: levelColors(this.meta)[last] })]
+        : [];
+    if (missing && last === 0) return [this.titleEntry(), ...missingEntries()];
+    const [lo, hi] = this.color.range;
+    const bar = {
+      type: "bar",
+      stops: [...Array(11).keys()].map((i) => cssColor(i / 10)),
+      ticks: [hi, (lo + hi) / 2, lo].map((value) => formatTick(value, this.color.temporal)),
+      inactive: this.off.color.has(0),
+    };
+    const entries = [this.titleEntry(), bar];
+    if (this.empty.color.has(0)) entries.push({ type: "note" });
+    return [...entries, ...missingEntries()];
+  }
+
+  // Returns the element of an entry (`entries`).
+  node(entry) {
+    if (entry.type === "title") return this.titleNode(entry);
+    if (entry.type === "item") return this.itemNode(entry);
+    if (entry.type === "bar") return this.barNode(entry);
+    const note = document.createElement("div");
+    note.className = "legend-item empty";
+    note.textContent = EMPTY_NOTE;
+    return note;
+  }
+
+  // The title; for a numeric column, a right click opens the scale's menu.
+  titleNode({ text, legend, scale }) {
+    const title = document.createElement("div");
+    title.className = "legend-title";
+    title.classList.toggle("shapes", legend === "shape");
+    title.textContent = text;
+    title.title = text;
+    if (scale) {
+      title.classList.add("scale");
+      title.title = `${text}
+右クリックで色の付け方を変える`;
+      title.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        this.onMenu(event);
+      });
+    }
+    return title;
+  }
+
+  // One item of a legend.
+  itemNode({ legend: kind, i, text, color, kernel, inactive, empty }) {
     const item = document.createElement("div");
     item.className = "legend-item";
-    item.classList.toggle("inactive", this.off[kind].has(i));
-    item.classList.toggle("empty", this.empty[kind].has(i));
+    item.classList.toggle("inactive", inactive);
+    item.classList.toggle("empty", empty);
     const marker = document.createElement("span");
     marker.className = "legend-marker";
     const swatch = document.createElement("span");
     swatch.className = "swatch";
-    paint(swatch);
+    if (kernel) {
+      swatch.classList.add("shape");
+      swatch.append(shapeCanvas(kernel));
+    } else {
+      swatch.style.background = color;
+    }
     marker.append(swatch);
     // A long name ends in "…" within the side pane; its tooltip has it whole.
     const name = document.createElement("span");
     name.className = "legend-name";
     name.textContent = text;
-    item.title = this.empty[kind].has(i) ? `${text}\n表示範囲とフィルタの条件に合う行が無い` : text;
+    item.title = empty ? `${text}
+表示範囲とフィルタの条件に合う行が無い` : text;
     item.append(marker, name);
-    if (this.empty[kind].has(i)) item.append(" （行なし）");
+    if (empty) item.append(` ${EMPTY_NOTE}`);
     item.addEventListener("click", () => this.toggle(kind, i));
     item.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -211,67 +283,27 @@ export class Legend {
     return "右クリックで色と点の大きさを変える";
   }
 
-  // The title; for a numeric column, a right click opens the scale's menu.
-  titleElement() {
-    const title = document.createElement("div");
-    title.className = "legend-title";
-    title.textContent = this.title;
-    title.title = this.title;
-    if (this.color.kind !== "levels") {
-      title.classList.add("scale");
-      title.title = `${this.title}\n右クリックで色の付け方を変える`;
-      title.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        this.onMenu(event);
-      });
-    }
-    return title;
-  }
-
-  // A gradient's color bar, high values at the top, and under it the missing
-  // level's item; only the item without a finite value.
-  barNodes() {
-    const missing = hasMissing(this.series);
-    const last = this.series.length - 1;
-    const missingNodes = () => {
-      if (!missing) return [];
-      const colors = levelColors(this.meta);
-      return [
-        this.item("color", last, levelText(this.series[last]), (swatch) => {
-          swatch.style.background = colors[last];
-        }),
-      ];
-    };
-    if (missing && last === 0) return [this.titleElement(), ...missingNodes()];
-    const [lo, hi] = this.color.range;
+  barNode({ stops, ticks, inactive }) {
     const bar = document.createElement("div");
     bar.className = "colorbar";
     const strip = document.createElement("div");
     strip.className = "colorbar-strip";
-    const stops = [...Array(11).keys()].map((i) => cssColor(i / 10));
     strip.style.background = `linear-gradient(to top, ${stops.join(", ")})`;
-    const ticks = document.createElement("div");
-    ticks.className = "colorbar-ticks";
-    for (const value of [hi, (lo + hi) / 2, lo]) {
+    const labels = document.createElement("div");
+    labels.className = "colorbar-ticks";
+    for (const text of ticks) {
       const tick = document.createElement("span");
-      tick.textContent = formatTick(value, this.color.temporal);
-      ticks.append(tick);
+      tick.textContent = text;
+      labels.append(tick);
     }
-    bar.append(strip, ticks);
+    bar.append(strip, labels);
     bar.title = "右クリックで色の付け方を変える";
-    bar.classList.toggle("inactive", this.off.color.has(0));
+    bar.classList.toggle("inactive", inactive);
     bar.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       this.onMenu(event);
     });
-    const nodes = [this.titleElement(), bar];
-    if (this.empty.color.has(0)) {
-      const note = document.createElement("div");
-      note.className = "legend-item empty";
-      note.textContent = "（行なし）";
-      nodes.push(note);
-    }
-    return [...nodes, ...missingNodes()];
+    return bar;
   }
 
   // Whether the color legend has no items to toggle: a gradient without its

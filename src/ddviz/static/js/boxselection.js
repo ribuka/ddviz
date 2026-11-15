@@ -45,6 +45,14 @@ export class BoxSelection {
     return this.#state;
   }
 
+  // Whether the selected rows' layer over the drawn result is being asked
+  // for: asked (`base`) and not come yet (`layerBase`, the result of the
+  // layer that came). A request that failed is not awaited.
+  get asking() {
+    const state = this.#state;
+    return state !== null && state.base !== null && state.base !== state.layerBase;
+  }
+
   // Takes plotly's box of `event`; plotly sends no range for a click beside
   // the box, which drops it.
   pick(event) {
@@ -133,6 +141,7 @@ export class BoxSelection {
     closeImages(state.bitmaps);
     state.bitmaps = bitmaps;
     state.layer = layer;
+    state.layerBase = meta.task;
     state.held = true;
     layers.setSelection({ meta, bitmaps, piles: new Set(layer.piles) });
     statusLine.show(`選んだ行：${layer.rows.toLocaleString()} 行（${layer.task_seconds.toFixed(1)} 秒）`);

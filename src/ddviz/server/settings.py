@@ -17,6 +17,9 @@ MAX_LISTED = 1000
 MAX_HISTORY = 20
 # Opacity of the series made inactive in the legend (`docs/spec.md`, "凡例クリック").
 INACTIVE_OPACITY = 0.1
+# Resolutions the graph image copy may use; the first is the default
+# (`docs/spec.md`, "グラフ画像のコピー").
+IMAGE_COPY_DPIS = (300, 96)
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,19 @@ class LegendSettings:
 
 
 @dataclass(frozen=True)
+class ImageCopySettings:
+    """Resolution of the graph image the plot's menu copies.
+
+    Parameters
+    ----------
+    dpi : int
+        Dots per inch of the PNG, 96 or 300; 96 CSS px make an inch.
+    """
+
+    dpi: int = IMAGE_COPY_DPIS[0]
+
+
+@dataclass(frozen=True)
 class PlotSettings:
     """Limits of a plot.
 
@@ -62,11 +78,14 @@ class PlotSettings:
         Most levels a categorical column on X or Y may have.
     legend : LegendSettings
         Looks of the legend's series.
+    image_copy : ImageCopySettings
+        Resolution of the copied graph image.
     """
 
     max_levels: int = MAX_LEVELS
     max_axis_levels: int = MAX_AXIS_LEVELS
     legend: LegendSettings = LegendSettings()
+    image_copy: ImageCopySettings = ImageCopySettings()
 
 
 @dataclass(frozen=True)
@@ -154,7 +173,8 @@ def load_settings(path: Path | None = None) -> Settings:
     ValueError
         When ``plot.max_levels``, ``plot.max_axis_levels``, ``columns.max_listed`` or
         ``columns.max_history`` is not a positive integer, ``hover.max_temp_gb`` is not a positive number, or
-        ``plot.legend.inactive_opacity`` is not a number from 0 to 1.
+        ``plot.legend.inactive_opacity`` is not a number from 0 to 1, or
+        ``plot.image_copy.dpi`` is not the integer 96 or 300.
     """
     path = path or settings_path()
     data = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -176,6 +196,9 @@ def load_settings(path: Path | None = None) -> Settings:
             "plot.legend.inactive_opacity needs a number from 0 to 1: "
             f"{inactive_opacity!r}"
         )
+    dpi = data.get("plot", {}).get("image_copy", {}).get("dpi", IMAGE_COPY_DPIS[0])
+    if isinstance(dpi, bool) or not isinstance(dpi, int) or dpi not in IMAGE_COPY_DPIS:
+        raise ValueError(f"plot.image_copy.dpi needs the integer 96 or 300: {dpi!r}")
     hover = data.get("hover", {})
     max_temp_gb = hover.get("max_temp_gb")
     if max_temp_gb is not None and (
@@ -197,6 +220,7 @@ def load_settings(path: Path | None = None) -> Settings:
             max_levels=max_levels,
             max_axis_levels=max_axis_levels,
             legend=LegendSettings(inactive_opacity=float(inactive_opacity)),
+            image_copy=ImageCopySettings(dpi=dpi),
         ),
         hover=HoverSettings()
         if max_temp_gb is None
