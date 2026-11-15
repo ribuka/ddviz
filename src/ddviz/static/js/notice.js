@@ -1,6 +1,6 @@
 // The status bar's message, with an icon for errors and warnings, and the
-// toasts at the top right that tell of an error (Issue #31) or of the desktop
-// window's save of the plot's data (Issue #182).
+// toasts at the top right that tell of an error (Issue #31) or of a save of
+// the plot's data (Issue #182, #194).
 
 // How long a toast stays: an error, and a notice that something went well.
 const TOAST_MS = { error: 10000, success: 7000 };
@@ -83,13 +83,44 @@ export class Toasts {
     for (const old of this.shown()) {
       if (old.dataset.text === text) this.close(old);
     }
-    const toast = document.createElement("div");
-    toast.className = kind === "error" ? "toast notice-error" : "toast toast-success";
-    toast.dataset.text = text;
-    toast.setAttribute("role", kind === "error" ? "alert" : "status");
     const message = document.createElement("span");
     message.className = "toast-text";
     message.textContent = text;
+    const toast = this.add(message, kind);
+    toast.dataset.text = text;
+  }
+
+  // Shows a toast of a save of the plot's data (`saves.js`) with `content`:
+  // it stays until `settle` while the save goes on, and `onClose` is called
+  // when it closes (by its button, or pushed out by newer toasts) — the save
+  // goes on. Same texts never replace it. Returns the toast.
+  hold(content, onClose) {
+    const toast = this.add(content, "success", Infinity);
+    toast.classList.add("toast-save");
+    toast.onClose = onClose;
+    return toast;
+  }
+
+  // Gives a held toast its end's look (`kind`) and lets it leave after the
+  // time of that kind. Returns false when it has closed already.
+  settle(toast, kind) {
+    if (!toast.isConnected || toast.classList.contains("toast-leaving")) return false;
+    toast.classList.toggle("notice-error", kind === "error");
+    toast.classList.toggle("toast-success", kind !== "error");
+    toast.setAttribute("role", kind === "error" ? "alert" : "status");
+    clearTimeout(toast.timer);
+    toast.timer = undefined;
+    toast.left = TOAST_MS[kind];
+    this.resume(toast);
+    return true;
+  }
+
+  // Adds a toast of `kind` holding `content` and a close button, which
+  // leaves after `ms` (never for Infinity); the oldest go past MAX_TOASTS.
+  add(content, kind, ms = TOAST_MS[kind]) {
+    const toast = document.createElement("div");
+    toast.className = kind === "error" ? "toast notice-error" : "toast toast-success";
+    toast.setAttribute("role", kind === "error" ? "alert" : "status");
     const close = document.createElement("button");
     close.type = "button";
     close.className = "toast-close";
@@ -97,8 +128,8 @@ export class Toasts {
     close.setAttribute("aria-label", "閉じる");
     close.textContent = "×";
     close.addEventListener("click", () => this.close(toast));
-    toast.append(message, close);
-    toast.left = TOAST_MS[kind];
+    toast.append(content, close);
+    toast.left = ms;
     toast.hovered = false;
     toast.addEventListener("mouseenter", () => {
       toast.hovered = true;
@@ -112,17 +143,18 @@ export class Toasts {
     this.resume(toast);
     const shown = this.shown();
     for (const extra of shown.slice(0, Math.max(0, shown.length - MAX_TOASTS))) this.close(extra);
+    return toast;
   }
 
   // Runs the toast's timer, or stops it while it is hovered or the window is
-  // hidden, keeping the time left.
+  // hidden, keeping the time left. A toast held (Infinity) has none.
   resume(toast) {
     if (toast.timer !== undefined) {
       clearTimeout(toast.timer);
       toast.timer = undefined;
       toast.left -= performance.now() - toast.started;
     }
-    if (toast.hovered || document.hidden) return;
+    if (toast.hovered || document.hidden || toast.left === Infinity) return;
     toast.started = performance.now();
     toast.timer = setTimeout(() => this.close(toast), Math.max(0, toast.left));
   }
@@ -133,12 +165,14 @@ export class Toasts {
     toast.timer = undefined;
     toast.classList.add("toast-leaving");
     setTimeout(() => toast.remove(), EXIT_MS);
+    toast.onClose?.();
   }
 }
 
 // Tells in a toast how the desktop window's save of the plot's data ended
 // (`ddviz.desktop.downloads`): `{saved: <the name saved under>}`, or
-// `{error: <why>}`.
+// `{error: <why>}`. For a save the page does not know (`saves.js` shows the
+// others in their own toasts).
 export function showSaveResult(toasts, result) {
   if (result.saved !== undefined) {
     toasts.show(`ダウンロードに保存しました（${result.saved}）`, "success");

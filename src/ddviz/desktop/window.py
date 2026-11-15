@@ -460,9 +460,10 @@ class _App:
 
 #: Builds the UI server's app for an input, whether to read its subfolders,
 #: the token, what returns the ids of the window's WebView2 processes, and
-#: whether the page is the desktop window's (with its title bar).
+#: whether the page is the desktop window's (with its title bar), and the
+#: window's saves of the plot's data (`ddviz.server.api_saves.SaveActions`).
 MakeApp = Callable[
-    [list[str], bool, str, Callable[[], list[int] | None], bool], object
+    [list[str], bool, str, Callable[[], list[int] | None], bool, object], object
 ]
 
 
@@ -631,13 +632,15 @@ def _run(
     frontend.attach(window)
     window.events.shown += lambda: _record(window)
     TitleBar().attach(window)
-    # The plot's data is saved to Downloads without pywebview's dialog.
-    Downloads().attach(window)
+    # The plot's data is saved to Downloads without pywebview's dialog; the
+    # page opens, shows or cancels the saves through the server.
+    downloads = Downloads()
+    downloads.attach(window)
     app = _App(
         window,
         paths,
         recursive,
-        lambda p, r, t: make_app(p, r, t, frontend.pids, True),
+        lambda p, r, t: make_app(p, r, t, frontend.pids, True, downloads),
         label,
     )
     api.app = app

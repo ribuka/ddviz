@@ -22,7 +22,7 @@ import { showCasts } from "./casts.js";
 import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } from "./colorscale.js";
 import { openColumnMenu } from "./columnmenu.js";
 import { attachColumnList } from "./columns.js";
-import { exportProgress, openDataMenu } from "./datamenu.js";
+import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
 import { FilterPane, RestorePoint } from "./filters.js";
 import { attachHover } from "./hover.js";
@@ -34,6 +34,7 @@ import { levelText } from "./names.js";
 import { MemoryMeter } from "./memory.js";
 import { showSaveResult, StatusLine, Toasts, errorText } from "./notice.js";
 import { openPlotMenu } from "./plotmenu.js";
+import { Saves } from "./saves.js";
 import { openScaleMenu } from "./scalemenu.js";
 import { LINE_HEADING, LINE_WIDTHS, levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
 import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
@@ -45,10 +46,17 @@ import { attachZoneMenu } from "./zonemenu.js";
 
 const toasts = new Toasts(document.getElementById("toasts"));
 const statusLine = new StatusLine(document.getElementById("status"), toasts);
+// The saves of the plot's data; the table fetches the pages refused while
+// one was written.
+const saves = new Saves(toasts, () => table.exportEnded());
 // The desktop window saves the plot's data to the Downloads folder by itself
-// and calls this with how it ended (ddviz.desktop.downloads); a browser
-// (`--port`) saves it as its own download and never calls it.
-window.ddvizSaved = (result) => showSaveResult(toasts, result);
+// and calls these with how far it got and how it ended
+// (ddviz.desktop.downloads); a browser (`--port`) saves it as its own
+// download and never calls them.
+window.ddvizSaveProgress = (progress) => saves.transferProgress(progress);
+window.ddvizSaved = (result) => {
+  if (!saves.saved(result)) showSaveResult(toasts, result);
+};
 // The memory in use, fetched as soon as the page shows and then about every second.
 new MemoryMeter(document.getElementById("memory-backend"), document.getElementById("memory-frontend")).fetch();
 const hoverWarning = document.getElementById("hover-warning");
@@ -117,7 +125,7 @@ events.onmessage = (event) => {
   const message = JSON.parse(event.data);
   if (message.type !== "progress") return;
   if (message.export !== undefined) {
-    exportProgress(message);
+    saves.exportProgress(message);
     return;
   }
   if (message.stage === "convert") {
@@ -543,7 +551,7 @@ const DOWNLOAD_DATA = {
   title: "データを保存（CSV / Parquet）",
   icon: Plotly.Icons.disk,
   click: (_, event) =>
-    openDataMenu(event.currentTarget ?? event.target.closest(".modebar-btn"), () => overview?.meta.task ?? null),
+    openDataMenu(event.currentTarget ?? event.target.closest(".modebar-btn"), () => overview?.meta.task ?? null, saves),
 };
 const PLOT_CONFIG = {
   displayModeBar: true,
@@ -1231,6 +1239,7 @@ function markPending() {
 let selection = null;
 let selectionGeneration = 0;
 const table = new SelectionTable(document.getElementById("table"));
+table.exporting = () => saves.running;
 
 // Returns the panel of a box from plotly's `range` (keyed by axis id), its
 // bounds as numbers (a date axis gives dates).

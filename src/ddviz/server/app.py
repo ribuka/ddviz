@@ -2,8 +2,10 @@
 
 This process never imports polars; it only reads the files the workers
 write. The routes live in `ddviz.server.api_source` (the columns),
-`ddviz.server.api_plot` (drawing and hovers) and `ddviz.server.api_selection`
-(the selection and its table). Every request needs the token of the run
+`ddviz.server.api_plot` (drawing, hovers and the plot's data),
+`ddviz.server.api_selection` (the selection and its table) and, in the
+window, `ddviz.server.api_saves` (the saved files). Every request needs the
+token of the run
 (`ddviz.server.auth`).
 """
 
@@ -21,10 +23,12 @@ from fastapi.staticfiles import StaticFiles
 from ddviz.server.api_history import history_router
 from ddviz.server.api_memory import memory_router
 from ddviz.server.api_plot import plot_router
+from ddviz.server.api_saves import SaveActions, saves_router
 from ddviz.server.api_selection import selection_router
 from ddviz.server.api_source import source_router
 from ddviz.server.auth import TokenAuth
 from ddviz.server.broker import TaskBroker
+from ddviz.server.exporting import Exporting
 from ddviz.server.history import SearchHistory, history_file
 from ddviz.server.memory import FrontendPids, MemoryMeter
 from ddviz.server.page import index_page
@@ -47,6 +51,7 @@ def create_app(
     token: str,
     frontend_pids: FrontendPids | None = None,
     desktop: bool = False,
+    saves: SaveActions | None = None,
 ) -> FastAPI:
     """Create the UI server for a Parquet file, a folder of them or several files.
 
@@ -74,6 +79,10 @@ def create_app(
     desktop : bool
         Serving the desktop window: the page draws its title bar
         (`ddviz.server.page.index_page`).
+    saves : SaveActions or None
+        The window's saves of the plot's data, which the page opens, shows
+        in their folder or cancels (`ddviz.server.api_saves`); None in a
+        browser, which has no such routes.
 
     Returns
     -------
@@ -85,6 +94,7 @@ def create_app(
         data_paths, recursive, cache_root, root / "level-index", settings, broker
     )
     results = Results()
+    exporting = Exporting()
     meter = MemoryMeter(frontend_pids)
     history = SearchHistory(
         history_file(history_root, source.paths),
@@ -132,10 +142,13 @@ def create_app(
             source,
             results,
             broker,
+            exporting,
             settings.plot.max_levels,
             settings.plot.max_axis_levels,
             settings.hover.max_temp_bytes,
         )
     )
-    app.include_router(selection_router(source, results, broker))
+    app.include_router(selection_router(source, results, broker, exporting))
+    if saves is not None:
+        app.include_router(saves_router(saves))
     return app

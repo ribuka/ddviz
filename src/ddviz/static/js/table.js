@@ -6,6 +6,9 @@
 // the data: the plot's columns first. Only the columns in view are fetched,
 // a chunk at a time: the server reads a page of a chunk's columns in a
 // worker (`GET /api/table`), from the column cache or from the source.
+// While the plot's data is written in the same pool, the server refuses the
+// pages (409 `exporting`): the table says so, and fetches them once the
+// export has ended (`exportEnded`, Issue #194).
 
 const COLUMN_WIDTH = 120;
 const INDEX_WIDTH = 90;
@@ -13,6 +16,8 @@ const INDEX_WIDTH = 90;
 const CHUNK = 50;
 const SCROLL_SETTLE_MS = 120;
 const MIN_HEIGHT = 80;
+// Wait before fetching again a page refused for an export that has ended.
+const EXPORT_RETRY_MS = 1000;
 // Heights of the drawer, lowest first: its header only, the height it was
 // given (by dragging its edge), and the whole plot area. ▲ and ▼ step
 // through them.
@@ -38,6 +43,11 @@ export class SelectionTable {
     this.grid = root.querySelector(".table-grid");
     this.up = root.querySelector(".table-up");
     this.down = root.querySelector(".table-down");
+    // Shown while the server refuses the pages: the plot's data is being
+    // written in the table's pool (409 `exporting`), until `exportEnded`.
+    this.wait = root.querySelector(".table-wait");
+    // Whether the page's export runs (`Saves.running`); set by the app.
+    this.exporting = () => false;
     this.state = "open";
     this.rows = 0;
     this.offset = 0;
@@ -112,6 +122,7 @@ export class SelectionTable {
   show(rows) {
     this.generation++;
     this.chunks.clear();
+    this.wait.hidden = true;
     if (rows === null) {
       this.root.hidden = true;
       return;
@@ -130,6 +141,7 @@ export class SelectionTable {
     if (offset < 0 || offset >= this.rows) return;
     this.generation++;
     this.chunks.clear();
+    this.wait.hidden = true;
     this.offset = offset;
     this.scroll.scrollTop = 0;
     this.updateTitle();
@@ -173,6 +185,7 @@ export class SelectionTable {
     try {
       const body = await pending;
       if (mine !== this.generation) return null;
+      this.wait.hidden = true;
       this.chunks.set(chunk, body);
       this.pageSize = body.page_size;
       this.totalColumns = body.total_columns;
@@ -182,11 +195,28 @@ export class SelectionTable {
       this.render();
       return body;
     } catch (error) {
-      if (mine === this.generation) this.chunks.delete(chunk);
+      if (mine === this.generation) {
+        this.chunks.delete(chunk);
+        if (String(error).includes('"exporting"')) {
+          this.wait.hidden = false;
+          // The export may have ended before this answer came, and told
+          // so already: fetch again (later, in case another page's export
+          // still runs).
+          if (!this.exporting()) setTimeout(() => this.exportEnded(), EXPORT_RETRY_MS);
+        }
+      }
       // A newer page or column chunk killed the worker of this one.
       if (!String(error).startsWith("Error: 409")) console.error(error);
       return null;
     }
+  }
+
+  // The export of the plot's data has ended: the pages refused meanwhile
+  // are fetched again.
+  exportEnded() {
+    if (this.wait.hidden) return;
+    this.wait.hidden = true;
+    this.fetchInView();
   }
 
   // Draws the columns in view from the fetched chunks; the others are

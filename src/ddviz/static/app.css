@@ -42,7 +42,6 @@
   --bg-pressed: #e3e3e3;
   --bg-tip: rgb(0 0 0 / 75%);
   --bg-veil: rgb(255 255 255 / 70%);
-  --bg-dim: rgb(0 0 0 / 35%);
   --track: #ddd;
 
   /* borders */
@@ -71,7 +70,6 @@
   --error-strong: #7f1d1d;
   --error-border: #fca5a5;
   --error-bg: #fef2f2;
-  --error-menu: #b00020;
   --danger: #c00;
   --warning: #f59e0b;
   --warning-text: #b45309;
@@ -1126,6 +1124,23 @@ button {
   display: none;
 }
 
+/* While the plot's data is written, the table's pages wait (Issue #194). */
+.table-wait {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  padding: 0 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.table-wait[hidden],
+#table.collapsed .table-wait {
+  display: none;
+}
+
 .table-resize {
   height: 5px;
   margin-top: -3px;
@@ -1905,59 +1920,153 @@ html.desktop #toasts {
   background: radial-gradient(circle, currentColor 0 2px, transparent 2.5px);
 }
 
-/* Covers the page, grayed out, while the plot's data is written: a spinner,
-   the rows written and a bar. Above the menu, which stays open under it. */
-#exporting {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-dim);
-  z-index: 200;
+/* No format while an export runs: it says why. */
+.data-menu-note {
+  max-width: 260px;
+  padding: 2px 12px 4px 24px;
+  color: var(--text-hint);
+  font-size: 11px;
 }
 
-#exporting[hidden] {
+/* ---- saves of the plot's data (saves.js): a save's toast and its row of
+   the history, in the look of a browser's downloads ---- */
+.toast.toast-save {
+  width: 340px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.save-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.save-view[hidden],
+.save-view [hidden] {
   display: none;
 }
 
-#exporting .box {
+.save-head,
+.save-line,
+.save-progress {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 24px 32px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.save-badge {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--border-card);
+  border-radius: 3px;
+  background: var(--bg-card-head);
+  color: var(--text-sub);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.save-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.save-status {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-sub);
+  font-variant-numeric: tabular-nums;
+}
+
+.save-progress progress {
+  flex: 1;
+  min-width: 0;
+  height: 8px;
+}
+
+.save-cancel {
+  flex: none;
+  padding: 1px 10px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 3px;
   background: var(--bg);
-}
-
-#exporting .spinner {
-  width: 48px;
-  height: 48px;
-  box-sizing: border-box;
-  border: 5px solid var(--track);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: exporting-spin 0.9s linear infinite;
-}
-
-#exporting progress {
-  width: 320px;
-}
-
-@keyframes exporting-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.data-menu-error {
-  max-width: 260px;
-  padding: 4px 12px;
-  border-top: 1px solid var(--border-light);
-  color: var(--error-menu);
+  color: var(--text);
+  font: inherit;
   font-size: 12px;
+  cursor: pointer;
+}
+
+.save-cancel:hover:not(:disabled) {
+  background: var(--bg-hover-gray);
+}
+
+.save-cancel:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+/* The file's actions: open it, show it in its folder. */
+.save-action {
+  flex: none;
+  width: 26px;
+  height: 24px;
+  padding: 4px 5px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+.save-action:hover {
+  background: var(--bg-hover-gray);
+  color: var(--accent);
+}
+
+.save-action svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+/* The history: under the title bar's button, or the mode bar's save button
+   in a browser; newest first, scrolling past six rows. Over the toasts. */
+.saves-panel {
+  position: fixed;
+  z-index: 150;
+  width: 360px;
+  max-width: calc(100vw - 8px);
+  box-sizing: border-box;
+  padding: 4px 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-float);
+  box-shadow: var(--shadow-float);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.saves-panel-heading {
+  padding: 6px 12px 4px;
+  font-weight: 600;
+}
+
+.saves-list {
+  max-height: calc(6 * 64px);
+  overflow-y: auto;
+}
+
+.save-row {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-light);
 }
 
 /* ---- dialog of a numeric axis (axisdialog.js) ---- */

@@ -48,6 +48,82 @@ html.desktop:not(.caption-known) body {
   outline-offset: -2px;
 }
 
+/* The history of the saves of the plot's data (js/saves.js), at the right
+   end, 8px left of the OS caption buttons; a ring around it shows the saves
+   running (Issue #194). Only the graph's page adds it. */
+#titlebar .titlebar-saves {
+  app-region: no-drag;
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 100%;
+  margin-right: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+#titlebar .titlebar-saves[hidden] {
+  display: none;
+}
+
+#titlebar .titlebar-saves:hover,
+#titlebar .titlebar-saves[aria-expanded="true"] {
+  background: rgb(0 0 0 / 8%);
+}
+
+#titlebar .titlebar-saves:focus-visible {
+  outline: 2px solid #2a6fdb;
+  outline-offset: -2px;
+}
+
+#titlebar .titlebar-saves > svg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+}
+
+#titlebar .titlebar-saves > svg.saves-ring {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke-width: 2;
+  /* From the top, clockwise. */
+  transform: translate(-50%, -50%) rotate(-90deg);
+  visibility: hidden;
+}
+
+#titlebar .titlebar-saves > svg.saves-ring.running {
+  visibility: visible;
+}
+
+.saves-ring-track {
+  stroke: #d6d6d6;
+}
+
+.saves-ring-value {
+  stroke: #2a6fdb;
+  stroke-dasharray: 0 100;
+}
+
+#titlebar .titlebar-saves > svg.saves-ring.spinning {
+  animation: saves-ring-spin 1s linear infinite;
+}
+
+@keyframes saves-ring-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(-90deg);
+  }
+
+  to {
+    transform: translate(-50%, -50%) rotate(270deg);
+  }
+}
+
 #titlebar .titlebar-title {
   flex: 1;
   min-width: 0;

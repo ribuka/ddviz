@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # a worker does not import fastapi
     from fastapi import FastAPI
 
+    from ddviz.server.api_saves import SaveActions
+
 
 def make_app(
     paths: list[str],
@@ -27,6 +29,7 @@ def make_app(
     token: str,
     frontend_pids: Callable[[], list[int] | None] | None = None,
     desktop: bool = False,
+    saves: SaveActions | None = None,
 ) -> FastAPI:
     """Build the UI server for a Parquet file, a folder of them or several files.
 
@@ -44,6 +47,9 @@ def make_app(
         the footer; None in a browser.
     desktop : bool
         Serving the desktop window, whose page draws its title bar.
+    saves : SaveActions or None
+        The window's saves of the plot's data (`ddviz.server.api_saves`);
+        None in a browser.
 
     Returns
     -------
@@ -66,6 +72,7 @@ def make_app(
         token,
         frontend_pids,
         desktop,
+        saves,
     )
 
 

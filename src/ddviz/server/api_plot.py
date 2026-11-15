@@ -30,9 +30,11 @@ from ddviz.server.broker import TaskBroker, TaskEnd
 from ddviz.server.derive import resized_spec, unchanged
 from ddviz.server.encoding import Encoding
 from ddviz.server.errors import ensure_done
+from ddviz.server.exporting import Exporting
 from ddviz.server.figure import build_figure
 from ddviz.server.hover import HoverIndex
 from ddviz.server.models import (
+    ExportCancel,
     PlotDataRequest,
     PlotRequest,
     SizeRequest,
@@ -75,6 +77,7 @@ def plot_router(
     source: Source,
     results: Results,
     broker: TaskBroker,
+    exporting: Exporting,
     max_levels: int,
     max_axis_levels: int,
     max_hover_bytes: int,
@@ -89,6 +92,8 @@ def plot_router(
         The drawn results, which the routes replace.
     broker : TaskBroker
         Runs the plot tasks.
+    exporting : Exporting
+        The export of the plot's data running, which the page may cancel.
     max_levels : int
         Most levels a categorical color, Symbol, Group X, Group Y or Wrap
         column may have.
@@ -364,48 +369,68 @@ def plot_router(
     # Files of the plot's data written and not fetched yet, by their id.
     exports: dict[str, tuple[TaskEnd, str]] = {}
 
-    @router.post("/api/plot-data/{task}")
-    async def plot_data(task: int, request: PlotDataRequest) -> dict:
-        """Write the rows of the overview as a CSV or Parquet file (`ddviz.compute.tasks.plotdata`) and return its id.
+    # Before ``/api/plot-data/{task}``, which would take its path.
+    @router.post("/api/plot-data/cancel", status_code=204)
+    async def plot_data_cancel(request: ExportCancel) -> None:
+        """Cancel the export of the page's token: kill its task, or stop it before it reaches the pool; nothing for another token."""
+        if exporting.cancel(request.export):
+            await broker.cancel("table")
+
+    @router.post("/api/plot-data/{task}", response_model=None)
+    async def plot_data(task: int, request: PlotDataRequest) -> dict | JSONResponse:
+        """Write the rows of the overview as a CSV or Parquet file (`ddviz.compute.tasks.plotdata`) and return its id and name.
 
         The overview, not the view: the file holds the whole plot whatever
         the zoom. A worker of the table's pool writes it, sending its progress
         to ``/api/events`` with the page's ``export``; the page then fetches
         it from ``/api/plot-data/file/{id}``. A file not fetched is removed
-        when the next one is written.
+        when the next one is written. While it is written, the table's pages
+        are refused (`Exporting`); an export cancelled by
+        ``POST /api/plot-data/cancel`` answers 409 ``{"cancelled": true}``
+        and leaves no file.
         """
         index = results.overview
         if index is None or index.out.name != str(task):
             raise HTTPException(404, "stale")
-        # A newer overview may replace it from the first await until the
-        # worker has read it: keep its directory from here.
-        with results.hold(index):
-            spec = index.manifest.spec
-            names = [c["name"] for c in await source.schema()]
-            if request.columns == "all":
-                columns = names
-            else:
-                columns = [c for c in names if c in spec.files]
-            missing = await asyncio.to_thread(source.missing, columns)
-            parts = {c: source.parts(c) for c in columns if c not in missing}
-            data = PlotDataTask(
-                str(index.out),
-                request.format,
-                request.rows,
-                columns,
-                parts,
-                source.source_files([c for c in columns if c not in parts]),
-                request.export,
-            )
-            for end, _ in exports.values():
+        exporting.begin(request.export)
+        try:
+            # A newer overview may replace it from the first await until the
+            # worker has read it: keep its directory from here.
+            with results.hold(index):
+                spec = index.manifest.spec
+                names = [c["name"] for c in await source.schema()]
+                if request.columns == "all":
+                    columns = names
+                else:
+                    columns = [c for c in names if c in spec.files]
+                missing = await asyncio.to_thread(source.missing, columns)
+                parts = {c: source.parts(c) for c in columns if c not in missing}
+                data = PlotDataTask(
+                    str(index.out),
+                    request.format,
+                    request.rows,
+                    columns,
+                    parts,
+                    source.source_files([c for c in columns if c not in parts]),
+                    request.export,
+                )
+                for end, _ in exports.values():
+                    end.discard()
+                exports.clear()
+                if exporting.cancelled:
+                    return JSONResponse({"cancelled": True}, status_code=409)
+                exporting.submitted = True
+                end = await broker.run(data, "table")
+            if exporting.cancelled:
                 end.discard()
-            exports.clear()
-            end = await broker.run(data, "table")
+                return JSONResponse({"cancelled": True}, status_code=409)
+        finally:
+            exporting.end()
         ensure_done(end)
         name = file_name(source.paths, request.format, datetime.now().astimezone())
         key = uuid.uuid4().hex
         exports[key] = (end, name)
-        return {"file": key}
+        return {"file": key, "name": name}
 
     @router.get("/api/plot-data/file/{key}")
     async def plot_data_file(key: str) -> FileResponse:

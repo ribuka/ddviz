@@ -29,7 +29,7 @@ from ddviz.server.source import Source
 from ddviz.shared.missing import MISSING, MISSING_COLOR
 from ddviz.shared.scatter import POINT_SIZE, SHAPE_SIZE
 from ddviz.shared.shapes import SHAPES, kernel
-from ddviz.shared.tasks import PlotTask
+from ddviz.shared.tasks import PlotDataTask, PlotTask
 
 if TYPE_CHECKING:
     from httpx import Response
@@ -927,6 +927,157 @@ def test_plot_data_keeps_an_overview_replaced_while_it_prepares(
     assert replaced and replaced[0] != meta["task"]
     assert response.status_code == 200, response.text
     assert pl.read_parquet(io.BytesIO(response.content)).height == meta["rows"]
+
+
+def _hold_exports(monkeypatch: pytest.MonkeyPatch) -> tuple[threading.Event, threading.Event]:
+    """Hold each export of the plot's data just before its task goes to the pool, until released; return (reached, release)."""
+    reached, release = threading.Event(), threading.Event()
+    run = TaskBroker.run
+
+    async def held(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        if isinstance(task, PlotDataTask):
+            reached.set()
+            await asyncio.to_thread(release.wait, 30)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", held)
+    return reached, release
+
+
+def test_an_export_holds_the_table_and_is_cancelled_by_its_token(
+    tmp_path: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While the plot's data is written, the table's pages are 409 ``exporting``; the page's token cancels it, killing the table pool's task, and no file stays."""
+    meta = _plot(client)["meta"]
+    box = {"task": meta["task"], "panel": 0, "x_range": [-5, 5], "y_range": [-5, 5]}
+    assert client.post("/api/selection", json=box).status_code == 200
+    reached, release = _hold_exports(monkeypatch)
+    cancels: list[str] = []
+    cancel = TaskBroker.cancel
+
+    async def counted(self: TaskBroker, pool: str = "plot") -> None:
+        cancels.append(pool)
+        await cancel(self, pool)
+
+    monkeypatch.setattr(TaskBroker, "cancel", counted)
+    body = {"format": "csv", "rows": "drawn", "columns": "drawn", "export": "mine"}
+    answer: list[Response] = []
+    thread = threading.Thread(
+        target=lambda: answer.append(client.post(f"/api/plot-data/{meta['task']}", json=body))
+    )
+    thread.start()
+    try:
+        assert reached.wait(30)
+        table = client.get("/api/table")
+        assert table.status_code == 409
+        assert table.json() == {"detail": "exporting"}
+        # Another token's cancel does nothing.
+        assert client.post("/api/plot-data/cancel", json={"export": "other"}).status_code == 204
+        assert cancels == []
+        assert client.post("/api/plot-data/cancel", json={"export": "mine"}).status_code == 204
+        assert cancels == ["table"]
+    finally:
+        release.set()
+        thread.join(30)
+    assert answer[0].status_code == 409
+    assert answer[0].json() == {"cancelled": True}
+    assert list((tmp_path / "run" / "table").iterdir()) == []
+    assert client.get("/api/table").status_code == 200
+    assert client.post("/api/plot-data/cancel", json={}).status_code == 422
+
+
+def test_an_export_cancelled_before_its_task_never_runs(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancel while the export looks up its columns stops it before the pool, which runs nothing; the next export writes its file and names it."""
+    meta = _plot(client)["meta"]
+    missing = Source.missing
+    runs: list[object] = []
+    run = TaskBroker.run
+
+    async def counted(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        runs.append(task)
+        return await run(self, task, pool)
+
+    def cancel_first(self: Source, columns: list[str]) -> dict[str, list[int]]:
+        if not runs:
+            runs.append(None)
+            response = client.post("/api/plot-data/cancel", json={"export": "t"})
+            assert response.status_code == 204
+        return missing(self, columns)
+
+    monkeypatch.setattr(Source, "missing", cancel_first)
+    monkeypatch.setattr(TaskBroker, "run", counted)
+    body = {"format": "csv", "rows": "drawn", "columns": "drawn", "export": "t"}
+    response = client.post(f"/api/plot-data/{meta['task']}", json=body)
+    assert response.status_code == 409
+    assert response.json() == {"cancelled": True}
+    assert runs == [None]
+
+    written = client.post(f"/api/plot-data/{meta['task']}", json=body)
+    assert written.status_code == 200
+    name = written.json()["name"]
+    assert re.fullmatch(r"scatter_\d{8}-\d{6}\.csv", name)
+    file = client.get(f"/api/plot-data/file/{written.json()['file']}")
+    assert file.headers["content-disposition"] == f'attachment; filename="{name}"'
+
+
+class _Saves:
+    """The window's saves (`SaveActions`): `a` is saved, `gone` was moved, `locked` cannot be opened."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def _act(self, action: str, file: str) -> None:
+        self.calls.append((action, file))
+        if file == "gone":
+            raise FileNotFoundError(2, "No such file", file)
+        if file == "locked":
+            raise PermissionError(13, "Access is denied")
+        if file != "a":
+            raise KeyError(file)
+
+    def open(self, file: str) -> None:
+        self._act("open", file)
+
+    def reveal(self, file: str) -> None:
+        self._act("reveal", file)
+
+    def cancel(self, file: str) -> None:
+        self._act("cancel", file)
+
+
+def test_the_windows_saves_open_show_and_cancel(tmp_path: Path, scatter_path: Path) -> None:
+    """With the window's saves, the page opens, shows or cancels them by id: a file gone is 404 ``missing``, an id not saved 404 ``unknown``, an OS failure 500; a browser has no such routes."""
+    saves = _Saves()
+    for given in (saves, None):
+        app = create_app(
+            [str(scatter_path)],
+            False,
+            tmp_path / "run",
+            tmp_path / "cache",
+            tmp_path / "history",
+            Settings(),
+            TOKEN,
+            desktop=given is not None,
+            saves=given,
+        )
+        (tmp_path / "run").mkdir(exist_ok=True)
+        with TestClient(app) as window:
+            window.get("/", params={"token": TOKEN})
+            if given is None:
+                assert window.post("/api/saves/a/open").status_code == 404
+                assert window.post("/api/saves/a/reveal").status_code == 404
+                continue
+            for action in ("open", "reveal", "cancel"):
+                assert window.post(f"/api/saves/a/{action}").status_code == 204
+            gone = window.post("/api/saves/gone/open")
+            assert (gone.status_code, gone.json()) == (404, {"detail": "missing"})
+            unknown = window.post("/api/saves/b/reveal")
+            assert (unknown.status_code, unknown.json()) == (404, {"detail": "unknown"})
+            locked = window.post("/api/saves/locked/open")
+            assert (locked.status_code, locked.json()) == (500, {"detail": "Access is denied"})
+    assert saves.calls[:3] == [("open", "a"), ("reveal", "a"), ("cancel", "a")]
 
 
 def test_plot_data_needs_no_hover_files(tmp_path: Path, scatter_path: Path) -> None:
