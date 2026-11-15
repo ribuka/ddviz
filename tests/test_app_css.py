@@ -91,3 +91,40 @@ def test_floating_elements_share_shadow_and_corners(selector: str) -> None:
     body = _rule(selector)
     assert "box-shadow: var(--shadow-float)" in body
     assert "border-radius: var(--radius-float)" in body
+
+
+def _root_number(name: str) -> int:
+    """Return the integer value of a `:root` variable.
+
+    Parameters
+    ----------
+    name : str
+        The variable's name, with its leading `--`.
+
+    Returns
+    -------
+    int
+        Its value.
+    """
+    match = re.search(rf"{re.escape(name)}\s*:\s*(\d+)\s*;", _rule(":root"))
+    assert match, name
+    return int(match.group(1))
+
+
+def test_stacking_comes_from_root_variables() -> None:
+    """Every `z-index` is a `--z-*` variable of `:root`, so the stacking order reads in one place."""
+    written = [
+        (sel, line.strip())
+        for sel, body in _rules()
+        for line in body.split(";")
+        if line.strip().startswith("z-index") and not line.split(":", 1)[1].strip().startswith("var(--z-")
+    ]
+    assert written == []
+
+
+def test_stacking_order() -> None:
+    """The toasts sit under the converting cover, the menus over it; the drawer and drop hints under the toasts."""
+    page = [_root_number(name) for name in ("--z-toast", "--z-cover", "--z-menu", "--z-saves-panel")]
+    assert page == sorted(set(page))
+    plot = [_root_number(name) for name in ("--z-table", "--z-drop", "--z-toast")]
+    assert plot == sorted(set(plot))

@@ -78,6 +78,24 @@
   --shadow-float: 0 4px 12px rgb(0 0 0 / 18%);
   --radius-float: 6px;
   --shadow-drawer: 0 -2px 8px rgb(0 0 0 / 8%);
+
+  /* Stacking, lowest first. Within a box of their own: */
+  --z-modebar: 1;          /* #plot .modebar-container, over the figure */
+  --z-table-index: 1;      /* .tc.ti, the row numbers of the table */
+  --z-table-head: 2;       /* .tc.th */
+  --z-table-corner: 3;     /* .tc.th.ti */
+  --z-filter-resize: 4;    /* .filter-resize */
+  --z-left-resize: 5;      /* .left-resize */
+  /* Over the plot area: */
+  --z-pending: 10;         /* #pending */
+  --z-hover: 10;           /* #hover-label, #hover-ring */
+  --z-table: 20;           /* #table, the drawer over the plot */
+  --z-drop: 50;            /* #drop-tip, #drop-line */
+  /* Over the page, children of <body>: */
+  --z-toast: 100;          /* #toasts */
+  --z-cover: 101;          /* #converting, over the toasts as it is now */
+  --z-menu: 102;           /* .scale-menu, over the cover as it is now */
+  --z-saves-panel: 150;    /* .saves-panel */
 }
 
 html,
@@ -167,7 +185,7 @@ button {
   bottom: 0;
   width: 6px;
   cursor: ew-resize;
-  z-index: 5;
+  z-index: var(--z-left-resize);
 }
 
 #columns {
@@ -247,7 +265,7 @@ button {
   right: 0;
   height: 6px;
   cursor: ns-resize;
-  z-index: 4;
+  z-index: var(--z-filter-resize);
 }
 
 #filters.collapsed .filter-resize {
@@ -935,7 +953,7 @@ button {
   background: var(--bg-tip);
   color: var(--text-on-color);
   font-size: 12px;
-  z-index: 50;
+  z-index: var(--z-drop);
 }
 
 #drop-line {
@@ -943,7 +961,7 @@ button {
   pointer-events: none;
   background: var(--accent);
   border-radius: 1px;
-  z-index: 50;
+  z-index: var(--z-drop);
 }
 
 #drop-line[hidden],
@@ -1103,7 +1121,7 @@ button {
   box-shadow: var(--shadow-drawer);
   color: var(--text-table);
   font-size: 12px;
-  z-index: 20;
+  z-index: var(--z-table);
 }
 
 #table[hidden] {
@@ -1225,7 +1243,7 @@ button {
 .tc.th {
   font-weight: 600;
   background: var(--bg-table-header);
-  z-index: 2;
+  z-index: var(--z-table-head);
 }
 
 .tc.plot.th {
@@ -1237,11 +1255,11 @@ button {
   color: var(--text-table-muted);
   text-align: right;
   background: var(--bg-table-header);
-  z-index: 1;
+  z-index: var(--z-table-index);
 }
 
 .tc.th.ti {
-  z-index: 3;
+  z-index: var(--z-table-corner);
 }
 
 #statusbar {
@@ -1313,7 +1331,7 @@ button {
   align-items: flex-end;
   gap: 8px;
   max-width: min(480px, calc(100vw - 24px));
-  z-index: 100;
+  z-index: var(--z-toast);
 }
 
 html.desktop #toasts {
@@ -1454,7 +1472,7 @@ html.desktop #toasts {
   max-width: 360px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  z-index: 10;
+  z-index: var(--z-hover);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1466,7 +1484,7 @@ html.desktop #toasts {
   margin: -6px 0 0 -6px;
   border: 1px solid var(--ring);
   border-radius: 50%;
-  z-index: 10;
+  z-index: var(--z-hover);
 }
 
 #info {
@@ -1514,7 +1532,7 @@ html.desktop #toasts {
   align-items: center;
   justify-content: center;
   background: var(--bg-veil);
-  z-index: 100;
+  z-index: var(--z-cover);
 }
 
 #converting[hidden] {
@@ -1559,7 +1577,7 @@ html.desktop #toasts {
   background: var(--bg-tip);
   color: var(--text-on-color);
   font-size: 12px;
-  z-index: 10;
+  z-index: var(--z-pending);
 }
 
 /* ---- color scale of a numeric color column ---- */
@@ -1597,7 +1615,7 @@ html.desktop #toasts {
 
 .scale-menu {
   position: fixed;
-  z-index: 100;
+  z-index: var(--z-menu);
   display: flex;
   flex-direction: column;
   min-width: 170px;
@@ -1858,7 +1876,7 @@ html.desktop #toasts {
 
 /* The mode bar of a grid that scrolls lies over the top strip. */
 #plot .modebar-container {
-  z-index: 1;
+  z-index: var(--z-modebar);
 }
 
 .sticky-strip {
@@ -2041,7 +2059,7 @@ html.desktop #toasts {
    in a browser; newest first, scrolling past six rows. Over the toasts. */
 .saves-panel {
   position: fixed;
-  z-index: 150;
+  z-index: var(--z-saves-panel);
   width: 360px;
   max-width: calc(100vw - 8px);
   box-sizing: border-box;
