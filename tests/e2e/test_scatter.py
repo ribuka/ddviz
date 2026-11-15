@@ -1300,11 +1300,11 @@ def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     page.wait_for_function(PAINTED_PIXEL)
 
     # In a low window the longer menu stays on screen and scrolls.
-    page.set_viewport_size({"width": 1280, "height": 400})
+    page.set_viewport_size({"width": 1280, "height": 240})
     page.wait_for_function(SETTLED)
     bar.click(button="right")
     box = menu.bounding_box()
-    assert box["y"] >= 0 and box["y"] + box["height"] <= 400
+    assert box["y"] >= 0 and box["y"] + box["height"] <= 240
     expect(menu.get_by_text("15 px", exact=True)).not_to_be_in_viewport()
     for item in (menu.get_by_label("区間数"), menu.get_by_role("button", name="適用")):
         item.scroll_into_view_if_needed()
