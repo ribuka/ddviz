@@ -80,6 +80,7 @@
             <button type="button" class="table-down" title="表を畳む">▼</button>
           </header>
           <div class="table-scroll"><div class="table-inner"><div class="table-grid"></div></div></div>
+          <div class="table-wait" role="status" hidden>データを書き出している間は表を表示できません。書き出しが終わると表示します。</div>
         </section>
       </div>
       <div class="zone vertical" data-role="row"></div>
@@ -122,13 +123,6 @@
     <div class="box">
       <div id="converting-text"></div>
       <progress id="converting-bar"></progress>
-    </div>
-  </div>
-  <div id="exporting" hidden>
-    <div class="box">
-      <div class="spinner" aria-hidden="true"></div>
-      <div id="exporting-text" role="status"></div>
-      <progress id="exporting-bar"></progress>
     </div>
   </div>
 </body>

@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 from ddviz.server.broker import TaskBroker
 from ddviz.server.derive import box_selection, selection_spec
 from ddviz.server.errors import ensure_done
+from ddviz.server.exporting import Exporting
 from ddviz.server.models import SelectionRequest
 from ddviz.server.results import Layer, Results
 from ddviz.server.source import Source
@@ -28,7 +29,9 @@ TABLE_PAGE = 100
 TABLE_MAX_COLUMNS = 200
 
 
-def selection_router(source: Source, results: Results, broker: TaskBroker) -> APIRouter:
+def selection_router(
+    source: Source, results: Results, broker: TaskBroker, exporting: Exporting
+) -> APIRouter:
     """Return the routes of the selection and its table.
 
     Parameters
@@ -39,6 +42,9 @@ def selection_router(source: Source, results: Results, broker: TaskBroker) -> AP
         The drawn results and the selection over them.
     broker : TaskBroker
         Runs the selection and table tasks.
+    exporting : Exporting
+        The export of the plot's data running in the table's pool: the
+        table's pages wait for it (409 ``exporting``).
 
     Returns
     -------
@@ -119,6 +125,10 @@ def selection_router(source: Source, results: Results, broker: TaskBroker) -> AP
             parts,
             source.source_files([c for c in window if c in missing]),
         )
+        # The export of the plot's data runs in the same pool: a page now
+        # would kill it.
+        if exporting.active:
+            raise HTTPException(409, "exporting")
         end = await broker.run(task, "table")
         ensure_done(end)
         page = end.take()

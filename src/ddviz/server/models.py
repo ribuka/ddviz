@@ -58,6 +58,14 @@ class PlotDataRequest(BaseModel):
     export: str
 
 
+class ExportCancel(BaseModel):
+    """Body of ``POST /api/plot-data/cancel``: the page's token of the export to cancel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    export: str
+
+
 class SizeRequest(BaseModel):
     """Body of ``POST /api/overview``: the size of the plot area in pixels, the left and bottom margins asked for (`PlotRequest`) and the local filter."""
 

@@ -58,6 +58,13 @@ class _Operation:
         self.InterruptReason = "None"
         self.ResultFilePath: str | None = None
         self.StateChanged = _Event()
+        self.BytesReceived = 0
+        self.TotalBytesToReceive = 0
+        self.BytesReceivedChanged = _Event()
+        self.cancelled = 0
+
+    def Cancel(self) -> None:
+        self.cancelled += 1
 
 
 class _Args:
@@ -71,19 +78,25 @@ class _Args:
 
 
 class _Core:
-    """``CoreWebView2``: the page's URL, and the scripts run in it with what Downloads held then."""
+    """``CoreWebView2``: the page's URL, and the scripts run in it: the ends of the saves (`told`) with what Downloads held then, and the progress (`progress`)."""
 
     def __init__(self, folder: Path, source: str = f"{ORIGIN}/") -> None:
         self.Source = source
         self.folder = folder
         self.told: list[tuple[dict, list[str]]] = []
+        self.progress: list[dict] = []
         self.DownloadStarting = _Event()
 
     def ExecuteScriptAsync(self, script: str) -> None:
-        prefix, suffix = "window.ddvizSaved?.(", ");"
-        assert script.startswith(prefix) and script.endswith(suffix)
+        function, _, rest = script.partition("?.(")
+        assert rest.endswith(");"), script
+        value = json.loads(rest.removesuffix(");"))
+        if function == "window.ddvizSaveProgress":
+            self.progress.append(value)
+            return
+        assert function == "window.ddvizSaved", script
         listed = sorted(p.name for p in self.folder.iterdir()) if self.folder.is_dir() else []
-        self.told.append((json.loads(script[len(prefix) : -len(suffix)]), listed))
+        self.told.append((value, listed))
 
 
 def _start(
@@ -139,7 +152,7 @@ def test_success_is_told_once_after_the_final_name_holds_the_file(tmp_path: Path
     operation.StateChanged.fire(operation, None)  # still in progress
     assert core.told == []
     _transfer(args, b"x")
-    assert core.told == [({"saved": NAME}, [NAME])]
+    assert core.told == [({"file": "abc", "saved": NAME, "size": 1}, [NAME])]
 
 
 def test_a_name_in_use_by_a_file_or_a_folder_takes_the_lowest_free_number(tmp_path: Path) -> None:
@@ -149,7 +162,7 @@ def test_a_name_in_use_by_a_file_or_a_folder_takes_the_lowest_free_number(tmp_pa
     core = _Core(tmp_path)
     _transfer(_start(_saver(tmp_path), core), b"new")
     saved = "sample_20261114-120000 (2).csv"
-    assert core.told[0][0] == {"saved": saved}
+    assert core.told[0][0] == {"file": "abc", "saved": saved, "size": 3}
     assert (tmp_path / saved).read_bytes() == b"new"
     assert (tmp_path / NAME).read_bytes() == b"old"
     assert (tmp_path / "sample_20261114-120000 (1).csv").is_dir()
@@ -159,13 +172,14 @@ def test_two_saves_of_the_same_name_both_stay(tmp_path: Path) -> None:
     """Two downloads in progress at once, of one name, end in two files."""
     core = _Core(tmp_path)
     saver = _saver(tmp_path)
-    first, second = _start(saver, core), _start(saver, core)
+    first = _start(saver, core, uri=f"{ORIGIN}/api/plot-data/file/one")
+    second = _start(saver, core, uri=f"{ORIGIN}/api/plot-data/file/two")
     assert Path(first.ResultFilePath).parent != Path(second.ResultFilePath).parent
     _transfer(second, b"second")
     _transfer(first, b"first")
     assert [told for told, _ in core.told] == [
-        {"saved": NAME},
-        {"saved": "sample_20261114-120000 (1).csv"},
+        {"file": "two", "saved": NAME, "size": 6},
+        {"file": "one", "saved": "sample_20261114-120000 (1).csv", "size": 5},
     ]
     assert (tmp_path / NAME).read_bytes() == b"second"
     assert (tmp_path / "sample_20261114-120000 (1).csv").read_bytes() == b"first"
@@ -207,7 +221,9 @@ def test_a_folder_that_cannot_be_resolved_is_told_once(tmp_path: Path) -> None:
     core = _Core(tmp_path)
     args = _start(Downloads(missing), core)
     assert args.Cancel
-    assert core.told == [({"error": "ダウンロードのフォルダーが見つかりません。"}, [])]
+    assert core.told == [
+        ({"file": "abc", "error": "ダウンロードのフォルダーが見つかりません。"}, [])
+    ]
 
 
 def test_a_folder_that_cannot_be_created_is_told_once(tmp_path: Path) -> None:
@@ -235,7 +251,7 @@ def test_an_interrupted_save_is_told_once_and_leaves_nothing(
     """A write that failed or a transfer that stopped is told once; neither the final name nor the partial file stays."""
     core = _Core(tmp_path)
     _transfer(_start(_saver(tmp_path), core), b"part", state="Interrupted", reason=reason)
-    assert core.told == [({"error": message}, [])]
+    assert core.told == [({"file": "abc", "error": message}, [])]
     assert list(tmp_path.iterdir()) == []
 
 
@@ -250,7 +266,9 @@ def test_a_file_that_cannot_be_moved_to_its_name_is_told_once(
     monkeypatch.setattr(downloads, "_move_new", denied)
     core = _Core(tmp_path)
     _transfer(_start(_saver(tmp_path), core), b"x")
-    assert core.told == [({"error": f"Permission denied（{tmp_path / NAME}）"}, [])]
+    assert core.told == [
+        ({"file": "abc", "error": f"Permission denied（{tmp_path / NAME}）"}, [])
+    ]
     assert list(tmp_path.iterdir()) == []
 
 
@@ -285,6 +303,68 @@ def test_stop_removes_the_saves_in_progress(tmp_path: Path) -> None:
     Path(args.ResultFilePath).write_bytes(b"part")
     saver.stop()
     assert list(tmp_path.iterdir()) == []
+
+
+def test_the_progress_is_told_at_most_every_quarter_second(tmp_path: Path) -> None:
+    """``BytesReceivedChanged`` every 10ms, 100 times, tells the page of the progress once per 250ms at most."""
+    now = [0.0]
+    core = _Core(tmp_path)
+    saver = Downloads(lambda: tmp_path, clock=lambda: now[0])
+    operation = _start(saver, core).DownloadOperation
+    operation.TotalBytesToReceive = 1000
+    for i in range(100):
+        now[0] = i * 0.01
+        operation.BytesReceived = i * 10
+        operation.BytesReceivedChanged.fire(operation, None)
+    assert core.progress[0] == {"file": "abc", "received": 0, "total": 1000}
+    assert [p["received"] for p in core.progress] == [0, 250, 500, 750]
+    # Not to a page left.
+    core.Source = "http://127.0.0.1:50999/"
+    now[0] = 10.0
+    operation.BytesReceivedChanged.fire(operation, None)
+    assert len(core.progress) == 4
+
+
+def test_a_cancelled_transfer_is_told_as_cancelled_and_leaves_nothing(tmp_path: Path) -> None:
+    """`cancel` cancels the transfer; its end as ``UserCanceled`` is told as cancelled, and neither file stays."""
+    core = _Core(tmp_path)
+    saver = _saver(tmp_path)
+    args = _start(saver, core)
+    operation = args.DownloadOperation
+    saver.cancel("abc")
+    assert operation.cancelled == 1
+    _transfer(args, b"part", state="Interrupted", reason="UserCanceled")
+    assert core.told == [({"file": "abc", "cancelled": True}, [])]
+    assert list(tmp_path.iterdir()) == []
+    # Once ended, nothing; an id not saved is unknown.
+    saver.cancel("abc")
+    assert operation.cancelled == 1
+    with pytest.raises(KeyError):
+        saver.cancel("other")
+
+
+def test_a_saved_file_opens_and_shows_in_its_folder(tmp_path: Path) -> None:
+    """`open` and `reveal` get the final path, numbered names too; a file gone is `FileNotFoundError`, one not saved `KeyError`."""
+    (tmp_path / NAME).write_bytes(b"old")
+    opened: list[Path] = []
+    shown: list[Path] = []
+    saver = Downloads(lambda: tmp_path, opener=opened.append, revealer=shown.append)
+    core = _Core(tmp_path)
+    args = _start(saver, core)
+    with pytest.raises(KeyError):
+        saver.open("abc")  # not saved yet
+    _transfer(args, b"new")
+    saved = tmp_path / "sample_20261114-120000 (1).csv"
+    saver.open("abc")
+    saver.reveal("abc")
+    assert opened == [saved] and shown == [saved]
+    saved.unlink()
+    with pytest.raises(FileNotFoundError):
+        saver.open("abc")
+    with pytest.raises(FileNotFoundError):
+        saver.reveal("abc")
+    with pytest.raises(KeyError):
+        saver.reveal("other")
 
 
 def test_replace_takes_the_place_of_pywebviews_handler(tmp_path: Path) -> None:
