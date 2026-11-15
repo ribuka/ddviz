@@ -624,3 +624,89 @@ def test_filters_key_follows_the_conditions(js_page: Page) -> None:
         }"""
     )
     assert result == {"same": True, "changed": [True, True, True, True]}
+
+
+def test_card_kind_tells_how_a_card_sets_its_condition(js_page: Page) -> None:
+    """A card is null before its summary, else range, pick, contains or listed, in that order."""
+    kinds = js_page.evaluate(
+        """async () => {
+          const { cardKind } = await import("/static/js/filters.js");
+          const text = { numeric: false, levels: null, n_levels: 5000, nulls: 0 };
+          const found = { levels: [["a", 1]], n_levels: 5000, truncated: false };
+          return [
+            { numeric: false, summary: null, candidates: null, mode: "pick" },
+            { numeric: true, summary: { numeric: true, min: 0, max: 1 }, candidates: null, mode: "pick" },
+            { numeric: false, summary: text, candidates: found, mode: "pick" },
+            { numeric: false, summary: text, candidates: found, mode: "contains" },
+            { numeric: false, summary: text, candidates: false, mode: "contains" },
+            { numeric: false, summary: { numeric: false, levels: [["a", 1]] }, candidates: null, mode: "pick" },
+          ].map(cardKind);
+        }"""
+    )
+    assert kinds == [None, "range", "pick", "contains", "contains", "listed"]
+
+
+# A filter pane of the four kinds of cards: numeric (n), listed levels (g),
+# picked candidates (id) and the text contained (t), each setting a condition.
+FOUR_KINDS = """async () => {
+  const summaries = {
+    n: { numeric: true, min: 0, max: 10, nulls: 0, integer: true, temporal: null },
+    g: { numeric: false, levels: [["a", 5], ["b", 3], ["c", 1]], n_levels: 3, nulls: 0 },
+    id: { numeric: false, levels: null, n_levels: 5000, nulls: 0 },
+    t: { numeric: false, levels: null, n_levels: 90000, nulls: 0 },
+  };
+  const candidates = {
+    id: { levels: [["v1", 2], ["v2", 1]], n_levels: 5000, truncated: false },
+    t: { levels: null, n_levels: 90000 },
+  };
+  window.fetch = async (url) => {
+    const u = new URL(url, location.href);
+    const column = u.searchParams.get("column");
+    const body = u.pathname === "/api/summary" ? summaries[column] : candidates[column];
+    return new Response(JSON.stringify(body));
+  };
+  document.body.innerHTML = `
+    <div id="filters"><div class="filter-head"><span class="filter-summary"></span>
+    <button class="filter-up"></button><button class="filter-down"></button></div>
+    <div class="filter-resize"></div><div class="filter-list"></div></div>
+    <div id="drop-tip"></div>`;
+  const { FilterPane } = await import("/static/js/filters.js");
+  const pane = new FilterPane(document.getElementById("filters"), () => {}, () => {});
+  for (const [name, numeric] of [["n", true], ["g", false], ["id", false], ["t", false]]) pane.add({ name, numeric });
+  const ready = () => pane.cards.every((c) => c.summary && (c.summary.levels !== null || c.candidates !== null));
+  while (!ready()) await new Promise((r) => setTimeout(r, 10));
+  const [n, g, id, t] = pane.cards;
+  n.range = [2, 7];
+  g.levels = new Set(["b", "a"]);
+  id.levels = new Set(["v2", "v1"]);
+  t.contains = "ab";
+  return { conditions: pane.conditions(), summary: pane.summaryText() };
+}"""
+
+
+def test_the_four_kinds_of_cards_give_their_conditions_and_summary(js_page: Page) -> None:
+    """Each kind of card sends its own condition and says it in its own words."""
+    got = js_page.evaluate(FOUR_KINDS)
+    assert got["conditions"] == [
+        {"column": "n", "range": [2, 7]},
+        {"column": "g", "levels": ["a", "b"]},
+        {"column": "id", "levels": ["v1", "v2"]},
+        {"column": "t", "contains": "ab"},
+    ]
+    assert got["summary"] == "n: 2〜7、g: 2/3、id: 2/5000、t: 「ab」を含む"
+
+
+def test_plain_enter_leaves_out_the_enter_of_a_conversion(js_page: Page) -> None:
+    """Only an Enter that does not commit an IME conversion is plain."""
+    got = js_page.evaluate(
+        """async () => {
+          const { plainEnter } = await import("/static/js/filters.js");
+          return [
+            { key: "Enter" },
+            { key: "Enter", isComposing: true },
+            { key: "Enter", keyCode: 229 },
+            { key: "a" },
+          ].map(plainEnter);
+        }"""
+    )
+    assert got == [True, False, False, False]

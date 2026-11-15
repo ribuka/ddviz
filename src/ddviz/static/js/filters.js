@@ -164,6 +164,57 @@ export function filtersKey(list) {
   return JSON.stringify(list.map((f) => [f.column, f.range ?? null, f.levels ?? null, f.contains ?? null]));
 }
 
+// Returns how a card sets its condition: "range" for a numeric column,
+// "pick" for the candidates ticked (a card of candidates in its "pick"
+// mode), "contains" for the text its values contain, "listed" for the
+// levels it lists; null before its summary comes.
+export function cardKind(card) {
+  if (!card.summary) return null;
+  if (card.numeric) return "range";
+  if (card.candidates && card.mode === "pick") return "pick";
+  if (card.summary.levels === null) return "contains";
+  return "listed";
+}
+
+// Returns a card's state that sets its condition, as `FilterPane.snapshot`
+// keeps it.
+function cardState(card) {
+  return {
+    card,
+    range: card.range && [...card.range],
+    levels: new Set(card.levels),
+    contains: card.contains,
+    mode: card.mode,
+    query: card.query,
+    order: card.order,
+  };
+}
+
+// Returns the note of a column's nulls to put after a card's text.
+function nullsText(nulls) {
+  return nulls >= 1 ? `　null ${nulls.toLocaleString()} 行` : "";
+}
+
+// Returns the row of a card's count of ticked levels and its button that
+// unticks them all.
+function clearBar(title) {
+  const bar = document.createElement("div");
+  bar.className = "filter-note";
+  const counter = document.createElement("span");
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "filter-reset";
+  clear.textContent = "すべて外す";
+  clear.title = title;
+  bar.append(counter, clear);
+  return { bar, counter, clear };
+}
+
+// Whether a key is an Enter that does not commit an IME conversion.
+export function plainEnter(event) {
+  return event.key === "Enter" && !event.isComposing && event.keyCode !== 229;
+}
+
 export class FilterPane {
   // `root` is the pane (`#filters`); `onChange` gets the conditions after each
   // committed change; `onSummary` gets the summary text whenever it changes.
@@ -316,7 +367,7 @@ export class FilterPane {
     this.cards.push(card);
     // A new card sets no condition: the state sent has it, so that a request
     // sent now goes back to it (`RestorePoint`).
-    this.sent = [...this.sent, { card, range: null, levels: new Set(), contains: "", mode: "pick", query: "", order: "name" }];
+    this.sent = [...this.sent, cardState(card)];
     // A folded pane opens to show the card; a maximized one stays so.
     if (this.state === "collapsed") this.setState("open");
     this.render();
@@ -363,7 +414,7 @@ export class FilterPane {
 
   // Whether a card's condition is its ticked candidates.
   picks(card) {
-    return Boolean(card.candidates) && card.mode === "pick";
+    return cardKind(card) === "pick";
   }
 
   // Fetches the candidates of a card for its `query` and `order`. An answer
@@ -427,20 +478,21 @@ export class FilterPane {
     const out = [];
     for (const card of this.cards) {
       if (!this.isActive(card)) continue;
-      if (card.numeric) out.push({ column: card.name, range: [...card.range] });
-      else if (this.picks(card)) out.push({ column: card.name, levels: [...card.levels].sort() });
-      else if (card.summary.levels === null) out.push({ column: card.name, contains: card.contains });
+      const kind = cardKind(card);
+      if (kind === "range") out.push({ column: card.name, range: [...card.range] });
+      else if (kind === "contains") out.push({ column: card.name, contains: card.contains });
       else out.push({ column: card.name, levels: [...card.levels].sort() });
     }
     return out;
   }
 
   isActive(card) {
-    if (!card.summary) return false;
-    if (card.numeric) {
+    const kind = cardKind(card);
+    if (kind === null) return false;
+    if (kind === "range") {
       return card.range !== null && (card.range[0] > card.summary.min || card.range[1] < card.summary.max);
     }
-    if (card.summary.levels === null && !this.picks(card)) return card.contains !== "";
+    if (kind === "contains") return card.contains !== "";
     return card.levels.size > 0;
   }
 
@@ -449,10 +501,16 @@ export class FilterPane {
     return this.cards
       .filter((card) => this.isActive(card))
       .map((card) => {
-        if (card.numeric) return `${card.name}: ${formatBound(card, card.range[0])}〜${formatBound(card, card.range[1])}`;
-        if (this.picks(card)) return `${card.name}: ${card.levels.size}/${card.candidates.n_levels}`;
-        if (card.summary.levels === null) return `${card.name}: 「${card.contains}」を含む`;
-        return `${card.name}: ${card.levels.size}/${card.summary.levels.length}`;
+        switch (cardKind(card)) {
+          case "range":
+            return `${card.name}: ${formatBound(card, card.range[0])}〜${formatBound(card, card.range[1])}`;
+          case "pick":
+            return `${card.name}: ${card.levels.size}/${card.candidates.n_levels}`;
+          case "contains":
+            return `${card.name}: 「${card.contains}」を含む`;
+          default:
+            return `${card.name}: ${card.levels.size}/${card.summary.levels.length}`;
+        }
       })
       .join("、");
   }
@@ -476,15 +534,7 @@ export class FilterPane {
   // candidates' mode, and the query and order of its candidates. What only
   // shows (the order of a listed card's levels) is not part of it.
   snapshot() {
-    return this.cards.map((card) => ({
-      card,
-      range: card.range && [...card.range],
-      levels: new Set(card.levels),
-      contains: card.contains,
-      mode: card.mode,
-      query: card.query,
-      order: card.order,
-    }));
+    return this.cards.map(cardState);
   }
 
   // Puts the cards back as `snapshot()` had them: a card removed since comes
@@ -614,7 +664,7 @@ export class FilterPane {
     const fromText = (text) => (dates ? parseTemporal(temporal, text) : text === "" ? null : Number(text));
     const note = document.createElement("div");
     note.className = "filter-note";
-    note.textContent = `最小 ${formatBound(card, min)}　最大 ${formatBound(card, max)}` + (nulls ? `　null ${nulls.toLocaleString()} 行` : "");
+    note.textContent = `最小 ${formatBound(card, min)}　最大 ${formatBound(card, max)}` + nullsText(nulls);
     body.append(note);
     if (min === null) {
       note.textContent = "有限な値が無い";
@@ -722,25 +772,12 @@ export class FilterPane {
       else this.candidateBody(card, body);
       return;
     }
-    const bar = document.createElement("div");
-    bar.className = "filter-note";
-    const counter = document.createElement("span");
-    const clear = document.createElement("button");
-    clear.type = "button";
-    clear.className = "filter-reset";
-    clear.textContent = "すべて外す";
-    clear.title = "選んだ水準を外す（絞らない）";
-    bar.append(counter, clear);
+    const { bar, counter, clear } = clearBar("選んだ水準を外す（絞らない）");
     const list = document.createElement("div");
     list.className = "filter-levels";
     const labels = new Map();
     const boxes = levels.map(([level, n]) => {
-      const label = levelRow(level, n, card.levels.has(level), (checked) => {
-        if (checked) card.levels.add(level);
-        else card.levels.delete(level);
-        update();
-        this.commitSoon();
-      });
+      const label = levelRow(level, n, card.levels.has(level), (checked) => this.tickLevel(card, level, checked, update));
       labels.set(level, label);
       return label.querySelector("input");
     });
@@ -750,7 +787,7 @@ export class FilterPane {
     const update = () => {
       const picked = card.levels.size;
       counter.textContent = picked ? `${picked} / ${levels.length} 水準を選択` : `${levels.length} 水準（選ぶと絞る）`;
-      if (nulls) counter.textContent += `　null ${nulls.toLocaleString()} 行`;
+      counter.textContent += nullsText(nulls);
       clear.disabled = picked === 0;
     };
     clear.addEventListener("click", () => {
@@ -778,15 +815,7 @@ export class FilterPane {
       return;
     }
     const { nulls } = card.summary;
-    const bar = document.createElement("div");
-    bar.className = "filter-note";
-    const counter = document.createElement("span");
-    const clear = document.createElement("button");
-    clear.type = "button";
-    clear.className = "filter-reset";
-    clear.textContent = "すべて外す";
-    clear.title = "選んだ水準を、候補に無いものも含めて外す（絞らない）";
-    bar.append(counter, clear);
+    const { bar, counter, clear } = clearBar("選んだ水準を、候補に無いものも含めて外す（絞らない）");
     const search = document.createElement("div");
     search.className = "filter-search";
     const input = document.createElement("input");
@@ -823,7 +852,7 @@ export class FilterPane {
     input.addEventListener("input", () => (card.draft = input.value));
     input.addEventListener("keydown", (event) => {
       // The Enter that commits an IME conversion keeps editing.
-      if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
+      if (!plainEnter(event)) return;
       event.preventDefault();
       send();
     });
@@ -833,7 +862,7 @@ export class FilterPane {
       const size = card.levels.size;
       const total = card.candidates.n_levels.toLocaleString();
       counter.textContent = size ? `${size.toLocaleString()} / ${total} 水準を選択` : `${total} 水準（検索して選ぶと絞る）`;
-      if (nulls) counter.textContent += `　null ${nulls.toLocaleString()} 行`;
+      counter.textContent += nullsText(nulls);
       clear.disabled = size === 0;
     };
     // A ticked level the candidates do not list, to untick.
@@ -862,12 +891,7 @@ export class FilterPane {
       list.classList.toggle("loading", card.loading);
       list.replaceChildren(
         ...levels.map(([level, n]) =>
-          levelRow(level, n, card.levels.has(level), (checked) => {
-            if (checked) card.levels.add(level);
-            else card.levels.delete(level);
-            count();
-            this.commitSoon();
-          }),
+          levelRow(level, n, card.levels.has(level), (checked) => this.tickLevel(card, level, checked, count)),
         ),
       );
       list.hidden = levels.length === 0;
@@ -882,6 +906,15 @@ export class FilterPane {
     });
     body.append(bar, search, status, list, more, picked);
     card.refresh();
+  }
+
+  // Ticks (`checked`) or unticks a level of a card, then calls `after` (which
+  // shows the count again) and sends the conditions soon.
+  tickLevel(card, level, checked, after) {
+    if (checked) card.levels.add(level);
+    else card.levels.delete(level);
+    after();
+    this.commitSoon();
   }
 
   // The error of a card's candidates, with a button that asks again.
@@ -939,7 +972,7 @@ export class FilterPane {
     } else {
       note.textContent = `水準が多すぎる（約 ${count.toLocaleString()} 個）ため、部分一致で絞る`;
     }
-    if (nulls) note.textContent += `　null ${nulls.toLocaleString()} 行`;
+    note.textContent += nullsText(nulls);
     const bar = document.createElement("div");
     bar.className = "filter-contains";
     const input = document.createElement("input");
@@ -953,7 +986,7 @@ export class FilterPane {
     });
     input.addEventListener("keydown", (event) => {
       // The Enter that commits an IME conversion keeps editing.
-      if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) input.blur();
+      if (plainEnter(event)) input.blur();
     });
     bar.append(input);
     body.append(note, bar);
