@@ -17,7 +17,7 @@ import { AxisDirections, ascending, oriented } from "./axisdirection.js";
 import { axisKey } from "./axiskey.js";
 import { bandTickUpdate, withBandTicks } from "./bandticks.js";
 import { openAxisMenu } from "./axismenu.js";
-import { AxisScales, isLogAxis, toPosition, toValues } from "./axisscale.js";
+import { AxisScales, isLogAxis, toValues } from "./axisscale.js";
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
 import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } from "./colorscale.js";
@@ -25,7 +25,8 @@ import { openColumnMenu } from "./columnmenu.js";
 import { attachColumnList } from "./columns.js";
 import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
-import { FilterPane, RestorePoint } from "./filters.js";
+import { FilterPane, filtersKey, RestorePoint } from "./filters.js";
+import { drawable, drawnRoles, hasBoxPair, hasSmoothPair } from "./graph.js";
 import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { fitBottom, fitMargin, MARGIN_BOTTOM, MARGIN_LEFT, neededBottom, neededMargin } from "./leftmargin.js";
@@ -35,8 +36,22 @@ import { levelText } from "./names.js";
 import { MemoryMeter } from "./memory.js";
 import { showSaveResult, StatusLine, Toasts, errorText } from "./notice.js";
 import { openPlotMenu } from "./plotmenu.js";
+import {
+  axisCoordinates,
+  figureKey,
+  rangeUpdate,
+  sameAxes,
+  sameOrder,
+  sameRange,
+  sameRanges,
+  sameSize,
+  shownRanges,
+  withRanges,
+} from "./ranges.js";
+import { markerSizeText, rowsText } from "./resulttext.js";
 import { Saves } from "./saves.js";
 import { openScaleMenu } from "./scalemenu.js";
+import { boxOf, panelKey, samePanels } from "./selectionbox.js";
 import { LINE_HEADING, LINE_WIDTHS, levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
 import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
@@ -203,10 +218,6 @@ let bottomMargin = MARGIN_BOTTOM;
 // Conditions of the local filter (`ddviz.server.plan.parse_filters`) that every
 // request carries; a result's meta has those it was aggregated with.
 let filters = [];
-// Returns a key of conditions, from the page's or from a result's meta.
-function filtersKey(list) {
-  return JSON.stringify(list.map((f) => [f.column, f.range ?? null, f.levels ?? null, f.contains ?? null]));
-}
 // How a numeric color column is cut into intervals ({n, by}), or null for a
 // gradient (`ddviz.server.plotoptions.parse_color_bins`); back to null for another color
 // column. The graph last plotted, to plot again with another cutting.
@@ -442,11 +453,6 @@ async function setAxisReversed(axis, column, reversed) {
     ownRelayout = null;
   }
   if (meta === current) followMargin(false);
-}
-
-// Whether two ranges run the same way.
-function sameOrder(a, b) {
-  return a[1] < a[0] === b[1] < b[0];
 }
 
 // Returns `layout` with the axis ranges (ascending) given the direction of
@@ -687,17 +693,6 @@ function stageSize() {
   };
 }
 
-function sameSize(a, b) {
-  return (
-    a !== null &&
-    b !== null &&
-    a.width === b.width &&
-    a.height === b.height &&
-    a.margin_left === b.margin_left &&
-    a.margin_bottom === b.margin_bottom
-  );
-}
-
 // Measures the left margin the y tick labels of the figure drawn need, and
 // the bottom margin its x tick labels at an angle set need
 // (`leftmargin.js`), and keeps them as `leftMargin` and `bottomMargin`. A
@@ -875,7 +870,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     await Plotly.newPlot(gd, figure.data, forPlotly(withSelectionBox(layout, meta)), PLOT_CONFIG);
     // The view's ranges go on after the whole ones: plotly keeps the ranges
     // of its first draw for Reset axes and a double click.
-    const zoomedUpdate = view?.zoomed && rangeUpdate(shaped(withRanges(figure.layout, meta, view.ranges)));
+    const zoomedUpdate = view?.zoomed && rangeUpdate(gd, shaped(withRanges(figure.layout, meta, view.ranges)));
     if (zoomedUpdate) await Plotly.relayout(gd, zoomedUpdate);
     timings.plot = Math.round(performance.now() - drawStarted);
     // The legend and the colors and shapes picked change once the figure is
@@ -934,7 +929,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
 // selection's box. Null without a figure.
 function keptView() {
   if (!overview || !gd._fullLayout) return null;
-  const ranges = shownRanges(overview.meta);
+  const ranges = shownRanges(gd, overview.meta);
   const { x_ranges: x, y_ranges: y } = overview.meta;
   const zoomed = !(sameRanges(ranges.x, x) && sameRanges(ranges.y, y));
   return { ranges, zoomed, box: selection ? structuredClone(selection.box) : null };
@@ -948,7 +943,7 @@ function keptView() {
 function carriedView(meta) {
   if (!overview || !gd._fullLayout) return null;
   const old = overview.meta;
-  const shown = shownRanges(old);
+  const shown = shownRanges(gd, old);
   const ranges = { x: [], y: [] };
   let zoomed = false;
   for (const role of ["x", "y"]) {
@@ -966,36 +961,6 @@ function carriedView(meta) {
     });
   }
   return zoomed ? { ranges, zoomed, box: null } : null;
-}
-
-// Returns what the coordinates of the axis column `index` of `role` of
-// `meta` mean: its scale, temporal kind, and the levels of a categorical
-// axis (the order of its bands), or the one band of a figure without x.
-function axisCoordinates(meta, role, index) {
-  const column = meta[`${role}_columns`][index];
-  return JSON.stringify([
-    role === "x" && meta.one_band,
-    meta[`${role}_log`][index],
-    meta.temporal?.[column] ?? null,
-    meta.axis_levels?.[column] ?? null,
-  ]);
-}
-
-// Whether a kept view (`keptView`) has a range for each axis column of a result.
-function sameAxes(keep, meta) {
-  return keep.ranges.x.length === meta.x_axes.length && keep.ranges.y.length === meta.y_axes.length;
-}
-
-// Returns `layout` with the axis ranges of each x and y column given (`shownRanges`).
-function withRanges(layout, meta, ranges) {
-  const out = { ...layout };
-  for (const panel of meta.panels) {
-    const xKey = axisKey(panel.xaxis);
-    const yKey = axisKey(panel.yaxis);
-    out[xKey] = { ...layout[xKey], range: ranges.x[panel.x] };
-    out[yKey] = { ...layout[yKey], range: ranges.y[panel.y] };
-  }
-  return out;
 }
 
 // A superseded plot that the server finished before the newer request came
@@ -1054,7 +1019,7 @@ function resumeShown() {
   } else if (waiting || movedWhilePlotting || filtersKey(current.filters) !== filtersKey(filters)) {
     movedWhilePlotting = false;
     hideHover();
-    const shown = shownRanges(overview.meta);
+    const shown = shownRanges(gd, overview.meta);
     if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) showOverview();
     else requestView(shown);
   } else {
@@ -1069,55 +1034,6 @@ function showRows(meta, where = "") {
   statusLine.show(rowsText(meta, where));
 }
 
-// Returns the status of a result: its rows, and whether the filter left rows out.
-function rowsText(meta, where = "") {
-  const filtered = meta.filters.length ? "（フィルタ後）" : "";
-  // Box plots without points draw only their outliers as points; smoothing
-  // lines without points draw none.
-  let drawn = "";
-  if (meta.panels.every((p) => !p.points)) {
-    drawn = meta.panels.some((p) => p.boxes.length) ? "（外れ値）" : "（点は描いていない）";
-  }
-  return `${where}${meta.rows.toLocaleString()} 行${drawn}${filtered}`;
-}
-
-// Returns whether two ranges are equal up to a small part of their span. A
-// date axis's range comes back from plotly as the same milliseconds
-// (`dateText`), however short it is.
-function sameRange(a, b) {
-  const tol = Math.abs(b[1] - b[0]) * 1e-9;
-  return Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol;
-}
-
-// Returns whether two lists of ranges (one per axis column) are equal.
-function sameRanges(a, b) {
-  return a.length === b.length && a.every((range, i) => sameRange(range, b[i]));
-}
-
-// Returns the ranges on screen of each x and y column of a result, as
-// numbers (a date axis holds dates), ascending on a reversed axis too: the panels of one column share them
-// (`matches`).
-function shownRanges(meta) {
-  const full = gd._fullLayout;
-  return {
-    x: meta.x_axes.map((id) => ascending(linearRange(full[axisKey(id)]))),
-    y: meta.y_axes.map((id) => ascending(linearRange(full[axisKey(id)]))),
-  };
-}
-
-// Returns `layout` with the axis ranges the user has on screen.
-function withShownRanges(layout, meta) {
-  const shown = shownRanges(meta);
-  const out = { ...layout };
-  for (const panel of meta.panels) {
-    const xKey = axisKey(panel.xaxis);
-    const yKey = axisKey(panel.yaxis);
-    out[xKey] = { ...layout[xKey], range: shown.x[panel.x] };
-    out[yKey] = { ...layout[yKey], range: shown.y[panel.y] };
-  }
-  return out;
-}
-
 // The drawn figure without its axis ranges and the ticks of its categorical
 // axes, which follow the ranges (`bandticks.js`). A result of the same plot
 // and size has the same figure, and then only its images and ranges change:
@@ -1129,33 +1045,6 @@ let ownRelayout = null;
 // Whether this page is drawing a new figure with `Plotly.react`, which drops
 // plotly's box of the selection: its events do not drop the selection.
 let ownReact = false;
-
-function figureKey(data, layout) {
-  const axes = {};
-  for (const [key, value] of Object.entries(layout)) {
-    axes[key] = /^[xy]axis\d*$/.test(key) ? { ...value, range: null, tickvals: null, ticktext: null } : value;
-  }
-  return JSON.stringify([data, axes]);
-}
-
-// Returns the relayout that gives every axis its range in `layout`, and a
-// categorical axis its ticks, or null when the axes already have them.
-function rangeUpdate(layout) {
-  const update = {};
-  for (const [key, value] of Object.entries(layout)) {
-    if (!/^[xy]axis\d*$/.test(key)) continue;
-    if (!sameRange(linearRange(gd._fullLayout[key]), value.range)) {
-      update[`${key}.range`] = plotlyRange(value, value.range);
-    }
-    const drawn = gd.layout[key] ?? {};
-    for (const name of ["tickvals", "ticktext"]) {
-      if (value[name] && JSON.stringify(value[name]) !== JSON.stringify(drawn[name])) {
-        update[`${key}.${name}`] = value[name];
-      }
-    }
-  }
-  return Object.keys(update).length ? update : null;
-}
 
 // Returns `layout` with plotly's box of the selection on the panel of `meta`
 // that has the box's facet levels and axis columns; a filter may have moved
@@ -1179,7 +1068,7 @@ async function draw(data, plain, meta, bitmaps) {
   const layout = withBandTicks(orientedLayout(decorate(plain, meta, settingsOf, angleOf), meta), meta);
   const key = figureKey(data, layout);
   if (key === drawnKey) {
-    const update = rangeUpdate(layout);
+    const update = rangeUpdate(gd, layout);
     if (update) {
       ownRelayout = update;
       await Plotly.relayout(gd, update);
@@ -1238,38 +1127,6 @@ let selectionGeneration = 0;
 const table = new SelectionTable(document.getElementById("table"));
 table.exporting = () => saves.running;
 
-// Returns the panel of a box from plotly's `range` (keyed by axis id), its
-// bounds as numbers (a date axis gives dates).
-function boxOf(meta, range) {
-  const panel = meta.panels.findIndex((p) => p.xaxis in range && p.yaxis in range);
-  if (panel < 0) return null;
-  const { xaxis, yaxis } = meta.panels[panel];
-  const full = gd._fullLayout;
-  return {
-    panel,
-    at: panelKey(meta.panels[panel]),
-    x_range: boxRange(full[axisKey(xaxis)], range[xaxis]),
-    y_range: boxRange(full[axisKey(yaxis)], range[yaxis]),
-  };
-}
-
-// Returns the bounds of plotly's box along an axis in linear units. On a
-// log axis, plotly's `event.range` holds values (checked in Chrome), not the
-// exponents of the axis's range: they become exponents here.
-function boxRange(axis, range) {
-  return ascending(isLogAxis(axis) ? range.map((v) => toPosition(true, v)) : linearRange(axis, range));
-}
-
-// Names a panel by its facet levels and axis columns, the same in every result of a plot.
-function panelKey(panel) {
-  return JSON.stringify([panel.facet, panel.x, panel.y]);
-}
-
-// Whether two results draw the same panels in the same order.
-function samePanels(a, b) {
-  return a.panels.length === b.panels.length && a.panels.every((p, i) => panelKey(p) === panelKey(b.panels[i]));
-}
-
 // plotly sends no range for a click beside the box, which drops it.
 function onSelected(event) {
   if (!event?.range) {
@@ -1278,7 +1135,7 @@ function onSelected(event) {
   }
   if (!current) return;
   statusLine.release();
-  const box = boxOf(current, event.range);
+  const box = boxOf(gd, current, event.range);
   if (!box) return;
   closeImages(selection?.bitmaps);
   selection = { box, base: null, bitmaps: null, fresh: true };
@@ -1467,7 +1324,7 @@ async function requestAgain({ path, body, ranges, whole, status }) {
   hideHover();
   // The images and the panels' placement change; the axes of a view stay
   // where the user put them.
-  const layout = whole ? figure.layout : withShownRanges(figure.layout, meta);
+  const layout = whole ? figure.layout : withRanges(figure.layout, meta, shownRanges(gd, meta));
   if (!drawn) await draw(figure.data, layout, meta, bitmaps);
   restorePoint.confirm(filterCandidate);
   if (mine === generation) setPending(false);
@@ -1533,7 +1390,7 @@ function viewFailed(text) {
   requested = whole ? { x: [], y: [] } : { x: current.x_ranges, y: current.y_ranges };
   // The result shown may be an old overview standing in (`showOverview`):
   // it has other conditions, so the shown ranges are aggregated again.
-  const shown = shownRanges(current);
+  const shown = shownRanges(gd, current);
   const sameFilter = filtersKey(current.filters) === filtersKey(filters);
   if (sameFilter && sameRanges(shown.x, current.x_ranges) && sameRanges(shown.y, current.y_ranges)) return;
   hideHover();
@@ -1564,7 +1421,7 @@ function onRelayout(event) {
     showOverview();
     return;
   }
-  const shown = shownRanges(overview.meta);
+  const shown = shownRanges(gd, overview.meta);
   if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) {
     showOverview();
     return;
@@ -1622,7 +1479,7 @@ async function onResizeSettled() {
     measureMargin(false);
   }
   if (requested.x.length) {
-    requestView(shownRanges(current));
+    requestView(shownRanges(gd, current));
   } else {
     requestOverview();
   }
@@ -1640,7 +1497,7 @@ function applyFilters() {
   if (!overview || plotting === generation) return;
   hideHover();
   if (requested.x.length) {
-    requestView(shownRanges(current));
+    requestView(shownRanges(gd, current));
   } else {
     requestOverview();
   }
@@ -1690,44 +1547,6 @@ function clearPlot() {
   logWarning.hidden = true;
 }
 
-// The roles a scatter plot draws (`ddviz.server.plan.drawn_columns`) and
-// its elements.
-function drawnRoles(encoding) {
-  const { x, y, color, row, col, wrap, elements, symbol } = encoding;
-  return JSON.stringify([x, y, color, row, col, wrap, elements, symbol]);
-}
-
-// Whether the graph draws every row in one band along x: no x column and
-// numeric y columns only (`ddviz.server.plan.one_band`).
-function oneBand(encoding) {
-  const numeric = (name) => builder.numeric.get(name) !== false;
-  return !encoding.x.length && encoding.y.length > 0 && encoding.y.every(numeric);
-}
-
-// Whether the graph has a scatter plot (`ddviz.server.plan.drawable`).
-function drawable(encoding) {
-  return (encoding.x.length > 0 && encoding.y.length > 0) || oneBand(encoding);
-}
-
-// Whether a pair of the graph's axis columns can have box plots: a
-// categorical x and a numeric y, or the one band
-// (`ddviz.server.plan.has_box_pair`).
-function hasBoxPair(encoding) {
-  const numeric = (name) => builder.numeric.get(name) !== false;
-  return (
-    oneBand(encoding) || (encoding.x.some((x) => !numeric(x)) && encoding.y.some(numeric))
-  );
-}
-
-// Whether a pair of the graph's axis columns can have smoothing lines, or
-// lines joining the points: a numeric x and a numeric y (a temporal column
-// is numeric; `ddviz.server.plan.has_smooth_pair`,
-// `ddviz.server.plan.has_line_pair`).
-function hasSmoothPair(encoding) {
-  const numeric = (name) => builder.numeric.get(name) !== false;
-  return encoding.x.some(numeric) && encoding.y.some(numeric);
-}
-
 // Draws the markers of every series in another size, dropping the sizes of
 // single symbol levels: the graph is plotted again.
 function setShapeSize(size) {
@@ -1771,15 +1590,6 @@ function setLevelShape(column, level, shape) {
 // them.
 function sharedSize() {
   return current && levelSizes.size === 0 ? current.marker_size : null;
-}
-
-// Returns the text of the size of a result's markers (its meta), for the
-// points' icon: a range when symbol levels have sizes of their own.
-function markerSizeText(meta) {
-  const sizes = meta.symbol?.sizes.length ? meta.symbol.sizes : [meta.marker_size];
-  const lo = Math.min(...sizes);
-  const hi = Math.max(...sizes);
-  return lo === hi ? `${lo} px` : `${lo}〜${hi} px`;
 }
 
 // Draws the lines of every series in another width: a graph with them is
@@ -1865,8 +1675,8 @@ const builder = new Builder(
   document.getElementById("columns"),
   (encoding) => {
     // Elements no longer possible are turned off; that edit comes back here.
-    const smooth = hasSmoothPair(encoding);
-    if (elementBar?.allow({ line: smooth, box: hasBoxPair(encoding), smooth })) return;
+    const smooth = hasSmoothPair(encoding, builder.numeric);
+    if (elementBar?.allow({ line: smooth, box: hasBoxPair(encoding, builder.numeric), smooth })) return;
     const key = drawnRoles(encoding);
     if (key === drawnRolesKey) return;
     const drawn = JSON.parse(drawnRolesKey);
@@ -1877,7 +1687,7 @@ const builder = new Builder(
       closeWrapMenu();
     }
     drawnRolesKey = key;
-    if (drawable(encoding)) {
+    if (drawable(encoding, builder.numeric)) {
       plot(encoding);
     } else {
       // A graph without a figure is committed at once: no plot can fail.

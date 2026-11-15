@@ -598,3 +598,29 @@ def test_restore_gives_back_the_mode_ticks_query_and_order(js_page: Page) -> Non
     assert result["conditions"] == [{"column": "id", "levels": ["v3"]}]
     assert result["first"] == {"name": "v1", "checked": False}
     assert result["input"] == ""
+
+
+def test_filters_key_follows_the_conditions(js_page: Page) -> None:
+    """Conditions of the same order and values have one key; another range, levels or contains gives another."""
+    result = js_page.evaluate(
+        """async () => {
+          const { filtersKey } = await import("/static/js/filters.js");
+          const list = [
+            { column: "a", range: [0, 1] },
+            { column: "b", levels: ["p"] },
+            { column: "c", contains: "x" },
+          ];
+          const copy = list.map((f) => ({ ...f }));
+          const changed = [
+            [{ ...list[0], range: [0, 2] }, list[1], list[2]],
+            [list[0], { ...list[1], levels: ["p", "q"] }, list[2]],
+            [list[0], list[1], { ...list[2], contains: "y" }],
+            [list[1], list[0], list[2]],
+          ];
+          return {
+            same: filtersKey(list) === filtersKey(copy),
+            changed: changed.map((other) => filtersKey(list) !== filtersKey(other)),
+          };
+        }"""
+    )
+    assert result == {"same": True, "changed": [True, True, True, True]}
