@@ -36,6 +36,7 @@ import { levelText } from "./names.js";
 import { MemoryMeter } from "./memory.js";
 import { showSaveResult, StatusLine, Toasts, errorText } from "./notice.js";
 import { openPlotMenu } from "./plotmenu.js";
+import { PlotOptions } from "./plotoptions.js";
 import {
   axisCoordinates,
   figureKey,
@@ -53,7 +54,7 @@ import { Saves } from "./saves.js";
 import { openScaleMenu } from "./scalemenu.js";
 import { boxOf, panelKey, samePanels } from "./selectionbox.js";
 import { LINE_HEADING, LINE_WIDTHS, levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
-import { DEFAULT_SMOOTHING, openSmoothMenu, smoothingText } from "./smoothmenu.js";
+import { openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
 import { forPlotly, linearRange, plotlyRange } from "./temporal.js";
@@ -161,7 +162,7 @@ const legend = new Legend(
   document.getElementById("legend"),
   () => layers.draw(),
   (event) =>
-    openScaleMenu(event, colorBins, setColorBins, recolor, sharedSize(), setShapeSize),
+    openScaleMenu(event, options.colorBins, setColorBins, recolor, options.sharedSize(current), setShapeSize),
   (event, kind, i) => {
     if (kind === "shape") {
       const { column, levels, sizes, shapes, choices } = current.symbol;
@@ -173,10 +174,10 @@ const legend = new Legend(
     } else if (current.color.kind === "bins" && !isMissingLevel(current, i)) {
       // The intervals take their colors from the scale; the missing level
       // takes its own, as a categorical level.
-      openScaleMenu(event, colorBins, setColorBins, recolor, sharedSize(), setShapeSize);
+      openScaleMenu(event, options.colorBins, setColorBins, recolor, options.sharedSize(current), setShapeSize);
     } else {
       const level = current.series[i];
-      openShapeMenu(event, SIZE_HEADING, sharedSize(), setShapeSize, {
+      openShapeMenu(event, SIZE_HEADING, options.sharedSize(current), setShapeSize, {
         color: { current: levelColors(current)[i], onPick: (color) => setLevelColor(level, color) },
       });
     }
@@ -218,52 +219,10 @@ let bottomMargin = MARGIN_BOTTOM;
 // Conditions of the local filter (`ddviz.server.plan.parse_filters`) that every
 // request carries; a result's meta has those it was aggregated with.
 let filters = [];
-// How a numeric color column is cut into intervals ({n, by}), or null for a
-// gradient (`ddviz.server.plotoptions.parse_color_bins`); back to null for another color
-// column. The graph last plotted, to plot again with another cutting.
-let colorBins = null;
+// The settings of the plot requests that are not the graph's (`PlotOptions`).
+const options = new PlotOptions();
+// The graph last plotted, to plot again with other settings.
 let plottedEncoding = null;
-// How the smoothing lines are fitted (`ddviz.server.plotoptions.parse_smoothing`),
-// picked in the menu of their element icon; kept for every graph.
-let smoothing = DEFAULT_SMOOTHING;
-// Size in pixels of the markers of every series
-// (`ddviz.server.plotoptions.parse_shape_size`), picked in the menu of the points'
-// element icon or of the legend's color markers; kept for every graph. Null
-// for the default: larger for the symbol's shapes than for the circles of
-// the points.
-let shapeSize = null;
-// Width in pixels of the lines joining the points of every series
-// (`ddviz.server.plotoptions.parse_line_width`), picked in the menu of the lines'
-// element icon; kept for every graph, with the lines on or off.
-let lineWidth = 2;
-// Sizes of the shapes of single symbol levels, by symbol column and level
-// name (`ddviz.server.plotoptions.parse_shape_sizes`), picked in the menu of the
-// symbol legend's markers; kept for every graph, dropped when the size of
-// every series is picked.
-const levelSizes = new Map();
-// Shapes of single symbol levels, by level name, of the symbol column
-// `column` (`ddviz.server.plotoptions.parse_level_shapes`), picked in the panel of
-// the menu of the symbol legend's markers. They stay while the symbol
-// column does, as the colors picked for the color levels: a graph of
-// another symbol column drops them.
-const levelShapes = { column: undefined, shapes: Object.create(null) };
-// Whether the Color and the Symbol zone draw the rows of a null or NaN
-// value (`ddviz.server.models.ShowNullRows`), set in the zones' menu
-// (zonemenu.js); kept whatever column the zone holds, true after a reload.
-const showNullRows = { color: true, symbol: true };
-// Whether a categorical color column keeps its levels over every row, those
-// the filter leaves without rows staying in the legend
-// (`ddviz.server.models.PlotRequest.keep_unfiltered_color_levels`), set in
-// the Color zone's menu (zonemenu.js); kept whatever column the zone holds,
-// off after a reload. Off, the levels are those of the filter's rows.
-let keepColorLevels = false;
-// Wrapped panels to a row, or null to make them closest to square
-// (`ddviz.server.plotoptions.parse_wrap_cols`); back to null for another wrap column.
-// The user sets it in the Wrap zone's form (wrapmenu.js).
-let wrapCols = null;
-// The number to a row with none set, of the latest result for the wrap
-// column (`wrap_auto_cols` of its meta), or null without one.
-let wrapAuto = null;
 // Generation of the plot request in flight, or 0. A new size waits for it:
 // a request for the old plot would kill its aggregation (or its conversion).
 let plotting = 0;
@@ -583,8 +542,8 @@ function setCurrent(meta, { legend: withLegend = true } = {}) {
   elementBar.setPointsText(markerSizeText(meta));
   elementBar.setLineText(meta.line_width === null ? null : `${meta.line_width} px`);
   stage.classList.toggle("scrolls", meta.scroll);
-  wrapAuto = meta.wrap_auto_cols;
-  setWrapAuto(wrapAuto);
+  options.wrapAuto = meta.wrap_auto_cols;
+  setWrapAuto(options.wrapAuto);
   sticky.set(meta);
   showHoverWarning(meta.hover);
   showLogWarning(meta.nonpositive);
@@ -748,23 +707,14 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   const size = stageSize();
   plottedEncoding = encoding;
   const candidate = builder.snapshot();
-  // Another symbol column drops the shapes picked once its result is drawn.
-  const shapes = encoding.symbol === levelShapes.column ? pickedShapes(encoding.symbol) : null;
   const body = {
     encoding,
     ...size,
     filters,
-    color_bins: colorBins,
-    wrap_cols: wrapCols,
-    smooth: smoothing,
-    shape_size: shapeSize,
-    line_width: lineWidth,
-    shape_sizes: levelSizes.get(encoding.symbol) || null,
-    level_shapes: shapes,
-    show_null_rows: { ...showNullRows },
+    ...options.request(encoding),
     axis_scales: axisScales.request(encoding),
-    keep_unfiltered_color_levels: keepColorLevels,
   };
+
   // The filter pane's state of these conditions, which the pane goes back to
   // once the result is drawn (`RestorePoint`).
   const filterCandidate = restorePoint.propose(filterPane.sent);
@@ -879,7 +829,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     // The colors picked for the levels stay while the color column does.
     keepPicked(meta.color.column);
     // The shapes picked stay while the symbol column does.
-    pickedShapes(encoding.symbol);
+    options.pickedShapes(encoding.symbol);
     layers.attach();
     sticky.attach();
     // The chips of X and Y follow the axes drawn now and on every later draw.
@@ -1533,7 +1483,7 @@ function clearPlot() {
   if (overview?.bitmaps) closeImages(overview.bitmaps);
   overview = null;
   current = null;
-  wrapAuto = null;
+  options.wrapAuto = null;
   setWrapAuto(null);
   elementBar.setPointsText(null);
   elementBar.setLineText(null);
@@ -1550,59 +1500,34 @@ function clearPlot() {
 // Draws the markers of every series in another size, dropping the sizes of
 // single symbol levels: the graph is plotted again.
 function setShapeSize(size) {
-  shapeSize = size;
-  levelSizes.clear();
+  options.setShapeSize(size);
   if (plottedEncoding) plot(plottedEncoding);
 }
 
 // Draws the shapes of a symbol level in another size: the graph is plotted again.
 function setLevelSize(column, level, size) {
-  // Level names come from the data: no prototype, so that "__proto__" is a
-  // name like the others.
-  const sizes = levelSizes.get(column) ?? Object.create(null);
-  sizes[level] = size;
-  levelSizes.set(column, sizes);
+  options.setLevelSize(column, level, size);
   if (plottedEncoding) plot(plottedEncoding);
-}
-
-// Returns the shapes picked for the levels of a symbol column, or null for
-// none; the shapes of another column are dropped.
-function pickedShapes(column) {
-  if (column !== levelShapes.column) {
-    levelShapes.column = column;
-    levelShapes.shapes = Object.create(null);
-  }
-  return Object.keys(levelShapes.shapes).length ? levelShapes.shapes : null;
 }
 
 // Draws the points of a symbol level in another shape, or in the shape of
 // its place again (null): the graph is plotted again.
 function setLevelShape(column, level, shape) {
-  pickedShapes(column);
-  if (shape === null) delete levelShapes.shapes[level];
-  else levelShapes.shapes[level] = shape;
+  options.setLevelShape(column, level, shape);
   if (plottedEncoding) plot(plottedEncoding);
-}
-
-// Returns the size of every series' markers drawn, checked in the menus of
-// the size of every series; null while symbol levels have sizes of their
-// own, of any symbol column, so that picking any size, that one too, drops
-// them.
-function sharedSize() {
-  return current && levelSizes.size === 0 ? current.marker_size : null;
 }
 
 // Draws the lines of every series in another width: a graph with them is
 // plotted again.
 function setLineWidth(width) {
-  lineWidth = width;
+  options.lineWidth = width;
   if (plottedEncoding?.elements.includes("line")) plot(plottedEncoding);
 }
 
 // Fits the smoothing lines another way: a graph with them is plotted again.
 function setSmoothing(picked) {
-  smoothing = picked;
-  elementBar.setSmoothText(smoothingText(smoothing));
+  options.smoothing = picked;
+  elementBar.setSmoothText(smoothingText(picked));
   if (plottedEncoding?.elements.includes("smooth")) plot(plottedEncoding);
 }
 
@@ -1619,7 +1544,7 @@ let drawnRolesKey = drawnRoles({
 // Cuts a numeric color column another way, or draws it as a gradient (null):
 // the series change, so the graph is plotted again.
 function setColorBins(bins) {
-  colorBins = bins;
+  options.colorBins = bins;
   if (plottedEncoding) plot(plottedEncoding);
 }
 
@@ -1680,10 +1605,10 @@ const builder = new Builder(
     const key = drawnRoles(encoding);
     if (key === drawnRolesKey) return;
     const drawn = JSON.parse(drawnRolesKey);
-    if (encoding.color !== drawn[2]) colorBins = null;
+    if (encoding.color !== drawn[2]) options.colorBins = null;
     if (encoding.wrap !== drawn[5]) {
-      wrapCols = null;
-      wrapAuto = null;
+      options.wrapCols = null;
+      options.wrapAuto = null;
       closeWrapMenu();
     }
     drawnRolesKey = key;
@@ -1702,17 +1627,16 @@ const builder = new Builder(
     // it. The wrap's number to a row with none set is the drawn result's.
     save: () => ({
       drawnRolesKey,
-      colorBins,
-      wrapCols,
       plottedEncoding,
-      keepColorLevels,
       elements: elementBar?.state() ?? null,
+      ...options.saved(),
     }),
     load: (state) => {
-      ({ drawnRolesKey, colorBins, wrapCols, plottedEncoding, keepColorLevels } = state);
+      ({ drawnRolesKey, plottedEncoding } = state);
+      options.load(state);
       if (state.elements) elementBar.restore(state.elements);
-      wrapAuto = current?.wrap_auto_cols ?? null;
-      setWrapAuto(wrapAuto);
+      options.wrapAuto = current?.wrap_auto_cols ?? null;
+      setWrapAuto(options.wrapAuto);
       closeWrapMenu();
     },
   },
@@ -1723,9 +1647,9 @@ document.querySelector('#builder .zone[data-role="wrap"]').addEventListener("con
   event.preventDefault();
   closeWrapMenu();
   if (!builder.placed("wrap").length) return;
-  openWrapMenu(event, wrapCols, wrapAuto, (cols) => {
-    if (cols === wrapCols) return;
-    wrapCols = cols;
+  openWrapMenu(event, options.wrapCols, options.wrapAuto, (cols) => {
+    if (cols === options.wrapCols) return;
+    options.wrapCols = cols;
     if (plottedEncoding?.wrap) plot(plottedEncoding);
   });
 });
@@ -1735,7 +1659,7 @@ document.querySelector('#builder .zone[data-role="wrap"]').addEventListener("con
 // plot, the next plot takes it.
 attachZoneMenu(builderRoot, {
   hasColumn: (role) => builder.placed(role).length > 0,
-  showNullRows,
+  showNullRows: options.showNullRows,
   onNullRows: () => {
     if (plottedEncoding) plot(plottedEncoding);
   },
@@ -1743,30 +1667,32 @@ attachZoneMenu(builderRoot, {
     const [column] = builder.placed("color");
     return column !== undefined && !builder.numeric.get(column);
   },
-  keepLevels: () => keepColorLevels,
+  keepLevels: () => options.keepColorLevels,
   onKeepLevels: async () => {
-    const before = keepColorLevels;
-    keepColorLevels = !before;
+    const before = options.keepColorLevels;
+    options.keepColorLevels = !before;
     if (!plottedEncoding) {
       builder.commit();
       return;
     }
-    const toggled = keepColorLevels;
-    if ((await plot(plottedEncoding)) === "refused" && keepColorLevels === toggled) keepColorLevels = before;
+    const toggled = options.keepColorLevels;
+    if ((await plot(plottedEncoding)) === "refused" && options.keepColorLevels === toggled) {
+      options.keepColorLevels = before;
+    }
   },
 });
 elementBar = new ElementBar(
   document.getElementById("elements"),
   (elements) => builder.setElements(elements),
-  (event) => openSmoothMenu(event, smoothing, setSmoothing),
+  (event) => openSmoothMenu(event, options.smoothing, setSmoothing),
   (event) => {
-    if (current) openShapeMenu(event, SIZE_HEADING, sharedSize(), setShapeSize);
+    if (current) openShapeMenu(event, SIZE_HEADING, options.sharedSize(current), setShapeSize);
   },
   (event) => {
     if (current) openShapeMenu(event, LINE_HEADING, current.line_width, setLineWidth, { sizes: LINE_WIDTHS });
   },
 );
-elementBar.setSmoothText(smoothingText(smoothing));
+elementBar.setSmoothText(smoothingText(options.smoothing));
 // The empty graph with its element icons is the first committed state.
 builder.commit();
 // The chips of X and Y follow the drawn axes, and their zones' sizes.
