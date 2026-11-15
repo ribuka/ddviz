@@ -1381,3 +1381,30 @@ def test_too_many_color_levels_of_a_filter_keep_the_drawn_results(
     held = client.post("/api/selection", json={"task": view["task"]}).json()
     assert held["rows"] == selected["rows"]
     assert client.get("/api/table").json()["rows"] == selected["rows"]
+
+
+STATIC_JS = Path(__file__).parents[2] / "src" / "ddviz" / "static" / "js"
+
+
+def _meta_keys_the_page_reads() -> set[str]:
+    """Return the meta keys the scripts of the page read straight from ``meta``."""
+    keys: set[str] = set()
+    for script in STATIC_JS.glob("*.js"):
+        text = script.read_text(encoding="utf-8")
+        keys |= set(re.findall(r"\bmeta\.([a-z_]+)", text))
+        for key in re.findall(r"meta\[`\$\{\w+\}_([a-z_]+)`\]", text):
+            keys |= {f"x_{key}", f"y_{key}"}
+    return keys
+
+
+def test_the_page_reads_only_meta_keys_the_plot_returns(client: TestClient) -> None:
+    """Every meta key the page reads is in the meta ``/api/plot`` returns.
+
+    Only ``meta.key`` and ``meta[`${axis}_key`]`` (as both ``x_key`` and
+    ``y_key``) are collected: a key read from the meta under another name,
+    such as ``current.key``, is not.
+    """
+    allowed = set(_plot(client)["meta"])
+    read = _meta_keys_the_page_reads()
+    assert read
+    assert read <= allowed, sorted(read - allowed)

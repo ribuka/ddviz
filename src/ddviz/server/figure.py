@@ -10,6 +10,7 @@ labels and facet labels of a grid that scrolls (``static/js/sticky.js``).
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import TypedDict
 
 from ddviz.server.labeltext import facet_text, fit_text, level_text, plotly_text
 from ddviz.shared.layout import (
@@ -316,13 +317,110 @@ def _panel_smooths(manifest: PlotManifest) -> dict[tuple, list[list]]:
     return smooths
 
 
-def build_figure(manifest: PlotManifest) -> dict:
-    """Return the figure of a plot task and what the page needs to draw its images.
+class FigureMeta(TypedDict):
+    """What the page needs to draw a plot task's images, beside its figure.
 
-    The figure holds the axes of every panel, each kept by an empty scatter
-    trace (plotly leaves out the axes of a subplot without traces). A
-    categorical axis has a tick at the middle of each level's band. The axes
-    of the panels of one x column match, and so do those of one y column.
+    The page reads it as JSON (``static/js``); `ddviz.server.api_plot` adds
+    the keys of the task's result to it.
+    """
+
+    # The panels in grid order, each ``{"xaxis", "yaxis", "x", "y", "facet",
+    # "points", "boxes", "smooths"}``: its axes, the indices of its axis
+    # columns, its facet levels (row and col as text, or None), whether the
+    # points of every row are drawn, and its box plots (``[level, series, n,
+    # low, q1, median, q3, high]`` each, `ddviz.shared.scatter.Boxes`) and
+    # smoothing lines (``[series, xs, ys]`` each,
+    # `ddviz.shared.scatter.Smooths`).
+    panels: list[dict]
+    # The x and y axis columns.
+    x_columns: list[str]
+    y_columns: list[str]
+    # The axes that hold the range of each x and y column; the axes of the
+    # other panels match them.
+    x_axes: list[str]
+    y_axes: list[str]
+    # Whether each x and y column is on a numeric axis: linear, and not
+    # categorical, temporal or the one band. The axis dialog
+    # (`static/js/axisdialog.js`) is of linear axes.
+    x_numeric: list[bool]
+    y_numeric: list[bool]
+    # Whether each axis column may lie on a log axis (a number or a
+    # duration), and whether it does; the ranges of a log axis are exponents.
+    x_loggable: list[bool]
+    y_loggable: list[bool]
+    x_log: list[bool]
+    y_log: list[bool]
+    # Whether each y column is categorical: its labels are cut to the room of
+    # `MARGIN_LEFT` (``static/js/bandticks.js``) and leave the left margin out
+    # (``static/js/leftmargin.js``).
+    y_categorical: list[bool]
+    # Left margin in pixels (`ddviz.shared.layout.left_margin`).
+    margin_left: int
+    # Bottom margin in pixels (`ddviz.shared.layout.bottom_margin`).
+    margin_bottom: int
+    # The log axis columns with rows left out for a value not positive,
+    # ``[role, column]`` each.
+    nonpositive: list[list[str]]
+    # The bin grid (`ddviz.shared.scatter.BinGrid`).
+    grid: dict
+    # The data range of each x and y column.
+    x_ranges: list[list[float]]
+    y_ranges: list[list[float]]
+    # The color levels as text.
+    series: list[str]
+    # How the series are colored: ``kind`` is ``"levels"``, ``"bins"`` for the
+    # intervals of a numeric column, or ``"gradient"``, whose images hold
+    # grays from 1 to 255 over ``range``; ``shapes`` series per color level.
+    color: dict
+    # The symbol levels with their marker shapes, or None: series ``s`` is
+    # color level ``s // shapes`` (of ``series``) and symbol level
+    # ``s % shapes``.
+    symbol: dict | None
+    # Size in pixels of the markers of every series
+    # (`ddviz.shared.shapes.marker`); a symbol level may have its own
+    # (`symbol.sizes`).
+    marker_size: int
+    # Width in pixels of the lines joining the points, or None without
+    # them; where the PNG of each color level's lines lies in the images file
+    # (none for a level without lines), as ``images``.
+    line_width: int | None
+    line_images: list[list[int] | None]
+    # The color of each series.
+    colors: list[str]
+    # Where the PNG of each series lies in the images file
+    # (`ddviz.shared.manifest.IMAGES`); its panels are tiles, ``ncol`` to a
+    # row, as `ddviz.compute.raster.atlas`.
+    images: list[list[int] | None]
+    # The panels to a row of the grid.
+    ncol: int
+    # Wrapped panels to a row with no number set (`wrap_columns` for the
+    # levels and the size requested), whatever number the user set; None
+    # without a wrap column.
+    wrap_auto_cols: int | None
+    # The Wrap column, whose panel labels hold its levels alone; the copied
+    # graph image names it (``static/js/plotimage.js``). None without
+    # wrapping.
+    wrap_column: str | None
+    # The rows drawn.
+    rows: int
+    # Whether the grid scrolls.
+    scroll: bool
+    # The facet labels of a grid that scrolls, in its strips
+    # (``static/js/sticky.js``): plotly annotations in paper coordinates. The
+    # figure has them instead when the grid fits, and a wrapped grid has
+    # them in the figure only.
+    facet_labels: list[dict]
+    # The levels of each categorical axis column.
+    axis_levels: dict[str, list[str]]
+    # Whether the x axis is the one band (`ddviz.shared.scatter.ONE_BAND`).
+    one_band: bool
+    # The kind of each temporal column (`ddviz.shared.temporal.KINDS`): a
+    # datetime, date or time axis is plotly's date axis over milliseconds.
+    temporal: dict[str, str]
+
+
+def _base_layout(manifest: PlotManifest) -> dict:
+    """Return the layout of the figure without its axes: size, margins and colors.
 
     Parameters
     ----------
@@ -332,55 +430,10 @@ def build_figure(manifest: PlotManifest) -> dict:
     Returns
     -------
     dict
-        ``{"figure": {"data", "layout"}, "meta": {...}}``; the meta holds the
-        axes, the axis columns (``x``, ``y``: their indices), the facet
-        levels (``facet``: row and col as text, or None), whether the
-        points of every row are drawn (``points``) and the box plots
-        (``boxes``: ``[level, series, n, low, q1, median, q3, high]`` each,
-        `ddviz.shared.scatter.Boxes`) and smoothing lines (``smooths``:
-        ``[series, xs, ys]`` each, `ddviz.shared.scatter.Smooths`) of each
-        panel, the levels of each
-        categorical axis column (``axis_levels``), whether the x axis is
-        the one band (``one_band``, `ddviz.shared.scatter.ONE_BAND`),
-        the kind of each temporal column (``temporal``,
-        `ddviz.shared.temporal.KINDS`: a datetime, date or time axis is
-        plotly's date axis over milliseconds),
-        the axes that hold the range of each x and y column (``x_axes``,
-        ``y_axes``), whether each x and y column is on a numeric axis
-        (``x_numeric``, ``y_numeric``: linear, and not categorical, temporal
-        or the one band), whether each may lie on a log axis and does
-        (``x_loggable``, ``x_log`` and those of y: a number or a duration;
-        the ranges of a log axis are exponents), the log axis columns
-        with rows left out for a value not positive (``nonpositive``,
-        ``[role, column]`` each), the bin grid, the data range of each column, where each
-        series' PNG lies in the images file (`ddviz.shared.manifest.IMAGES`; its
-        panels are tiles, ``ncol`` to a row, as `ddviz.compute.raster.atlas`),
-        whether each y column is categorical (``y_categorical``), the
-        left margin (``margin_left``, `ddviz.shared.layout.left_margin`),
-        the bottom margin (``margin_bottom``, `ddviz.shared.layout.bottom_margin`),
-        the panels a wrapped grid would put to a row with no number set
-        (``wrap_auto_cols``, `ddviz.shared.layout.wrap_columns`; None
-        without wrapping), the Wrap column (``wrap_column``, or None),
-        whether the grid scrolls, its facet labels (plotly annotations in
-        paper coordinates; the figure has them only when the grid fits, and
-        a wrapped grid has them in the figure only), and
-        how the series are colored
-        (``color``: ``kind`` is ``"levels"``, ``"bins"`` for the intervals of
-        a numeric column, or ``"gradient"``, whose images hold grays
-        from 1 to 255 over ``range``; ``shapes`` series per color level),
-        and the symbol levels with their marker shapes (``symbol``, or
-        None): series ``s`` is color level ``s // shapes`` (of ``series``)
-        and symbol level ``s % shapes``.
+        The plotly layout, with no annotations yet.
     """
-    spec, layout, axes = manifest.spec, manifest.layout, manifest.axes
-    x_ranges, y_ranges = manifest.x_ranges, manifest.y_ranges
-    levels = manifest.levels
-    # The first panel of each x column (the top row) and of each y column
-    # (the left column) holds its range; the other panels match it.
-    x_axes = [f"x{_axis_suffix(axes.panel(0, 0, xi, 0))}" for xi in range(axes.nx)]
-    y_axes = [f"y{_axis_suffix(axes.panel(0, 0, 0, yj))}" for yj in range(axes.ny)]
-
-    fig_layout: dict = {
+    layout = manifest.layout
+    return {
         "width": layout.width,
         "height": layout.height,
         "margin": {
@@ -397,70 +450,268 @@ def build_figure(manifest: PlotManifest) -> dict:
         "plot_bgcolor": PLOT_COLOR,
         "annotations": [],
     }
-    panels = []
+
+
+def _axis_ids(manifest: PlotManifest) -> tuple[list[str], list[str]]:
+    """Return the axes that hold the range of each x and of each y column.
+
+    The first panel of each x column (the top row) and of each y column (the
+    left column) holds its range; the other panels match it.
+
+    Parameters
+    ----------
+    manifest : PlotManifest
+        Manifest of the plot task.
+
+    Returns
+    -------
+    tuple of list of str
+        The x axes and the y axes, as plotly names them (``"x"``, ``"x2"``).
+    """
+    axes = manifest.axes
+    x_axes = [f"x{_axis_suffix(axes.panel(0, 0, xi, 0))}" for xi in range(axes.nx)]
+    y_axes = [f"y{_axis_suffix(axes.panel(0, 0, 0, yj))}" for yj in range(axes.ny)]
+    return x_axes, y_axes
+
+
+def _x_axis(manifest: PlotManifest, panel: int, xi: int, x_axes: list[str]) -> dict:
+    """Return the layout of the x axis of a panel.
+
+    Parameters
+    ----------
+    manifest : PlotManifest
+        Manifest of the plot task.
+    panel : int
+        Index of the panel.
+    xi : int
+        Index of the x column of the panel.
+    x_axes : list of str
+        The axes that hold the range of each x column (`_axis_ids`).
+
+    Returns
+    -------
+    dict
+        The plotly layout of the axis.
+    """
+    spec, layout, axes = manifest.spec, manifest.layout, manifest.axes
+    suffix = _axis_suffix(panel)
+    x_axis = f"x{suffix}"
+    # The bottom panel of each panel column, above the empty cells of a
+    # wrapped grid, shows the x ticks.
+    bottom = panel + layout.ncol >= axes.panels
+    return {
+        "domain": layout.x_domain(panel % layout.ncol),
+        "anchor": f"y{suffix}",
+        "range": list(manifest.x_ranges[xi]),
+        "showticklabels": bottom,
+        **(HIDDEN_LABELS if layout.scroll else {}),
+        "zeroline": False,
+        **EXPONENT,
+        **_band_ticks(manifest, spec.x[xi], layout.panel_width),
+        **_date_axis(spec, spec.x[xi]),
+        **_log_axis(spec.x[xi] in spec.log_x),
+        **_FRAME,
+        **({"matches": x_axes[xi]} if x_axis != x_axes[xi] else {}),
+    }
+
+
+def _y_axis(manifest: PlotManifest, panel: int, yj: int, y_axes: list[str]) -> dict:
+    """Return the layout of the y axis of a panel.
+
+    Parameters
+    ----------
+    manifest : PlotManifest
+        Manifest of the plot task.
+    panel : int
+        Index of the panel.
+    yj : int
+        Index of the y column of the panel.
+    y_axes : list of str
+        The axes that hold the range of each y column (`_axis_ids`).
+
+    Returns
+    -------
+    dict
+        The plotly layout of the axis.
+    """
+    spec, layout = manifest.spec, manifest.layout
+    prow, pcol = divmod(panel, layout.ncol)
+    suffix = _axis_suffix(panel)
+    y_axis = f"y{suffix}"
+    return {
+        "domain": layout.y_domain(prow),
+        "anchor": f"x{suffix}",
+        "range": list(manifest.y_ranges[yj]),
+        "showticklabels": pcol == 0,
+        **(HIDDEN_LABELS if layout.scroll else {}),
+        # plotly hides a label that would cross the figure's left edge;
+        # the page measures every label to size the left margin
+        # (``static/js/leftmargin.js``), so they all show.
+        "ticklabeloverflow": "allow",
+        "zeroline": False,
+        **EXPONENT,
+        **_band_ticks(manifest, spec.y[yj], None),
+        **_date_axis(spec, spec.y[yj]),
+        **_log_axis(spec.y[yj] in spec.log_y),
+        **_FRAME,
+        **({"matches": y_axes[yj]} if y_axis != y_axes[yj] else {}),
+    }
+
+
+def _panel(
+    manifest: PlotManifest,
+    panel: int,
+    boxes: dict[tuple, list[list[float]]],
+    smooths: dict[tuple, list[list]],
+) -> dict:
+    """Return what the page needs of a panel (`FigureMeta.panels`).
+
+    Parameters
+    ----------
+    manifest : PlotManifest
+        Manifest of the plot task.
+    panel : int
+        Index of the panel.
+    boxes : dict
+        The box plots of each panel (`_panel_boxes`).
+    smooths : dict
+        The smoothing lines of each panel (`_panel_smooths`).
+
+    Returns
+    -------
+    dict
+        The axes, axis columns and facet levels of the panel, whether its
+        points are drawn, and its box plots and smoothing lines.
+    """
+    spec, axes, levels = manifest.spec, manifest.axes, manifest.levels
+    xi, yj = axes.axes(panel)
+    suffix = _axis_suffix(panel)
+    facet = [
+        None if getattr(spec, role) is None else str(levels[role][i])
+        for role, i in zip(("row", "col"), axes.facet(panel), strict=True)
+    ]
+    row, col = axes.facet(panel)
+    return {
+        "xaxis": f"x{suffix}",
+        "yaxis": f"y{suffix}",
+        "x": xi,
+        "y": yj,
+        "facet": facet,
+        "points": spec.draws_points(spec.x[xi], spec.y[yj]),
+        "boxes": boxes.get((spec.x[xi], spec.y[yj], row, col), []),
+        "smooths": smooths.get((spec.x[xi], spec.y[yj], row, col), []),
+    }
+
+
+def _meta(
+    manifest: PlotManifest,
+    panels: list[dict],
+    x_axes: list[str],
+    y_axes: list[str],
+    labels: list[dict],
+) -> FigureMeta:
+    """Return what the page needs to draw the images of a plot task.
+
+    Parameters
+    ----------
+    manifest : PlotManifest
+        Manifest of the plot task.
+    panels : list of dict
+        The panels (`_panel`).
+    x_axes, y_axes : list of str
+        The axes that hold the range of each x and y column (`_axis_ids`).
+    labels : list of dict
+        The facet labels the page draws in the strips of a grid that scrolls.
+
+    Returns
+    -------
+    FigureMeta
+        The meta of the figure.
+    """
+    spec, layout, axes = manifest.spec, manifest.layout, manifest.axes
+    return FigureMeta(
+        panels=panels,
+        x_columns=spec.x,
+        y_columns=spec.y,
+        x_axes=x_axes,
+        y_axes=y_axes,
+        x_numeric=[_numeric_axis(manifest, c) and c not in spec.log_x for c in spec.x],
+        y_numeric=[_numeric_axis(manifest, c) and c not in spec.log_y for c in spec.y],
+        x_loggable=[_loggable_axis(manifest, c) for c in spec.x],
+        y_loggable=[_loggable_axis(manifest, c) for c in spec.y],
+        x_log=[c in spec.log_x for c in spec.x],
+        y_log=[c in spec.log_y for c in spec.y],
+        y_categorical=[c in manifest.axis_levels for c in spec.y],
+        margin_left=layout.margin_left,
+        margin_bottom=layout.margin_bottom,
+        nonpositive=manifest.nonpositive,
+        grid=asdict(manifest.grid),
+        x_ranges=[list(r) for r in manifest.x_ranges],
+        y_ranges=[list(r) for r in manifest.y_ranges],
+        series=[str(v) for v in manifest.levels["color"]],
+        color=_color_scale(manifest),
+        symbol=_symbol(manifest),
+        marker_size=spec.shape_size,
+        line_width=spec.line_width,
+        line_images=manifest.line_images,
+        colors=manifest.colors,
+        images=manifest.images,
+        ncol=layout.ncol,
+        wrap_auto_cols=(
+            wrap_columns(
+                axes.wrap,
+                spec.width,
+                spec.height,
+                spec.margin_left,
+                spec.margin_bottom,
+            )
+            if axes.wrap
+            else None
+        ),
+        wrap_column=spec.col if spec.wrap else None,
+        rows=manifest.rows,
+        scroll=layout.scroll,
+        facet_labels=labels,
+        axis_levels=manifest.axis_levels,
+        one_band=spec.x == [ONE_BAND],
+        temporal=spec.temporal,
+    )
+
+
+def build_figure(manifest: PlotManifest) -> dict:
+    """Return the figure of a plot task and what the page needs to draw its images.
+
+    The figure holds the axes of every panel, each kept by an empty scatter
+    trace (plotly leaves out the axes of a subplot without traces). A
+    categorical axis has a tick at the middle of each level's band. The axes
+    of the panels of one x column match, and so do those of one y column.
+
+    Parameters
+    ----------
+    manifest : PlotManifest
+        Manifest of the plot task.
+
+    Returns
+    -------
+    dict
+        ``{"figure": {"data", "layout"}, "meta": FigureMeta}``.
+    """
+    spec, layout, axes = manifest.spec, manifest.layout, manifest.axes
+    x_axes, y_axes = _axis_ids(manifest)
+    fig_layout = _base_layout(manifest)
     boxes = _panel_boxes(manifest)
     smooths = _panel_smooths(manifest)
+    panels = []
     for panel in range(axes.panels):
-        prow, pcol = divmod(panel, layout.ncol)
         xi, yj = axes.axes(panel)
         suffix = _axis_suffix(panel)
-        x_axis, y_axis = f"x{suffix}", f"y{suffix}"
-        # The bottom panel of each panel column, above the empty cells of a
-        # wrapped grid, shows the x ticks.
-        bottom = panel + layout.ncol >= axes.panels
-        fig_layout[f"xaxis{suffix}"] = {
-            "domain": layout.x_domain(pcol),
-            "anchor": y_axis,
-            "range": list(x_ranges[xi]),
-            "showticklabels": bottom,
-            **(HIDDEN_LABELS if layout.scroll else {}),
-            "zeroline": False,
-            **EXPONENT,
-            **_band_ticks(manifest, spec.x[xi], layout.panel_width),
-            **_date_axis(spec, spec.x[xi]),
-            **_log_axis(spec.x[xi] in spec.log_x),
-            **_FRAME,
-            **({"matches": x_axes[xi]} if x_axis != x_axes[xi] else {}),
-        }
-        fig_layout[f"yaxis{suffix}"] = {
-            "domain": layout.y_domain(prow),
-            "anchor": x_axis,
-            "range": list(y_ranges[yj]),
-            "showticklabels": pcol == 0,
-            **(HIDDEN_LABELS if layout.scroll else {}),
-            # plotly hides a label that would cross the figure's left edge;
-            # the page measures every label to size the left margin
-            # (``static/js/leftmargin.js``), so they all show.
-            "ticklabeloverflow": "allow",
-            "zeroline": False,
-            **EXPONENT,
-            **_band_ticks(manifest, spec.y[yj], None),
-            **_date_axis(spec, spec.y[yj]),
-            **_log_axis(spec.y[yj] in spec.log_y),
-            **_FRAME,
-            **({"matches": y_axes[yj]} if y_axis != y_axes[yj] else {}),
-        }
-        facet = [
-            None if getattr(spec, role) is None else str(levels[role][i])
-            for role, i in zip(("row", "col"), axes.facet(panel), strict=True)
-        ]
-        row, col = axes.facet(panel)
-        panels.append(
-            {
-                "xaxis": x_axis,
-                "yaxis": y_axis,
-                "x": xi,
-                "y": yj,
-                "facet": facet,
-                "points": spec.draws_points(spec.x[xi], spec.y[yj]),
-                "boxes": boxes.get((spec.x[xi], spec.y[yj], row, col), []),
-                "smooths": smooths.get((spec.x[xi], spec.y[yj], row, col), []),
-            }
-        )
+        fig_layout[f"xaxis{suffix}"] = _x_axis(manifest, panel, xi, x_axes)
+        fig_layout[f"yaxis{suffix}"] = _y_axis(manifest, panel, yj, y_axes)
+        panels.append(_panel(manifest, panel, boxes, smooths))
     # A grid that scrolls has its tick labels and facet labels in strips
     # along the edges of the area (``static/js/sticky.js``), so that they
     # stay in sight: plotly draws neither.
-    labels = _facet_labels(spec, levels, layout, axes)
+    labels = _facet_labels(spec, manifest.levels, layout, axes)
     if spec.wrap:
         # A wrapped grid's labels lie between its panels: plotly draws them,
         # and they scroll with their panels.
@@ -482,74 +733,5 @@ def build_figure(manifest: PlotManifest) -> dict:
         }
         for panel in panels
     ]
-    meta = {
-        "panels": panels,
-        "x_columns": spec.x,
-        "y_columns": spec.y,
-        "x_axes": x_axes,
-        "y_axes": y_axes,
-        # The axis dialog (`static/js/axisdialog.js`) is of linear axes.
-        "x_numeric": [
-            _numeric_axis(manifest, c) and c not in spec.log_x for c in spec.x
-        ],
-        "y_numeric": [
-            _numeric_axis(manifest, c) and c not in spec.log_y for c in spec.y
-        ],
-        # Whether each axis column may lie on a log axis, and whether it does.
-        "x_loggable": [_loggable_axis(manifest, c) for c in spec.x],
-        "y_loggable": [_loggable_axis(manifest, c) for c in spec.y],
-        "x_log": [c in spec.log_x for c in spec.x],
-        "y_log": [c in spec.log_y for c in spec.y],
-        # Whether each y column is categorical: its labels are cut to the
-        # room of `MARGIN_LEFT` (``static/js/bandticks.js``) and leave the
-        # left margin out (``static/js/leftmargin.js``).
-        "y_categorical": [c in manifest.axis_levels for c in spec.y],
-        # Left margin in pixels (`ddviz.shared.layout.left_margin`).
-        "margin_left": layout.margin_left,
-        # Bottom margin in pixels (`ddviz.shared.layout.bottom_margin`).
-        "margin_bottom": layout.margin_bottom,
-        # The log axis columns with rows left out for a value not positive.
-        "nonpositive": manifest.nonpositive,
-        "grid": asdict(manifest.grid),
-        "x_ranges": [list(r) for r in x_ranges],
-        "y_ranges": [list(r) for r in y_ranges],
-        "series": [str(v) for v in levels["color"]],
-        "color": _color_scale(manifest),
-        "symbol": _symbol(manifest),
-        # Size in pixels of the markers of every series
-        # (`ddviz.shared.shapes.marker`); a symbol level may have its own
-        # (`symbol.sizes`).
-        "marker_size": spec.shape_size,
-        # Width in pixels of the lines joining the points, or None without
-        # them; where the PNG of each color level's lines lies in the
-        # images file (none for a level without lines), as ``images``.
-        "line_width": spec.line_width,
-        "line_images": manifest.line_images,
-        "colors": manifest.colors,
-        "images": manifest.images,
-        "ncol": layout.ncol,
-        # Wrapped panels to a row with no number set (`wrap_columns` for the
-        # levels and the size requested), whatever number the user set; None
-        # without a wrap column.
-        "wrap_auto_cols": (
-            wrap_columns(
-                axes.wrap,
-                spec.width,
-                spec.height,
-                spec.margin_left,
-                spec.margin_bottom,
-            )
-            if axes.wrap
-            else None
-        ),
-        # The Wrap column, whose panels' labels hold its levels alone; the
-        # copied graph image names it (``static/js/plotimage.js``).
-        "wrap_column": spec.col if spec.wrap else None,
-        "rows": manifest.rows,
-        "scroll": layout.scroll,
-        "facet_labels": labels,
-        "axis_levels": manifest.axis_levels,
-        "one_band": spec.x == [ONE_BAND],
-        "temporal": spec.temporal,
-    }
+    meta = _meta(manifest, panels, x_axes, y_axes, labels)
     return {"figure": {"data": data, "layout": fig_layout}, "meta": meta}
