@@ -158,6 +158,12 @@ function formatBound(card, value) {
   return formatTemporal(card.summary?.temporal, value) ?? formatNumber(value);
 }
 
+// Returns a key of conditions of the local filter
+// (`ddviz.server.plan.parse_filters`), from the page's or from a result's meta.
+export function filtersKey(list) {
+  return JSON.stringify(list.map((f) => [f.column, f.range ?? null, f.levels ?? null, f.contains ?? null]));
+}
+
 export class FilterPane {
   // `root` is the pane (`#filters`); `onChange` gets the conditions after each
   // committed change; `onSummary` gets the summary text whenever it changes.
