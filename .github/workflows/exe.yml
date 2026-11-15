@@ -1,10 +1,11 @@
 name: Exe
 
 # Builds the folder for distribution (dist\ddviz), checks that the exe runs a
-# worker task, and keeps it zipped as ddviz-<VERSION>-win-x64.zip, an
-# artifact of the run for a day. The release workflow calls it with the tag
+# worker task and that a copy with DLLs marked as from the internet unblocks
+# them and loads pythonnet and the WebView2 SDK, and keeps it zipped as
+# ddviz-<VERSION>-win-x64.zip, an artifact of the run for a day. The release workflow calls it with the tag
 # and attaches the zip to the release; a pull request that touches the
-# packaging or these workflows builds it to check.
+# packaging, the start of the app or these workflows builds it to check.
 
 on:
   pull_request:
@@ -12,6 +13,8 @@ on:
       - main
     paths:
       - packaging/**
+      - src/ddviz/__main__.py
+      - src/ddviz/desktop/**
       - .github/workflows/exe.yml
       - .github/workflows/release.yml
   workflow_call:

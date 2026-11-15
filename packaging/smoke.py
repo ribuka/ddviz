@@ -7,7 +7,10 @@ SDK are next to the exe and that no WebView2 Runtime is. It then writes a small 
 ``ddviz.exe --worker`` and has it count the non-null values (polars and
 pyarrow, inside the exe), then checks the counts. It also has workers write
 the index of a column's levels and search it (the filter card's candidates,
-`ddviz.compute.levelindex`), and checks what they found. The window is not
+`ddviz.compute.levelindex`), and checks what they found. Last, it copies the
+folder under ``tmp\exe-smoke\``, marks the copy's DLLs as from the internet
+and checks that its ``ddviz.exe --check-desktop-runtime`` unblocks them and
+loads pythonnet and the WebView2 SDK (`desktop_check`). The window is not
 opened: a CI runner has no desktop to show it on.
 """
 
@@ -19,11 +22,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+import desktop_check
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = ROOT / "dist" / "ddviz" / "ddviz.exe"
+#: Where the copies with marked DLLs are made, one folder per run.
+WORK = ROOT / "tmp" / "exe-smoke"
 TIMEOUT_S = 120
 NOTICES = ("LICENSE-WebView2-SDK.txt", "NOTICE.txt")
 
@@ -149,7 +155,12 @@ def main(argv: list[str]) -> int:
         if manifest["rows"] != 3 or manifest["counts"] != [2, 2]:
             raise RuntimeError(f"unexpected result: {manifest}")
         check_levels(exe, Path(tmp))
-    print(f"ok: {exe} ran a nonnull task and the tasks of the levels", flush=True)
+    n_dlls = desktop_check.check_marked_copy(exe.parent, WORK)
+    print(
+        f"ok: {exe} ran a nonnull task and the tasks of the levels; a copy with"
+        f" {n_dlls} marked DLLs unblocked them and loaded the window's DLLs",
+        flush=True,
+    )
     return 0
 
 

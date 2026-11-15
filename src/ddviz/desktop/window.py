@@ -9,7 +9,6 @@ address bar, so the user sees an app, not a web page.
 
 from __future__ import annotations
 
-import ctypes
 import importlib.metadata
 import json
 import logging
@@ -25,6 +24,7 @@ import webview
 from webview.dom import DOMEventHandler
 
 from ddviz.desktop.downloads import Downloads
+from ddviz.desktop.messages import show_warning
 from ddviz.desktop.runlog import RunLog, app_data_dir
 from ddviz.desktop.single_instance import IN_USE_MESSAGE, Outcome, claim, record_window
 from ddviz.desktop.titlebar import TitleBar
@@ -200,8 +200,6 @@ def dropped_paths(event: dict) -> tuple[list[str], str | None]:
     return paths, None
 
 
-_MB_ICONWARNING = 0x30
-
 NO_RUNTIME_MESSAGE = (
     "WebView2 のランタイムが見つかりません。\n\n"
     "次のどちらかを行ってから、もう一度起動してください。\n"
@@ -224,19 +222,6 @@ def fixed_runtime() -> Path | None:
     if not getattr(sys, "frozen", False):
         return None
     return Path(sys.executable).parent / "webview2"
-
-
-def show_warning(text: str) -> None:
-    """Show a modal message box; off Windows, only log the text.
-
-    Parameters
-    ----------
-    text : str
-        The message.
-    """
-    _log.warning(text)
-    if sys.platform == "win32":
-        ctypes.windll.user32.MessageBoxW(None, text, "ddviz", _MB_ICONWARNING)
 
 
 class _App:
