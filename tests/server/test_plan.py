@@ -191,6 +191,13 @@ def test_scatter_needs_x_and_y() -> None:
         scatter_spec(Encoding(x=("a",)), {"a": "a.parquet"}, 400, 300, [])
 
 
+def test_scatter_takes_the_arguments_after_colors_by_keyword_only() -> None:
+    """Passing filters by position is refused, so same-typed arguments are not swapped."""
+    encoding = Encoding(x=("a",), y=("b",))
+    with pytest.raises(TypeError):
+        scatter_spec(encoding, {"a": ["a.parquet"]}, 400, 300, [], [])
+
+
 NUMERIC = {"a": True, "b": True, "g": False}
 
 
@@ -199,7 +206,7 @@ def test_filters_are_read_but_not_hovered() -> None:
     encoding = Encoding(x=("a",), y=("b",))
     files = {c: [f"{c}.parquet"] for c in ("a", "b", "g")}
     filters = [Filter("g", levels=["p"])]
-    spec = scatter_spec(encoding, files, 400, 300, ["#000000"], filters)
+    spec = scatter_spec(encoding, files, 400, 300, ["#000000"], filters=filters)
     assert spec.hover == ["a", "b"]
     assert list(spec.files) == ["a", "b", "g"]
     assert spec.filters == filters
