@@ -27,6 +27,8 @@ class PlotRequest(BaseModel):
     set (`ddviz.shared.layout.bottom_margin`). ``keep_unfiltered_color_levels``
     keeps the levels of a categorical color column over every row
     (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_color_levels`).
+    ``wrap_cols``, ``shape_size`` and ``line_width`` are kept as sent, for
+    `ddviz.server.plotoptions` to take JSON integers only.
     """
 
     encoding: dict
@@ -36,9 +38,9 @@ class PlotRequest(BaseModel):
     margin_bottom: int = MARGIN_BOTTOM
     filters: list[dict] = []
     color_bins: dict | None = None
-    wrap_cols: int | None = None
+    wrap_cols: object = None
     smooth: dict | None = None
-    shape_size: int | None = None
+    shape_size: object = None
     line_width: object = None
     shape_sizes: dict[str, object] | None = None
     level_shapes: dict[str, object] | None = None

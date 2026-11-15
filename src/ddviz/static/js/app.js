@@ -208,30 +208,30 @@ function filtersKey(list) {
   return JSON.stringify(list.map((f) => [f.column, f.range ?? null, f.levels ?? null, f.contains ?? null]));
 }
 // How a numeric color column is cut into intervals ({n, by}), or null for a
-// gradient (`ddviz.server.plan.parse_color_bins`); back to null for another color
+// gradient (`ddviz.server.plotoptions.parse_color_bins`); back to null for another color
 // column. The graph last plotted, to plot again with another cutting.
 let colorBins = null;
 let plottedEncoding = null;
-// How the smoothing lines are fitted (`ddviz.server.plan.parse_smoothing`),
+// How the smoothing lines are fitted (`ddviz.server.plotoptions.parse_smoothing`),
 // picked in the menu of their element icon; kept for every graph.
 let smoothing = DEFAULT_SMOOTHING;
 // Size in pixels of the markers of every series
-// (`ddviz.server.plan.parse_shape_size`), picked in the menu of the points'
+// (`ddviz.server.plotoptions.parse_shape_size`), picked in the menu of the points'
 // element icon or of the legend's color markers; kept for every graph. Null
 // for the default: larger for the symbol's shapes than for the circles of
 // the points.
 let shapeSize = null;
 // Width in pixels of the lines joining the points of every series
-// (`ddviz.server.plan.parse_line_width`), picked in the menu of the lines'
+// (`ddviz.server.plotoptions.parse_line_width`), picked in the menu of the lines'
 // element icon; kept for every graph, with the lines on or off.
 let lineWidth = 2;
 // Sizes of the shapes of single symbol levels, by symbol column and level
-// name (`ddviz.server.plan.parse_shape_sizes`), picked in the menu of the
+// name (`ddviz.server.plotoptions.parse_shape_sizes`), picked in the menu of the
 // symbol legend's markers; kept for every graph, dropped when the size of
 // every series is picked.
 const levelSizes = new Map();
 // Shapes of single symbol levels, by level name, of the symbol column
-// `column` (`ddviz.server.plan.parse_level_shapes`), picked in the panel of
+// `column` (`ddviz.server.plotoptions.parse_level_shapes`), picked in the panel of
 // the menu of the symbol legend's markers. They stay while the symbol
 // column does, as the colors picked for the color levels: a graph of
 // another symbol column drops them.
@@ -247,7 +247,7 @@ const showNullRows = { color: true, symbol: true };
 // off after a reload. Off, the levels are those of the filter's rows.
 let keepColorLevels = false;
 // Wrapped panels to a row, or null to make them closest to square
-// (`ddviz.server.plan.parse_wrap_cols`); back to null for another wrap column.
+// (`ddviz.server.plotoptions.parse_wrap_cols`); back to null for another wrap column.
 // The user sets it in the Wrap zone's form (wrapmenu.js).
 let wrapCols = null;
 // The number to a row with none set, of the latest result for the wrap

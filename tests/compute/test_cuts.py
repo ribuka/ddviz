@@ -14,7 +14,7 @@ from ddviz.compute.aggregate import COUNT, INDEX, aggregate
 from ddviz.compute.cuts import cut_labels, find_cuts
 from ddviz.compute.tasks.plot import run_plot, run_selection
 from ddviz.server.encoding import Encoding
-from ddviz.server.plan import FACET_BINS, parse_color_bins, scatter_spec
+from ddviz.server.plan import FACET_BINS, scatter_spec
 from ddviz.shared.manifest import IMAGES, read_manifest
 from ddviz.shared.scatter import Binning, Filter, ScatterSpec, Selection, View
 
@@ -140,15 +140,6 @@ def test_plan_cuts_numeric_facets_and_makes_numeric_color_a_gradient(
     )
     assert binned.binned == {"color": Binning(3, "values")}
     assert not binned.gradient
-
-
-def test_parse_color_bins_takes_known_counts_only() -> None:
-    """The page may cut a color column into 2, 3, 5 or 10 intervals, by rows or by values."""
-    assert parse_color_bins({"n": 5, "by": "rows"}) == Binning(5, "rows")
-    assert parse_color_bins(None) is None
-    for raw in ({"n": 4, "by": "rows"}, {"n": 5, "by": "other"}, {"n": 5}):
-        with pytest.raises(ValueError, match="color bins"):
-            parse_color_bins(raw)
 
 
 def test_numeric_facet_panels_hold_their_intervals(

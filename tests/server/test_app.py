@@ -291,6 +291,21 @@ def test_plot_wraps_a_column_and_refuses_a_bad_wrap_cols(client: TestClient) -> 
     assert bad.status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("field", "raw"), [("shape_size", "9"), ("shape_size", 9.0), ("wrap_cols", "2")]
+)
+def test_plot_takes_json_integers_only(
+    client: TestClient, field: str, raw: object
+) -> None:
+    """An integer setting sent as a string or a float is refused, not converted."""
+    encoding = {"x": ["x"], "y": ["y"], "wrap": "facet"}
+    response = client.post(
+        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS, field: raw}
+    )
+    assert response.status_code == 400
+    assert field in response.json()["detail"]
+
+
 def test_the_margins_asked_for_go_to_the_plot_view_and_overview(
     client: TestClient,
 ) -> None:
