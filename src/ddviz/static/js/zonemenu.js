@@ -14,36 +14,24 @@
 //
 // The menu closes and stays in the window as the other right-click menus
 // (smoothmenu.js).
+import { menuItem, Popup } from "./popup.js";
 
 export const NULL_ROLES = ["color", "symbol"];
 export const KEEP_LEVELS_TEXT = "フィルタで除外された水準も凡例に残す";
 
-let open = null;
-
-function close() {
-  open?.remove();
-  open = null;
-}
-
-window.addEventListener("pointerdown", (event) => {
-  if (open && !open.contains(event.target)) close();
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") close();
-});
+const popup = new Popup();
 
 // Returns a checked item `name` of the menu, which closes it and calls `pick`.
-function menuItem(name, text, checked, pick) {
-  const row = document.createElement("button");
-  row.type = "button";
-  row.className = "scale-menu-item";
+function item(name, text, checked, pick) {
+  const row = menuItem(
+    text,
+    () => {
+      popup.close();
+      pick();
+    },
+    { checked },
+  );
   row.dataset.item = name;
-  row.classList.toggle("checked", checked);
-  row.textContent = text;
-  row.addEventListener("click", () => {
-    close();
-    pick();
-  });
   return row;
 }
 
@@ -58,25 +46,20 @@ export function attachZoneMenu(root, { hasColumn, showNullRows, onNullRows, cate
     const zone = root.querySelector(`.zone[data-role="${role}"]`);
     zone.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      close();
+      popup.close();
       if (!hasColumn(role)) return;
       const menu = document.createElement("div");
       menu.className = "scale-menu zone-menu";
       menu.append(
-        menuItem("null-rows", "Show null rows", showNullRows[role], () => {
+        item("null-rows", "Show null rows", showNullRows[role], () => {
           showNullRows[role] = !showNullRows[role];
           onNullRows(role);
         }),
       );
       if (role === "color" && categoricalColor()) {
-        menu.append(menuItem("keep-levels", KEEP_LEVELS_TEXT, keepLevels(), onKeepLevels));
+        menu.append(item("keep-levels", KEEP_LEVELS_TEXT, keepLevels(), onKeepLevels));
       }
-      document.body.append(menu);
-      const { innerWidth, innerHeight } = window;
-      const rect = menu.getBoundingClientRect();
-      menu.style.left = `${Math.max(4, Math.min(event.clientX, innerWidth - rect.width - 4))}px`;
-      menu.style.top = `${Math.max(4, Math.min(event.clientY, innerHeight - rect.height - 4))}px`;
-      open = menu;
+      popup.open(menu, event);
     });
   }
 }

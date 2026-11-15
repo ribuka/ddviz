@@ -1,6 +1,7 @@
 // The menu of the smoothing lines, opened by a right click on their element
 // icon (elements.js): the method (`ddviz.server.plan.SMOOTH_METHODS`) and
 // its parameter, csaps' p or lowess' frac (`ddviz.server.plan.parse_smoothing`).
+import { menuHeading, menuItem, Popup } from "./popup.js";
 
 export const METHODS = [
   ["gcv", "GCV 平滑化スプライン"],
@@ -17,19 +18,7 @@ export const DEFAULT_SMOOTHING = { method: "gcv" };
 // The parameters last picked, kept while another method is drawn.
 const picked = { p: null, frac: 2 / 3 };
 
-let open = null;
-
-function close() {
-  open?.remove();
-  open = null;
-}
-
-window.addEventListener("pointerdown", (event) => {
-  if (open && !open.contains(event.target)) close();
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") close();
-});
+const popup = new Popup();
 
 // Returns the text of a smoothing ({method, p, frac}).
 export function smoothingText(smoothing) {
@@ -53,27 +42,16 @@ function of(method) {
 // Opens the menu at a right click. `smoothing` is the current one;
 // `onPick` gets the smoothing picked.
 export function openSmoothMenu(event, smoothing, onPick) {
-  close();
   const menu = document.createElement("div");
   menu.className = "scale-menu";
   const item = (text, checked, run) => {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "scale-menu-item";
-    row.classList.toggle("checked", checked);
-    row.textContent = text;
-    row.addEventListener("click", () => {
-      close();
+    const pick = () => {
+      popup.close();
       if (!checked) run();
-    });
-    menu.append(row);
+    };
+    menu.append(menuItem(text, pick, { checked }));
   };
-  const heading = (text) => {
-    const head = document.createElement("div");
-    head.className = "scale-menu-heading";
-    head.textContent = text;
-    menu.append(head);
-  };
+  const heading = (text) => menu.append(menuHeading(text));
   heading("平滑線の方式");
   for (const [method, text] of METHODS) {
     item(text, smoothing.method === method, () => onPick(of(method)));
@@ -94,10 +72,5 @@ export function openSmoothMenu(event, smoothing, onPick) {
       onPick(of("lowess"));
     });
   }
-  document.body.append(menu);
-  const { innerWidth, innerHeight } = window;
-  const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(4, Math.min(event.clientX, innerWidth - rect.width - 4))}px`;
-  menu.style.top = `${Math.max(4, Math.min(event.clientY, innerHeight - rect.height - 4))}px`;
-  open = menu;
+  popup.open(menu, event);
 }

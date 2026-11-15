@@ -9,6 +9,7 @@
 // of a symbol level's marker the level's shape, each in a panel opened as
 // a submenu (colorpanel.js, shapepanel.js).
 import { colorPanel } from "./colorpanel.js";
+import { menuHeading, menuItem, menuSeparator, Popup } from "./popup.js";
 import { shapeCanvas, shapePanel } from "./shapepanel.js";
 
 export const SIZES = [3, 5, 7, 9, 11, 15];
@@ -23,7 +24,6 @@ export function levelHeading(level) {
   return `形「${level}」の大きさ`;
 }
 
-let open = null;
 // The panel open beside the menu (of the color or the shape), or null.
 let sub = null;
 
@@ -32,18 +32,7 @@ function closeSub() {
   sub = null;
 }
 
-function close() {
-  closeSub();
-  open?.remove();
-  open = null;
-}
-
-window.addEventListener("pointerdown", (event) => {
-  if (open && !open.contains(event.target) && !sub?.contains(event.target)) close();
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") close();
-});
+const popup = new Popup({ onClose: closeSub, inside: () => [sub] });
 
 // Opens the menu at a right click, under `heading`. `size` is the current
 // size; `onPick` gets the size picked. With `color` ({current, onPick}: the
@@ -55,40 +44,21 @@ window.addEventListener("keydown", (event) => {
 // `sizes` lists the sizes to pick from: the widths of the lines
 // (`LINE_WIDTHS`) in the menu of the lines' icon.
 export function openShapeMenu(event, heading, size, onPick, { color = null, shape = null, sizes = SIZES } = {}) {
-  close();
   const menu = document.createElement("div");
   menu.className = "scale-menu shape-menu";
-  if (color) menu.append(colorItem(color), menuGap());
-  if (shape) menu.append(shapeItem(shape), menuGap());
-  const head = document.createElement("div");
-  head.className = "scale-menu-heading";
-  head.textContent = heading;
-  menu.append(head);
+  if (color) menu.append(colorItem(color), menuSeparator());
+  if (shape) menu.append(shapeItem(shape), menuSeparator());
+  menu.append(menuHeading(heading));
   for (const pick of sizes) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "scale-menu-item";
-    row.classList.toggle("checked", pick === size);
-    row.textContent = `${pick} px`;
-    row.addEventListener("pointerenter", closeSub);
-    row.addEventListener("click", () => {
-      close();
+    const choose = () => {
+      popup.close();
       if (pick !== size) onPick(pick);
-    });
+    };
+    const row = menuItem(`${pick} px`, choose, { checked: pick === size });
+    row.addEventListener("pointerenter", closeSub);
     menu.append(row);
   }
-  document.body.append(menu);
-  const { innerWidth, innerHeight } = window;
-  const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(4, Math.min(event.clientX, innerWidth - rect.width - 4))}px`;
-  menu.style.top = `${Math.max(4, Math.min(event.clientY, innerHeight - rect.height - 4))}px`;
-  open = menu;
-}
-
-function menuGap() {
-  const gap = document.createElement("div");
-  gap.className = "scale-menu-separator";
-  return gap;
+  popup.open(menu, event);
 }
 
 // The item that opens the color panel beside it, on hover or on a click.
@@ -118,7 +88,7 @@ function subItem(className, swatch, label, panel, onPick) {
   const show = () => {
     if (sub) return;
     sub = panel((picked) => {
-      close();
+      popup.close();
       onPick(picked);
     });
     document.body.append(sub);

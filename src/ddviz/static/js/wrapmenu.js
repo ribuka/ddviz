@@ -5,24 +5,23 @@
 // or the apply button; Escape, a click outside the form or another right
 // click drop the draft. The form closes and stays in the window as the
 // right-click menus do (scalemenu.js).
+import { menuHeading, Popup } from "./popup.js";
 
 // The largest number taken: JavaScript's integers are exact up to it.
 export const WRAP_COLS_MAX = Number.MAX_SAFE_INTEGER;
 export const WRAP_COLS_ERROR = `1 以上 ${WRAP_COLS_MAX} 以下の整数を入力してください`;
 
-let open = null;
+// The label of "自動（n）" in the open form, or null when closed.
+let autoLabel = null;
+const popup = new Popup({
+  onClose: () => {
+    autoLabel = null;
+  },
+});
 
 export function closeWrapMenu() {
-  open?.form.remove();
-  open = null;
+  popup.close();
 }
-
-window.addEventListener("pointerdown", (event) => {
-  if (open && !open.form.contains(event.target)) closeWrapMenu();
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeWrapMenu();
-});
 
 // The number of the text, or null when it is not an integer from 1 to
 // `WRAP_COLS_MAX`: ASCII digits only (leading zeros allowed) between blanks,
@@ -41,20 +40,16 @@ function autoText(auto) {
 // Shows `auto`, the number to a row of the latest result (null without one
 // for the wrap column), in an open form.
 export function setWrapAuto(auto) {
-  if (open) open.autoLabel.textContent = autoText(auto);
+  if (autoLabel) autoLabel.textContent = autoText(auto);
 }
 
 // Opens the form at a right click. `cols` is the number set (null for
 // automatic), `auto` as `setWrapAuto`; `onApply` gets the number applied
 // (null for automatic), whether or not it changed.
 export function openWrapMenu(event, cols, auto, onApply) {
-  closeWrapMenu();
   const form = document.createElement("form");
   form.className = "scale-menu wrap-menu";
   form.noValidate = true;
-  const head = document.createElement("div");
-  head.className = "scale-menu-heading";
-  head.textContent = "1 行のパネル数";
   const choice = (text) => {
     const label = document.createElement("label");
     label.className = "wrap-menu-choice";
@@ -89,7 +84,7 @@ export function openWrapMenu(event, cols, auto, onApply) {
   apply.type = "submit";
   apply.className = "wrap-menu-apply";
   apply.textContent = "適用";
-  form.append(head, automatic.label, manual.label, field, error, apply);
+  form.append(menuHeading("1 行のパネル数"), automatic.label, manual.label, field, error, apply);
 
   const showMode = (isManual) => {
     input.disabled = !isManual;
@@ -134,11 +129,7 @@ export function openWrapMenu(event, cols, auto, onApply) {
     submit();
   });
 
-  document.body.append(form);
-  const { innerWidth, innerHeight } = window;
-  const rect = form.getBoundingClientRect();
-  form.style.left = `${Math.max(4, Math.min(event.clientX, innerWidth - rect.width - 4))}px`;
-  form.style.top = `${Math.max(4, Math.min(event.clientY, innerHeight - rect.height - 4))}px`;
-  open = { form, autoLabel: automatic.span };
+  popup.open(form, event);
+  autoLabel = automatic.span;
   (cols === null ? automatic.radio : input).focus();
 }
