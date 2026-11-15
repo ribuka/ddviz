@@ -1,4 +1,4 @@
-"""Routes that draw: a plot, its zoomed view, its overview at another size, hovers, and the plot's data.
+"""Routes that draw: a plot, its zoomed view, its overview at another size, and hovers.
 
 The hover files of the open results (the overview and the view), and of
 replaced ones a worker still reads (`Results.hold`), keep within
@@ -15,31 +15,20 @@ the selection and the table of a result follow its filter.
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from dataclasses import asdict, replace
-from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from starlette.background import BackgroundTask
+from fastapi.responses import FileResponse, JSONResponse
 
-from ddviz.server.broker import TaskBroker, TaskEnd
+from ddviz.server.broker import TaskBroker
 from ddviz.server.derive import resized_spec, unchanged
 from ddviz.server.encoding import Encoding
 from ddviz.server.errors import ensure_done
-from ddviz.server.exporting import Exporting
 from ddviz.server.figure import build_figure
 from ddviz.server.hover import HoverIndex
-from ddviz.server.models import (
-    ExportCancel,
-    PlotDataRequest,
-    PlotRequest,
-    SizeRequest,
-    ViewRequest,
-)
+from ddviz.server.models import PlotRequest, SizeRequest, ViewRequest
 from ddviz.server.plan import (
     drawable,
     drawn_columns,
@@ -53,14 +42,13 @@ from ddviz.server.plan import (
     scatter_spec,
     undrawn,
 )
-from ddviz.server.plotdata import FORMATS, file_name
 from ddviz.server.results import Results, drop
 from ddviz.server.source import Source
 from ddviz.shared.axisscale import NoPositiveValuesError, axis_positions
-from ddviz.shared.manifest import IMAGES, read_manifest
+from ddviz.shared.manifest import IMAGES
 from ddviz.shared.palette import DEFAULT_COLORS
 from ddviz.shared.scatter import FilteredColorLevelsError, ScatterSpec
-from ddviz.shared.tasks import PlotDataTask, PlotTask
+from ddviz.shared.tasks import PlotTask
 
 
 class _ColorLevelsRefused(Exception):
@@ -77,7 +65,6 @@ def plot_router(
     source: Source,
     results: Results,
     broker: TaskBroker,
-    exporting: Exporting,
     max_levels: int,
     max_axis_levels: int,
     max_hover_bytes: int,
@@ -92,8 +79,6 @@ def plot_router(
         The drawn results, which the routes replace.
     broker : TaskBroker
         Runs the plot tasks.
-    exporting : Exporting
-        The export of the plot's data running, which the page may cancel.
     max_levels : int
         Most levels a categorical color, Symbol, Group X, Group Y or Wrap
         column may have.
@@ -363,101 +348,5 @@ def plot_router(
         if index is None:
             return {"stale": True}
         return {"pile": index.pile(i)}
-
-    # Files of the plot's data written and not fetched yet, by their id.
-    exports: dict[str, tuple[TaskEnd, str]] = {}
-
-    # Before ``/api/plot-data/{task}``, which would take its path.
-    @router.post("/api/plot-data/cancel", status_code=204)
-    async def plot_data_cancel(request: ExportCancel) -> None:
-        """Cancel the export of the page's token: kill its task, or stop it before it reaches the pool; nothing for another token."""
-        if exporting.cancel(request.export):
-            await broker.cancel("table")
-
-    @router.post("/api/plot-data/{task}", response_model=None)
-    async def plot_data(task: int, request: PlotDataRequest) -> dict | JSONResponse:
-        """Write the rows of the overview as a CSV or Parquet file (`ddviz.compute.tasks.plotdata`) and return its id and name.
-
-        The overview, not the view: the file holds the whole plot whatever
-        the zoom. A worker of the table's pool writes it, sending its progress
-        to ``/api/events`` with the page's ``export``; the page then fetches
-        it from ``/api/plot-data/file/{id}``. A file not fetched is removed
-        when the next one is written. While it is written, the table's pages
-        are refused (`Exporting`); an export cancelled by
-        ``POST /api/plot-data/cancel`` answers 409 ``{"cancelled": true}``
-        and leaves no file.
-        """
-        index = results.overview
-        if index is None or index.out.name != str(task):
-            raise HTTPException(404, "stale")
-        exporting.begin(request.export)
-        try:
-            # A newer overview may replace it from the first await until the
-            # worker has read it: keep its directory from here.
-            with results.hold(index):
-                spec = index.manifest.spec
-                names = [c["name"] for c in await source.schema()]
-                if request.columns == "all":
-                    columns = names
-                else:
-                    columns = [c for c in names if c in spec.files]
-                missing = await asyncio.to_thread(source.missing, columns)
-                parts = {c: source.parts(c) for c in columns if c not in missing}
-                data = PlotDataTask(
-                    str(index.out),
-                    request.format,
-                    request.rows,
-                    columns,
-                    parts,
-                    source.source_files([c for c in columns if c not in parts]),
-                    request.export,
-                )
-                for end, _ in exports.values():
-                    end.discard()
-                exports.clear()
-                if exporting.cancelled:
-                    return JSONResponse({"cancelled": True}, status_code=409)
-                exporting.submitted = True
-                end = await broker.run(data, "table")
-            if exporting.cancelled:
-                end.discard()
-                return JSONResponse({"cancelled": True}, status_code=409)
-        finally:
-            exporting.end()
-        ensure_done(end)
-        name = file_name(source.paths, request.format, datetime.now().astimezone())
-        key = uuid.uuid4().hex
-        exports[key] = (end, name)
-        return {"file": key, "name": name}
-
-    @router.get("/api/plot-data/file/{key}")
-    async def plot_data_file(key: str) -> FileResponse:
-        """Return a file of the plot's data written by ``POST /api/plot-data/{task}``, once; its name comes in ``Content-Disposition``."""
-        found = exports.pop(key, None)
-        if found is None:
-            raise HTTPException(404, "unknown file")
-        end, name = found
-        file = end.out / read_manifest(end.out)["file"]
-        return FileResponse(
-            file,
-            media_type=FORMATS[file.suffix.removeprefix(".")],
-            filename=name,
-            background=BackgroundTask(end.discard),
-        )
-
-    @router.get("/api/events")
-    async def events() -> StreamingResponse:
-        """Stream the progress messages of the plot pool's tasks."""
-        queue = broker.listen()
-
-        async def stream() -> AsyncIterator[str]:
-            try:
-                while True:
-                    message = await queue.get()
-                    yield f"data: {json.dumps(message)}\n\n"
-            finally:
-                broker.unlisten(queue)
-
-        return StreamingResponse(stream(), media_type="text/event-stream")
 
     return router

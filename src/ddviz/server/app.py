@@ -2,7 +2,8 @@
 
 This process never imports polars; it only reads the files the workers
 write. The routes live in `ddviz.server.api_source` (the columns),
-`ddviz.server.api_plot` (drawing, hovers and the plot's data),
+`ddviz.server.api_plot` (drawing and hovers), `ddviz.server.api_export` (the
+plot's data), `ddviz.server.api_events` (the progress events),
 `ddviz.server.api_selection` (the selection and its table) and, in the
 window, `ddviz.server.api_saves` (the saved files). Every request needs the
 token of the run
@@ -20,6 +21,8 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from ddviz.server.api_events import events_router
+from ddviz.server.api_export import export_router
 from ddviz.server.api_history import history_router
 from ddviz.server.api_memory import memory_router
 from ddviz.server.api_plot import plot_router
@@ -142,12 +145,13 @@ def create_app(
             source,
             results,
             broker,
-            exporting,
             settings.plot.max_levels,
             settings.plot.max_axis_levels,
             settings.hover.max_temp_bytes,
         )
     )
+    app.include_router(export_router(source, results, broker, exporting))
+    app.include_router(events_router(broker))
     app.include_router(selection_router(source, results, broker, exporting))
     if saves is not None:
         app.include_router(saves_router(saves))
