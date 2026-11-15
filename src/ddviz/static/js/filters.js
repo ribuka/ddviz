@@ -25,6 +25,7 @@ import { attachDrag } from "./dragresize.js";
 import { plainEnter } from "./keys.js";
 import { levelText } from "./names.js";
 import { errorText } from "./notice.js";
+import { Popup } from "./popup.js";
 import { formatTemporal, isDateKind, parseTemporal } from "./temporal.js";
 
 const TICK_SETTLE_MS = 400;
@@ -62,29 +63,17 @@ export function sortLevels(levels, order) {
   return sorted;
 }
 
-// The open "Sort by" menu of a card and the button that opened it, or null.
-let levelMenu = null;
-let levelMenuButton = null;
+// The "Sort by" menu of a card. A press outside it closes it, except on the
+// button that opened it, whose click closes it; another card's button
+// switches to its own menu.
+const levelMenu = new Popup();
 
 // Closes the "Sort by" menu of a card; returns the button that opened it, or null.
 function closeLevelMenu() {
-  const button = levelMenuButton;
-  levelMenu?.remove();
-  levelMenu = null;
-  levelMenuButton = null;
+  const button = levelMenu.anchor;
+  levelMenu.close();
   return button;
 }
-
-// A press outside the menu closes it, except on the button that opened it,
-// whose click closes it; another card's button switches to its own menu.
-window.addEventListener("pointerdown", (event) => {
-  if (levelMenu && !levelMenu.contains(event.target) && !levelMenuButton.contains(event.target)) {
-    closeLevelMenu();
-  }
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeLevelMenu();
-});
 
 // Opens the "Sort by" menu of a card under `button`, or above it when the
 // window has no room below; `pick` gets the key.
@@ -109,15 +98,7 @@ function openLevelMenu(button, order, pick) {
     });
     menu.append(row);
   }
-  document.body.append(menu);
-  const rect = button.getBoundingClientRect();
-  const { width, height } = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - width - 4))}px`;
-  const below = rect.bottom + 2;
-  const top = below + height <= window.innerHeight - 4 ? below : rect.top - 2 - height;
-  menu.style.top = `${Math.max(4, Math.min(top, window.innerHeight - height - 4))}px`;
-  levelMenu = menu;
-  levelMenuButton = button;
+  levelMenu.openUnder(menu, button, { align: "left", gap: 2 });
 }
 
 // Returns the row of a level to tick: its box, its name and its rows (none

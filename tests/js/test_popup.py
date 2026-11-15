@@ -164,3 +164,96 @@ def test_menu_parts(js_page: Page) -> None:
     assert out["picks"] == 1
     assert out["heading"] == ["DIV", "scale-menu-heading", "H"]
     assert out["gap"] == ["DIV", "scale-menu-separator"]
+
+
+# Places a fixed anchor at (x, y), 80 x 20 px, and a fixed box of 100 x 50 px
+# under it with `options`; returns their rects and the window's size, then
+# removes both.
+PLACE_UNDER = """async ([x, y, options]) => {
+  const m = await import("/static/js/popup.js");
+  const anchor = document.createElement("div");
+  anchor.style.cssText = `position: fixed; left: ${x}px; top: ${y}px; width: 80px; height: 20px`;
+  const box = document.createElement("div");
+  box.style.cssText = "position: fixed; width: 100px; height: 50px";
+  document.body.append(anchor, box);
+  m.placeUnder(box, anchor, options);
+  const rect = (el) => {
+    const r = el.getBoundingClientRect();
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  };
+  const out = { anchor: rect(anchor), box: rect(box), width: innerWidth, height: innerHeight };
+  anchor.remove();
+  box.remove();
+  return out;
+}"""
+
+
+def test_placeunder_aligns_left_below_the_anchor(js_page: Page) -> None:
+    """Aligned left, the box's left is the anchor's left and its top the anchor's bottom + gap."""
+    out = js_page.evaluate(PLACE_UNDER, [200, 100, {"align": "left", "gap": 2}])
+    assert (out["box"]["left"], out["box"]["top"]) == (out["anchor"]["left"], out["anchor"]["bottom"] + 2)
+
+
+def test_placeunder_aligns_right(js_page: Page) -> None:
+    """Aligned right, the box's right is the anchor's right."""
+    out = js_page.evaluate(PLACE_UNDER, [300, 100, {"align": "right", "gap": 4}])
+    assert out["box"]["right"] == out["anchor"]["right"]
+    assert out["box"]["top"] == out["anchor"]["bottom"] + 4
+
+
+def test_placeunder_opens_above_without_room_below(js_page: Page) -> None:
+    """With the anchor near the window's bottom, the box's bottom is the anchor's top - gap."""
+    height = js_page.evaluate("() => innerHeight")
+    out = js_page.evaluate(PLACE_UNDER, [200, height - 30, {"gap": 2}])
+    assert out["box"]["bottom"] == out["anchor"]["top"] - 2
+
+
+def test_placeunder_keeps_the_box_inside_on_the_right(js_page: Page) -> None:
+    """With the anchor at the window's right edge, the box's right is EDGE px inside the window."""
+    width = js_page.evaluate("() => innerWidth")
+    out = js_page.evaluate(PLACE_UNDER, [width - 80, 100, {"align": "left"}])
+    assert out["box"]["right"] == width - 4
+
+
+# Opens a fixed box under `window.anchor`, a fixed button at (100, 100) of
+# 80 x 20 px, with the Popup of SETUP.
+OPEN_UNDER = """() => {
+  window.anchor = document.createElement("button");
+  window.anchor.style.cssText = "position: fixed; left: 100px; top: 100px; width: 80px; height: 20px";
+  document.body.append(window.anchor);
+  window.box = document.createElement("div");
+  window.box.style.cssText = "position: fixed; width: 100px; height: 50px";
+  window.popup.openUnder(window.box, window.anchor);
+  window.counts.closed = 0;
+  return window.popup.anchor === window.anchor;
+}"""
+
+
+@pytest.fixture
+def under(popup: Page) -> Iterator[Page]:
+    """Return the page with a popup opened under an anchor as OPEN_UNDER, the anchor removed after the test."""
+    assert popup.evaluate(OPEN_UNDER)
+    yield popup
+    popup.evaluate("() => { window.anchor.remove(); delete window.anchor; }")
+
+
+def test_openunder_a_press_on_the_anchor_does_not_close(under: Page) -> None:
+    """A press in the anchor keeps the popup open under it."""
+    under.mouse.click(140, 110)
+    state = under.evaluate(STATE)
+    assert state["open"] and state["same"] and state["inPage"]
+    assert under.evaluate("() => window.popup.anchor === window.anchor")
+
+
+def test_openunder_a_press_outside_closes_and_drops_the_anchor(under: Page) -> None:
+    """A press outside the popup and its anchor closes it; the anchor is then null."""
+    under.mouse.click(400, 400)
+    assert under.evaluate(STATE) == {"open": False, "same": False, "inPage": False, "closed": 1}
+    assert under.evaluate("() => window.popup.anchor") is None
+
+
+def test_openunder_escape_closes_and_drops_the_anchor(under: Page) -> None:
+    """Escape closes the popup opened under the anchor; the anchor is then null."""
+    under.keyboard.press("Escape")
+    assert under.evaluate(STATE) == {"open": False, "same": False, "inPage": False, "closed": 1}
+    assert under.evaluate("() => window.popup.anchor") is None
