@@ -18,6 +18,7 @@
 // lists the column closes the menu.
 import { beginDrag } from "./builder.js";
 import { closeColumnMenuIfGone } from "./columnmenu.js";
+import { Popup } from "./popup.js";
 import { attachSearchHistory } from "./searchhistory.js";
 
 const SEARCH_DELAY_MS = 150;
@@ -96,25 +97,16 @@ export function attachColumnList(root, onMenu) {
   return search();
 }
 
-// The open "Sort by" menu, or null.
-let sortMenu = null;
+// The "Sort by" menu. A press on its button does not close it: the
+// button's click does.
+const sortMenu = new Popup();
 
 // Closes the "Sort by" menu; tells whether it was open.
 function closeSortMenu() {
-  const wasOpen = sortMenu !== null;
-  sortMenu?.remove();
-  sortMenu = null;
+  const wasOpen = sortMenu.element !== null;
+  sortMenu.close();
   return wasOpen;
 }
-
-window.addEventListener("pointerdown", (event) => {
-  if (sortMenu && !sortMenu.contains(event.target) && !event.target.closest?.(".column-order")) {
-    closeSortMenu();
-  }
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeSortMenu();
-});
 
 // Opens the "Sort by" menu under `button`. Count waits for the non-null
 // values, as the share filters do; `pick` gets "name" or "count".
@@ -139,12 +131,7 @@ function openSortMenu(button, order, sharesDone, pick) {
     });
     menu.append(row);
   }
-  document.body.append(menu);
-  const rect = button.getBoundingClientRect();
-  const width = menu.getBoundingClientRect().width;
-  menu.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - width - 4))}px`;
-  menu.style.top = `${rect.bottom + 2}px`;
-  sortMenu = menu;
+  sortMenu.openUnder(menu, button, { align: "left", gap: 2 });
 }
 
 // A count of rows in the narrow share column: up to 3 significant digits

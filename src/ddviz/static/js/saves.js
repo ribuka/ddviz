@@ -16,6 +16,7 @@
 // kill it (`running`). The history lives as long as the page; in the window
 // a button in the title bar opens it, in a browser the save menu
 // (`datamenu.js`).
+import { Popup } from "./popup.js";
 
 const FORMATS = { csv: "CSV", parquet: "Parquet" };
 // Share of the bar of the export; the transfer fills the rest.
@@ -134,14 +135,12 @@ export class Saves {
     this.saves = [];
     this.exporting = null;
     this.panel = null;
+    this.panelList = null;
     this.panelAnchor = null;
+    // The history. A press on its button does not close it: the button's
+    // click does.
+    this.popup = new Popup({ onClose: () => this.historyClosed() });
     this.button = this.titleButton();
-    window.addEventListener("pointerdown", (event) => {
-      if (this.panel && !this.panel.contains(event.target) && !this.panelAnchor?.contains(event.target)) this.closeHistory();
-    });
-    window.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && this.panel) this.closeHistory();
-    });
   }
 
   // Whether an export runs: no other save starts meanwhile.
@@ -421,25 +420,29 @@ export class Saves {
     const list = document.createElement("div");
     list.className = "saves-list";
     panel.append(head, list);
-    document.body.append(panel);
+    // Listed before it opens, so that it is placed at its size.
+    list.replaceChildren(...this.saves.map((save) => this.view(save, false).root));
+    this.renderRing();
+    this.popup.openUnder(panel, anchor, { align: "right", gap: 4 });
     this.panel = panel;
     this.panelList = list;
     this.panelAnchor = anchor;
     anchor.setAttribute("aria-expanded", "true");
-    this.refreshHistory();
-    const box = anchor.getBoundingClientRect();
-    const rect = panel.getBoundingClientRect();
-    panel.style.left = `${Math.max(4, Math.min(box.right - rect.width, window.innerWidth - rect.width - 4))}px`;
-    panel.style.top = `${box.bottom + 4}px`;
   }
 
   closeHistory() {
+    this.popup.close();
+  }
+
+  // The popup's `onClose`, called on every close: drops the views of the
+  // history and resets its button, when the history was open.
+  historyClosed() {
     if (this.panel === null) return;
     for (const save of this.saves) {
       for (const view of save.views) if (!view.toast) save.views.delete(view);
     }
-    this.panel.remove();
     this.panel = null;
+    this.panelList = null;
     this.panelAnchor?.setAttribute("aria-expanded", "false");
     this.panelAnchor = null;
   }

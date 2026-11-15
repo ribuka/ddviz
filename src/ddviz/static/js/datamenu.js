@@ -6,6 +6,7 @@
 // format while an export runs. A click outside or Esc closes the menu. In a
 // browser, the menu's last item opens the history of the saves (in the
 // window, the title bar's button does).
+import { Popup } from "./popup.js";
 
 const FORMATS = [
   ["csv", "CSV"],
@@ -33,19 +34,13 @@ const CHOICES = [
 // The rows and columns picked, until the page is reloaded.
 const picked = { rows: "drawn", columns: "drawn" };
 
-let open = null;
+// The menu. A press on its button does not close it: the button's click
+// opens it again (`openDataMenu` closes it first).
+const popup = new Popup();
 
 function close() {
-  open?.remove();
-  open = null;
+  popup.close();
 }
-
-window.addEventListener("pointerdown", (event) => {
-  if (open && !open.contains(event.target)) close();
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") close();
-});
 
 // Returns a group of radios of a choice, which change `picked` and keep the
 // menu open.
@@ -125,10 +120,5 @@ export function openDataMenu(anchor, task, saves) {
     });
     menu.append(separator(), history);
   }
-  document.body.append(menu);
-  const box = anchor.getBoundingClientRect();
-  const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(4, Math.min(box.right - rect.width, window.innerWidth - rect.width - 4))}px`;
-  menu.style.top = `${Math.min(box.bottom + 4, window.innerHeight - rect.height - 4)}px`;
-  open = menu;
+  popup.openUnder(menu, anchor, { align: "right", gap: 4 });
 }
