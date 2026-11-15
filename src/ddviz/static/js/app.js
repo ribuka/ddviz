@@ -1,23 +1,10 @@
 // The page: drop columns on the graph builder's zones, plot, zoom and pan,
 // resize, hover, select rows with a box, and filter rows.
-import {
-  axisAt,
-  axisKind,
-  decorate,
-  decorationUpdate,
-  dialogKind,
-  emptySettings,
-  hasAngle,
-  isEmpty,
-  labelAt,
-  openAxisDialog,
-  yMarginAt,
-} from "./axisdialog.js";
-import { AxisDirections, ascending, oriented } from "./axisdirection.js";
+import { decorate } from "./axisdialog.js";
+import { AxisControls } from "./axiscontrols.js";
 import { axisKey } from "./axiskey.js";
+import { toValues } from "./axisscale.js";
 import { bandTickUpdate, withBandTicks } from "./bandticks.js";
-import { openAxisMenu } from "./axismenu.js";
-import { AxisScales, isLogAxis, toValues } from "./axisscale.js";
 import { Builder } from "./builder.js";
 import { showCasts } from "./casts.js";
 import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } from "./colorscale.js";
@@ -42,7 +29,6 @@ import {
   figureKey,
   rangeUpdate,
   sameAxes,
-  sameOrder,
   sameRange,
   sameRanges,
   sameSize,
@@ -57,7 +43,7 @@ import { LINE_HEADING, LINE_WIDTHS, levelHeading, openShapeMenu, SIZE_HEADING } 
 import { openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
-import { forPlotly, linearRange, plotlyRange } from "./temporal.js";
+import { forPlotly } from "./temporal.js";
 import { closeWrapMenu, openWrapMenu, setWrapAuto } from "./wrapmenu.js";
 import { attachZoneMenu } from "./zonemenu.js";
 
@@ -193,14 +179,25 @@ fetch("/api/settings")
     layers.draw();
   });
 const sticky = new StickyLabels(document.getElementById("scroller"), gd, (meta, role, index) =>
-  angleOn(meta, role, index),
+  axes.angleOn(meta, role, index),
 );
 const builderRoot = document.getElementById("builder");
-const yZone = builderRoot.querySelector(':scope > .zone[data-role="y"]');
-// The elements of the axes' left margin outside the plot (`axisHit`): the
-// gap between the y zone and the plot area is the builder's, the stage's or
-// the scroller's.
-const MARGIN_TARGETS = [builderRoot, ...["stage", "scroller", "canvas"].map((id) => document.getElementById(id))];
+// The settings of the axis columns, and the axes' menu and dialog (`axiscontrols.js`).
+const axes = new AxisControls({
+  gd,
+  builderRoot,
+  yZone: builderRoot.querySelector(':scope > .zone[data-role="y"]'),
+  sticky,
+  marginTargets: [builderRoot, ...["stage", "scroller", "canvas"].map((id) => document.getElementById(id))],
+  current: () => current,
+  hideHover: () => hideHover(),
+  relayoutOwn,
+  plotted: () => plottedEncoding !== null,
+  replot: () => plot(plottedEncoding),
+  followMargin,
+  openPlotMenu: (event) => openPlotMenu(event, gd),
+});
+axes.attach();
 const empty = document.getElementById("empty");
 // Over a plot whose whole result has no rows, which draws empty panels.
 const noRows = document.getElementById("no-rows");
@@ -253,242 +250,10 @@ gd.addEventListener(
   },
   { capture: true },
 );
-gd.addEventListener("contextmenu", (event) => {
-  event.preventDefault();
-  if (!gd._fullLayout || event.target.closest(".modebar")) return;
-  hideHover();
-  // On the tick labels of an axis, the menu of its column (`axismenu.js`).
-  const hit = current && axisHit(event);
-  if (hit) {
-    openAxisMenuOf(event, hit);
-    return;
-  }
-  openPlotMenu(event, gd);
-});
-// The left margin of the y axes reaches out of the plot, over the gap
-// between the plot area and the y zone (`axisHit`): a right click there
-// opens the axis's menu too. One on the plot is the handler's above.
-builderRoot.addEventListener("contextmenu", (event) => {
-  if (gd.contains(event.target)) return;
-  const hit = current && gd._fullLayout && axisHit(event);
-  if (!hit) return;
-  event.preventDefault();
-  hideHover();
-  openAxisMenuOf(event, hit);
-});
-
-// Opens the menu of the axis column `hit` (`axisHit`) of the result drawn.
-function openAxisMenuOf(event, { axis, index }) {
-  const meta = current;
-  const column = meta[`${axis}_columns`][index];
-  openAxisMenu(event, {
-    axis,
-    column,
-    log: meta[`${axis}_log`][index],
-    loggable: meta[`${axis}_loggable`][index],
-    onLog: (log) => setAxisLog(meta, axis, column, log),
-    reversed: axisDirections.isReversed(axis, column),
-    onReverse: (reversed) => setAxisReversed(axis, column, reversed),
-  });
-}
 gd.addEventListener("mousedown", () => {
   dragging = true;
 });
 
-// The settings of the axis columns with a dialog (`axisdialog.js`: numeric
-// and temporal), by column name: their ticks, the format of their labels
-// and reference lines, kept for every graph that draws the column on such
-// an axis (a duration's on a linear one). The range set
-// in the dialog is a view, as a zoom's: going back to the overview drops it.
-const axisSettings = new Map();
-const settingsOf = (column) => axisSettings.get(column);
-// The angle of the major tick labels of each x and y column (`hasAngle`:
-// linear numeric and categorical axes), in degrees, by role and column: a
-// column on both x and y has one of each. Every panel of the role's
-// column draws it; it stays through zooms and graphs until the page
-// reloads. A column without one has plotly's automatic labels.
-const axisAngles = new Map();
-const angleOf = (role, column) => axisAngles.get(`${role}:${column}`) ?? null;
-// The angle drawn on the axis column `index` of `role` of `meta`, or null.
-function angleOn(meta, role, index) {
-  return hasAngle(meta, role, index) ? angleOf(role, meta[`${role}_columns`][index]) : null;
-}
-// A double click on the tick labels of an axis with a dialog (`dialogKind`) opens it
-// instead of plotly's autorange of that axis. plotly counts the presses
-// itself, within its `doubleClickDelay`, so the second press does not reach
-// it. The wait here is plotly's own, read on each press, so that every pair
-// plotly would count as a double click opens the dialog, whatever plotly's
-// version or config. The presses are taken on the builder, before plotly's
-// handlers, as the axes' left margin reaches out of the plot (`axisHit`).
-let axisPress = null;
-builderRoot.addEventListener(
-  "mousedown",
-  (event) => {
-    if (event.button !== 0) return;
-    const hit = current && gd._fullLayout ? axisUnder(event) : null;
-    const last = axisPress;
-    axisPress = null;
-    if (!hit) return;
-    // The strips let the pointer through to the plot area below: plotly
-    // would take the first press as one on the plot, which clears a Box
-    // Select's selection. A press on a strip's numeric axis is the axis's.
-    if (hit.strip) event.stopPropagation();
-    const near = last && Math.hypot(event.clientX - last.x, event.clientY - last.y) <= 4;
-    if (near && last.axis === hit.axis && last.index === hit.index && event.timeStamp - last.time < gd._context.doubleClickDelay) {
-      event.stopPropagation();
-      event.preventDefault();
-      hideHover();
-      openAxis(hit);
-      return;
-    }
-    axisPress = { ...hit, x: event.clientX, y: event.clientY, time: event.timeStamp };
-  },
-  { capture: true },
-);
-
-// Returns the axis column with a dialog (`dialogKind`) whose tick labels are under a pointer
-// event, as `{axis, index}`, or null: in the strips of a grid that scrolls
-// (`sticky.js`), which let the pointer through to the panels, or on plotly's
-// own labels.
-function axisUnder(event) {
-  const hit = axisHit(event);
-  return hit && dialogKind(current, hit.axis, hit.index) ? hit : null;
-}
-
-// Returns the axis column whose tick labels are under a pointer event, of
-// any kind, as `{axis, index}` (with `strip: true` in a strip of a grid that
-// scrolls), or null (`axisUnder`). A y axis also takes
-// its whole left margin, from the y zone's right edge (the zone keeps its
-// chips and drops) to the plot area of the leftmost panel at that height:
-// in a grid that scrolls, the left strip and the gap left of it
-// (`sticky.js`), which the strip shows the leftmost panels' labels of
-// whatever the scroll; otherwise the figure's margin and the gap
-// (`yMarginAt`). Other UI over the margin (the mode bar, the table) keeps
-// its own.
-function axisHit(event) {
-  const { clientX, clientY, target } = event;
-  const open = gd.contains(target) ? !target.closest(".modebar") : MARGIN_TARGETS.includes(target);
-  if (!open) return null;
-  const from = yZone.getBoundingClientRect().right;
-  const strip = sticky.axisAt(clientX, clientY, from);
-  if (strip) return { axis: strip.axis, index: strip.axis === "x" ? strip.panel.x : strip.panel.y, strip: true };
-  if (sticky.shown) return axisAt(event, gd, current);
-  return (
-    axisAt(event, gd, current) ??
-    yMarginAt(clientX, clientY, gd, current, from) ??
-    labelAt(clientX, clientY, gd, current)
-  );
-}
-
-// The scale of each x and y column while the input is open (`axisscale.js`).
-const axisScales = new AxisScales();
-
-// The direction of each x and y column while the input is open (`axisdirection.js`).
-const axisDirections = new AxisDirections();
-
-// Reverses the axes of a column, or puts them back, on the result drawn: only
-// their direction changes, at the shown range. Nothing is aggregated or
-// asked of the server, and the selection stays, unless the labels need
-// another left margin (`followMargin`).
-async function setAxisReversed(axis, column, reversed) {
-  axisDirections.set(axis, column, reversed);
-  if (!current || !gd._fullLayout) return;
-  const meta = current;
-  const update = {};
-  meta.panels.forEach((panel) => {
-    if (meta[`${axis}_columns`][panel[axis]] !== column) return;
-    const key = axisKey(panel[`${axis}axis`]);
-    const full = gd._fullLayout[key];
-    if (!full) return;
-    const range = oriented(linearRange(full), reversed);
-    if (!sameOrder(linearRange(full), range)) update[`${key}.range`] = plotlyRange(full, range);
-  });
-  if (!Object.keys(update).length) return;
-  hideHover();
-  ownRelayout = update;
-  try {
-    await Plotly.relayout(gd, update);
-  } finally {
-    ownRelayout = null;
-  }
-  if (meta === current) followMargin(false);
-}
-
-// Returns `layout` with the axis ranges (ascending) given the direction of
-// their columns (`axisdirection.js`).
-function orientedLayout(layout, meta) {
-  const out = { ...layout };
-  for (const [id, reversed] of Object.entries(axisDirections.byAxis(meta))) {
-    const key = axisKey(id);
-    if (out[key]?.range) out[key] = { ...out[key], range: oriented(out[key].range, reversed) };
-  }
-  return out;
-}
-
-// Puts an axis column of the drawn result `meta` on a log or a linear axis:
-// the graph is plotted again, with the column's axis over its whole range
-// (its coordinates changed) and the other columns' axes at their shown
-// ranges (`carriedView`). A refusal (no positive value) keeps the drawn
-// plot, its selection and the scale.
-async function setAxisLog(meta, axis, column, log) {
-  if (meta !== current || !plottedEncoding) return;
-  axisScales.set(axis, column, log);
-  if ((await plot(plottedEncoding)) === "refused") axisScales.set(axis, column, !log);
-}
-
-// Opens the dialog of the axis column `index` of `axis` ("x" or "y") of the drawn result.
-function openAxis({ axis, index }) {
-  const column = current[`${axis}_columns`][index];
-  const full = gd._fullLayout[axisKey(current[`${axis}_axes`][index])];
-  openAxisDialog({
-    title: `${axis.toUpperCase()} 軸: ${column}`,
-    kind: dialogKind(current, axis, index),
-    range: ascending(linearRange(full)),
-    settings: settingsOf(column) ?? emptySettings(),
-    // plotly's interval of the ticks drawn, for the unit of a temporal one.
-    drawn: full.dtick,
-    angle: angleOf(axis, column),
-    onApply: (settings, picked, angle) => applyAxis(axis, column, settings, picked, angle),
-  });
-}
-
-// Keeps the settings of an axis column and draws them, with the range
-// `picked` when it differs from the shown one: the view is aggregated
-// again, as after a zoom. The drawn result may have changed since the
-// dialog opened: the range goes to the column's axis, if it still has a
-// dialog (`axisKind`), in linear units (milliseconds on a date axis).
-// The angle of the labels (null for plotly's own; undefined from a dialog
-// without one) is the column's in that role. A categorical axis has no
-// settings nor range (null): only its angle changes.
-async function applyAxis(axis, column, settings, picked, angle) {
-  if (settings) {
-    if (isEmpty(settings)) axisSettings.delete(column);
-    else axisSettings.set(column, settings);
-  }
-  if (angle === null) axisAngles.delete(`${axis}:${column}`);
-  else if (angle !== undefined) axisAngles.set(`${axis}:${column}`, angle);
-  if (!current || !gd._fullLayout) return;
-  const meta = current;
-  const update = decorationUpdate(meta, settingsOf, angleOf);
-  ownRelayout = update;
-  try {
-    await Plotly.relayout(gd, update);
-  } finally {
-    ownRelayout = null;
-  }
-  if (meta !== current) return;
-  const index = meta[`${axis}_columns`].indexOf(column);
-  const key = index < 0 || !axisKind(meta, axis, index) ? null : axisKey(meta[`${axis}_axes`][index]);
-  const full = key && gd._fullLayout[key];
-  if (!full || !picked || sameRange(ascending(linearRange(full)), picked)) {
-    // The ticks' labels changed at the same range.
-    followMargin(false);
-    return;
-  }
-  // A new range is a view (`onRelayout`), which measures the margin.
-  const range = oriented(picked, axisDirections.isReversed(axis, column));
-  await Plotly.relayout(gd, { [`${key}.range`]: plotlyRange(full, range) });
-}
 window.addEventListener("mouseup", () => {
   dragging = false;
   dragEnded?.();
@@ -661,7 +426,7 @@ function stageSize() {
 // keeps only a larger margin, and a smaller one waits for the next
 // operation. Returns whether either changed.
 function measureMargin(grow) {
-  const angled = (meta, role, index) => angleOn(meta, role, index) !== null;
+  const angled = (meta, role, index) => axes.angleOn(meta, role, index) !== null;
   const left = neededMargin(gd, current, sticky, angled);
   const bottom = neededBottom(gd, current, sticky, angled);
   if (left === null || bottom === null) return false;
@@ -712,7 +477,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     ...size,
     filters,
     ...options.request(encoding),
-    axis_scales: axisScales.request(encoding),
+    axis_scales: axes.scales.request(encoding),
   };
 
   // The filter pane's state of these conditions, which the pane goes back to
@@ -813,7 +578,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     // A plot drawn again after a failure has the view and the box drawn before.
     const view = keep && sameAxes(keep, meta) ? keep : carried;
     if (view?.box) boxSelection.restore(view.box);
-    const shaped = (ranged) => withBandTicks(orientedLayout(decorate(ranged, meta, settingsOf, angleOf), meta), meta);
+    const shaped = (ranged) => withBandTicks(axes.orientedLayout(decorate(ranged, meta, axes.settingsOf, axes.angleOf), meta), meta);
     const layout = shaped(figure.layout);
     drawnKey = figureKey(figure.data, layout);
     Plotly.purge(gd);
@@ -992,6 +757,17 @@ let drawnKey = null;
 // The ranges this page is setting with `Plotly.relayout`, whose own
 // `plotly_relayout` is not a view to aggregate.
 let ownRelayout = null;
+
+// Relayouts the figure with `update` as this page's own: `onRelayout` does
+// not take its `plotly_relayout` for a view to aggregate.
+async function relayoutOwn(update) {
+  ownRelayout = update;
+  try {
+    await Plotly.relayout(gd, update);
+  } finally {
+    ownRelayout = null;
+  }
+}
 // Whether this page is drawing a new figure with `Plotly.react`, which drops
 // plotly's box of the selection: its events do not drop the selection.
 let ownReact = false;
@@ -1000,15 +776,11 @@ let ownReact = false;
 // ticks and reference lines of the axis settings.
 async function draw(data, plain, meta, bitmaps) {
   const started = performance.now();
-  const layout = withBandTicks(orientedLayout(decorate(plain, meta, settingsOf, angleOf), meta), meta);
+  const layout = withBandTicks(axes.orientedLayout(decorate(plain, meta, axes.settingsOf, axes.angleOf), meta), meta);
   const key = figureKey(data, layout);
   if (key === drawnKey) {
     const update = rangeUpdate(gd, layout);
-    if (update) {
-      ownRelayout = update;
-      await Plotly.relayout(gd, update);
-      ownRelayout = null;
-    }
+    if (update) await relayoutOwn(update);
   } else {
     ownReact = true;
     try {
@@ -1267,12 +1039,7 @@ async function followBandTicks() {
   if (!current || !gd._fullLayout || ownRelayout) return;
   const update = bandTickUpdate(gd, current);
   if (!update) return;
-  ownRelayout = update;
-  try {
-    await Plotly.relayout(gd, update);
-  } finally {
-    ownRelayout = null;
-  }
+  await relayoutOwn(update);
 }
 
 // A new size of the plot area (the window, or a pane beside it) aggregates
