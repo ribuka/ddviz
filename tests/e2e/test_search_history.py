@@ -103,3 +103,27 @@ def test_a_long_history_scrolls_within_the_window(app_page: Page, app_url: str) 
     expect(active).to_be_in_viewport()
     search.press("Enter")
     expect(search).to_have_value("word15")
+
+
+def test_the_enter_of_a_conversion_picks_no_keyword(app_page: Page, app_url: str) -> None:
+    """With a keyword chosen by ↓, the Enter of an IME conversion leaves the box as it is; Enter puts the keyword in."""
+    page = app_page
+    for word in ["old", "new"]:
+        assert page.request.post(f"{app_url}/api/search-history", data={"word": word}).ok
+    search = page.locator(".column-search")
+    history = page.locator(".search-history")
+    expect(page.locator("#columns .column").first).to_be_visible()
+    search.focus()
+    expect(history.locator(".search-history-word")).to_have_text(["new", "old"])
+    search.press("ArrowDown")
+    expect(history.locator(".search-history-row.active")).to_have_text("new×")
+    search.evaluate(
+        """(box) => box.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter", isComposing: true, bubbles: true, cancelable: true,
+        }))"""
+    )
+    expect(search).to_have_value("")
+    expect(history).to_have_count(1)
+    search.press("Enter")
+    expect(search).to_have_value("new")
+    expect(history).to_have_count(0)

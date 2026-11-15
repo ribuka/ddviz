@@ -1144,6 +1144,17 @@ D&D の後の描画（`/api/plot`）が失敗したら、操作の前の配置�
 - `prefers-reduced-motion: reduce`（Windows の「アニメーション効果」を切った環境。RDP では切られていることが多い）では位置を動かさず、`opacity` だけにする。
 - 出るときの動きは CSS の `@starting-style` で書く。Chromium 117 以降が要るが、同梱の WebView2 の固定版は 156（「最小構成の exe」）なので足りる。Server 2016 で動く最後の版に固定するとき（同）に 117 未満になるなら、追加した次のフレームでクラスを付ける方式に替える。
 
+### 入力欄の Enter（2026-11-15 決定・実装。Issue #236）
+
+- ページの入力欄の Enter（適用、追加、選択、欄を離れる）は、IME の変換を確定する Enter（`isComposing`、または `keyCode` 229）では動かない。判定は `static/js/keys.js` の `plainEnter` の 1 つだけで行う。理由は「ローカルフィルタ」と同じ（日本語の文字列を続けて打てなくなるため）。
+- 対象の欄：
+  - 軸のダイアログの範囲・間隔・補助目盛り・小数桁数・角度の欄（適用して閉じる）と、参照線の値の欄（線を足す）。`axisdialog.js`
+  - 色のパネルの HEX の欄（その色を選ぶ）。`colorpanel.js`
+  - 1 行のパネル数のフォーム（適用して閉じる）。`wrapmenu.js`
+  - フィルタの数値・日時のカードの下限・上限の欄（欄を離れ、条件を送る）、候補の検索欄（候補を取りに行く）、「含む」の欄（欄を離れ、条件を送る）。`filters.js`
+  - 列の検索欄の履歴の一覧（選んでいる語を入れる）。`searchhistory.js`
+- 確かめたこと（2026-11-15）：`tests/js/test_keys.py`（`plainEnter`）、`tests/js/test_axisdialog.py`・`test_colorpanel.py`・`test_wrapmenu.py`・`test_filters.py`（各欄で、`isComposing` の Enter と `keyCode` 229 の Enter では動かず、ふつうの Enter で動く）、`tests/e2e/test_search_history.py`（Chrome。履歴の語を ↓ で選んだまま `isComposing` の Enter では入らず、Enter で入る）。どれも合成のイベントで、実際の IME がそのイベントを送るかはマージ後にユーザーが確かめる（Windows 11 の Microsoft IME。日付の軸の参照線の値の欄と最小値の欄）。
+
 ### 画面の色と数字（2026-11-01 決定・実装。Issue #47）
 
 - 色は `app.css` の `:root` の CSS 変数にまとめ、ほかの規則は変数（`var(--accent)` など）で書く。変数は役割ごと（アクセント、文字、面の背景、枠線、エラーと警告、浮く要素の影）に並べる。理由：100 か所以上の直書きでは、同じ役割の色がずれても気づけない。ダークモードは対象外だが、足すときは `:root` の値を替えるだけで済む。

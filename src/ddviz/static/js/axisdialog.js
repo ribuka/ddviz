@@ -13,6 +13,7 @@
 // (`dialogKind`); it is kept by role and column apart from the settings.
 
 import { axisKey } from "./axiskey.js";
+import { plainEnter } from "./keys.js";
 import { axisText, dateText, isDateKind, readAxisValue } from "./temporal.js";
 
 // The look of a new reference line, and the dashes offered.
@@ -648,7 +649,7 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
   };
   add.addEventListener("click", addLine);
   value.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
+    if (!plainEnter(event)) return;
     event.preventDefault();
     addLine();
   });
@@ -735,7 +736,7 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
   // Cancel (the dialog's own).
   for (const input of [min, max, dtick, minor, digits, turn].filter(Boolean)) {
     input.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter") return;
+      if (!plainEnter(event)) return;
       event.preventDefault();
       if (apply()) dialog.close();
     });

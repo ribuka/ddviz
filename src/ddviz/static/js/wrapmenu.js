@@ -5,6 +5,7 @@
 // or the apply button; Escape, a click outside the form or another right
 // click drop the draft. The form closes and stays in the window as the
 // right-click menus do (scalemenu.js).
+import { plainEnter } from "./keys.js";
 import { menuHeading, Popup } from "./popup.js";
 
 // The largest number taken: JavaScript's integers are exact up to it.
@@ -124,7 +125,7 @@ export function openWrapMenu(event, cols, auto, onApply) {
   });
   // Enter applies from the choices too, not only from the text field.
   form.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" || event.target === apply) return;
+    if (!plainEnter(event) || event.target === apply) return;
     event.preventDefault();
     submit();
   });

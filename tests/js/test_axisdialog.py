@@ -9,6 +9,8 @@ from collections.abc import Iterator
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from tests.js.test_keys import press_conversion_enters, press_plain_enter
+
 pytestmark = pytest.mark.js
 
 DAY_MS = 86_400_000
@@ -650,3 +652,27 @@ def test_times_and_durations_have_no_calendar_units(page: Page, kind: str) -> No
     )
     assert units == UNITS
     expect(dialog.locator("input[name=calendar-minor]")).to_have_count(0)
+
+
+def test_enter_in_the_minimum_applies_unless_it_commits_a_conversion(page: Page) -> None:
+    """Enter in the minimum applies and closes the dialog; the Enter of an IME conversion does neither."""
+    dialog = open_dialog(page, range=[0, 1])
+    low = dialog.locator("input[name=min]")
+    press_conversion_enters(low)
+    assert applied(page) == []
+    expect(dialog).to_be_visible()
+    press_plain_enter(low)
+    expect(dialog).to_have_count(0)
+    assert len(applied(page)) == 1
+
+
+def test_enter_in_the_line_adds_it_unless_it_commits_a_conversion(page: Page) -> None:
+    """Enter in the value of a reference line adds the line; the Enter of an IME conversion does not."""
+    dialog = open_dialog(page, range=[0, 1])
+    value = dialog.locator("input[name=line]")
+    value.fill("0.5")
+    rows = dialog.locator(".axis-dialog-lines .axis-dialog-line")
+    press_conversion_enters(value)
+    expect(rows).to_have_count(0)
+    press_plain_enter(value)
+    expect(rows).to_have_count(1)
