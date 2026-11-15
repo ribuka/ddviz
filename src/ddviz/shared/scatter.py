@@ -28,6 +28,10 @@ LINE_WIDTH = 2
 # level, so that every row lies in one band. It is no column of the data;
 # the scan makes it (`ddviz.compute.scan.scan_columns`).
 ONE_BAND = "\x00one band"
+# Half the width of a band of a categorical axis, as a part of the step
+# between levels (`ddviz.compute.bands`): the points of a band, its boxes
+# and its piles lie within it.
+BAND = 0.4
 
 
 class FilteredColorLevelsError(ValueError):
@@ -462,6 +466,16 @@ class ScatterSpec:
             if x in categorical and y not in categorical
         }
 
+    def _numeric_pairs(self) -> set[tuple[str, str]]:
+        """Return the pairs of axis columns with a numeric x and a numeric y."""
+        categorical = set(self.categorical)
+        return {
+            (x, y)
+            for x in self.x
+            for y in self.y
+            if x not in categorical and y not in categorical
+        }
+
     def smooth_pairs(self) -> set[tuple[str, str]]:
         """Return the pairs of axis columns whose panels have smoothing lines.
 
@@ -473,13 +487,7 @@ class ScatterSpec:
         """
         if self.smooth is None:
             return set()
-        categorical = set(self.categorical)
-        return {
-            (x, y)
-            for x in self.x
-            for y in self.y
-            if x not in categorical and y not in categorical
-        }
+        return self._numeric_pairs()
 
     def line_pairs(self) -> set[tuple[str, str]]:
         """Return the pairs of axis columns whose panels join their points with lines.
@@ -492,13 +500,7 @@ class ScatterSpec:
         """
         if self.line_width is None:
             return set()
-        categorical = set(self.categorical)
-        return {
-            (x, y)
-            for x in self.x
-            for y in self.y
-            if x not in categorical and y not in categorical
-        }
+        return self._numeric_pairs()
 
     def draws_points(self, x: str, y: str) -> bool:
         """Return whether the panels of a pair draw the points of every row, not only the outliers or none.

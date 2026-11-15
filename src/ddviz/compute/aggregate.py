@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import polars as pl
 
-from ddviz.compute.axisposition import on_axis, position
+from ddviz.compute.axisposition import on_axis, position, within
 from ddviz.compute.bands import JITTER_X, band_range, jitter, level_index
 from ddviz.compute.boxes import (
     GROUP,
@@ -34,6 +34,7 @@ from ddviz.compute.smooth import bin_query, fit_lines
 from ddviz.compute.stacked import ROWS, TOP, marker_boxes, stack_frame, stacked_bins
 from ddviz.compute.stacks import Axis
 from ddviz.shared.axisscale import (
+    RANGE_PADDING,
     NoPositiveValuesError,
     no_positive_message,
     padded_log_range,
@@ -66,8 +67,6 @@ INDEX = "__idx"
 # panels draw points.
 _OUTLIER = "__outlier"
 
-# Margin added on each side of the data range, as a fraction of the range.
-RANGE_PADDING = 0.02
 # Most piles a plot draws (`ddviz.compute.stacks`): the page draws each with
 # its number of rows.
 MAX_PILES = 100_000
@@ -870,10 +869,8 @@ def aggregate(
         def query(rows: pl.LazyFrame) -> pl.LazyFrame:
             return (
                 rows.filter(
-                    x.is_finite(),
-                    y.is_finite(),
-                    x.is_between(*x_ranges[xi]),
-                    y.is_between(*y_ranges[yj]),
+                    within(x, *x_ranges[xi]),
+                    within(y, *y_ranges[yj]),
                     *valid,
                     *extra,
                 )

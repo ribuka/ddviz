@@ -33,8 +33,8 @@ from dataclasses import dataclass
 import polars as pl
 
 from ddviz.compute.axisposition import position
-from ddviz.compute.bands import BAND
 from ddviz.compute.temporal import as_number, temporal_kind
+from ddviz.shared.scatter import BAND
 
 # Columns of a frame of drawn rows: the coordinates as compared (`KEYS`: the
 # facet cell and the levels of the categorical axes packed into one Int64,
@@ -240,7 +240,7 @@ def _fits_line(axis: Axis, center: str, width: str, n: pl.Expr) -> pl.Expr:
 
     The points lie their largest marker plus a pixel apart; the pixels of
     the first and last points' markers must lie in the band (the center
-    plus or minus `ddviz.compute.bands.BAND`) and in the panel.
+    plus or minus `ddviz.shared.scatter.BAND`) and in the panel.
     """
     c, w = pl.col(center), pl.col(width)
     half = (n - 1) / 2 * (w + 1)

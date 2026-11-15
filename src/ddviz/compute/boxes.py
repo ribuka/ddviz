@@ -21,7 +21,8 @@ import math
 import numpy as np
 import polars as pl
 
-from ddviz.compute.bands import BAND, level_index
+from ddviz.compute.bands import level_index
+from ddviz.shared.scatter import BAND
 
 # Columns of the frame `box_stats` reads: the group of a row and its value.
 GROUP = "__group"

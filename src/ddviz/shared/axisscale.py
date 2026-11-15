@@ -22,7 +22,9 @@ SCALES = (LINEAR, LOG)
 MIN_EXPONENT = -323.0
 MAX_EXPONENT = 308.0
 
-# Margin of a log axis around its data, as a share of its span of exponents.
+# Margin of an axis on each side of its data, as a share of its span: of
+# the values on a linear axis (`ddviz.compute.aggregate`), of the exponents
+# on a log axis.
 RANGE_PADDING = 0.02
 # Half the span of exponents around a single positive value.
 SINGLE_VALUE_PAD = 0.5

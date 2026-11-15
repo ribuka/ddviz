@@ -13,6 +13,7 @@ import numpy as np
 import polars as pl
 
 from ddviz.compute.aggregate import Aggregation
+from ddviz.compute.codes import text_codes
 from ddviz.compute.stacked import COLOR_MAX, COLOR_MIN, ROWS, VALUES
 from ddviz.compute.stacks import KEYS, PANEL, SERIES, N
 from ddviz.shared.keys import BinGrid
@@ -69,12 +70,7 @@ def _array(values: pl.Series) -> tuple[np.ndarray, list | None]:
         return values.fill_null(0).cast(pl.Int64).to_numpy(), None
     if values.dtype.is_numeric():
         return values.cast(pl.Float64).fill_null(np.nan).to_numpy(), None
-    text = values.cast(pl.String)
-    labels = text.drop_nulls().unique().sort()
-    codes = text.replace_strict(
-        labels, list(range(len(labels))), default=-1, return_dtype=pl.Int32
-    )
-    return codes.to_numpy(), labels.to_list()
+    return text_codes(values)
 
 
 def _value(i: int) -> str:

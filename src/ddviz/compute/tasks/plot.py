@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 
 from ddviz.compute.aggregate import COUNT, INDEX, KEY, Aggregation, aggregate
+from ddviz.compute.codes import text_codes
 from ddviz.compute.hoverfit import NPY_HEADER, fit_hover
 from ddviz.compute.progress import Emit
 from ddviz.compute.raster import occupancy
@@ -32,12 +33,7 @@ def _column_array(series: pl.Series) -> tuple[np.ndarray, list | None]:
         if series.dtype.is_integer() and series.null_count() == 0:
             return series.cast(pl.Int64).to_numpy(), None
         return series.cast(pl.Float64).fill_null(np.nan).to_numpy(), None
-    text = series.cast(pl.String)
-    labels = text.drop_nulls().unique().sort()
-    codes = text.replace_strict(
-        labels, list(range(len(labels))), default=-1, return_dtype=pl.Int32
-    )
-    return codes.to_numpy(), labels.to_list()
+    return text_codes(series)
 
 
 def _column_bytes(dtype: pl.DataType) -> int:

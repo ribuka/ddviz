@@ -268,7 +268,7 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 | `desktop` | 窓（pywebview）と異常終了のログ | UI | なし |
 | `server` | HTTP の API、グラフの要求（`Encoding`、`plan`）、図、ホバー、列の検索、設定 | UI | `shared`、`workers` |
 | `workers` | 子の起動・タスクの受け渡し・kill（`runner`、`jobs`）と子の入口（`worker`） | UI と子 | なし（`worker` だけ、子が起動した後に `compute` を import する） |
-| `shared` | 両方のプロセスが使う取り決め：`ScatterSpec`、manifest、配置（`layout`）、集約のキー、系列の色、symbol の形（`shapes`）、列のキャッシュのファイル、入力の Parquet ファイルの列挙と名付け（`inputs`）、自然順のキー（`natural`） | UI と子 | なし |
+| `shared` | 両方のプロセスが使う取り決め：`ScatterSpec`、manifest、配置（`layout`）、集約のキー、系列の色、symbol の形（`shapes`）、列のキャッシュのファイル、入力の Parquet ファイルの列挙と名付け（`inputs`）、自然順のキー（`natural`）、カテゴリの帯の半幅（`scatter.BAND`。UI のプロセスの図と子の計算が同じ値を使う）、範囲の余白の割合（`axisscale.RANGE_PADDING`） | UI と子 | なし |
 | `compute` | polars を使う計算：タスク、集約、区間、行の条件、画像化、集計、変換 | 子だけ | `shared` |
 
 - 理由：「UI のプロセスは polars を import しない」（「プロセス構成」）という一番大事な境界を、ファイルの置き場所で見えるようにする。境界と import の向きは `tests/test_layers.py` で確かめる（UI 側の全モジュールを新しいインタプリタで import して polars が読まれないこと、各パッケージが上の表の向きにしか import しないこと）。
@@ -296,7 +296,8 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 `compute` の中の分け方（2026-10-30 決定）：
 
 - `tasks/` に、worker が実行するタスクを種類ごとに置く。`run.py` はタスクの型で関数を選ぶ `run_task`、`columns.py` は schema・nonnull・summary、`plot.py` は plot と selection、`images.py` は系列の画像の書き出し、`table.py` は表のページ、`plotdata.py` は保存する図のデータ（plot_data）。
-- `selection.py` に、描く行の条件（`drawn_conditions`）と範囲選択の条件（`selection_filter`、`selection_columns`）を置く。集約（`aggregate.py`）と表のタスクの両方が使うため、集約から切り出した。
+- `selection.py` に、範囲選択の条件（`selection_filter`、`selection_columns`）を置く。集約（`aggregate.py`）と表のタスクの両方が使うため、集約から切り出した。描く行の条件（`drawn_conditions`）は `missing.py` にある。
+- 2 か所以上で使う小さな部品は、意味の近いモジュールに 1 つだけ置く（2026-11-15 決定。Issue #199）：行の中心（`bands.band_center`）、「位置が有限で範囲の中」の条件（`axisposition.within`）、非数値の列の番号とラベル（`codes.text_codes`。`tasks/plot.py` の `_column_array` と `tasks/piles.py` の `_array` が使い、数値の列の扱いはそれぞれに残す）。理由：片方だけ直すと、集約と範囲選択、ホバーと積み重ねで食い違うため。
 - 進捗のメッセージの型 `Emit` は `progress.py` の 1 か所に置く（以前は `task.py` と `convert.py` の 2 か所にあった）。
 
 タスクと manifest の型（2026-10-30 決定）：

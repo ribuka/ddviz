@@ -27,6 +27,24 @@ def position(value: pl.Expr, log: bool) -> pl.Expr:
     return value.log10() if log else value
 
 
+def within(position: pl.Expr, lo: float, hi: float) -> pl.Expr:
+    """Return whether positions are finite and from `lo` to `hi`.
+
+    Parameters
+    ----------
+    position : polars.Expr
+        The positions on an axis (`position`).
+    lo, hi : float
+        The bounds of the range, both included.
+
+    Returns
+    -------
+    polars.Expr
+        The condition: null for a null position.
+    """
+    return position.is_finite() & position.is_between(lo, hi)
+
+
 def on_axis(value: pl.Expr, log: bool) -> pl.Expr:
     """Return whether values have a position on an axis: finite, and positive on a log axis.
 
