@@ -8,7 +8,7 @@
 // closing the menu any other way drops it (as wrapmenu.js).
 import { COLOR_SETS, scale } from "./colorscale.js";
 import { plainEnter } from "./keys.js";
-import { menuHeading, menuItem, Popup } from "./popup.js";
+import { menuHeading, menuItem, placeAt, Popup } from "./popup.js";
 import { SIZE_HEADING, SIZES } from "./shapemenu.js";
 
 // The fewest intervals (`ddviz.server.plotoptions.COLOR_BINS_MIN`).
@@ -94,6 +94,12 @@ function countForm(n, maxLevels, onApply) {
     if (value === null) {
       error.textContent = colorBinsError(maxLevels);
       error.hidden = false;
+      // The error makes the menu taller: keep it in the window.
+      const menu = form.closest(".scale-menu");
+      if (menu) {
+        const { left, top } = menu.getBoundingClientRect();
+        placeAt(menu, left, top);
+      }
       input.focus();
       return;
     }

@@ -136,3 +136,25 @@ def test_without_a_limit_of_2_or_more_the_number_is_off(
     expect(menu.locator(".scale-menu-count-note")).to_have_text(note)
     menu.get_by_text("連続（グラデーション）").click()
     assert js_page.evaluate("window.picked") == [None]
+
+
+def test_the_error_keeps_the_menu_in_the_window(js_page: Page) -> None:
+    """Opened at the window's bottom right, the menu made taller by the error moves up and its last item stays in the window."""
+    js_page.set_viewport_size({"width": 1000, "height": 900})
+    js_page.add_style_tag(url="/static/app.css")
+    js_page.evaluate(
+        """async () => {
+          const { openScaleMenu } = await import("/static/js/scalemenu.js");
+          openScaleMenu({ clientX: 999, clientY: 899 }, null, () => {}, () => {}, 5, () => {}, 100);
+        }"""
+    )
+    menu = js_page.locator(".scale-menu")
+    js_page.get_by_label("区間数").fill("101")
+    js_page.get_by_role("button", name="適用").click()
+    expect(menu.locator(".scale-menu-count-error")).to_be_visible()
+    box = menu.bounding_box()
+    assert box["y"] >= 0
+    assert box["y"] + box["height"] <= 900
+    last = menu.get_by_text("15 px", exact=True)
+    last.scroll_into_view_if_needed()
+    expect(last).to_be_in_viewport()
