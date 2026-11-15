@@ -271,6 +271,7 @@ def scatter_spec(
     width: int,
     height: int,
     colors: list[str],
+    *,
     filters: list[Filter] | None = None,
     numeric: dict[str, bool] | None = None,
     color_bins: Binning | None = None,
