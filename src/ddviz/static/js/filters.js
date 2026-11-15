@@ -47,6 +47,33 @@ const TITLES = {
 // Bounds of a dragged height: the pane's own, and what it leaves the column list.
 const MIN_HEIGHT = 80;
 const MIN_COLUMNS_HEIGHT = 160;
+// The lowest height a card's list is dragged to (Issue #210).
+const MIN_LIST_HEIGHT = 40;
+// A card moves once the pointer is this far from where its head was pressed.
+const REORDER_START = 5;
+// While a card moves, the pane scrolls this fast with the pointer this near
+// its top or bottom edge (half its height at most).
+const EDGE = 32;
+const EDGE_SPEED = 480;
+
+// Returns where a card moved to `y` goes among the other cards, from their
+// `{ top, height }` on the page in their order: before the first one whose
+// middle is below `y`; after the last when there is none (0 with no other).
+export function insertionIndex(rects, y) {
+  const i = rects.findIndex((r) => y < r.top + r.height / 2);
+  return i === -1 ? rects.length : i;
+}
+
+// Returns how fast (CSS px a second; up negative) the pane between `top`
+// and `bottom` scrolls with the pointer at `y` while a card moves: within
+// `EDGE` of an edge (half the height at most), else 0.
+export function edgeSpeed(top, bottom, y) {
+  const edge = Math.min(EDGE, (bottom - top) / 2);
+  if (y < top || y > bottom) return 0;
+  if (y < top + edge) return -EDGE_SPEED;
+  if (y > bottom - edge) return EDGE_SPEED;
+  return 0;
+}
 
 // Orders of the levels a card lists, by the "Sort by" menu.
 const LEVEL_ORDERS = [
@@ -140,10 +167,17 @@ function formatBound(card, value) {
   return formatTemporal(card.summary?.temporal, value) ?? formatNumber(value);
 }
 
+// Returns conditions in the order of their columns (JavaScript's comparison of
+// strings, apart from the locale): the order of the cards only shows.
+function byColumn(list) {
+  return [...list].sort((a, b) => (a.column < b.column ? -1 : a.column > b.column ? 1 : 0));
+}
+
 // Returns a key of conditions of the local filter
-// (`ddviz.server.plan.parse_filters`), from the page's or from a result's meta.
+// (`ddviz.server.plan.parse_filters`), from the page's or from a result's
+// meta; conditions in another order have the same key.
 export function filtersKey(list) {
-  return JSON.stringify(list.map((f) => [f.column, f.range ?? null, f.levels ?? null, f.contains ?? null]));
+  return JSON.stringify(byColumn(list).map((f) => [f.column, f.range ?? null, f.levels ?? null, f.contains ?? null]));
 }
 
 // Returns how a card sets its condition: "range" for a numeric column,
@@ -198,6 +232,8 @@ export class FilterPane {
   constructor(root, onChange, onSummary) {
     this.root = root;
     this.list = root.querySelector(".filter-list");
+    // What scrolls the cards (the list itself in a page without it).
+    this.body = root.querySelector(".filter-body") ?? this.list;
     this.head = root.querySelector(".filter-summary");
     this.up = root.querySelector(".filter-up");
     this.down = root.querySelector(".filter-down");
@@ -205,7 +241,8 @@ export class FilterPane {
     this.tip = document.getElementById("drop-tip");
     this.onChange = onChange;
     this.onSummary = onSummary;
-    // One card per column, in the order added: `{name, numeric, summary,
+    // One card per column, in the order shown (added last at the end, moved
+    // by its head): `{name, numeric, summary,
     // range, levels, contains, element}`; `range` is [lo, hi], `levels` the
     // ticked set, `contains` the text of a column with too many levels. A
     // card of candidates also has `candidates` (`null` until the first
@@ -213,8 +250,12 @@ export class FilterPane {
     // answer), its `mode` ("pick" or "contains"), the `query` sent last, the
     // `draft` in its search box, `shown` (the query and order of the
     // candidates listed), `seq` (the number of its request sent last, for
-    // dropping older answers), `loading` and `failure`.
+    // dropping older answers), `loading` and `failure`. `listHeight` is the
+    // height its list of levels (or of candidates) was dragged to, null
+    // before: it only shows, and stays until the card is removed.
     this.cards = [];
+    // The card being moved by its head (`attachReorder`), as `{ cancel }`.
+    this.reorder = null;
     this.committed = "[]";
     // The state of the conditions sent last (`commit`).
     this.sent = [];
@@ -242,6 +283,7 @@ export class FilterPane {
   // Only the pane's height changes: the cards, the conditions, the column
   // list and the plot area stay as they are, so nothing is sent or drawn again.
   setState(state) {
+    if (state === "collapsed") this.cancelReorder();
     this.state = state;
     this.root.classList.toggle("collapsed", state === "collapsed");
     this.root.classList.toggle("maximized", state === "maximized");
@@ -323,6 +365,7 @@ export class FilterPane {
 
   add({ name, numeric }) {
     if (this.cards.some((c) => c.name === name)) return;
+    this.cancelReorder();
     const card = {
       name,
       numeric,
@@ -332,6 +375,7 @@ export class FilterPane {
       contains: "",
       order: "name",
       element: null,
+      listHeight: null,
       candidates: null,
       mode: "pick",
       query: "",
@@ -352,6 +396,7 @@ export class FilterPane {
   }
 
   remove(card) {
+    this.cancelReorder();
     this.cards = this.cards.filter((c) => c !== card);
     // An answer to its request on the way is dropped.
     card.seq++;
@@ -445,7 +490,10 @@ export class FilterPane {
 
   // Draws one card again, keeping the others (and their boxes' focus).
   renderCard(card) {
-    if (card.element?.isConnected) card.element.replaceWith(this.cardElement(card));
+    if (card.element?.isConnected) {
+      this.cancelReorder();
+      card.element.replaceWith(this.cardElement(card));
+    }
     this.updateSummary();
   }
 
@@ -460,7 +508,7 @@ export class FilterPane {
       else if (kind === "contains") out.push({ column: card.name, contains: card.contains });
       else out.push({ column: card.name, levels: [...card.levels].sort() });
     }
-    return out;
+    return byColumn(out);
   }
 
   isActive(card) {
@@ -568,6 +616,7 @@ export class FilterPane {
   }
 
   render() {
+    this.cancelReorder();
     this.list.replaceChildren(...this.cards.map((card) => this.cardElement(card)));
     this.updateSummary();
   }
@@ -616,10 +665,13 @@ export class FilterPane {
       head.append(sort);
     }
     head.append(close);
+    head.title = "ドラッグでカードの順番を変える";
+    this.attachReorder(card, head);
     element.append(head);
     const body = document.createElement("div");
     body.className = "filter-card-body";
     element.append(body);
+    card.levelList = null;
     if (card.error) {
       body.textContent = `エラー: ${card.error}`;
     } else if (!card.summary) {
@@ -629,7 +681,191 @@ export class FilterPane {
     } else {
       this.levelBody(card, body);
     }
+    if (card.levelList) element.append(this.listHandle(card));
     return element;
+  }
+
+  // Shows a card's list of levels (`levelList`) at the height it was dragged
+  // to; before a drag, as high as its rows, 180px at most (CSS).
+  fitList(card) {
+    const list = card.levelList;
+    const sized = card.listHeight !== null;
+    list.classList.toggle("sized", sized);
+    list.style.height = sized ? `${card.listHeight}px` : "";
+  }
+
+  // The bottom edge of a card that lists levels to tick: dragging it down
+  // makes the list taller, up lower, `MIN_LIST_HEIGHT` at least and with no
+  // upper bound (the pane scrolls). It starts from the height the list
+  // shows; a click alone changes nothing. Only the list changes: nothing is
+  // sent.
+  listHandle(card) {
+    const handle = document.createElement("div");
+    handle.className = "filter-list-resize";
+    handle.title = "ドラッグで一覧の高さを変える";
+    attachDrag(handle, (event) => {
+      const list = card.levelList;
+      const startY = event.clientY;
+      const startHeight = list.hidden ? 0 : list.getBoundingClientRect().height;
+      return {
+        move: (e) => {
+          // The card was drawn again or removed since: the drag is over.
+          if (!list.isConnected || card.levelList !== list) return;
+          if (card.listHeight === null && e.clientY === startY) return;
+          card.listHeight = Math.max(MIN_LIST_HEIGHT, startHeight + e.clientY - startY);
+          list.hidden = false;
+          this.fitList(card);
+        },
+        end: () => {},
+      };
+    });
+    return handle;
+  }
+
+  // Ends the move of a card, if one moves, leaving the cards in their order.
+  cancelReorder() {
+    this.reorder?.cancel();
+  }
+
+  // Moves a card by its head, apart from its buttons: a press of the primary
+  // button and a move of `REORDER_START` px start it. A copy of the card
+  // follows the pointer and a line shows where it goes (`insertionIndex`
+  // among the other cards); letting go within the pane puts it there.
+  // Letting go outside the pane, Escape or pointercancel leave the order as
+  // it was, as do a card added, removed or drawn again and the pane folded
+  // meanwhile (`cancelReorder`). With the pointer near the pane's top or
+  // bottom edge the pane scrolls (`edgeSpeed`). Only the order of the cards
+  // and of the summary changes: their elements move as they are, nothing is
+  // sent and no answer waited for is dropped.
+  attachReorder(card, head) {
+    head.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.target.closest("button") || this.reorder) return;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const pointerId = event.pointerId;
+      head.setPointerCapture(pointerId);
+      let x = startX;
+      let y = startY;
+      let moving = false;
+      let preview = null;
+      let line = null;
+      let frame = 0;
+      let last = null;
+      // The cards but the one moved, and where it goes among them.
+      const others = () => this.cards.filter((c) => c !== card);
+      let index = this.cards.indexOf(card);
+      const rect = card.element.getBoundingClientRect();
+      const place = () => {
+        const rest = others();
+        const rects = rest.map((c) => c.element.getBoundingClientRect());
+        index = insertionIndex(rects, y);
+        const box = this.list.getBoundingClientRect();
+        const at =
+          index < rects.length
+            ? rects[index].top - 3
+            : rects.length
+              ? rects[rects.length - 1].bottom + 3
+              : card.element.getBoundingClientRect().top;
+        line.style.cssText = `left: ${box.left + 8}px; width: ${Math.max(box.width - 16, 0)}px; top: ${at - 1}px`;
+        preview.style.top = `${rect.top + y - startY}px`;
+      };
+      const scroll = (time) => {
+        frame = 0;
+        const box = this.body.getBoundingClientRect();
+        const inside = x >= box.left && x <= box.right;
+        const speed = inside ? edgeSpeed(box.top, box.bottom, y) : 0;
+        if (speed === 0) {
+          last = null;
+          return;
+        }
+        if (last !== null) {
+          const most = this.body.scrollHeight - this.body.clientHeight;
+          const to = Math.min(Math.max(this.body.scrollTop + (speed * (time - last)) / 1000, 0), most);
+          this.body.scrollTop = to;
+          place();
+        }
+        last = time;
+        frame = requestAnimationFrame(scroll);
+      };
+      const follow = () => {
+        if (!frame) frame = requestAnimationFrame(scroll);
+      };
+      const begin = () => {
+        moving = true;
+        closeLevelMenu();
+        preview = card.element.cloneNode(true);
+        preview.classList.add("filter-card-preview");
+        preview.style.left = `${rect.left}px`;
+        preview.style.width = `${rect.width}px`;
+        line = document.createElement("div");
+        line.className = "filter-card-line";
+        document.body.append(preview, line);
+        document.body.classList.add("filter-reordering");
+        card.element.classList.add("moving");
+        place();
+      };
+      const finish = (put) => {
+        this.reorder = null;
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", cancel);
+        window.removeEventListener("keydown", key, true);
+        if (head.hasPointerCapture?.(pointerId)) head.releasePointerCapture(pointerId);
+        cancelAnimationFrame(frame);
+        frame = 0;
+        if (!moving) return;
+        preview.remove();
+        line.remove();
+        document.body.classList.remove("filter-reordering");
+        card.element.classList.remove("moving");
+        if (put) this.moveCard(card, index);
+      };
+      const move = (e) => {
+        if (e.pointerId !== pointerId) return;
+        x = e.clientX;
+        y = e.clientY;
+        if (!moving) {
+          if (Math.hypot(x - startX, y - startY) < REORDER_START) return;
+          begin();
+        }
+        place();
+        follow();
+      };
+      const up = (e) => {
+        if (e.pointerId !== pointerId) return;
+        const box = this.body.getBoundingClientRect();
+        const within = e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
+        finish(within);
+      };
+      const cancel = (e) => {
+        if (e.pointerId === pointerId) finish(false);
+      };
+      const key = (e) => {
+        if (e.key === "Escape") finish(false);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", cancel);
+      window.addEventListener("keydown", key, true);
+      this.reorder = { cancel: () => finish(false) };
+    });
+  }
+
+  // Puts a card at `index` among the other cards, moving its element as it
+  // is; the summary follows the new order. The same place changes nothing.
+  moveCard(card, index) {
+    if (this.cards.indexOf(card) === index) return;
+    const rest = this.cards.filter((c) => c !== card);
+    rest.splice(index, 0, card);
+    this.cards = rest;
+    // An element put elsewhere loses the scroll of its lists (and its focus,
+    // unless `moveBefore` keeps them): the lists get theirs back.
+    const lists = [...card.element.querySelectorAll(".filter-levels")].map((e) => [e, e.scrollTop]);
+    const next = rest[index + 1]?.element ?? null;
+    if (this.list.moveBefore) this.list.moveBefore(card.element, next);
+    else this.list.insertBefore(card.element, next);
+    for (const [e, top] of lists) e.scrollTop = top;
+    this.updateSummary();
   }
 
   numericBody(card, body) {
@@ -775,6 +1011,8 @@ export class FilterPane {
     });
     update();
     body.append(bar, list);
+    card.levelList = list;
+    this.fitList(card);
   }
 
   // A card of candidates: "候補を集計中…" until the first answer (or its
@@ -871,7 +1109,8 @@ export class FilterPane {
           levelRow(level, n, card.levels.has(level), (checked) => this.tickLevel(card, level, checked, count)),
         ),
       );
-      list.hidden = levels.length === 0;
+      // A list dragged to a height keeps it with no candidate.
+      list.hidden = levels.length === 0 && card.listHeight === null;
       more.hidden = !truncated;
       showPicked();
       count();
@@ -882,6 +1121,8 @@ export class FilterPane {
       this.commit();
     });
     body.append(bar, search, status, list, more, picked);
+    card.levelList = list;
+    this.fitList(card);
     card.refresh();
   }
 

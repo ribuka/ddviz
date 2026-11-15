@@ -81,6 +81,8 @@
 
   /* Stacking, lowest first. Within a box of their own: */
   --z-modebar: 1;          /* #plot .modebar-container, over the figure */
+  --z-list-resize: 1;      /* .filter-list-resize, over its card's rows; in the
+                              filter body, under the pane's .filter-resize */
   --z-table-index: 1;      /* .tc.ti, the row numbers of the table */
   --z-table-head: 2;       /* .tc.th */
   --z-table-corner: 3;     /* .tc.th.ti */
@@ -91,6 +93,8 @@
   --z-hover: 10;           /* #hover-label, #hover-ring */
   --z-table: 20;           /* #table, the drawer over the plot */
   --z-drop: 50;            /* #drop-tip, #drop-line */
+  --z-card-move: 60;       /* .filter-card-preview, .filter-card-line: over the
+                              drop hints, under the toasts and the menus */
   /* Over the page, children of <body>: */
   --z-toast: 100;          /* #toasts */
   --z-cover: 101;          /* #converting, over the toasts as it is now */
@@ -322,17 +326,65 @@ button {
 }
 
 .filter-card {
+  position: relative;
   margin: 6px 8px 0;
   border: 1px solid var(--border-card);
   border-radius: 4px;
 }
 
+/* The head moves the card (filters.js, attachReorder); its buttons do not. */
 .filter-card-head {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 2px 4px 2px 6px;
   background: var(--bg-card-head);
+  cursor: grab;
+  user-select: none;
+}
+
+/* The card being moved keeps its place; a copy follows the pointer and a
+   line shows where it goes. Neither takes the pointer. */
+.filter-card.moving {
+  opacity: 0.4;
+}
+
+.filter-card-preview {
+  position: fixed;
+  max-height: 120px;
+  margin: 0;
+  overflow: hidden;
+  opacity: 0.7;
+  background: var(--bg);
+  box-shadow: var(--shadow-float);
+  pointer-events: none;
+  z-index: var(--z-card-move);
+}
+
+.filter-card-line {
+  position: fixed;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: var(--z-card-move);
+}
+
+body.filter-reordering,
+body.filter-reordering * {
+  cursor: grabbing;
+}
+
+/* The bottom edge of a card listing levels, over its padding: dragging it
+   sets the height of the list alone (filters.js, listHandle). */
+.filter-list-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 6px;
+  cursor: ns-resize;
+  z-index: var(--z-list-resize);
 }
 
 .filter-card-name {
@@ -490,6 +542,13 @@ button {
   max-height: 180px;
   overflow: auto;
   margin-top: 4px;
+}
+
+/* A list dragged to a height has it, rows or not, with no upper bound
+   (filters.js, fitList); "選択済み" keeps 180px. */
+.filter-levels.sized {
+  flex: none;
+  max-height: none;
 }
 
 .filter-level {
