@@ -4,14 +4,11 @@
 // their number of rows ("×1,234") instead of points of their series.
 // `meta.piles` holds lists of the same length: each pile's `panel`, its bins
 // `bx` and `by`, its rows `n` and the `series` of its rows.
+import { axisKey } from "./axiskey.js";
 
 // Room between a pile's marker and its label, and the label's font.
 const LABEL_GAP = 3;
 const FONT = "11px sans-serif";
-
-function axisKey(id) {
-  return id.replace(/^([xy])/, "$1axis");
-}
 
 // Returns the colors of the piles from the page's stylesheet (`--pile-*`),
 // so that a theme changes them.

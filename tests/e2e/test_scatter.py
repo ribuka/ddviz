@@ -2099,6 +2099,29 @@ def box_select(page: Page) -> list[str]:
     return asked
 
 
+def test_the_table_drags_its_top_edge(app_page: Page) -> None:
+    """A drag of the open table's top edge 100px up makes it 100px taller (Issue #198)."""
+    page = app_page
+    page.set_viewport_size({"width": 1200, "height": 800})
+    place(page, "x", "x")
+    place(page, "y", "y")
+    box_select(page)
+    table = page.locator("#table")
+    page.locator("#table .table-up").click()
+    expect(table).not_to_have_class(re.compile(r"\b(collapsed|maximized)\b"))
+    page.wait_for_timeout(300)
+    before = table.evaluate("t => t.offsetHeight")
+    box = page.locator(".table-resize").bounding_box()
+    x = box["x"] + box["width"] / 2
+    y = box["y"] + box["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x, y - 100, steps=8)
+    page.mouse.up()
+    after = table.evaluate("t => t.offsetHeight")
+    assert 98 <= after - before <= 102
+
+
 def table_top(page: Page) -> float:
     """Return the top of the table (client pixels), or infinity while it is hidden."""
     box = page.locator("#table").bounding_box()

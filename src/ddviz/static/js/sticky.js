@@ -8,6 +8,7 @@
 // has its labels. plotly draws none of them (`ddviz.server.figure`). The
 // mode bar, at the figure's top right, follows the scroll the same way and
 // stays at the top right of the area, above the top strip.
+import { axisKey } from "./axiskey.js";
 
 // Gap in pixels between a y tick label and the plot area's edge, and
 // between the plot area's bottom edge and an x tick label.
@@ -16,10 +17,6 @@ const X_TICK_TOP = 3;
 // Half the height in pixels of a line of a label: a label at an angle turns
 // about the middle of its height at its end.
 const HALF_LINE = 8;
-
-function axisKey(id) {
-  return id.replace(/^([xy])/, "$1axis");
-}
 
 // `angleOf(meta, role, index)` is the angle of the tick labels of an axis
 // column, in degrees clockwise, or null for level labels.

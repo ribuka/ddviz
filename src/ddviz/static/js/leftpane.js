@@ -2,6 +2,8 @@
 // into a strip that keeps the filter's conditions in sight, and the strip
 // opens it again; its right edge drags to change its width. Either changes
 // the plot area's size, which app.js aggregates again once it settles.
+import { attachDrag } from "./dragresize.js";
+
 // The narrowest width (CSS, without the right border) the open pane drags
 // to: the column-kind buttons (All, Numeric, Categorical) take 204px in one
 // row with their margins in WebView2 (Segoe UI 13px); a font that sets them
@@ -41,23 +43,18 @@ export class LeftPane {
   }
 
   attachResize(handle) {
-    handle.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      handle.setPointerCapture(event.pointerId);
+    attachDrag(handle, (event) => {
       const startX = event.clientX;
       // The width as CSS sets it, without the right border.
       const startWidth = parseFloat(getComputedStyle(this.root).width);
       const minWidth = Math.max(MIN_WIDTH, this.kindsWidth());
-      const move = (e) => {
-        const width = Math.min(Math.max(startWidth + e.clientX - startX, minWidth), MAX_WIDTH);
-        this.root.style.width = `${width}px`;
+      return {
+        move: (e) => {
+          const width = Math.min(Math.max(startWidth + e.clientX - startX, minWidth), MAX_WIDTH);
+          this.root.style.width = `${width}px`;
+        },
+        end: () => {},
       };
-      const up = () => {
-        handle.removeEventListener("pointermove", move);
-        handle.removeEventListener("pointerup", up);
-      };
-      handle.addEventListener("pointermove", move);
-      handle.addEventListener("pointerup", up);
     });
   }
 }

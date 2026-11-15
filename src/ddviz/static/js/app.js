@@ -14,6 +14,7 @@ import {
   yMarginAt,
 } from "./axisdialog.js";
 import { AxisDirections, ascending, oriented } from "./axisdirection.js";
+import { axisKey } from "./axiskey.js";
 import { bandTickUpdate, withBandTicks } from "./bandticks.js";
 import { openAxisMenu } from "./axismenu.js";
 import { AxisScales, isLogAxis, toPosition, toValues } from "./axisscale.js";
@@ -1091,10 +1092,6 @@ function sameRange(a, b) {
 // Returns whether two lists of ranges (one per axis column) are equal.
 function sameRanges(a, b) {
   return a.length === b.length && a.every((range, i) => sameRange(range, b[i]));
-}
-
-function axisKey(id) {
-  return id.replace(/^([xy])/, "$1axis");
 }
 
 // Returns the ranges on screen of each x and y column of a result, as

@@ -1,5 +1,6 @@
 // Row-level hover over the image layers: the server looks up the row of the
 // pixel under the cursor, and this module draws a plotly-like label.
+import { axisKey } from "./axiskey.js";
 import { boxAt } from "./boxes.js";
 import { seriesColors, valueColor } from "./colorscale.js";
 import { MISSING, MISSING_TEXT, levelText } from "./names.js";
@@ -7,10 +8,6 @@ import { pileAt, pileCenter } from "./piles.js";
 import { formatTemporal, linearRange } from "./temporal.js";
 
 const HOVER_DISTANCE = 20;
-
-function axisKey(id) {
-  return id.replace(/^([xy])/, "$1axis");
-}
 
 // Returns a hover value as text: a datetime, date or time column's
 // (`kind`) as such (`temporal.js`), a number to 6 digits, a null (or NaN,
