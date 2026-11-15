@@ -3,6 +3,7 @@
 // `[level, series, n, low, q1, median, q3, high]` along a categorical x
 // axis. In a level's band, the series' boxes lie side by side. They are of
 // values: on a log y axis, at their exponents (`axisscale.js`).
+import { axisKey } from "./axiskey.js";
 import { isLogAxis, toPosition } from "./axisscale.js";
 
 // Half the width of a band (`ddviz.shared.scatter.BAND`), and the width of a
@@ -45,8 +46,8 @@ export function drawBoxes(ctx, full, meta, colors, alpha, order) {
   const rank = new Map(order.map((s, i) => [s, i]));
   for (const panel of meta.panels) {
     if (!panel.boxes?.length) continue;
-    const xa = full[panel.xaxis.replace(/^x/, "xaxis")];
-    const ya = full[panel.yaxis.replace(/^y/, "yaxis")];
+    const xa = full[axisKey(panel.xaxis)];
+    const ya = full[axisKey(panel.yaxis)];
     if (!xa || !ya) continue;
     const px = (v) => xa._offset + xa.l2p(v);
     // The boxes are of values: on a log axis, at their exponents.

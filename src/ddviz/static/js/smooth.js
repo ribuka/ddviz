@@ -2,6 +2,7 @@
 // (`ddviz.compute.smooth`): each panel's `smooths` are `[series, xs, ys]`,
 // a line through the points (xs, ys) in data coordinates: on a log axis,
 // at their exponents (`axisscale.js`), broken where a point has none.
+import { axisKey } from "./axiskey.js";
 import { isLogAxis, toPosition } from "./axisscale.js";
 
 // Width of a line's colored stroke, in CSS pixels.
@@ -22,8 +23,8 @@ export function drawSmooths(ctx, full, meta, colors, alpha, order) {
   const rank = new Map(order.map((s, i) => [s, i]));
   for (const panel of meta.panels) {
     if (!panel.smooths?.length) continue;
-    const xa = full[panel.xaxis.replace(/^x/, "xaxis")];
-    const ya = full[panel.yaxis.replace(/^y/, "yaxis")];
+    const xa = full[axisKey(panel.xaxis)];
+    const ya = full[axisKey(panel.yaxis)];
     if (!xa || !ya) continue;
     const xLog = isLogAxis(xa);
     const yLog = isLogAxis(ya);

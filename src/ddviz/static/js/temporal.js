@@ -5,6 +5,8 @@
 // date or time lies on plotly's date axis; a duration is a plain number.
 // The text is that of `ddviz.shared.temporal.text`.
 
+import { axisKey } from "./axiskey.js";
+
 const DATE_KINDS = ["datetime", "date", "time"];
 const US_PER_DAY = 86_400_000_000;
 
@@ -136,8 +138,8 @@ export function forPlotly(layout) {
   }
   if (layout.selections) {
     out.selections = layout.selections.map((box) => {
-      const [x0, x1] = plotlyRange(layout[box.xref.replace(/^x/, "xaxis")], [box.x0, box.x1]);
-      const [y0, y1] = plotlyRange(layout[box.yref.replace(/^y/, "yaxis")], [box.y0, box.y1]);
+      const [x0, x1] = plotlyRange(layout[axisKey(box.xref)], [box.x0, box.x1]);
+      const [y0, y1] = plotlyRange(layout[axisKey(box.yref)], [box.y0, box.y1]);
       return { ...box, x0, x1, y0, y1 };
     });
   }
