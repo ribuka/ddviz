@@ -12,6 +12,7 @@
 // on a categorical one, whose dialog shows the other settings disabled
 // (`dialogKind`); it is kept by role and column apart from the settings.
 
+import { axisKey } from "./axiskey.js";
 import { axisText, dateText, isDateKind, readAxisValue } from "./temporal.js";
 
 // The look of a new reference line, and the dashes offered.
@@ -370,7 +371,7 @@ function dialogAxes(meta) {
       ["y", panel.yaxis, panel.y],
     ]) {
       const kind = axisKind(meta, role, index);
-      if (kind) axes.push([axis.replace(/^([xy])/, "$1axis"), kind, meta[`${role}_columns`][index]]);
+      if (kind) axes.push([axisKey(axis), kind, meta[`${role}_columns`][index]]);
     }
   }
   return axes;
@@ -385,7 +386,7 @@ function angleAxes(meta) {
       ["x", panel.xaxis, panel.x],
       ["y", panel.yaxis, panel.y],
     ]) {
-      if (hasAngle(meta, role, index)) axes.push([axis.replace(/^([xy])/, "$1axis"), role, meta[`${role}_columns`][index]]);
+      if (hasAngle(meta, role, index)) axes.push([axisKey(axis), role, meta[`${role}_columns`][index]]);
     }
   }
   return axes;
@@ -457,8 +458,8 @@ export function axisAt(event, gd, meta) {
   const px = event.clientX - rect.left;
   const py = event.clientY - rect.top;
   for (const panel of meta.panels) {
-    const xa = full[panel.xaxis.replace(/^x/, "xaxis")];
-    const ya = full[panel.yaxis.replace(/^y/, "yaxis")];
+    const xa = full[axisKey(panel.xaxis)];
+    const ya = full[axisKey(panel.yaxis)];
     if (!xa || !ya) continue;
     const inside =
       px >= xa._offset && px <= xa._offset + xa._length && py >= ya._offset && py <= ya._offset + ya._length;
@@ -487,8 +488,8 @@ export function yMarginAt(clientX, clientY, gd, meta, from) {
   let left = Infinity;
   let index = null;
   for (const panel of meta.panels) {
-    const xa = full[panel.xaxis.replace(/^x/, "xaxis")];
-    const ya = full[panel.yaxis.replace(/^y/, "yaxis")];
+    const xa = full[axisKey(panel.xaxis)];
+    const ya = full[axisKey(panel.yaxis)];
     if (!xa || !ya) continue;
     const top = origin.top + ya._offset;
     if (clientY < top || clientY > top + ya._length) continue;
@@ -513,8 +514,8 @@ export function labelAt(clientX, clientY, gd, meta) {
   const within = (r) => clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
   let hit = null;
   for (const panel of meta.panels) {
-    const xa = full[panel.xaxis.replace(/^x/, "xaxis")];
-    const ya = full[panel.yaxis.replace(/^y/, "yaxis")];
+    const xa = full[axisKey(panel.xaxis)];
+    const ya = full[axisKey(panel.yaxis)];
     if (!xa || !ya) continue;
     const area = {
       left: origin.left + xa._offset,
