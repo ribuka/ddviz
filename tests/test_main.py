@@ -164,16 +164,26 @@ def test_the_check_runs_alone(
 
 
 @pytest.mark.parametrize(
-    "extra", [["data.parquet"], ["--recursive"], ["--port", "8000"]]
+    "args",
+    [
+        ["--check-desktop-runtime", "data.parquet"],
+        ["--check-desktop-runtime", "--recursive"],
+        ["--check-desktop-runtime", "--port", "8000"],
+        ["--check-desktop-runtime", "--worker"],
+        ["--worker", "--check-desktop-runtime"],
+    ],
 )
 def test_the_check_takes_no_other_arguments(
-    monkeypatch: pytest.MonkeyPatch, extra: list[str], steps: list[str]
+    monkeypatch: pytest.MonkeyPatch, args: list[str], steps: list[str]
 ) -> None:
-    """The check with a path or a start option is an argparse error."""
+    """The check with a path, a start option or ``--worker`` is an argparse error."""
+    from ddviz.workers import worker
+
     monkeypatch.setattr(
         runtime_check, "check_desktop_runtime", lambda: pytest.fail("check ran")
     )
-    _argv(monkeypatch, "--check-desktop-runtime", *extra)
+    monkeypatch.setattr(worker, "main", lambda: pytest.fail("worker ran"))
+    _argv(monkeypatch, *args)
     with pytest.raises(SystemExit) as caught:
         entry.main()
     assert caught.value.code == 2

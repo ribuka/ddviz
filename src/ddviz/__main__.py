@@ -86,7 +86,8 @@ def main() -> int:
     int
         Exit code.
     """
-    if "--worker" in sys.argv[1:]:
+    # With the check, ``--worker`` is left to argparse, which refuses it.
+    if "--worker" in sys.argv[1:] and "--check-desktop-runtime" not in sys.argv[1:]:
         from ddviz.workers.worker import main as worker_main
 
         return worker_main()
