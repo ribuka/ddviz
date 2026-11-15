@@ -210,6 +210,9 @@
         }
         setSaving(true);
         let values = null;
+        // The keys whose value in effect the save changed: those edited, and
+        // others that the save read again from the local file.
+        let saved = [];
         if (keys.length > 0) {
           let result;
           try {
@@ -224,13 +227,14 @@
           }
           values = result.values;
           for (const field of fields) {
+            if (values[field.item.key] !== field.value) saved.push(field.item.key);
             field.value = values[field.item.key];
             field.shown = textOf(field.item, field.value);
           }
         } else {
           values = Object.fromEntries(fields.map((f) => [f.item.key, f.value]));
         }
-        const toApply = [...new Set([...unapplied, ...keys])];
+        const toApply = [...new Set([...unapplied, ...keys, ...saved])];
         try {
           await apply?.(values, toApply);
         } catch (error) {

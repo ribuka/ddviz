@@ -384,3 +384,17 @@ def test_the_dpi_is_chosen_from_its_choices(page: Page, tmp_path: Path) -> None:
     calls = _calls(page)
     assert calls[0] == ["save", {"plot.image_copy.dpi": 96}]
     assert calls[1][:2] == ["apply", ["plot.image_copy.dpi"]]
+
+
+def test_values_the_save_read_again_are_applied_too(page: Page, tmp_path: Path) -> None:
+    """A save that read another value from the local file (changed since the dialog opened) applies that key along with the one edited."""
+    state = _open(page, tmp_path)
+    values = {**state["values"], "columns.max_history": 5, OPACITY: 0.8}
+    page.evaluate("(values) => { window.saveAnswers = [{ values }]; }", values)
+    _text(page, "columns.max_history").fill("5")
+    page.get_by_role("button", name="適用").click()
+    page.wait_for_function("window.prefsClosed")
+    calls = _calls(page)
+    assert calls[0] == ["save", {"columns.max_history": 5}]
+    assert sorted(calls[1][1]) == sorted(["columns.max_history", OPACITY])
+    assert calls[1][2][OPACITY] == 0.8

@@ -179,6 +179,9 @@ let maxLevels = null;
 function openColorScaleMenu(event) {
   openScaleMenu(event, options.colorBins, setColorBins, recolor, options.sharedSize(current), setShapeSize, maxLevels);
 }
+// The keys the Preferences applied (`ddvizApplySettings`): the settings of
+// the page's start, asked before, do not take them back.
+const appliedSettings = new Set();
 // The opacity of the legend's inactive series (`plot.legend.inactive_opacity`).
 fetch("/api/settings")
   .then(
@@ -187,9 +190,9 @@ fetch("/api/settings")
   )
   .then((settings) => {
     if (!settings) return;
-    legend.inactiveOpacity = settings.inactive_opacity;
-    imageCopyDpi = settings.image_copy_dpi;
-    maxLevels = settings.max_levels;
+    if (!appliedSettings.has("plot.legend.inactive_opacity")) legend.inactiveOpacity = settings.inactive_opacity;
+    if (!appliedSettings.has("plot.image_copy.dpi")) imageCopyDpi = settings.image_copy_dpi;
+    if (!appliedSettings.has("plot.max_levels")) maxLevels = settings.max_levels;
     layers.draw();
   });
 const sticky = new StickyLabels(document.getElementById("scroller"), gd, (meta, role, index) =>
@@ -1405,6 +1408,7 @@ const columnList = attachColumnList(document.getElementById("columns"), (event, 
 // settings at its next task (docs/spec.md, "Preferences"). It rejects when
 // the page could not follow, which the dialog tells apart from a failed save.
 window.ddvizApplySettings = async (values, changed) => {
+  for (const key of changed) appliedSettings.add(key);
   if (changed.includes("plot.legend.inactive_opacity")) {
     const opacity = values["plot.legend.inactive_opacity"];
     // At 0 the inactive series are not found by the hover: what it shows

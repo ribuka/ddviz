@@ -56,11 +56,15 @@ export function attachColumnList(root, onMenu) {
     if (order !== "file") query.set("order", order);
     const response = await fetch(`/api/columns?${query}`);
     if (mine !== generation) return true;
+    // A newer search may start while the body is read: check again.
     if (!response.ok) {
-      count.textContent = `エラー: ${await response.text()}`;
+      const error = await response.text();
+      if (mine !== generation) return true;
+      count.textContent = `エラー: ${error}`;
       return false;
     }
     const found = await response.json();
+    if (mine !== generation) return true;
     const shown = found.matched > found.columns.length ? `、上位 ${found.columns.length} 件を表示` : "";
     const shares = { pending: "（非 null の行数を計算中）", failed: "（非 null の行数は求められませんでした）" }[found.shares] ?? "";
     count.textContent = `${found.total.toLocaleString()} 列中 ${found.matched.toLocaleString()} 件${shown}${shares}`;

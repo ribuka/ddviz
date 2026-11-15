@@ -161,6 +161,82 @@ def test_the_column_list_searches_again_as_it_is(menu_page: Page) -> None:
     expect(page.locator(".prefs-dialog")).to_have_count(0)
 
 
+# Holds the body of the next `/api/columns` answer, read once its fetch is
+# done, until `window.releaseBody()`, which gives it without its columns:
+# an older list told apart from the one searched after it.
+HOLD_COLUMNS_BODY = """
+const realFetch = window.fetch;
+window.holdColumnsBody = false;
+window.releaseBody = null;
+window.fetch = async (url, options) => {
+  const response = await realFetch(url, options);
+  if (String(url).startsWith("/api/columns") && window.holdColumnsBody) {
+    window.holdColumnsBody = false;
+    const json = response.json.bind(response);
+    response.json = () => new Promise((done) => { window.releaseBody = () => json().then((found) => done({ ...found, matched: 0, columns: [] })); });
+  }
+  return response;
+};
+"""
+
+
+def test_an_older_column_list_read_late_does_not_cover_the_new_one(menu_page: Page) -> None:
+    """A search whose body is read after the list was searched again for `columns.max_listed` is dropped (the fake window saves nothing on the server: the new list is the same)."""
+    page = menu_page
+    page.add_init_script(HOLD_COLUMNS_BODY)
+    page.reload()
+    numeric = page.locator('.column-kinds [data-kind="numeric"]')
+    expect(page.locator("#columns .column").first).to_be_visible()
+    numeric.click()
+    wait_idle(page)
+    shown = page.locator("#columns .column").count()
+    assert shown > 0
+    page.locator('.column-kinds [data-kind=""]').click()
+    page.evaluate("window.holdColumnsBody = true")
+    numeric.click()
+    page.wait_for_function("window.releaseBody !== null")
+    open_preferences(page)
+    page.locator('.prefs-item[data-key="columns.max_listed"] .prefs-text').fill("1")
+    page.get_by_role("button", name="適用").click()
+    expect(page.locator(".prefs-dialog")).to_have_count(0)
+    expect(page.locator("#columns .column")).to_have_count(shown)
+    page.evaluate("window.releaseBody()")
+    page.evaluate(FRAMES)
+    expect(page.locator("#columns .column")).to_have_count(shown)
+
+
+def test_the_settings_of_the_start_do_not_undo_the_applied_ones(menu_page: Page) -> None:
+    """The page's first `/api/settings`, answered after an apply, does not take the applied value back."""
+    page = menu_page
+    held = []
+    page.route("**/api/settings", lambda route: held.append(route))
+    page.reload()
+    expect(page.locator("#columns .column").first).to_be_visible()
+    for _ in range(50):
+        if held:
+            break
+        page.wait_for_timeout(100)
+    assert len(held) == 1
+    open_preferences(page)
+    page.locator('.prefs-item[data-key="plot.max_levels"] .prefs-text').fill("4")
+    page.get_by_role("button", name="適用").click()
+    expect(page.locator(".prefs-dialog")).to_have_count(0)
+    held[0].continue_()
+    page.unroute("**/api/settings")
+    page.evaluate(FRAMES)
+    place(page, "x", "x")
+    place(page, "y", "y")
+    place(page, "x", "color")
+    bar = page.locator("#legend .colorbar")
+    expect(bar).to_be_visible()
+    bar.click(button="right")
+    menu = page.locator(".scale-menu")
+    menu.get_by_label("区間数").fill("5")
+    menu.get_by_role("button", name="適用").click()
+    expect(menu.locator(".scale-menu-count-error")).to_have_text("2 以上 4 以下の整数を入力してください")
+    page.keyboard.press("Escape")
+
+
 def test_the_limit_of_the_color_bins_follows_at_once(menu_page: Page) -> None:
     """A saved `plot.max_levels` is the limit of the next number of intervals entered; the intervals shown stay."""
     page = menu_page
