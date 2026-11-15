@@ -13,6 +13,7 @@ from playwright.sync_api import Page, expect
 
 from ddviz.server.app import create_app
 from ddviz.server.settings import Settings
+from ddviz.server.settings_store import SettingsStore
 from tests.e2e.conftest import TOKEN
 from tests.e2e.test_scatter import PAINTED_PIXEL, place
 
@@ -33,7 +34,7 @@ def app_url(tmp_path: Path, folder_path: Path) -> Iterator[str]:
         root,
         tmp_path / "cache",
         tmp_path / "history",
-        Settings(),
+        SettingsStore(Settings()),
         TOKEN,
     )
     server = uvicorn.Server(

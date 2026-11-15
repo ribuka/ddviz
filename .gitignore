@@ -21,6 +21,9 @@ wheels/
 # tmp
 /tmp/
 
+# local settings written by the Preferences of the app
+/config/settings.local.toml
+
 # Playwright traces of failed E2E tests
 /test-results/
 

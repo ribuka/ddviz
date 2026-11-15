@@ -13,6 +13,7 @@ from playwright.sync_api import Page
 
 from ddviz.server.app import create_app
 from ddviz.server.settings import Settings
+from ddviz.server.settings_store import SettingsStore
 
 TOKEN = "secret-of-the-e2e-run"
 # Records the time of the last mouse press on the plot, the presses plotly
@@ -63,7 +64,7 @@ def app_url(
         root,
         tmp_path / "cache",
         tmp_path / "history",
-        settings,
+        SettingsStore(settings),
         TOKEN,
         desktop=desktop,
     )

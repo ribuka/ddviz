@@ -1,0 +1,131 @@
+/* The Preferences dialog (js/preferences.js): the content scrolls, the
+   buttons stay in sight. */
+.prefs-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 25%);
+}
+
+.prefs-dialog {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+  color: #222;
+  font: 13px "Segoe UI", sans-serif;
+}
+
+.prefs-title {
+  margin: 0;
+  padding: 16px 24px 8px;
+  font-size: 16px;
+}
+
+.prefs-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 24px;
+}
+
+.prefs-group-title {
+  margin: 12px 0 6px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid #ddd;
+  font-size: 13px;
+  color: #444;
+}
+
+.prefs-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.prefs-label {
+  font-weight: 600;
+}
+
+.prefs-inputs {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.prefs-slider {
+  width: 140px;
+}
+
+.prefs-text {
+  width: 96px;
+  padding: 3px 6px;
+  font: inherit;
+  text-align: right;
+}
+
+.prefs-item.invalid .prefs-text {
+  border-color: #c5221f;
+  outline-color: #c5221f;
+}
+
+.prefs-unit {
+  min-width: 1.5em;
+  color: #555;
+}
+
+.prefs-timing,
+.prefs-note,
+.prefs-error {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.prefs-timing {
+  color: #1a73e8;
+}
+
+.prefs-note {
+  color: #666;
+}
+
+.prefs-error {
+  color: #c5221f;
+}
+
+.prefs-error:empty,
+.prefs-message:empty {
+  display: none;
+}
+
+.prefs-message {
+  margin: 8px 24px 0;
+  color: #c5221f;
+  line-height: 1.5;
+}
+
+.prefs-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 24px 16px;
+  border-top: 1px solid #eee;
+  margin-top: 8px;
+}
+
+.prefs-buttons button {
+  min-width: 80px;
+  padding: 5px 12px;
+  font: inherit;
+}

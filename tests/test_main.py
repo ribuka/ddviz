@@ -188,3 +188,24 @@ def test_the_check_takes_no_other_arguments(
         entry.main()
     assert caught.value.code == 2
     assert steps == []
+
+
+def test_settings_that_cannot_be_read_warn_and_stop_before_the_window(
+    monkeypatch: pytest.MonkeyPatch, steps: list[str]
+) -> None:
+    """A settings file that cannot be read, or has a wrong value, is told in a message box with the error (its file or key), and the window does not open."""
+    from ddviz.server.settings_store import SettingsStore
+
+    def broken(cls: type, path: Path | None = None) -> None:
+        raise ValueError("plot.max_levels needs a positive integer: 0")
+
+    monkeypatch.setattr(SettingsStore, "load", classmethod(broken))
+    monkeypatch.setattr(dll_access, "unblock_or_warn", lambda warn: True)
+    warned: list[str] = []
+    monkeypatch.setattr(messages, "show_warning", warned.append)
+    _argv(monkeypatch)
+    assert entry.main() == 1
+    assert warned == [
+        f"{entry.SETTINGS_UNREADABLE}\n\nplot.max_levels needs a positive integer: 0"
+    ]
+    assert steps == []

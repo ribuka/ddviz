@@ -82,3 +82,19 @@ def test_a_file_held_without_write_sharing_is_busy(tmp_path: Path) -> None:
     (tmp_path / "ddviz.exe").write_bytes(b"exe")
     with _held_like_a_running_exe(held):
         assert _load_build().busy_files(tmp_path) == [held]
+
+
+def test_the_config_copy_leaves_out_the_local_settings(tmp_path: Path) -> None:
+    """The distribution's config has the shared settings.toml without the local file, which stays in the source."""
+    build = _load_build()
+    source = tmp_path / "config"
+    source.mkdir()
+    (source / "settings.toml").write_text("[cache]\nmax_gb = 1\n", encoding="utf-8")
+    (source / "settings.local.toml").write_text("[cache]\nmax_gb = 2\n", encoding="utf-8")
+    target = tmp_path / "dist" / "config"
+    build.copy_config(source, target)
+    assert sorted(p.name for p in target.iterdir()) == ["settings.toml"]
+    assert (target / "settings.toml").read_text(encoding="utf-8") == "[cache]\nmax_gb = 1\n"
+    assert (source / "settings.local.toml").read_text(encoding="utf-8") == (
+        "[cache]\nmax_gb = 2\n"
+    )

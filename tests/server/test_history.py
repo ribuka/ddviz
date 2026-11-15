@@ -10,7 +10,7 @@ from ddviz.server.history import SearchHistory, history_file
 
 def _history(tmp_path: Path, limit: int = 20) -> SearchHistory:
     paths = [str(tmp_path / "a.parquet")]
-    return SearchHistory(history_file(tmp_path / "history", paths), paths, limit)
+    return SearchHistory(history_file(tmp_path / "history", paths), paths, lambda: limit)
 
 
 def test_newest_first_and_the_same_keyword_moves_to_the_top(tmp_path: Path) -> None:

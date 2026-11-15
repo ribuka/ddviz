@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
@@ -65,17 +66,24 @@ class SearchHistory:
         that two windows on the same input see each other's keywords.
     paths : list of str
         Paths of the input, written into the file to tell what it is for.
-    limit : int
-        Most keywords kept (``columns.max_history`` of the settings).
+    limit : callable
+        Returns the most keywords shown and kept (``columns.max_history`` of
+        the settings in effect), which each call reads when it starts; a
+        lower one cuts the file only at its next write.
     """
 
-    def __init__(self, path: Path, paths: list[str], limit: int) -> None:
+    def __init__(self, path: Path, paths: list[str], limit: Callable[[], int]) -> None:
         self.path = path
         self.paths = paths
         self.limit = limit
 
-    def words(self) -> list[str]:
+    def words(self, limit: int | None = None) -> list[str]:
         """Return the keywords, newest first.
+
+        Parameters
+        ----------
+        limit : int, optional
+            Most keywords returned; `limit` of the history by default.
 
         Returns
         -------
@@ -92,7 +100,8 @@ class SearchHistory:
         words = data.get("words") if isinstance(data, dict) else None
         if not isinstance(words, list):
             return []
-        return [w for w in words if isinstance(w, str)][: self.limit]
+        limit = self.limit() if limit is None else limit
+        return [w for w in words if isinstance(w, str)][:limit]
 
     def add(self, word: str) -> list[str]:
         """Put `word` first; the same keyword, in any case, moves rather than repeats.
@@ -108,11 +117,12 @@ class SearchHistory:
             The keywords after the change.
         """
         word = normalize(word)
-        words = self.words()
+        limit = self.limit()
+        words = self.words(limit)
         if not word:
             return words
         key = word.casefold()
-        return self._write([word, *(w for w in words if w.casefold() != key)])
+        return self._write([word, *(w for w in words if w.casefold() != key)], limit)
 
     def remove(self, word: str) -> list[str]:
         """Remove `word`.
@@ -122,7 +132,8 @@ class SearchHistory:
         list of str
             The keywords after the change.
         """
-        return self._write([w for w in self.words() if w != word])
+        limit = self.limit()
+        return self._write([w for w in self.words(limit) if w != word], limit)
 
     def clear(self) -> list[str]:
         """Remove every keyword.
@@ -135,9 +146,9 @@ class SearchHistory:
         self.path.unlink(missing_ok=True)
         return []
 
-    def _write(self, words: list[str]) -> list[str]:
+    def _write(self, words: list[str], limit: int) -> list[str]:
         """Write `words`, cut to `limit`, through a temporary file; return them."""
-        words = words[: self.limit]
+        words = words[:limit]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
         temporary.write_text(

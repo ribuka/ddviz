@@ -179,6 +179,9 @@ let maxLevels = null;
 function openColorScaleMenu(event) {
   openScaleMenu(event, options.colorBins, setColorBins, recolor, options.sharedSize(current), setShapeSize, maxLevels);
 }
+// The keys the Preferences applied (`ddvizApplySettings`): the settings of
+// the page's start, asked before, do not take them back.
+const appliedSettings = new Set();
 // The opacity of the legend's inactive series (`plot.legend.inactive_opacity`).
 fetch("/api/settings")
   .then(
@@ -187,9 +190,9 @@ fetch("/api/settings")
   )
   .then((settings) => {
     if (!settings) return;
-    legend.inactiveOpacity = settings.inactive_opacity;
-    imageCopyDpi = settings.image_copy_dpi;
-    maxLevels = settings.max_levels;
+    if (!appliedSettings.has("plot.legend.inactive_opacity")) legend.inactiveOpacity = settings.inactive_opacity;
+    if (!appliedSettings.has("plot.image_copy.dpi")) imageCopyDpi = settings.image_copy_dpi;
+    if (!appliedSettings.has("plot.max_levels")) maxLevels = settings.max_levels;
     layers.draw();
   });
 const sticky = new StickyLabels(document.getElementById("scroller"), gd, (meta, role, index) =>
@@ -1394,7 +1397,31 @@ const zoneObserver = new ResizeObserver(() => builder.layout());
 for (const zone of axisZones) zoneObserver.observe(zone);
 // A right click on a listed column opens its menu of the roles and the
 // filter pane to place it on.
-await attachColumnList(document.getElementById("columns"), (event, column) =>
+const columnList = attachColumnList(document.getElementById("columns"), (event, column) =>
   openColumnMenu(event, column, builder, filterPane),
 );
+// The Preferences dialog of the title bar (`titlebar.js`) calls this after a
+// save, with the values now in effect and the keys changed: the opacity of
+// the inactive series redraws the images drawn, without aggregating again,
+// the column list searches again as it is, and the limit of the color bins
+// and the DPI of the image copy are taken for the next ones; the server reads the other
+// settings at its next task (docs/spec.md, "Preferences"). It rejects when
+// the page could not follow, which the dialog tells apart from a failed save.
+window.ddvizApplySettings = async (values, changed) => {
+  for (const key of changed) appliedSettings.add(key);
+  if (changed.includes("plot.legend.inactive_opacity")) {
+    const opacity = values["plot.legend.inactive_opacity"];
+    // At 0 the inactive series are not found by the hover: what it shows
+    // or looks up now may be of a series that turned invisible or visible.
+    if (opacity === 0 || legend.inactiveOpacity === 0) hideHover();
+    legend.inactiveOpacity = opacity;
+    layers.draw();
+  }
+  // The next bins entered and image copied take the new limit and DPI; the
+  // bins and graph shown stay as they are.
+  if (changed.includes("plot.max_levels")) maxLevels = values["plot.max_levels"];
+  if (changed.includes("plot.image_copy.dpi")) imageCopyDpi = values["plot.image_copy.dpi"];
+  if (changed.includes("columns.max_listed")) await columnList.refresh();
+};
+await columnList.loaded;
 showCasts(document.getElementById("casts"));

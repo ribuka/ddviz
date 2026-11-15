@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import json
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -24,7 +25,7 @@ from fastapi import HTTPException
 from ddviz.server.broker import Pool, TaskBroker
 from ddviz.server.errors import ensure_done
 from ddviz.server.plan import parse_filters
-from ddviz.server.settings import Settings
+from ddviz.server.settings import CacheSettings
 from ddviz.shared.cache import SCHEMA, ColumnCache, evict
 from ddviz.shared.generated import part_key
 from ddviz.shared.inputs import parquet_files, unique
@@ -64,8 +65,9 @@ class Source:
     index_dir : pathlib.Path
         Directory of the indexes of the levels a filter card searches, under
         the run's directory, which the server removes when it stops.
-    settings : Settings
-        Limits of the column cache.
+    cache_limits : callable
+        Returns the limits of the column cache in effect, which each cleaning
+        of the cache reads when it starts.
     broker : TaskBroker
         Runs the tasks that read the files.
     """
@@ -76,14 +78,14 @@ class Source:
         recursive: bool,
         cache_root: Path,
         index_dir: Path,
-        settings: Settings,
+        cache_limits: Callable[[], CacheSettings],
         broker: TaskBroker,
     ) -> None:
         self.paths = [str(p) for p in unique([Path(p) for p in paths])]
         self.recursive = recursive
         self._cache_root = cache_root
         self._index_dir = index_dir
-        self._settings = settings
+        self._cache_limits = cache_limits
         self._broker = broker
         self._schema: list[dict] | None = None
         self.files: list[Path] = []
@@ -230,7 +232,7 @@ class Source:
 
     def evict(self, keep: list[Path]) -> None:
         """Remove old column parts, keeping the given ones."""
-        limits = self._settings.cache
+        limits = self._cache_limits()
         evict(self._cache_root, limits.max_bytes, limits.max_unused_days, keep)
 
     async def _measure_shares(self) -> None:
