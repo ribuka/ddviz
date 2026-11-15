@@ -18,7 +18,7 @@ import asyncio
 import json
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, replace
 from datetime import datetime
 
@@ -194,6 +194,25 @@ def plot_router(
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
+    async def aggregate_again(
+        spec: ScatterSpec,
+        shown: HoverIndex | None,
+        keep: Callable[[HoverIndex], None],
+    ) -> JSONResponse:
+        """Return the figure of `spec` aggregated again, or of `shown` when it already is (`unchanged`); `keep` takes a new result."""
+        if unchanged(shown.manifest if shown is not None else None, spec):
+            # A task for another size must not replace the result drawn now.
+            await broker.cancel()
+            return figure(shown, {"task_seconds": 0.0})
+        try:
+            index, timing = await run_again(spec)
+        except _ColorLevelsRefused as error:
+            return error.response()
+        if index is None:
+            return JSONResponse({"cancelled": True}, status_code=409)
+        keep(index)
+        return figure(index, timing)
+
     @router.post("/api/plot")
     async def plot(request: PlotRequest) -> JSONResponse:
         nonlocal latest
@@ -293,35 +312,14 @@ def plot_router(
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         spec = await respec(request, x_ranges, y_ranges)
-        if unchanged(results.view.manifest if results.view else None, spec):
-            # A task for another size must not replace the result drawn now.
-            await broker.cancel()
-            return figure(results.view, {"task_seconds": 0.0})
-        try:
-            index, timing = await run_again(spec)
-        except _ColorLevelsRefused as error:
-            return error.response()
-        if index is None:
-            return JSONResponse({"cancelled": True}, status_code=409)
-        results.set_view(index)
-        return figure(index, timing)
+        return await aggregate_again(spec, results.view, results.set_view)
 
     @router.post("/api/overview")
     async def overview(request: SizeRequest) -> JSONResponse:
         """Aggregate the overview again at another size of the plot area."""
         # The padded data ranges hold every row, so this is the overview.
         spec = await respec(request)
-        if unchanged(results.overview.manifest, spec):
-            await broker.cancel()
-            return figure(results.overview, {"task_seconds": 0.0})
-        try:
-            index, timing = await run_again(spec)
-        except _ColorLevelsRefused as error:
-            return error.response()
-        if index is None:
-            return JSONResponse({"cancelled": True}, status_code=409)
-        results.set_overview(index)
-        return figure(index, timing)
+        return await aggregate_again(spec, results.overview, results.set_overview)
 
     @router.get("/api/images/{task}")
     async def images(task: int) -> FileResponse:
