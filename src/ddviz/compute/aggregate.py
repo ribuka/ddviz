@@ -586,6 +586,210 @@ def _facet_levels(
     return kept
 
 
+@dataclass(frozen=True)
+class _Found:
+    """What the overview found, or a view carries: the ranges, levels, cuts and boxes and lines known."""
+
+    x_ranges: list[tuple[float, float]]
+    y_ranges: list[tuple[float, float]]
+    all_levels: dict[str, list]
+    # The drawn levels: `all_levels` with the facets of the filter.
+    levels: dict[str, list]
+    cuts: dict
+    color_range: tuple[float, float] | None
+    axis_levels: dict[str, list[str]]
+    known_boxes: list[Boxes]
+    known_smooths: list[Smooths]
+
+
+def _index(spec: ScatterSpec, found: _Found, role: str) -> pl.Expr:
+    """Return the index of each row's level of a role among the drawn levels."""
+    return role_index(
+        spec, role, found.levels[role], found.all_levels[role], found.cuts.get(role)
+    )
+
+
+@dataclass(frozen=True)
+class _Drawn:
+    """What every stage after the levels shares: the spec, what was found, the panels and the expressions of each row."""
+
+    spec: ScatterSpec
+    found: _Found
+    logs: _LogAxes
+    # The columns of the color, symbol, row and col.
+    used: list[str]
+    axes: AxisGrid
+    layout: GridLayout
+    grid: BinGrid
+    # The panel's row and col of each row, placed (`AxisGrid.place`).
+    row: pl.Expr
+    col: pl.Expr
+    # The facet cell of a box: the drawn row and col levels.
+    row_level: pl.Expr
+    col_level: pl.Expr
+    series: pl.Expr
+    # The boxes of the markers of each symbol level (`marker_boxes`).
+    marker_box: tuple
+
+    def index(self, role: str) -> pl.Expr:
+        """Return the index of each row's level of a role among the drawn levels."""
+        return _index(self.spec, self.found, role)
+
+    def box_groups(self, x_col: str) -> BoxGroups:
+        """Return the boxes of the pairs of an x column."""
+        return BoxGroups(
+            len(self.found.levels["row"]),
+            len(self.found.levels["col"]),
+            len(self.found.axis_levels[x_col]),
+            self.grid.n_series,
+        )
+
+    def group(self, x_col: str) -> pl.Expr:
+        """Return each row's box among those of a pair: its facet cell, x level and series."""
+        level = level_index(x_col, self.found.axis_levels[x_col])
+        return self.box_groups(x_col).key(
+            self.row_level, self.col_level, level, self.series
+        )
+
+
+class _RowCount:
+    """The rows of the plot, counted once from the files' footers."""
+
+    def __init__(self, spec: ScatterSpec) -> None:
+        self._spec = spec
+        self._rows: int | None = None
+
+    def __call__(self) -> int:
+        """Return the rows of the plot, counting them on the first call."""
+        if self._rows is None:
+            # Any column read from files: the one band has none.
+            column = next(c for c in [*self._spec.x, *self._spec.y] if c != ONE_BAND)
+            self._rows = _scan(self._spec, [column]).select(pl.len()).collect().item()
+        return self._rows
+
+
+def _find(
+    spec: ScatterSpec,
+    roles: dict[str, str | None],
+    logs: _LogAxes,
+    progress: Callable[[str], None],
+) -> _Found:
+    """Return the ranges and levels of the overview, or of a view, then the color levels of the filter and the drawn facet levels.
+
+    Raises `NoPositiveValuesError` when a log axis of the overview has no
+    positive value.
+    """
+    if spec.view is None:
+        empty = [
+            (role, c)
+            for role, columns in (("x", spec.log_x), ("y", spec.log_y))
+            for c in columns
+            if logs.ranges[c] is None
+        ]
+        if empty:
+            raise NoPositiveValuesError(no_positive_message(empty))
+    if spec.view is not None:
+        x_ranges = [(lo, hi) for lo, hi in spec.view.x_ranges]
+        y_ranges = [(lo, hi) for lo, hi in spec.view.y_ranges]
+        all_levels = spec.view.levels
+        cuts = spec.view.cuts
+        color_range = spec.view.color_range
+        if color_range is not None:
+            color_range = (color_range[0], color_range[1])
+        axis_levels = spec.view.axis_levels
+        known_boxes = spec.view.boxes
+        known_smooths = spec.view.smooths
+    else:
+        progress("levels")
+        # The color levels of the local filter are found on their own,
+        # after the limits of the levels over every row.
+        overview = _overview(
+            spec, {**roles, "color": None} if spec.filters_color() else roles, logs
+        )
+        x_ranges, y_ranges = overview.x_ranges, overview.y_ranges
+        all_levels, cuts = overview.levels, overview.cuts
+        color_range = overview.color_range
+        axis_levels = overview.axis_levels
+        known_boxes = []
+        known_smooths = []
+    if spec.filters_color() and (spec.view is None or spec.view.find_color):
+        progress("colors")
+        all_levels = {**all_levels, "color": _filtered_color_levels(spec)}
+    if spec.view is not None and spec.view.facets is not None:
+        levels = {**all_levels, **spec.view.facets}
+    else:
+        progress("facets")
+        levels = _facet_levels(spec, all_levels, cuts)
+    return _Found(
+        x_ranges=x_ranges,
+        y_ranges=y_ranges,
+        all_levels=all_levels,
+        levels=levels,
+        cuts=cuts,
+        color_range=color_range,
+        axis_levels=axis_levels,
+        known_boxes=known_boxes,
+        known_smooths=known_smooths,
+    )
+
+
+def _drawn(spec: ScatterSpec, found: _Found, logs: _LogAxes, used: list[str]) -> _Drawn:
+    """Return the panels of the drawn levels and the expressions of each row's panel and series."""
+    levels = found.levels
+    axes = facet_grid(
+        len(levels["row"]),
+        len(levels["col"]),
+        len(spec.x),
+        len(spec.y),
+        spec.wrap,
+        spec.wrap_cols,
+        spec.width,
+        spec.height,
+        spec.margin_left,
+        spec.margin_bottom,
+    )
+    layout = grid_layout(
+        spec.width,
+        spec.height,
+        axes.rows,
+        axes.cols,
+        WRAP_GAP if spec.wrap else GAP,
+        spec.margin_left,
+        spec.margin_bottom,
+    )
+    grid = BinGrid(
+        n_panels=layout.nrow * layout.ncol,
+        n_series=len(levels["color"]) * len(levels["symbol"]),
+        width=layout.panel_width,
+        height=layout.panel_height,
+    )
+    row_level, col_level = _index(spec, found, "row"), _index(spec, found, "col")
+    # A series is a pair of a color level and a symbol level.
+    series = _index(spec, found, "color") * len(levels["symbol"]) + _index(
+        spec, found, "symbol"
+    )
+    # The panel of a wrapped level is its index (`AxisGrid`).
+    row, col = axes.place(row_level, col_level)
+    marker_box = marker_boxes(
+        spec.marker_shapes(levels["symbol"]), spec.marker_sizes(levels["symbol"])
+    )
+    return _Drawn(
+        spec=spec,
+        found=found,
+        logs=logs,
+        used=used,
+        axes=axes,
+        layout=layout,
+        grid=grid,
+        row=row,
+        col=col,
+        row_level=row_level,
+        col_level=col_level,
+        series=series,
+        marker_box=marker_box,
+    )
+
+
 def aggregate(
     spec: ScatterSpec,
     progress: Callable[[str], None] = lambda _: None,
@@ -649,348 +853,27 @@ def aggregate(
     # A view keeps the overview's ranges, even of a log axis left without a
     # positive value by its filter: it draws no row there.
     logs = _LogAxes({}, []) if selection_only else _log_axes(spec)
-    if spec.view is None:
-        empty = [
-            (role, c)
-            for role, columns in (("x", spec.log_x), ("y", spec.log_y))
-            for c in columns
-            if logs.ranges[c] is None
-        ]
-        if empty:
-            raise NoPositiveValuesError(no_positive_message(empty))
-    if spec.view is not None:
-        x_ranges = [(lo, hi) for lo, hi in spec.view.x_ranges]
-        y_ranges = [(lo, hi) for lo, hi in spec.view.y_ranges]
-        all_levels = spec.view.levels
-        cuts = spec.view.cuts
-        color_range = spec.view.color_range
-        if color_range is not None:
-            color_range = (color_range[0], color_range[1])
-        axis_levels = spec.view.axis_levels
-        known_boxes = spec.view.boxes
-        known_smooths = spec.view.smooths
-    else:
-        progress("levels")
-        # The color levels of the local filter are found on their own,
-        # after the limits of the levels over every row.
-        found = _overview(
-            spec, {**roles, "color": None} if spec.filters_color() else roles, logs
-        )
-        x_ranges, y_ranges = found.x_ranges, found.y_ranges
-        all_levels, cuts, color_range = found.levels, found.cuts, found.color_range
-        axis_levels = found.axis_levels
-        known_boxes = []
-        known_smooths = []
-    if spec.filters_color() and (spec.view is None or spec.view.find_color):
-        progress("colors")
-        all_levels = {**all_levels, "color": _filtered_color_levels(spec)}
-    if spec.view is not None and spec.view.facets is not None:
-        levels = {**all_levels, **spec.view.facets}
-    else:
-        progress("facets")
-        levels = _facet_levels(spec, all_levels, cuts)
-
-    axes = facet_grid(
-        len(levels["row"]),
-        len(levels["col"]),
-        len(spec.x),
-        len(spec.y),
-        spec.wrap,
-        spec.wrap_cols,
-        spec.width,
-        spec.height,
-        spec.margin_left,
-        spec.margin_bottom,
-    )
-    layout = grid_layout(
-        spec.width,
-        spec.height,
-        axes.rows,
-        axes.cols,
-        WRAP_GAP if spec.wrap else GAP,
-        spec.margin_left,
-        spec.margin_bottom,
-    )
-    grid = BinGrid(
-        n_panels=layout.nrow * layout.ncol,
-        n_series=len(levels["color"]) * len(levels["symbol"]),
-        width=layout.panel_width,
-        height=layout.panel_height,
-    )
-
-    def index(role: str) -> pl.Expr:
-        """Return the index of each row's level of a role among the drawn levels."""
-        return role_index(spec, role, levels[role], all_levels[role], cuts.get(role))
-
-    row, col = index("row"), index("col")
-    # A series is a pair of a color level and a symbol level.
-    series = index("color") * len(levels["symbol"]) + index("symbol")
-    # The facet cell of a box: the drawn row and col levels.
-    row_level, col_level = row, col
-    # The panel of a wrapped level is its index (`AxisGrid`).
-    row, col = axes.place(row, col)
-    valid = drawn_conditions(spec)
-
-    def box_groups(x_col: str) -> BoxGroups:
-        """Return the boxes of the pairs of an x column."""
-        return BoxGroups(
-            len(levels["row"]),
-            len(levels["col"]),
-            len(axis_levels[x_col]),
-            grid.n_series,
-        )
-
-    def group(x_col: str) -> pl.Expr:
-        """Return each row's box among those of a pair: its facet cell, x level and series."""
-        level = level_index(x_col, axis_levels[x_col])
-        return box_groups(x_col).key(row_level, col_level, level, series)
-
-    known_boxes_of = {(b.x, b.y): b for b in known_boxes}
-    boxes = []
-    pairs_with_boxes = spec.box_pairs()
-    if pairs_with_boxes:
-        progress("boxes")
-    for y_col in spec.y:
-        for x_col in spec.x:
-            if (x_col, y_col) not in pairs_with_boxes:
-                continue
-            if (x_col, y_col) in known_boxes_of:
-                boxes.append(known_boxes_of[x_col, y_col])
-                continue
-            value = pl.col(y_col).cast(pl.Float64)
-            frame = (
-                _scan(spec, _kept_columns(spec, [x_col, y_col, *used]))
-                .filter(
-                    pl.col(x_col).is_not_null(),
-                    # On a log axis, the box of the positive values.
-                    on_axis(value, y_col in spec.log_y),
-                    *_kept(spec),
-                )
-                .select(group(x_col).alias(GROUP), value.alias(VALUE))
-            )
-            boxes.append(_boxes(x_col, y_col, box_stats(frame), box_groups(x_col)))
+    found = _find(spec, roles, logs, progress)
+    drawn = _drawn(spec, found, logs, used)
+    boxes = _all_boxes(drawn, progress)
     boxes_of = {(b.x, b.y): b for b in boxes}
-
-    known_smooths_of = {(k.x, k.y): k for k in known_smooths}
-    smooths = []
-    pairs_with_smooths = spec.smooth_pairs()
-    if pairs_with_smooths:
-        progress("smooth")
-    for y_col in spec.y:
-        for xi, x_col in enumerate(spec.x):
-            if (x_col, y_col) not in pairs_with_smooths:
-                continue
-            if (x_col, y_col) in known_smooths_of:
-                smooths.append(known_smooths_of[x_col, y_col])
-                continue
-            # The overview's range, whose bins a view's lines keep: a view
-            # with another filter fits them again over the whole range.
-            # On a log axis, the lines are fitted over the values themselves
-            # of the positive rows (the page draws them at their log10).
-            if x_col in spec.log_x:
-                at = x_ranges[xi]
-                if spec.view is not None and logs.ranges[x_col] is not None:
-                    at = logs.exponents(x_col)
-                bounds = values(at, True)
-            elif spec.view is None:
-                bounds = x_ranges[xi]
-            else:
-                bounds = _overview_range(spec, x_col)
-            smooths.append(
-                _smooths(
-                    spec,
-                    x_col,
-                    y_col,
-                    used,
-                    row_level,
-                    col_level,
-                    series,
-                    levels,
-                    bounds,
-                )
-            )
-
+    smooths = _all_smooths(drawn, progress)
     lines = line_values = None
-    pairs_with_lines = spec.line_pairs()
     if not selection_only:
-        lines, line_values = _lines(
-            spec,
-            pairs_with_lines,
-            used,
-            lambda xi, yj: axes.panel(row, col, xi, yj),
-            index("color"),
-            len(levels["color"]),
-            x_ranges,
-            y_ranges,
-            grid,
-            progress,
-        )
-
-    def pair(
-        xi: int, yj: int, extra: list[pl.Expr], extra_columns: list[str]
-    ) -> pl.DataFrame:
-        """Return the bins of the panels of one pair of axis columns, of the rows `extra` keeps."""
-        x_col, y_col = spec.x[xi], spec.y[yj]
-        outlier = pl.lit(True)
-        if (x_col, y_col) in pairs_with_lines or spec.draws_points(x_col, y_col):
-            # Two numeric axes: the stacks place the points of a categorical
-            # one. A pair of lines without points keeps the bins of its rows
-            # for the hover and the selection; its images leave them out
-            # (`ddviz.compute.tasks.plot`).
-            x = pl.col(x_col).cast(pl.Float64)
-            y = pl.col(y_col).cast(pl.Float64)
-        elif (x_col, y_col) in pairs_with_smooths:
-            # Only the smoothing lines: no row is drawn as a point.
-            x = pl.col(x_col).cast(pl.Float64)
-            y = pl.col(y_col).cast(pl.Float64)
-            outlier = pl.lit(False)
-        else:
-            # Only the outliers, spread in the slot of their series' box.
-            y = pl.col(y_col).cast(pl.Float64)
-            x = outlier_position(
-                x_col,
-                axis_levels[x_col],
-                series,
-                grid.n_series,
-                jitter(INDEX, JITTER_X),
-            )
-            groups = box_groups(x_col)
-            stats = _group_stats(boxes_of[x_col, y_col], groups)
-            outlier = is_outlier(y, group(x_col), fences(stats, groups.size))
-        # Positions on the axes: the log10 of a value on a log axis; the
-        # outliers above are of the values themselves.
-        x = position(x, x_col in spec.log_x)
-        y = position(y, y_col in spec.log_y)
-        key = grid.pack(
-            axes.panel(row, col, xi, yj),
-            series,
-            _bin_expr(y, y_ranges[yj], grid.height),
-            _bin_expr(x, x_ranges[xi], grid.width),
-        )
-
-        def query(rows: pl.LazyFrame) -> pl.LazyFrame:
-            return (
-                rows.filter(
-                    within(x, *x_ranges[xi]),
-                    within(y, *y_ranges[yj]),
-                    *valid,
-                    *extra,
-                )
-                # The group, like the key, reads the drawn facet levels: only
-                # the rows kept above have one.
-                .select(key.alias(KEY), pl.col(INDEX), outlier.alias(_OUTLIER))
-                .filter(pl.col(_OUTLIER))
-                .group_by(KEY)
-                .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
-            )
-
-        # The slices are of the scan, before the filter: each holds the same
-        # rows whatever the filter keeps.
-        return _binned(
-            _scan(spec, [x_col, y_col, *used, *extra_columns], INDEX),
-            n_rows(),
-            query,
-        )
-
-    counted: list[int] = []
-
-    def n_rows() -> int:
-        """Return the rows of the plot, counted once from the files' footers."""
-        if not counted:
-            # Any column read from files: the one band has none.
-            column = next(c for c in [*spec.x, *spec.y] if c != ONE_BAND)
-            counted.append(_scan(spec, [column]).select(pl.len()).collect().item())
-        return counted[0]
-
-    categorical = set(spec.categorical)
-    marker_box = marker_boxes(
-        spec.marker_shapes(levels["symbol"]), spec.marker_sizes(levels["symbol"])
-    )
-
-    def stacked(
-        xi: int, yj: int, extra: list[pl.Expr], extra_columns: list[str], piles: bool
-    ) -> tuple[pl.DataFrame, pl.DataFrame, Piles | None]:
-        """Return the bins, the bins of the piles and the piles of a pair with a categorical axis drawing points (`ddviz.compute.stacked`)."""
-        x_col, y_col = spec.x[xi], spec.y[yj]
-        x = Axis(x_col in categorical, *x_ranges[xi], grid.width, x_col in spec.log_x)
-        y = Axis(y_col in categorical, *y_ranges[yj], grid.height, y_col in spec.log_y)
-        columns = _kept_columns(spec, [x_col, y_col, *used, *extra_columns])
-        n_col = len(levels["col"])
-        panels = []
-        for cell in range(len(levels["row"]) * n_col):
-            r, c = axes.place(*divmod(cell, n_col))
-            panels.append(axes.panel(r, c, xi, yj))
-        frame, coordinates = stack_frame(
-            {c: spec.files[c] for c in dict.fromkeys(columns)},
-            INDEX,
-            x_col,
-            y_col,
-            x,
-            y,
-            axis_levels,
-            _kept(spec),
-            row_level * n_col + col_level,
-            panels,
-            series,
-            index("symbol"),
-            marker_box,
-            extra,
-        )
-        found = stacked_bins(
-            frame,
-            x,
-            y,
-            grid,
-            INDEX,
-            coordinates,
-            spec.color if spec.gradient else None,
-            piles,
-            tuple(dict.fromkeys([x_col, y_col])),
-        )
-
-        bins = found.bins.select(
-            KEY,
-            pl.col(ROWS).cast(pl.UInt32).alias(COUNT),
-            pl.col(TOP).cast(pl.get_index_type()).alias(INDEX),
-        )
-        in_piles = found.pile_bins.select(
-            KEY, pl.col(ROWS).cast(pl.UInt32).alias(COUNT)
-        )
-        if not piles:
-            return bins, in_piles, None
-        return bins, in_piles, Piles(x_col, y_col, found.piles, found.pile_series)
-
-    def all_pairs(
-        extra: list[pl.Expr], extra_columns: list[str], piles: bool = False
-    ) -> tuple[pl.DataFrame, pl.DataFrame, list[Piles]]:
-        """Return the bins of every pair, the bins of their piles and, when asked, their piles."""
-        # One query per pair, one after another: the pairs' panels differ, so
-        # their keys do too. One query over all pairs was about 10% faster but
-        # its peak grew with the pairs (9 pairs of 100M rows: 9.0GB against 4.0GB).
-        found = []
-        pile_bins = [pl.DataFrame(schema={KEY: pl.Int64, COUNT: pl.UInt32})]
-        drawn = []
-        for yj in range(axes.ny):
-            for xi in range(axes.nx):
-                x_col, y_col = spec.x[xi], spec.y[yj]
-                if {x_col, y_col} & categorical and spec.draws_points(x_col, y_col):
-                    bins, in_piles, pair_piles = stacked(
-                        xi, yj, extra, extra_columns, piles
-                    )
-                    found.append(bins)
-                    pile_bins.append(in_piles)
-                    if pair_piles is not None:
-                        drawn.append(pair_piles)
-                else:
-                    found.append(pair(xi, yj, extra, extra_columns))
-        return pl.concat(found).sort(KEY), pl.concat(pile_bins).sort(KEY), drawn
+        lines, line_values = _lines(drawn, progress)
+    n_rows = _RowCount(spec)
 
     bins = pile_bins = None
     piles: list[Piles] = []
     if not selection_only:
         progress("bins")
-        bins, pile_bins, piles = all_pairs(
-            filter_conditions(spec.filters), filter_columns(spec.filters), True
+        bins, pile_bins, piles = _all_pairs(
+            drawn,
+            boxes_of,
+            n_rows,
+            filter_conditions(spec.filters),
+            filter_columns(spec.filters),
+            True,
         )
         n_piles = sum(p.piles.height for p in piles)
         if n_piles > MAX_PILES:
@@ -1013,7 +896,9 @@ def aggregate(
         progress("selection")
         conditions = selection_filter(spec, INDEX)
         columns = selection_columns(spec)
-        selected, selected_piles, _ = all_pairs(conditions, columns)
+        selected, selected_piles, _ = _all_pairs(
+            drawn, boxes_of, n_rows, conditions, columns
+        )
         if spec.gradient:
             # The top selected row of each bin colors it, as in the result.
             colors = (
@@ -1035,20 +920,20 @@ def aggregate(
             .item()
         )
     return Aggregation(
-        grid=grid,
-        layout=layout,
-        axes=axes,
-        x_ranges=x_ranges,
-        y_ranges=y_ranges,
-        levels=levels,
-        all_levels=all_levels,
+        grid=drawn.grid,
+        layout=drawn.layout,
+        axes=drawn.axes,
+        x_ranges=found.x_ranges,
+        y_ranges=found.y_ranges,
+        levels=found.levels,
+        all_levels=found.all_levels,
         bins=bins,
         selected=selected,
         selected_rows=selected_rows,
         selected_piles=selected_piles,
-        cuts=cuts,
-        color_range=color_range,
-        axis_levels=axis_levels,
+        cuts=found.cuts,
+        color_range=found.color_range,
+        axis_levels=found.axis_levels,
         piles=piles,
         pile_bins=pile_bins,
         boxes=boxes,
@@ -1057,6 +942,240 @@ def aggregate(
         lines=lines,
         line_values=line_values,
     )
+
+
+def _all_boxes(drawn: _Drawn, progress: Callable[[str], None]) -> list[Boxes]:
+    """Return the box plots of each pair that has them: those the view knows, the others over the drawn rows that pass the local filter."""
+    spec = drawn.spec
+    known_boxes_of = {(b.x, b.y): b for b in drawn.found.known_boxes}
+    boxes = []
+    pairs_with_boxes = spec.box_pairs()
+    if pairs_with_boxes:
+        progress("boxes")
+    for y_col in spec.y:
+        for x_col in spec.x:
+            if (x_col, y_col) not in pairs_with_boxes:
+                continue
+            if (x_col, y_col) in known_boxes_of:
+                boxes.append(known_boxes_of[x_col, y_col])
+                continue
+            value = pl.col(y_col).cast(pl.Float64)
+            frame = (
+                _scan(spec, _kept_columns(spec, [x_col, y_col, *drawn.used]))
+                .filter(
+                    pl.col(x_col).is_not_null(),
+                    # On a log axis, the box of the positive values.
+                    on_axis(value, y_col in spec.log_y),
+                    *_kept(spec),
+                )
+                .select(drawn.group(x_col).alias(GROUP), value.alias(VALUE))
+            )
+            boxes.append(
+                _boxes(x_col, y_col, box_stats(frame), drawn.box_groups(x_col))
+            )
+    return boxes
+
+
+def _all_smooths(drawn: _Drawn, progress: Callable[[str], None]) -> list[Smooths]:
+    """Return the smoothing lines of each pair that has them: those the view knows, the others fitted again (`_smooths`)."""
+    spec = drawn.spec
+    known_smooths_of = {(k.x, k.y): k for k in drawn.found.known_smooths}
+    smooths = []
+    pairs_with_smooths = spec.smooth_pairs()
+    if pairs_with_smooths:
+        progress("smooth")
+    for y_col in spec.y:
+        for xi, x_col in enumerate(spec.x):
+            if (x_col, y_col) not in pairs_with_smooths:
+                continue
+            if (x_col, y_col) in known_smooths_of:
+                smooths.append(known_smooths_of[x_col, y_col])
+                continue
+            # The overview's range, whose bins a view's lines keep: a view
+            # with another filter fits them again over the whole range.
+            # On a log axis, the lines are fitted over the values themselves
+            # of the positive rows (the page draws them at their log10).
+            if x_col in spec.log_x:
+                at = drawn.found.x_ranges[xi]
+                if spec.view is not None and drawn.logs.ranges[x_col] is not None:
+                    at = drawn.logs.exponents(x_col)
+                bounds = values(at, True)
+            elif spec.view is None:
+                bounds = drawn.found.x_ranges[xi]
+            else:
+                bounds = _overview_range(spec, x_col)
+            smooths.append(_smooths(drawn, x_col, y_col, bounds))
+    return smooths
+
+
+def _pair(
+    drawn: _Drawn,
+    boxes_of: dict[tuple[str, str], Boxes],
+    n_rows: _RowCount,
+    xi: int,
+    yj: int,
+    extra: list[pl.Expr],
+    extra_columns: list[str],
+) -> pl.DataFrame:
+    """Return the bins of the panels of one pair of axis columns, of the rows `extra` keeps."""
+    spec, grid, found = drawn.spec, drawn.grid, drawn.found
+    x_col, y_col = spec.x[xi], spec.y[yj]
+    outlier = pl.lit(True)
+    if (x_col, y_col) in spec.line_pairs() or spec.draws_points(x_col, y_col):
+        # Two numeric axes: the stacks place the points of a categorical
+        # one. A pair of lines without points keeps the bins of its rows
+        # for the hover and the selection; its images leave them out
+        # (`ddviz.compute.tasks.plot`).
+        x = pl.col(x_col).cast(pl.Float64)
+        y = pl.col(y_col).cast(pl.Float64)
+    elif (x_col, y_col) in spec.smooth_pairs():
+        # Only the smoothing lines: no row is drawn as a point.
+        x = pl.col(x_col).cast(pl.Float64)
+        y = pl.col(y_col).cast(pl.Float64)
+        outlier = pl.lit(False)
+    else:
+        # Only the outliers, spread in the slot of their series' box.
+        y = pl.col(y_col).cast(pl.Float64)
+        x = outlier_position(
+            x_col,
+            found.axis_levels[x_col],
+            drawn.series,
+            grid.n_series,
+            jitter(INDEX, JITTER_X),
+        )
+        groups = drawn.box_groups(x_col)
+        stats = _group_stats(boxes_of[x_col, y_col], groups)
+        outlier = is_outlier(y, drawn.group(x_col), fences(stats, groups.size))
+    # Positions on the axes: the log10 of a value on a log axis; the
+    # outliers above are of the values themselves.
+    x = position(x, x_col in spec.log_x)
+    y = position(y, y_col in spec.log_y)
+    key = grid.pack(
+        drawn.axes.panel(drawn.row, drawn.col, xi, yj),
+        drawn.series,
+        _bin_expr(y, found.y_ranges[yj], grid.height),
+        _bin_expr(x, found.x_ranges[xi], grid.width),
+    )
+    valid = drawn_conditions(spec)
+
+    def query(rows: pl.LazyFrame) -> pl.LazyFrame:
+        return (
+            rows.filter(
+                within(x, *found.x_ranges[xi]),
+                within(y, *found.y_ranges[yj]),
+                *valid,
+                *extra,
+            )
+            # The group, like the key, reads the drawn facet levels: only
+            # the rows kept above have one.
+            .select(key.alias(KEY), pl.col(INDEX), outlier.alias(_OUTLIER))
+            .filter(pl.col(_OUTLIER))
+            .group_by(KEY)
+            .agg(pl.len().alias(COUNT), pl.col(INDEX).max())
+        )
+
+    # The slices are of the scan, before the filter: each holds the same
+    # rows whatever the filter keeps.
+    return _binned(
+        _scan(spec, [x_col, y_col, *drawn.used, *extra_columns], INDEX),
+        n_rows(),
+        query,
+    )
+
+
+def _stacked(
+    drawn: _Drawn,
+    xi: int,
+    yj: int,
+    extra: list[pl.Expr],
+    extra_columns: list[str],
+    piles: bool,
+) -> tuple[pl.DataFrame, pl.DataFrame, Piles | None]:
+    """Return the bins, the bins of the piles and the piles of a pair with a categorical axis drawing points (`ddviz.compute.stacked`)."""
+    spec, grid, axes, levels = drawn.spec, drawn.grid, drawn.axes, drawn.found.levels
+    x_ranges, y_ranges = drawn.found.x_ranges, drawn.found.y_ranges
+    categorical = set(spec.categorical)
+    x_col, y_col = spec.x[xi], spec.y[yj]
+    x = Axis(x_col in categorical, *x_ranges[xi], grid.width, x_col in spec.log_x)
+    y = Axis(y_col in categorical, *y_ranges[yj], grid.height, y_col in spec.log_y)
+    columns = _kept_columns(spec, [x_col, y_col, *drawn.used, *extra_columns])
+    n_col = len(levels["col"])
+    panels = []
+    for cell in range(len(levels["row"]) * n_col):
+        r, c = axes.place(*divmod(cell, n_col))
+        panels.append(axes.panel(r, c, xi, yj))
+    frame, coordinates = stack_frame(
+        {c: spec.files[c] for c in dict.fromkeys(columns)},
+        INDEX,
+        x_col,
+        y_col,
+        x,
+        y,
+        drawn.found.axis_levels,
+        _kept(spec),
+        drawn.row_level * n_col + drawn.col_level,
+        panels,
+        drawn.series,
+        drawn.index("symbol"),
+        drawn.marker_box,
+        extra,
+    )
+    found = stacked_bins(
+        frame,
+        x,
+        y,
+        grid,
+        INDEX,
+        coordinates,
+        spec.color if spec.gradient else None,
+        piles,
+        tuple(dict.fromkeys([x_col, y_col])),
+    )
+
+    bins = found.bins.select(
+        KEY,
+        pl.col(ROWS).cast(pl.UInt32).alias(COUNT),
+        pl.col(TOP).cast(pl.get_index_type()).alias(INDEX),
+    )
+    in_piles = found.pile_bins.select(KEY, pl.col(ROWS).cast(pl.UInt32).alias(COUNT))
+    if not piles:
+        return bins, in_piles, None
+    return bins, in_piles, Piles(x_col, y_col, found.piles, found.pile_series)
+
+
+def _all_pairs(
+    drawn: _Drawn,
+    boxes_of: dict[tuple[str, str], Boxes],
+    n_rows: _RowCount,
+    extra: list[pl.Expr],
+    extra_columns: list[str],
+    piles: bool = False,
+) -> tuple[pl.DataFrame, pl.DataFrame, list[Piles]]:
+    """Return the bins of every pair, the bins of their piles and, when asked, their piles."""
+    spec = drawn.spec
+    categorical = set(spec.categorical)
+    # One query per pair, one after another: the pairs' panels differ, so
+    # their keys do too. One query over all pairs was about 10% faster but
+    # its peak grew with the pairs (9 pairs of 100M rows: 9.0GB against 4.0GB).
+    found = []
+    pile_bins = [pl.DataFrame(schema={KEY: pl.Int64, COUNT: pl.UInt32})]
+    drawn_piles = []
+    for yj in range(drawn.axes.ny):
+        for xi in range(drawn.axes.nx):
+            x_col, y_col = spec.x[xi], spec.y[yj]
+            if {x_col, y_col} & categorical and spec.draws_points(x_col, y_col):
+                bins, in_piles, pair_piles = _stacked(
+                    drawn, xi, yj, extra, extra_columns, piles
+                )
+                found.append(bins)
+                pile_bins.append(in_piles)
+                if pair_piles is not None:
+                    drawn_piles.append(pair_piles)
+            else:
+                found.append(
+                    _pair(drawn, boxes_of, n_rows, xi, yj, extra, extra_columns)
+                )
+    return pl.concat(found).sort(KEY), pl.concat(pile_bins).sort(KEY), drawn_piles
 
 
 def _overview_range(spec: ScatterSpec, column: str) -> tuple[float, float]:
@@ -1075,27 +1194,21 @@ def _kept_columns(spec: ScatterSpec, columns: list[str]) -> list[str]:
 
 
 def _lines(
-    spec: ScatterSpec,
-    pairs: set[tuple[str, str]],
-    used: list[str],
-    panel: Callable[[int, int], pl.Expr],
-    color: pl.Expr,
-    n_colors: int,
-    x_ranges: list[tuple[float, float]],
-    y_ranges: list[tuple[float, float]],
-    grid: BinGrid,
-    progress: Callable[[str], None],
+    drawn: _Drawn, progress: Callable[[str], None]
 ) -> tuple[LinePixels, pl.Series | None]:
     """Return the pixels of the lines of each pair, over the drawn rows that pass the local filter (`ddviz.compute.lines`).
 
     A pair's series are its facet cells by color level; a gradient's color
     splits none, and the color of each row is kept instead.
     """
+    spec, grid = drawn.spec, drawn.grid
+    pairs = spec.line_pairs()
     if not pairs:
         return LinePixels.empty(), None
     progress("lines")
+    color = drawn.index("color")
     # A gradient's lines are one series a panel; the others', one a color level.
-    n_series = 1 if spec.gradient else n_colors
+    n_series = 1 if spec.gradient else len(drawn.found.levels["color"])
     parts, values = [], []
     offset = 0
     for yj, y_col in enumerate(spec.y):
@@ -1103,13 +1216,13 @@ def _lines(
             if (x_col, y_col) not in pairs:
                 continue
             rows = _scan(
-                spec, _kept_columns(spec, [x_col, y_col, *used]), INDEX
+                spec, _kept_columns(spec, [x_col, y_col, *drawn.used]), INDEX
             ).filter(*_kept(spec))
             frame = line_frame(
                 rows,
                 x_col,
                 y_col,
-                panel(xi, yj),
+                drawn.axes.panel(drawn.row, drawn.col, xi, yj),
                 pl.lit(0) if spec.gradient else color,
                 n_series,
                 color,
@@ -1122,8 +1235,8 @@ def _lines(
                 frame,
                 x_col in spec.log_x,
                 y_col in spec.log_y,
-                x_ranges[xi],
-                y_ranges[yj],
+                drawn.found.x_ranges[xi],
+                drawn.found.y_ranges[yj],
                 grid.width,
                 grid.height,
                 n_series,
@@ -1136,27 +1249,21 @@ def _lines(
 
 
 def _smooths(
-    spec: ScatterSpec,
-    x_col: str,
-    y_col: str,
-    used: list[str],
-    row: pl.Expr,
-    col: pl.Expr,
-    series: pl.Expr,
-    levels: dict[str, list],
-    bounds: tuple[float, float],
+    drawn: _Drawn, x_col: str, y_col: str, bounds: tuple[float, float]
 ) -> Smooths:
     """Return the smoothing lines of a pair over the drawn rows that pass the local filter, one per facet cell and series (`ddviz.compute.smooth`)."""
+    spec = drawn.spec
     x = pl.col(x_col).cast(pl.Float64)
     y = pl.col(y_col).cast(pl.Float64)
     # On a log axis, only the positive values have a place to be drawn.
-    frame = _scan(spec, _kept_columns(spec, [x_col, y_col, *used])).filter(
+    frame = _scan(spec, _kept_columns(spec, [x_col, y_col, *drawn.used])).filter(
         on_axis(x, x_col in spec.log_x),
         on_axis(y, y_col in spec.log_y),
         *_kept(spec),
     )
-    n_col = len(levels["col"])
-    bins = bin_query(frame, x, y, row * n_col + col, series, bounds).collect(
+    n_col = len(drawn.found.levels["col"])
+    cells = drawn.row_level * n_col + drawn.col_level
+    bins = bin_query(frame, x, y, cells, drawn.series, bounds).collect(
         engine="streaming"
     )
     lines = [
@@ -1167,7 +1274,7 @@ def _smooths(
 
 
 def _boxes(x: str, y: str, stats: dict[int, list[float]], groups: BoxGroups) -> Boxes:
-    """Return the box plots of a pair from the boxes of its groups (`aggregate`'s ``group``)."""
+    """Return the box plots of a pair from the boxes of its groups (`_Drawn.group`)."""
     rows = [[*groups.parts(g), *stats[g]] for g in sorted(stats)]
     return Boxes(x=x, y=y, stats=rows)
 
