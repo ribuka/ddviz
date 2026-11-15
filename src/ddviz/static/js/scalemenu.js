@@ -5,6 +5,7 @@
 // (shapemenu.js): a gradient's legend has no markers, and the markers of the
 // intervals open this menu.
 import { COLOR_SETS, scale } from "./colorscale.js";
+import { menuHeading, menuItem, Popup } from "./popup.js";
 import { SIZE_HEADING, SIZES } from "./shapemenu.js";
 
 // Numbers of intervals offered (`ddviz.server.plan.COLOR_BINS`).
@@ -18,19 +19,7 @@ const BY = [
 // cuts that way.
 let preferredBy = "values";
 
-let open = null;
-
-function close() {
-  open?.remove();
-  open = null;
-}
-
-window.addEventListener("pointerdown", (event) => {
-  if (open && !open.contains(event.target)) close();
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") close();
-});
+const popup = new Popup();
 
 // Opens the menu at a right click; the counts and the way to cut are two
 // lists, so that each count shows once. `bins` is the current cutting ({n, by})
@@ -38,27 +27,16 @@ window.addEventListener("keydown", (event) => {
 // gradient); `onScale` runs after a new color set or direction. `size` is
 // the size of the markers and `onSize` gets the size picked.
 export function openScaleMenu(event, bins, onBins, onScale, size, onSize) {
-  close();
   const menu = document.createElement("div");
   menu.className = "scale-menu";
   const item = (text, checked, run) => {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "scale-menu-item";
-    row.classList.toggle("checked", checked);
-    row.textContent = text;
-    row.addEventListener("click", () => {
-      close();
+    const pick = () => {
+      popup.close();
       run();
-    });
-    menu.append(row);
+    };
+    menu.append(menuItem(text, pick, { checked }));
   };
-  const heading = (text) => {
-    const head = document.createElement("div");
-    head.className = "scale-menu-heading";
-    head.textContent = text;
-    menu.append(head);
-  };
+  const heading = (text) => menu.append(menuHeading(text));
   const by = bins?.by ?? preferredBy;
   item("連続（グラデーション）", bins === null, () => bins !== null && onBins(null));
   heading("区間に分ける");
@@ -91,10 +69,5 @@ export function openScaleMenu(event, bins, onBins, onScale, size, onSize) {
   for (const pick of SIZES) {
     item(`${pick} px`, pick === size, () => pick !== size && onSize(pick));
   }
-  document.body.append(menu);
-  const { innerWidth, innerHeight } = window;
-  const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(4, Math.min(event.clientX, innerWidth - rect.width - 4))}px`;
-  menu.style.top = `${Math.max(4, Math.min(event.clientY, innerHeight - rect.height - 4))}px`;
-  open = menu;
+  popup.open(menu, event);
 }

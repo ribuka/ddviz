@@ -3,6 +3,7 @@
 // axes of the mode bar, nearer to the mouse. Each item clicks the mode bar's
 // own button, so that it does what that button does; the drag mode in use is
 // checked.
+import { menuItem, menuSeparator, Popup } from "./popup.js";
 
 // The mode bar's buttons (`data-attr`, `data-val`), as plotly draws them.
 const MODES = [
@@ -12,49 +13,24 @@ const MODES = [
 ];
 const RESET = '.modebar-btn[data-attr="zoom"][data-val="reset"]';
 
-let open = null;
-
-function close() {
-  open?.remove();
-  open = null;
-}
-
-window.addEventListener("pointerdown", (event) => {
-  if (open && !open.contains(event.target)) close();
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") close();
-});
+const popup = new Popup();
 
 // Opens the menu at a right click on `gd`, a plot drawn with the mode bar.
 export function openPlotMenu(event, gd) {
-  close();
   const menu = document.createElement("div");
   menu.className = "scale-menu plot-menu";
   const item = (text, checked, selector) => {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "scale-menu-item";
-    row.classList.toggle("checked", checked);
-    row.textContent = text;
-    row.addEventListener("click", () => {
-      close();
+    const pick = () => {
+      popup.close();
       gd.querySelector(selector)?.click();
-    });
-    menu.append(row);
+    };
+    menu.append(menuItem(text, pick, { checked }));
   };
   const mode = gd._fullLayout.dragmode;
   for (const [key, text] of MODES) {
     item(text, mode === key, `.modebar-btn[data-attr="dragmode"][data-val="${key}"]`);
   }
-  const gap = document.createElement("div");
-  gap.className = "scale-menu-separator";
-  menu.append(gap);
+  menu.append(menuSeparator());
   item("Reset axes", false, RESET);
-  document.body.append(menu);
-  const { innerWidth, innerHeight } = window;
-  const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(4, Math.min(event.clientX, innerWidth - rect.width - 4))}px`;
-  menu.style.top = `${Math.max(4, Math.min(event.clientY, innerHeight - rect.height - 4))}px`;
-  open = menu;
+  popup.open(menu, event);
 }

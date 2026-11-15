@@ -10,6 +10,7 @@
 // an item is picked (`Builder.menuPlace`). A click outside, Escape, or an
 // item picked closes the menu; so does a search that no longer lists the
 // column (`closeColumnMenuIfGone`).
+import { menuItem, Popup } from "./popup.js";
 
 const ITEMS = [
   ["filter", null, "Add to Local filter"],
@@ -28,21 +29,25 @@ const PLACED = "既に配置済み";
 // less room on both sides, it takes the window's width over the menu.
 const SUBMENU_MIN_WIDTH = 120;
 
-// The open menu and its submenu, and the name of its column; null when closed.
-let open = null;
+// The submenu of the open menu, and the name of its column; null when closed.
 let sub = null;
 let target = null;
-
-export function closeColumnMenu() {
-  closeSub();
-  open?.remove();
-  open = null;
-  target = null;
-}
 
 function closeSub() {
   sub?.remove();
   sub = null;
+}
+
+const popup = new Popup({
+  onClose: () => {
+    closeSub();
+    target = null;
+  },
+  inside: () => [sub],
+});
+
+export function closeColumnMenu() {
+  popup.close();
 }
 
 // Closes the menu when its column is not among `names` (the columns listed).
@@ -50,49 +55,30 @@ export function closeColumnMenuIfGone(names) {
   if (target !== null && !names.includes(target)) closeColumnMenu();
 }
 
-window.addEventListener("pointerdown", (event) => {
-  if (open && !open.contains(event.target) && !sub?.contains(event.target)) closeColumnMenu();
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeColumnMenu();
-});
-
 // Opens the menu of `column` (`{name, numeric, temporal, placed}`, where
 // `placed()` is called when it is placed) at the pointer of `event`.
 // `builder` is the graph builder, `filters` the filter pane.
 export function openColumnMenu(event, column, builder, filters) {
-  closeColumnMenu();
   const menu = document.createElement("div");
   menu.className = "scale-menu column-menu";
   for (const [role, mode, text] of ITEMS) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "scale-menu-item";
-    row.dataset.role = role;
-    if (mode) row.dataset.mode = mode;
-    row.textContent = text;
-    menu.append(row);
-    if (role === "filter") {
-      const reasons = filters.has(column.name) ? [PLACED] : [];
-      disable(row, reasons);
-      row.addEventListener("pointerenter", closeSub);
-      row.addEventListener("click", () => {
+    const filter = role === "filter";
+    let reasons;
+    if (filter) reasons = filters.has(column.name) ? [PLACED] : [];
+    else reasons = builder.menuRefusals(role, mode, column.name);
+    const axes = !filter && reasons.length === 0 && mode === "overwrite" ? builder.placed(role) : [];
+    // On hover, the item closes the submenu, or opens its own.
+    let hover = closeSub;
+    let pick;
+    if (filter) {
+      pick = () => {
         closeColumnMenu();
         if (filters.has(column.name)) return;
         filters.add(column);
         column.placed?.();
-      });
-      continue;
-    }
-    disable(row, builder.menuRefusals(role, mode, column.name));
-    if (row.disabled) {
-      row.addEventListener("pointerenter", closeSub);
-      continue;
-    }
-    const axes = mode === "overwrite" ? builder.placed(role) : [];
-    if (axes.length > 1) {
-      row.classList.add("has-sub");
-      const show = () => {
+      };
+    } else if (axes.length > 1) {
+      hover = () => {
         if (sub?.dataset.role === role) return;
         closeSub();
         sub = axisMenu(row, role, axes, (index) => {
@@ -100,29 +86,24 @@ export function openColumnMenu(event, column, builder, filters) {
           builder.menuPlace(role, mode, column, index);
         });
       };
-      row.addEventListener("pointerenter", show);
-      row.addEventListener("click", show);
+      pick = hover;
     } else {
-      row.addEventListener("pointerenter", closeSub);
-      row.addEventListener("click", () => {
+      pick = () => {
         closeColumnMenu();
         builder.menuPlace(role, mode, column, 0);
-      });
+      };
     }
+    // An item that cannot be done is disabled, with the reasons as its tip.
+    const row = menuItem(text, pick, { disabled: reasons.length > 0 });
+    row.title = reasons.join("、");
+    row.dataset.role = role;
+    if (mode) row.dataset.mode = mode;
+    if (axes.length > 1) row.classList.add("has-sub");
+    row.addEventListener("pointerenter", hover);
+    menu.append(row);
   }
-  document.body.append(menu);
-  const { innerWidth, innerHeight } = window;
-  const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(4, Math.min(event.clientX, innerWidth - rect.width - 4))}px`;
-  menu.style.top = `${Math.max(4, Math.min(event.clientY, innerHeight - rect.height - 4))}px`;
-  open = menu;
+  popup.open(menu, event);
   target = column.name;
-}
-
-// Disables `row` when there are `reasons` it cannot be done, shown as its tip.
-function disable(row, reasons) {
-  row.disabled = reasons.length > 0;
-  row.title = reasons.join("、");
 }
 
 // Opens the submenu of `role`'s axes (`names`, in their order) beside
@@ -132,12 +113,7 @@ function axisMenu(row, role, names, pick) {
   menu.className = "scale-menu column-submenu";
   menu.dataset.role = role;
   names.forEach((name, index) => {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "scale-menu-item";
-    item.textContent = `${index + 1}. ${name}`;
-    item.addEventListener("click", () => pick(index));
-    menu.append(item);
+    menu.append(menuItem(`${index + 1}. ${name}`, () => pick(index)));
   });
   document.body.append(menu);
   const box = row.getBoundingClientRect();
