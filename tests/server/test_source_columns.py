@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from ddviz.server.app import create_app
 from ddviz.server.settings import Settings
+from ddviz.server.settings_store import SettingsStore
 
 TOKEN = "secret-of-the-run"
 SIZE = {"width": 400, "height": 300}
@@ -33,7 +34,7 @@ def _serve(tmp_path: Path, paths: list[Path], recursive: bool) -> Iterator[TestC
         run,
         tmp_path / "cache",
         tmp_path / "history",
-        Settings(),
+        SettingsStore(Settings()),
         TOKEN,
     )
     with TestClient(app) as client:

@@ -1,5 +1,6 @@
 # ddviz の設定。exe では ddviz.exe と同じフォルダの config/settings.toml を読む。
-# 項目を省いたときは既定値を使う。
+# 同じフォルダに settings.local.toml があれば、その項目がこのファイルより優先する
+# （アプリの Edit → Preferences… はそこへ保存する）。どちらにもない項目は既定値を使う。
 
 [cache]
 # 列キャッシュ（%LOCALAPPDATA%\ddviz\cache）の合計の上限（GB）。
@@ -25,7 +26,7 @@ max_axis_levels = 1000000
 # 0 なら非アクティブの系列は見えなくなり、ホバーでも拾わない。
 # 範囲選択の間、選ばれなかった行は 0.25 で描くので、0.25 以上にすると
 # 選ばれなかった系列と非アクティブの系列の見分けがつきにくくなる。
-inactive_opacity = 0.1
+inactive_opacity = 0.15
 
 [plot.image_copy]
 # グラフの右クリックメニューの Copy graph image でコピーする PNG の解像度（DPI）。

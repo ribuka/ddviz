@@ -18,6 +18,7 @@ import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 import uvicorn
 import webview
@@ -46,6 +47,10 @@ TITLE = "ddviz"
 _STATIC = Path(__file__).parents[1] / "static"
 _TITLEBAR_CSS = (_STATIC / "titlebar.css").read_text(encoding="utf-8")
 _TITLEBAR_JS = (_STATIC / "js" / "titlebar.js").read_text(encoding="utf-8")
+# The Preferences dialog that the title bar's menu opens (`Edit`), as the UI
+# server's page has it.
+_PREFERENCES_CSS = (_STATIC / "preferences.css").read_text(encoding="utf-8")
+_PREFERENCES_JS = (_STATIC / "js" / "preferences.js").read_text(encoding="utf-8")
 
 
 def _page(screen: str, style: str, body: str) -> str:
@@ -69,8 +74,9 @@ def _page(screen: str, style: str, body: str) -> str:
     return (
         f'<!doctype html><html lang="ja" class="desktop" data-screen="{screen}">'
         f'<head><meta charset="utf-8"><title>{TITLE}</title>'
-        f"<style>{_TITLEBAR_CSS}{style}</style></head>"
-        f"<body><script>{_TITLEBAR_JS}</script>{body}</body></html>"
+        f"<style>{_TITLEBAR_CSS}{_PREFERENCES_CSS}{style}</style></head>"
+        f"<body><script>{_PREFERENCES_JS}</script><script>{_TITLEBAR_JS}</script>"
+        f"{body}</body></html>"
     )
 
 
@@ -452,11 +458,22 @@ MakeApp = Callable[
 ]
 
 
+class Preferences(Protocol):
+    """The settings the Preferences dialog reads and saves (`ddviz.server.preferences.Preferences`)."""
+
+    def state(self) -> dict:
+        """Return the dialog's items and the values in effect."""
+
+    def save(self, changes: dict) -> dict:
+        """Save the changed values; return those in effect, or the error."""
+
+
 def run_window(
     paths: list[str] | None,
     recursive: bool,
     make_app: MakeApp,
     label: Callable[[list[str]], str],
+    preferences: Preferences,
 ) -> int:
     """Run the app in its own window until the window closes.
 
@@ -476,6 +493,10 @@ def run_window(
     label : callable
         Names an input in the window's title
         (`ddviz.shared.inputs.input_label`; the window does not import it).
+    preferences : Preferences
+        The settings of the Preferences dialog, which the app menu opens on
+        the chooser and on the input's page; they outlive the UI servers,
+        which read the same settings.
 
     Returns
     -------
@@ -505,7 +526,7 @@ def run_window(
                 "問題が続く場合は、このログを開発者に送ってください。"
             )
         _log.info("using %s", runtime)
-        if not _run(paths, recursive, make_app, label):
+        if not _run(paths, recursive, make_app, label, preferences):
             return 1
         log.finish()
         return 0
@@ -556,11 +577,18 @@ class _Api:
     """What the window's pages may call through pywebview's JS API, and nothing else of `_App`.
 
     The chooser calls `choose` and `cancel`; the title bar's app menu
-    (`static/js/titlebar.js`) calls `new`, `quit` and `version`, on every page.
+    (`static/js/titlebar.js`) calls `new`, `quit`, `version`, `settings` and
+    `save_settings`, on every page.
+
+    Parameters
+    ----------
+    preferences : Preferences
+        The settings of the Preferences dialog.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, preferences: Preferences) -> None:
         self.app: _App | None = None
+        self._preferences = preferences
 
     def choose(self, kind: str, recursive: bool) -> None:
         """Open the OS dialog for files or a folder (`_App.choose`)."""
@@ -594,17 +622,30 @@ class _Api:
         """Return ddviz's version (`_App.version`)."""
         return self.app.version()
 
+    def settings(self) -> dict:
+        """Return the Preferences dialog's items and the values in effect (`Preferences.state`)."""
+        return self._preferences.state()
+
+    def save_settings(self, changes: dict) -> dict:
+        """Save the values changed in the Preferences dialog (`Preferences.save`).
+
+        The page's UI server reads the same settings, so its next tasks use
+        them; the page redraws what takes them at once.
+        """
+        return self._preferences.save(changes)
+
 
 def _run(
     paths: list[str] | None,
     recursive: bool,
     make_app: MakeApp,
     label: Callable[[list[str]], str],
+    preferences: Preferences,
 ) -> bool:
     """Show the window until it closes; return whether everything went well."""
     webview.settings["SHOW_DEFAULT_MENUS"] = False
     webview.settings["ALLOW_FILE_URLS"] = False
-    api = _Api()
+    api = _Api(preferences)
     window = webview.create_window(
         TITLE,
         html=_CHOOSER if paths is None else _LOADING,

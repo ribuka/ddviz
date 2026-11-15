@@ -1,8 +1,9 @@
 r"""Build the ddviz folder for distribution: ``dist\ddviz``.
 
 Run from the repository root with ``uv run --group build packaging/build.py``.
-It builds the exe with PyInstaller (onedir) and copies ``config`` and the
-notices of the WebView2 SDK next to the exe. The WebView2 Runtime is not
+It builds the exe with PyInstaller (onedir) and copies ``config`` (without
+the local settings, ``settings.local.toml``, which the Preferences of the
+app write) and the notices of the WebView2 SDK next to the exe. The WebView2 Runtime is not
 bundled: the exe uses the one installed on the PC, or a fixed-version runtime
 that an administrator places in ``webview2`` next to the exe.
 """
@@ -21,6 +22,22 @@ DIST = ROOT / "dist" / "ddviz"
 # The notices shipped next to the exe, copied byte for byte (CRLF, for Notepad
 # on Server 2016).
 NOTICES = ("LICENSE-WebView2-SDK.txt", "NOTICE.txt")
+# The local settings of this checkout, which the distribution leaves out:
+# it ships the shared ``settings.toml`` alone.
+LOCAL_SETTINGS = "settings.local.toml"
+
+
+def copy_config(source: Path, target: Path) -> None:
+    """Copy the ``config`` folder `source` to `target`, without the local settings.
+
+    Parameters
+    ----------
+    source : Path
+        The repository's ``config``; it is not changed.
+    target : Path
+        The distribution's ``config``, which must not exist.
+    """
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns(LOCAL_SETTINGS))
 
 
 def busy_files(folder: Path) -> list[Path]:
@@ -84,7 +101,7 @@ def main() -> int:
         ],
         check=True,
     )
-    shutil.copytree(ROOT / "config", DIST / "config")
+    copy_config(ROOT / "config", DIST / "config")
     for name in NOTICES:
         shutil.copy2(PACKAGING / name, DIST / name)
     print(f"built {DIST}", flush=True)

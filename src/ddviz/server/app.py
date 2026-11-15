@@ -36,7 +36,7 @@ from ddviz.server.history import SearchHistory, history_file
 from ddviz.server.memory import FrontendPids, MemoryMeter
 from ddviz.server.page import index_page
 from ddviz.server.results import Results
-from ddviz.server.settings import Settings
+from ddviz.server.settings_store import SettingsStore
 from ddviz.server.source import Source
 from ddviz.shared.inputs import input_label
 from ddviz.workers.jobs import WorkerJob, physical_memory
@@ -50,7 +50,7 @@ def create_app(
     root: Path,
     cache_root: Path,
     history_root: Path,
-    settings: Settings,
+    settings: SettingsStore,
     token: str,
     frontend_pids: FrontendPids | None = None,
     desktop: bool = False,
@@ -72,8 +72,9 @@ def create_app(
     history_root : pathlib.Path
         Directory of the column list's search histories, one file per input
         (`ddviz.server.history`); kept across runs.
-    settings : Settings
-        The settings (`ddviz.server.settings`).
+    settings : SettingsStore
+        The settings in effect, which the routes read when a task or request
+        starts (`ddviz.server.settings_store`).
     token : str
         Secret of this run; requests without it are refused with 403.
     frontend_pids : callable or None
@@ -94,7 +95,12 @@ def create_app(
     """
     broker = TaskBroker(root)
     source = Source(
-        data_paths, recursive, cache_root, root / "level-index", settings, broker
+        data_paths,
+        recursive,
+        cache_root,
+        root / "level-index",
+        lambda: settings.current.cache,
+        broker,
     )
     results = Results()
     exporting = Exporting()
@@ -102,7 +108,7 @@ def create_app(
     history = SearchHistory(
         history_file(history_root, source.paths),
         source.paths,
-        settings.columns.max_history,
+        lambda: settings.current.columns.max_history,
     )
 
     @asynccontextmanager
@@ -135,13 +141,14 @@ def create_app(
     @app.get("/api/settings")
     async def page_settings() -> dict:
         """Return the settings the page draws with: the opacity of the legend's inactive series, the DPI of the copied graph image and the most intervals of a numeric color column."""
+        plot = settings.current.plot
         return {
-            "inactive_opacity": settings.plot.legend.inactive_opacity,
-            "max_levels": settings.plot.max_levels,
-            "image_copy_dpi": settings.plot.image_copy.dpi,
+            "inactive_opacity": plot.legend.inactive_opacity,
+            "max_levels": plot.max_levels,
+            "image_copy_dpi": plot.image_copy.dpi,
         }
 
-    app.include_router(source_router(source, settings.columns.max_listed))
+    app.include_router(source_router(source, lambda: settings.current.columns.max_listed))
     app.include_router(history_router(history))
     app.include_router(memory_router(meter))
     app.include_router(
@@ -149,9 +156,7 @@ def create_app(
             source,
             results,
             broker,
-            settings.plot.max_levels,
-            settings.plot.max_axis_levels,
-            settings.hover.max_temp_bytes,
+            lambda: settings.current,
         )
     )
     app.include_router(export_router(source, results, broker, exporting))

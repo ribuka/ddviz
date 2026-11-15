@@ -25,7 +25,10 @@ const SEARCH_DELAY_MS = 150;
 const PENDING_RETRY_MS = 1000;
 
 // `onMenu(event, column)` opens the menu of a listed column (`{name,
-// numeric, temporal, placed}`) at a right click on its row.
+// numeric, temporal, placed}`) at a right click on its row. It returns
+// `loaded`, the first search, and `refresh`, which searches again with the
+// keyword, kind, filters and order shown (after `columns.max_listed` was
+// saved) and rejects when the server refuses.
 export function attachColumnList(root, onMenu) {
   const input = root.querySelector(".column-search");
   const kinds = root.querySelectorAll("[data-kind]");
@@ -52,10 +55,10 @@ export function attachColumnList(root, onMenu) {
     else if (hideEmpty.checked) query.set("min_share", 0);
     if (order !== "file") query.set("order", order);
     const response = await fetch(`/api/columns?${query}`);
-    if (mine !== generation) return;
+    if (mine !== generation) return true;
     if (!response.ok) {
       count.textContent = `エラー: ${await response.text()}`;
-      return;
+      return false;
     }
     const found = await response.json();
     const shown = found.matched > found.columns.length ? `、上位 ${found.columns.length} 件を表示` : "";
@@ -68,6 +71,7 @@ export function attachColumnList(root, onMenu) {
     showColumns(list, found, remember, onMenu);
     closeColumnMenuIfGone(found.columns.map((column) => column.name));
     if (found.shares === "pending") timer = setTimeout(search, PENDING_RETRY_MS);
+    return true;
   }
 
   function searchSoon() {
@@ -94,7 +98,12 @@ export function attachColumnList(root, onMenu) {
       search();
     });
   }
-  return search();
+  return {
+    loaded: search(),
+    async refresh() {
+      if (!(await search())) throw new Error("列の一覧を取得できませんでした");
+    },
+  };
 }
 
 // The "Sort by" menu. A press on its button does not close it: the

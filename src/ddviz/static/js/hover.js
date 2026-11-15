@@ -106,12 +106,17 @@ function locate(gd, meta, event) {
 
 // Attaches the hover to the plot element once; `getMeta` returns the meta of
 // the result whose images are drawn (the overview or a zoomed view). Only one
-// lookup is in flight; moves during it collapse into the latest one.
+// lookup is in flight; moves during it collapse into the latest one. It
+// returns what hides the hover and drops the answers still in flight, for a
+// change that makes them wrong (another result, the series made invisible
+// by the opacity 0 or visible again).
 export function attachHover(gd, getMeta, legend, onTiming) {
   const label = document.getElementById("hover-label");
   const ring = document.getElementById("hover-ring");
   let queued = null;
   let busy = false;
+  // Bumped by the function returned: a lookup of an older one shows nothing.
+  let epoch = 0;
 
   function hide() {
     label.hidden = true;
@@ -121,13 +126,14 @@ export function attachHover(gd, getMeta, legend, onTiming) {
   async function show(event) {
     const meta = getMeta();
     if (!meta) return;
+    const mine = epoch;
     // A pile under the cursor (its marker or its label) answers before the
     // points near it.
     const rect = gd.getBoundingClientRect();
     const alpha = (s) => legend.opacity(s);
     const pile = pileAt(gd._fullLayout, meta, event.clientX - rect.left, event.clientY - rect.top, alpha);
     if (pile >= 0) {
-      await showPile(meta, pile);
+      await showPile(meta, pile, mine);
       return;
     }
     const at = locate(gd, meta, event);
@@ -159,6 +165,7 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     const body = await response.json();
     onTiming?.(performance.now() - started);
     const hit = body.hit;
+    if (mine !== epoch) return;
     if (!hit || meta !== getMeta()) {
       hide();
       return;
@@ -192,9 +199,10 @@ export function attachHover(gd, getMeta, legend, onTiming) {
 
   // Shows a pile: the rows that share its coordinates, in all and by series.
   // It stands for many rows, so no row's other values show.
-  async function showPile(meta, i) {
+  async function showPile(meta, i, mine) {
     const query = new URLSearchParams({ task: meta.task, i });
     const body = await (await fetch(`/api/pile?${query}`)).json();
+    if (mine !== epoch) return;
     const pile = body.pile;
     const at = pileCenter(gd._fullLayout, meta, i);
     if (!pile || !at || meta !== getMeta()) {
@@ -286,5 +294,9 @@ export function attachHover(gd, getMeta, legend, onTiming) {
     queued = null;
     hide();
   });
-  return hide;
+  return () => {
+    epoch += 1;
+    queued = null;
+    hide();
+  };
 }

@@ -233,7 +233,7 @@ def test_the_limits_advise_by_the_dpi(js_page: Page) -> None:
         }"""
     )
     assert "40000 × 10 px、300 DPI" in advice[0]
-    assert "plot.image_copy.dpi を 96 に変更して再起動するか、パネル数を減らしてください" in advice[0]
+    assert "Preferences… でグラフ画像のコピーの解像度を 96 DPI にするか、パネル数を減らしてください" in advice[0]
     assert "96 DPI" in advice[1]
     assert "plot.image_copy.dpi" not in advice[1]
     assert advice[1].endswith("パネル数を減らしてください")

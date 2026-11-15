@@ -55,7 +55,7 @@ export function sizeError({ width, height }, dpi) {
   const advice =
     dpi === CSS_DPI
       ? "パネル数を減らしてください"
-      : "config/settings.toml の plot.image_copy.dpi を 96 に変更して再起動するか、パネル数を減らしてください";
+      : "… → Edit → Preferences… でグラフ画像のコピーの解像度を 96 DPI にするか、パネル数を減らしてください";
   return (
     `画像が大きすぎます（${width} × ${height} px、${dpi} DPI。上限は辺 ${MAX_SIDE} px、` +
     `面積 ${MAX_AREA.toLocaleString("en-US")} px）。${advice}`

@@ -151,15 +151,14 @@ def test_without_the_geometry_the_page_shows_with_the_defaults(page: Page, app_p
 
 
 def test_the_menu_works_with_the_mouse(menu_page: Page) -> None:
-    """`…` opens File, Edit (disabled) and Help; one submenu at a time; commands call the window."""
+    """`…` opens File, Edit and Help; one submenu at a time; commands call the window."""
     page = menu_page
     button = page.locator("#titlebar .titlebar-menu")
     button.click()
     assert popups(page) == [["File", "Edit", "Help"]]
     assert focused(page) == "File"
-    expect(page.locator(".titlebar-item").filter(has_text="Edit")).to_be_disabled()
-    page.locator(".titlebar-item").filter(has_text="Edit").click(force=True)
-    assert popups(page) == [["File", "Edit", "Help"]]
+    page.locator(".titlebar-item").filter(has_text="Edit").click()
+    assert popups(page) == [["File", "Edit", "Help"], ["Preferences…"]]
     page.locator(".titlebar-item").filter(has_text="Help").click()
     assert popups(page) == [["File", "Edit", "Help"], ["Version"]]
     page.locator(".titlebar-item").filter(has_text="File").click()
@@ -194,13 +193,16 @@ def test_the_menu_works_with_the_keyboard(menu_page: Page) -> None:
     keys.press("Enter")
     assert focused(page) == "File"
     keys.press("ArrowDown")
-    assert focused(page) == "Help"  # Edit is skipped
+    assert focused(page) == "Edit"
+    keys.press("ArrowDown")
+    assert focused(page) == "Help"
     keys.press("ArrowRight")
     assert popups(page) == [["File", "Edit", "Help"], ["Version"]]
     assert focused(page) == "Version"
     keys.press("ArrowLeft")
     assert popups(page) == [["File", "Edit", "Help"]]
     assert focused(page) == "Help"
+    keys.press("ArrowUp")
     keys.press("ArrowUp")
     keys.press("Space")
     assert popups(page) == [["File", "Edit", "Help"], ["New", "Quit"]]

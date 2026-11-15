@@ -19,13 +19,19 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+#: Shown before the window when a settings file cannot be read or has a
+#: wrong value; the error, which names the file or the key, follows.
+SETTINGS_UNREADABLE = "設定ファイルを読み込めないため、ddviz を起動できません。"
+
 if TYPE_CHECKING:  # a worker does not import fastapi
     from fastapi import FastAPI
 
     from ddviz.server.api_saves import SaveActions
+    from ddviz.server.settings_store import SettingsStore
 
 
 def make_app(
+    settings: SettingsStore,
     paths: list[str],
     recursive: bool,
     token: str,
@@ -37,6 +43,9 @@ def make_app(
 
     Parameters
     ----------
+    settings : SettingsStore
+        The settings in effect, which outlive the server: `New` builds
+        another with the same store.
     paths : list of str
         Absolute paths of the input: one Parquet file or folder, or several
         Parquet files.
@@ -60,7 +69,6 @@ def make_app(
     """
     from ddviz.server.app import create_app
     from ddviz.server.history import default_history_root
-    from ddviz.server.settings import load_settings
     from ddviz.shared.cache import default_cache_root
 
     root = Path(tempfile.mkdtemp(prefix="ddviz-"))
@@ -70,7 +78,7 @@ def make_app(
         root,
         default_cache_root(),
         default_history_root(),
-        load_settings(),
+        settings,
         token,
         frontend_pids,
         desktop,
@@ -120,6 +128,7 @@ def main() -> int:
     # Several paths with a folder among them fail at Load, on the page: the
     # exe has no console to print an error to.
     paths = [str(Path(p).resolve()) for p in args.paths]
+    from ddviz.server.settings_store import SettingsStore
 
     if args.port is None:
         from ddviz.desktop.dll_access import unblock_or_warn
@@ -128,20 +137,33 @@ def main() -> int:
         # Before the window module: pywebview loads pythonnet's DLLs.
         if not unblock_or_warn(show_warning):
             return 1
+        try:
+            settings = SettingsStore.load()
+        except ValueError as error:
+            show_warning(f"{SETTINGS_UNREADABLE}\n\n{error}")
+            return 1
         from ddviz.desktop.window import run_window
+        from ddviz.server.preferences import Preferences
         from ddviz.shared.inputs import input_label
 
-        return run_window(paths or None, args.recursive, make_app, input_label)
+        return run_window(
+            paths or None,
+            args.recursive,
+            lambda *a: make_app(settings, *a),
+            input_label,
+            Preferences(settings),
+        )
 
     if not paths:
         parser.error("--port needs a Parquet file or folder")
+    settings = SettingsStore.load()
     import uvicorn
 
     token = secrets.token_urlsafe(32)
     # Opening this URL once moves the token into a cookie of the browser.
     print(f"ddviz: http://127.0.0.1:{args.port}/?token={token}", flush=True)
     uvicorn.run(
-        make_app(paths, args.recursive, token),
+        make_app(settings, paths, args.recursive, token),
         host="127.0.0.1",
         port=args.port,
     )

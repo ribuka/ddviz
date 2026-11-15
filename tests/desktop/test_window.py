@@ -21,9 +21,13 @@ from ddviz.desktop.window import (
     DROP_NOT_PARQUET,
     DROP_UNREADABLE,
     TITLE,
+    _Api,
     _App,
     dropped_paths,
 )
+from ddviz.server.preferences import Preferences
+from ddviz.server.settings import load_settings
+from ddviz.server.settings_store import SettingsStore
 from ddviz.shared.inputs import input_label
 
 
@@ -515,3 +519,66 @@ def test_version_is_the_packages_from_the_version_file() -> None:
     app = _App(_FakeWindow(), None, False, _hello, input_label)
     version = (Path(__file__).parents[2] / "VERSION").read_text(encoding="utf-8")
     assert app.version() == importlib.metadata.version("ddviz") == version.strip()
+
+
+def _settings_app(store: SettingsStore) -> Callable[[list[str], bool, str], FastAPI]:
+    """Return what builds an app answering with its input and the opacity of `store` in effect, as the UI server reads it."""
+
+    def make(paths: list[str], recursive: bool, token: str) -> FastAPI:
+        app = FastAPI()
+
+        @app.get("/")
+        async def index(token: str) -> list:
+            return [paths, store.current.plot.legend.inactive_opacity]
+
+        return app
+
+    return make
+
+
+def test_the_preferences_are_read_and_saved_through_the_window(tmp_path: Path) -> None:
+    """The page's API gives the dialog's items and values, and a save writes the local file and returns the new values; a wrong one returns the error."""
+    shared = tmp_path / "config" / "settings.toml"
+    shared.parent.mkdir()
+    store = SettingsStore.load(shared)
+    api = _Api(Preferences(store))
+    state = api.settings()
+    assert state["items"][0]["key"] == "plot.legend.inactive_opacity"
+    assert state["values"]["plot.legend.inactive_opacity"] == 0.15
+    saved = api.save_settings({"plot.legend.inactive_opacity": 0.4})
+    assert saved["values"]["plot.legend.inactive_opacity"] == 0.4
+    assert load_settings(shared).plot.legend.inactive_opacity == 0.4
+    assert "error" in api.save_settings({"plot.max_levels": 0})
+    assert api.settings()["values"]["plot.max_levels"] == 100
+
+
+def test_preferences_saved_on_the_chooser_last_across_loads_and_new(
+    tmp_path: Path,
+) -> None:
+    """A value saved on the chooser reaches the input loaded next; one saved on the graph's page reaches the input loaded after `New`."""
+    first_input, other = tmp_path / "a", tmp_path / "other"
+    first_input.mkdir()
+    other.mkdir()
+    shared = tmp_path / "config" / "settings.toml"
+    shared.parent.mkdir()
+    store = SettingsStore.load(shared)
+    api = _Api(Preferences(store))
+    window = _FakeWindow(chosen=[str(first_input)])
+    app = _App(window, None, False, _settings_app(store), input_label)
+    api.app = app
+    app.start()
+    try:
+        assert "error" not in api.save_settings({"plot.legend.inactive_opacity": 0.3})
+        app.choose("folder", False)
+        assert _get(window.url) == [[str(first_input)], 0.3]
+        assert "error" not in api.save_settings({"plot.legend.inactive_opacity": 0.7})
+        assert _get(window.url) == [[str(first_input)], 0.7]
+        app.new()
+        assert api.settings()["values"]["plot.legend.inactive_opacity"] == 0.7
+        window._chosen = [str(other)]
+        app.choose("folder", False)
+        assert _get(window.url) == [[str(other)], 0.7]
+    finally:
+        app.stop()
+    assert SettingsStore.load(shared).current.plot.legend.inactive_opacity == 0.7
+    assert not app.failed

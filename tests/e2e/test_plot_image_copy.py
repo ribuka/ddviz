@@ -489,6 +489,21 @@ def test_the_dpi_of_the_settings_sizes_the_png(page: Page) -> None:
     assert height == math.ceil(m["pad"] + fig["height"] + m["band"] + m["pad"])
 
 
+def test_a_dpi_applied_from_the_preferences_sizes_the_next_png(page: Page) -> None:
+    """After the Preferences apply 96 DPI (`ddvizApplySettings`), the next copy of the page open has as many pixels as CSS px."""
+    place(page, "x", "x")
+    place(page, "y", "y")
+    big, _ = copy_image(page)
+    page.evaluate(
+        """() => window.ddvizApplySettings({ "plot.image_copy.dpi": 96 }, ["plot.image_copy.dpi"])"""
+    )
+    width, _ = copy_image(page)
+    m = layout_of(page)
+    fig = page.evaluate(FIGURE)
+    assert width == math.ceil(m["pad"] + m["band"] + fig["width"] + m["pad"])
+    assert big > width
+
+
 def test_the_menu_ends_with_the_copy_disabled_while_unsettled(page: Page) -> None:
     """The item follows Reset axes after a separator; it is disabled while a result is awaited and while a copy runs, and no copy starts from it."""
     place(page, "x", "x")

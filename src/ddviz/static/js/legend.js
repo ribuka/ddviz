@@ -39,7 +39,7 @@ import { shapeCanvas } from "./shapepanel.js";
 import { formatTemporal } from "./temporal.js";
 
 // Until the settings come.
-const INACTIVE_OPACITY = 0.1;
+const INACTIVE_OPACITY = 0.15;
 // Beside a level without rows, and under a gradient's bar without them.
 export const EMPTY_NOTE = "（行なし）";
 

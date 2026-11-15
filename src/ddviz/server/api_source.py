@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi import APIRouter, HTTPException
 
 from ddviz.server.columns import search_columns
 from ddviz.server.source import Source
 
 
-def source_router(source: Source, max_listed: int) -> APIRouter:
+def source_router(source: Source, max_listed: Callable[[], int]) -> APIRouter:
     """Return the routes of the file's columns.
 
     Parameters
     ----------
     source : Source
         The file plotted.
-    max_listed : int
-        Most matching columns the search returns (``columns.max_listed`` of
-        the settings).
+    max_listed : callable
+        Returns the most matching columns the search returns
+        (``columns.max_listed`` of the settings in effect), read by each search.
 
     Returns
     -------
@@ -64,7 +66,7 @@ def source_router(source: Source, max_listed: int) -> APIRouter:
                 await source.schema(),
                 q,
                 kind,
-                max_listed,
+                max_listed(),
                 source.nonnull,
                 min_share,
                 order,

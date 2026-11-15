@@ -10,8 +10,11 @@
 // paint: the first child of <body>.
 //
 // `<html data-screen>` says which screen this is: `New` is enabled on
-// "graph" only. The commands go to the window through pywebview's JS API,
-// called from `call` alone.
+// "graph" only, `Preferences…` on "chooser" and "graph" (not while starting
+// or closing the data, "loading"). The commands go to the window through
+// pywebview's JS API, called from `call` alone. `Preferences…` opens the
+// dialog of preferences.js, which the page loads before this script; on the
+// graph's page the dialog then calls `window.ddvizApplySettings` (app.js).
 (() => {
   const root = document.documentElement;
   if (!root.classList.contains("desktop")) return;
@@ -41,7 +44,7 @@
         { command: "quit", label: "Quit" },
       ],
     },
-    { label: "Edit", items: null },
+    { label: "Edit", items: [{ command: "preferences", label: "Preferences…" }] },
     { label: "Help", items: [{ command: "version", label: "Version" }] },
   ];
   const NEW_CONFIRM = "現在のグラフ設定とフィルタを破棄し、Parquet 選択画面に戻りますか？";
@@ -55,12 +58,15 @@
 
   // Calls the window's `name` (`ddviz.desktop.window._Api`); the only place
   // that reaches pywebview.
-  async function call(name) {
-    return (await api)[name]();
+  async function call(name, ...args) {
+    return (await api)[name](...args);
   }
 
   function enabled(command) {
-    return command !== "new" || root.dataset.screen === "graph";
+    const screen = root.dataset.screen;
+    if (command === "new") return screen === "graph";
+    if (command === "preferences") return screen === "graph" || screen === "chooser";
+    return true;
   }
 
   const bar = document.createElement("header");
@@ -224,8 +230,29 @@
       await call("quit");
     } else if (command === "version") {
       await ask(`ddviz ${await call("version")}`, ["OK"], "OK");
+    } else if (command === "preferences") {
+      await preferences();
+      button.focus();
+      return;
     }
     if (document.activeElement === document.body) button.focus();
+  }
+
+  // Opens the Preferences dialog with the values in effect; it saves
+  // through the window and, on the graph's page, redraws through app.js.
+  async function preferences() {
+    let state;
+    try {
+      state = await call("settings");
+    } catch (error) {
+      await ask(`設定を読み込めませんでした：${error?.message ?? error}`, ["OK"], "OK");
+      return;
+    }
+    await window.ddvizPreferences.open({
+      state,
+      save: (changes) => call("save_settings", changes),
+      apply: window.ddvizApplySettings,
+    });
   }
 
   // Shows `text` with `labels` as buttons and the focus on `initial`;

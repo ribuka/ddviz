@@ -40,6 +40,7 @@ from ddviz.server.plotoptions import (
     parse_wrap_cols,
 )
 from ddviz.server.results import Results, drop
+from ddviz.server.settings import Settings
 from ddviz.server.source import Source
 from ddviz.shared.axisscale import NoPositiveValuesError, axis_positions
 from ddviz.shared.manifest import IMAGES
@@ -62,9 +63,7 @@ def plot_router(
     source: Source,
     results: Results,
     broker: TaskBroker,
-    max_levels: int,
-    max_axis_levels: int,
-    max_hover_bytes: int,
+    settings: Callable[[], Settings],
 ) -> APIRouter:
     """Return the routes that draw.
 
@@ -76,13 +75,15 @@ def plot_router(
         The drawn results, which the routes replace.
     broker : TaskBroker
         Runs the plot tasks.
-    max_levels : int
-        Most levels a categorical color, Symbol, Group X, Group Y or Wrap
-        column may have.
-    max_axis_levels : int
-        Most levels a categorical x or y column may have.
-    max_hover_bytes : int
-        Most bytes the hover files of the overview and the view take together.
+    settings : callable
+        Returns the settings in effect (`ddviz.server.settings_store`). A
+        plot reads them once when it starts: ``plot.max_levels`` (the most
+        levels of a categorical Color, Symbol, Group X, Group Y or Wrap
+        column, and the most intervals of a numeric color column),
+        ``plot.max_axis_levels`` (the most levels of a categorical x or y)
+        and ``hover.max_temp_bytes`` (the most bytes the hover files of the
+        overview and the view take together); a view or an overview
+        aggregated again reads the last.
 
     Returns
     -------
@@ -95,8 +96,10 @@ def plot_router(
     # those the page draws.
     latest = 0
 
-    async def run_plot(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
-        """Run a plot task beside the open results; return its result, or None when a newer task killed it."""
+    async def run_plot(
+        spec: ScatterSpec, max_hover_bytes: int
+    ) -> tuple[HoverIndex | None, dict]:
+        """Run a plot task beside the open results, whose hover files take at most `max_hover_bytes` with theirs; return its result, or None when a newer task killed it."""
         opened = (results.overview, results.view)
         used = sum(i.manifest.hover_bytes for i in opened if i is not None)
         # Replaced results that a worker still reads are on disk too.
@@ -121,22 +124,25 @@ def plot_router(
         index = await asyncio.to_thread(HoverIndex, end.out)
         return index, timing
 
-    async def run_again(spec: ScatterSpec) -> tuple[HoverIndex | None, dict]:
-        """Run a plot task of the current plot; None when it was cancelled or the plot changed."""
+    async def run_again(
+        spec: ScatterSpec, max_hover_bytes: int
+    ) -> tuple[HoverIndex | None, dict]:
+        """Run a plot task of the current plot (`run_plot`); None when it was cancelled or the plot changed."""
         plot_id = results.plot_id
-        index, timing = await run_plot(spec)
+        index, timing = await run_plot(spec, max_hover_bytes)
         if index is None or results.plot_id != plot_id:
             drop(index)
             return None, {}
         return index, timing
 
-    def figure(index: HoverIndex, timing: dict) -> JSONResponse:
+    def figure(index: HoverIndex, timing: dict, max_hover_bytes: int) -> JSONResponse:
         """Return the figure of a result; the page fetches its images on their own.
 
         To the meta of `build_figure` (`ddviz.server.figure.FigureMeta`) it
         adds the task (``task``), the piles the page draws (``piles``), the local
         filters drawn (``filters``), what the hover holds (``hover``:
-        ``files``, ``dropped``, ``bytes``, ``kept``, ``limit_gb``), and
+        ``files``, ``dropped``, ``bytes``, ``kept``, and ``limit_gb``, the
+        limit `max_hover_bytes` in GB), and
         ``timing``: the seconds of the task (``task_seconds``) and, for
         ``/api/plot``, of the conversion (``convert_seconds``), the encoding
         (``encoding``) and the roles placed but not drawn (``undrawn``).
@@ -191,24 +197,28 @@ def plot_router(
         keep: Callable[[HoverIndex], None],
     ) -> JSONResponse:
         """Return the figure of `spec` aggregated again, or of `shown` when it already is (`unchanged`); `keep` takes a new result."""
+        max_hover_bytes = settings().hover.max_temp_bytes
         if unchanged(shown.manifest if shown is not None else None, spec):
             # A task for another size must not replace the result drawn now.
             await broker.cancel()
-            return figure(shown, {"task_seconds": 0.0})
+            return figure(shown, {"task_seconds": 0.0}, max_hover_bytes)
         try:
-            index, timing = await run_again(spec)
+            index, timing = await run_again(spec, max_hover_bytes)
         except _ColorLevelsRefused as error:
             return error.response()
         if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
         keep(index)
-        return figure(index, timing)
+        return figure(index, timing, max_hover_bytes)
 
     @router.post("/api/plot")
     async def plot(request: PlotRequest) -> JSONResponse:
         nonlocal latest
         latest += 1
         mine = latest
+        # One snapshot of the settings for the whole plot.
+        current = settings()
+        max_levels = current.plot.max_levels
         try:
             encoding = Encoding.from_dict(request.encoding)
         except ValueError as error:
@@ -251,7 +261,7 @@ def plot_router(
                 numeric=numeric,
                 color_bins=color_bins,
                 max_levels=max_levels,
-                max_axis_levels=max_axis_levels,
+                max_axis_levels=current.plot.max_axis_levels,
                 wrap_cols=wrap_cols,
                 smoothing=smoothing,
                 shape_size=shape_size,
@@ -268,7 +278,7 @@ def plot_router(
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         try:
-            index, timing = await run_plot(spec)
+            index, timing = await run_plot(spec, current.hover.max_temp_bytes)
         except _ColorLevelsRefused as error:
             return error.response()
         if index is not None and mine != latest:
@@ -285,6 +295,7 @@ def plot_router(
                 "encoding": encoding.to_dict(),
                 "undrawn": undrawn(encoding, numeric),
             },
+            current.hover.max_temp_bytes,
         )
 
     @router.post("/api/view")

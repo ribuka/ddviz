@@ -16,6 +16,7 @@ from ddviz.server.app import create_app
 from ddviz.server.auth import COOKIE
 from ddviz.server.memory import MemoryMeter
 from ddviz.server.settings import Settings
+from ddviz.server.settings_store import SettingsStore
 from ddviz.workers.jobs import WorkerJob
 from ddviz.workers.runner import WorkerPool
 
@@ -116,7 +117,7 @@ def server(tmp_path: Path, scatter_path: Path) -> Iterator[TestClient]:
         tmp_path / "run",
         tmp_path / "cache",
         tmp_path / "history",
-        Settings(),
+        SettingsStore(Settings()),
         TOKEN,
     )
     with TestClient(app) as started:
@@ -151,7 +152,7 @@ def test_the_window_hands_over_its_frontend(
         tmp_path / "run",
         tmp_path / "cache",
         tmp_path / "history",
-        Settings(),
+        SettingsStore(Settings()),
         TOKEN,
         lambda: [os.getpid()],
     )

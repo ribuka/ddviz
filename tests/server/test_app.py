@@ -26,6 +26,7 @@ from ddviz.server.settings import (
     PlotSettings,
     Settings,
 )
+from ddviz.server.settings_store import SettingsStore
 from ddviz.server.source import Source
 from ddviz.shared.missing import MISSING, MISSING_COLOR
 from ddviz.shared.scatter import POINT_SIZE, SHAPE_SIZE
@@ -49,7 +50,7 @@ def server(tmp_path: Path, scatter_path: Path) -> Iterator[TestClient]:
         tmp_path / "run",
         tmp_path / "cache",
         tmp_path / "history",
-        Settings(),
+        SettingsStore(Settings()),
         TOKEN,
     )
     (tmp_path / "run").mkdir()
@@ -154,7 +155,7 @@ def test_the_page_reads_the_inactive_opacity(
         tmp_path / "run",
         tmp_path / "cache",
         tmp_path / "history",
-        settings,
+        SettingsStore(settings),
         TOKEN,
     )
     (tmp_path / "run").mkdir()
@@ -185,7 +186,7 @@ def _bins_server(tmp_path: Path, scatter_path: Path, max_levels: int) -> TestCli
         tmp_path / "run",
         tmp_path / "cache",
         tmp_path / "history",
-        Settings(plot=PlotSettings(max_levels=max_levels)),
+        SettingsStore(Settings(plot=PlotSettings(max_levels=max_levels))),
         TOKEN,
     )
     (tmp_path / "run").mkdir()
@@ -256,7 +257,7 @@ def test_columns_list_as_many_as_the_settings_allow(
         tmp_path / "run",
         tmp_path / "cache",
         tmp_path / "history",
-        settings,
+        SettingsStore(settings),
         TOKEN,
     )
     (tmp_path / "run").mkdir()
@@ -283,7 +284,7 @@ def test_search_history_is_kept_per_input_across_runs(
             root,
             tmp_path / "cache",
             tmp_path / "history",
-            Settings(),
+            SettingsStore(Settings()),
             TOKEN,
         )
         client = TestClient(app)
@@ -532,7 +533,7 @@ def folder_client(tmp_path: Path, folder_path: Path) -> Iterator[TestClient]:
         tmp_path / "run",
         tmp_path / "cache",
         tmp_path / "history",
-        Settings(),
+        SettingsStore(Settings()),
         TOKEN,
     )
     (tmp_path / "run").mkdir()
@@ -551,7 +552,7 @@ def files_client(tmp_path: Path, folder_path: Path) -> Iterator[TestClient]:
         tmp_path / "run",
         tmp_path / "cache",
         tmp_path / "history",
-        Settings(),
+        SettingsStore(Settings()),
         TOKEN,
     )
     (tmp_path / "run").mkdir()
@@ -609,7 +610,7 @@ def test_several_paths_with_a_folder_are_refused(
         tmp_path / "run",
         tmp_path / "cache",
         tmp_path / "history",
-        Settings(),
+        SettingsStore(Settings()),
         TOKEN,
     )
     (tmp_path / "run").mkdir()
@@ -630,14 +631,14 @@ def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
     """
     unlimited = _plot(client)["meta"]["hover"]
     assert unlimited["files"] and unlimited["dropped"] == []
-    settings = Settings(hover=HoverSettings(max_temp_bytes=unlimited["bytes"] + 1000))
+    settings = Settings(hover=HoverSettings(max_temp_gb=(unlimited["bytes"] + 1000) / 2**30))
     app = create_app(
         [str(scatter_path)],
         False,
         tmp_path / "limited",
         tmp_path / "cache",
         tmp_path / "history",
-        settings,
+        SettingsStore(settings),
         TOKEN,
     )
     (tmp_path / "limited").mkdir()
@@ -1160,7 +1161,7 @@ def test_the_windows_saves_open_show_and_cancel(tmp_path: Path, scatter_path: Pa
             tmp_path / "run",
             tmp_path / "cache",
             tmp_path / "history",
-            Settings(),
+            SettingsStore(Settings()),
             TOKEN,
             desktop=given is not None,
             saves=given,
@@ -1185,14 +1186,14 @@ def test_the_windows_saves_open_show_and_cancel(tmp_path: Path, scatter_path: Pa
 
 def test_plot_data_needs_no_hover_files(tmp_path: Path, scatter_path: Path) -> None:
     """A result without hover files still saves its rows: they are read from the columns."""
-    settings = Settings(hover=HoverSettings(max_temp_bytes=1))
+    settings = Settings(hover=HoverSettings(max_temp_gb=1 / 2**30))
     app = create_app(
         [str(scatter_path)],
         False,
         tmp_path / "run",
         tmp_path / "cache",
         tmp_path / "history",
-        settings,
+        SettingsStore(settings),
         TOKEN,
     )
     (tmp_path / "run").mkdir()
