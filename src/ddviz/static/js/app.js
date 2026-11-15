@@ -52,7 +52,7 @@ import {
 import { markerSizeText, rowsText } from "./resulttext.js";
 import { Saves } from "./saves.js";
 import { openScaleMenu } from "./scalemenu.js";
-import { boxOf, panelKey, samePanels } from "./selectionbox.js";
+import { BoxSelection } from "./boxselection.js";
 import { LINE_HEADING, LINE_WIDTHS, levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
 import { openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
@@ -800,7 +800,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   const drawStarted = performance.now();
   try {
     // The selection and the shapes of another symbol column go with the drawn plot.
-    clearSelection(false);
+    boxSelection.clear(false);
     movedWhilePlotting = false;
     setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
     requested = { x: [], y: [] };
@@ -812,12 +812,12 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     showImages(meta, null);
     // A plot drawn again after a failure has the view and the box drawn before.
     const view = keep && sameAxes(keep, meta) ? keep : carried;
-    if (view?.box) selection = { box: view.box, base: null, bitmaps: null, fresh: true };
+    if (view?.box) boxSelection.restore(view.box);
     const shaped = (ranged) => withBandTicks(orientedLayout(decorate(ranged, meta, settingsOf, angleOf), meta), meta);
     const layout = shaped(figure.layout);
     drawnKey = figureKey(figure.data, layout);
     Plotly.purge(gd);
-    await Plotly.newPlot(gd, figure.data, forPlotly(withSelectionBox(layout, meta)), PLOT_CONFIG);
+    await Plotly.newPlot(gd, figure.data, forPlotly(boxSelection.withBox(layout, meta)), PLOT_CONFIG);
     // The view's ranges go on after the whole ones: plotly keeps the ranges
     // of its first draw for Reset axes and a double click.
     const zoomedUpdate = view?.zoomed && rangeUpdate(gd, shaped(withRanges(figure.layout, meta, view.ranges)));
@@ -837,10 +837,10 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     builder.layout();
     gd.on("plotly_relayout", onRelayout);
     gd.on("plotly_selected", (event) => {
-      if (!ownReact) onSelected(event);
+      if (!ownReact) boxSelection.pick(event);
     });
     gd.on("plotly_deselect", () => {
-      if (!ownReact) clearSelection();
+      if (!ownReact) boxSelection.clear();
     });
     showImages(meta, bitmaps);
     if (view?.box) layers.setSelection({ box: view.box });
@@ -869,7 +869,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   // The area may have changed size, or the filter, while the plot was aggregated.
   if (filtersKey(meta.filters) !== filtersKey(filters)) applyFilters();
   else if (!sameSize(stageSize(), size)) onResize();
-  else followSelection();
+  else boxSelection.follow();
   return meta;
 }
 
@@ -882,7 +882,7 @@ function keptView() {
   const ranges = shownRanges(gd, overview.meta);
   const { x_ranges: x, y_ranges: y } = overview.meta;
   const zoomed = !(sameRanges(ranges.x, x) && sameRanges(ranges.y, y));
-  return { ranges, zoomed, box: selection ? structuredClone(selection.box) : null };
+  return { ranges, zoomed, box: boxSelection.state ? structuredClone(boxSelection.state.box) : null };
 }
 
 // Returns the view of a new result `meta` that keeps the drawn figure's
@@ -973,7 +973,7 @@ function resumeShown() {
     if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) showOverview();
     else requestView(shown);
   } else {
-    followSelection();
+    boxSelection.follow();
   }
 }
 
@@ -996,21 +996,6 @@ let ownRelayout = null;
 // plotly's box of the selection: its events do not drop the selection.
 let ownReact = false;
 
-// Returns `layout` with plotly's box of the selection on the panel of `meta`
-// that has the box's facet levels and axis columns; a filter may have moved
-// the panel or dropped it.
-function withSelectionBox(layout, meta) {
-  if (!selection) return layout;
-  const { at, x_range: x, y_range: y } = selection.box;
-  const panel = meta.panels.find((p) => panelKey(p) === at);
-  if (!panel) return layout;
-  // plotly's box on a log axis is of values, as its `event.range` (`boxRange`).
-  const [x0, x1] = toValues(isLogAxis(layout[axisKey(panel.xaxis)]), x);
-  const [y0, y1] = toValues(isLogAxis(layout[axisKey(panel.yaxis)]), y);
-  const box = { type: "rect", xref: panel.xaxis, yref: panel.yaxis, x0, x1, y0, y1 };
-  return { ...layout, selections: [{ ...box, line: { width: 1, dash: "dot" } }] };
-}
-
 // Draws `data` with `layout`, and the images of `meta` over it, with the
 // ticks and reference lines of the axis settings.
 async function draw(data, plain, meta, bitmaps) {
@@ -1027,7 +1012,7 @@ async function draw(data, plain, meta, bitmaps) {
   } else {
     ownReact = true;
     try {
-      await Plotly.react(gd, data, forPlotly(withSelectionBox(layout, meta)));
+      await Plotly.react(gd, data, forPlotly(boxSelection.withBox(layout, meta)));
     } finally {
       ownReact = false;
     }
@@ -1057,132 +1042,25 @@ function setPending(on) {
   }
   gd.classList.remove("pending");
   pending.hidden = true;
-  followSelection();
+  boxSelection.follow();
 }
 function markPending() {
   gd.classList.add("pending");
   pending.hidden = false;
 }
 
-// The selection: the box drawn on a panel of the drawn result (its data
-// ranges, its panel's facet levels and axis columns (`at`), and the index of
-// that panel in the drawn result, -1 when a filter dropped it), the result
-// its layer was asked for (`base`), the layer once it came, and whether the
-// server holds the selection (`held`). Every panel shows the selected rows
-// (`ddviz.compute.selection.selection_filter`); until the layer comes, the box shows
-// them in its own panel. A filter may drop or bring back facet panels, so
-// the panels' indices change: the box follows its facet levels.
-let selection = null;
-let selectionGeneration = 0;
+// The selection of rows with a box, its layer and the table of its rows.
 const table = new SelectionTable(document.getElementById("table"));
 table.exporting = () => saves.running;
-
-// plotly sends no range for a click beside the box, which drops it.
-function onSelected(event) {
-  if (!event?.range) {
-    clearSelection();
-    return;
-  }
-  if (!current) return;
-  statusLine.release();
-  const box = boxOf(gd, current, event.range);
-  if (!box) return;
-  closeImages(selection?.bitmaps);
-  selection = { box, base: null, bitmaps: null, fresh: true };
-  layers.setSelection({ box });
-  // An aggregation in flight would be killed; the selection waits for its result.
-  if (!waiting && !plotting) followSelection();
-}
-
-// Asks for the selected rows' layer over the drawn result, unless asked already.
-async function followSelection() {
-  if (!selection || !current || plotting || selection.base === current.task) return;
-  const mine = ++selectionGeneration;
-  const meta = current;
-  const { box } = selection;
-  box.panel = meta.panels.findIndex((p) => panelKey(p) === box.at);
-  if (!selection.held && box.panel < 0) {
-    // A filter dropped the box's panel before the server took the box.
-    clearSelection();
-    return;
-  }
-  // The layer of other panels would land on the wrong ones: the box stands in.
-  if (selection.bitmaps && !samePanels(layers.selection.meta, meta)) {
-    closeImages(selection.bitmaps);
-    selection.bitmaps = null;
-    layers.setSelection({ box });
-  }
-  selection.base = meta.task;
-  statusLine.show("選んだ行を集約中…");
-  // Once the server holds the selection, it is asked again by its facet
-  // levels, which the server keeps, not by the panel's index.
-  const { panel, x_range, y_range } = box;
-  // The server takes the box in values, ascending: those of a log axis are
-  // the powers of 10 of its exponents (`axisscale.js`).
-  const { x: xi, y: yj } = meta.panels[panel] ?? {};
-  const body = selection.held
-    ? { task: meta.task }
-    : {
-        task: meta.task,
-        panel,
-        x_range: toValues(meta.x_log[xi], x_range),
-        y_range: toValues(meta.y_log[yj], y_range),
-      };
-  const response = await fetch("/api/selection", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (mine !== selectionGeneration || !selection) return;
-  if (!response.ok) {
-    // Killed by a newer aggregation: asked again once its result is drawn.
-    selection.base = null;
-    const text = await response.text();
-    if (response.status !== 409) statusLine.error(errorText(text));
-    // Killed by a plot that failed: asked again, unless another aggregation goes on.
-    else if (errorText(text) === "cancelled" && !plotting && !waiting && mine === selectionGeneration) followSelection();
-    return;
-  }
-  const layer = await response.json();
-  let bitmaps = null;
-  try {
-    bitmaps = await loadImages({ task: layer.task, images: layer.images }, meta);
-  } catch (error) {
-    console.error(error);
-  }
-  if (mine !== selectionGeneration || !selection || !bitmaps) {
-    closeImages(bitmaps);
-    if (selection && mine === selectionGeneration) selection.base = null;
-    return;
-  }
-  closeImages(selection.bitmaps);
-  selection.bitmaps = bitmaps;
-  selection.layer = layer;
-  selection.held = true;
-  layers.setSelection({ meta, bitmaps, piles: new Set(layer.piles) });
-  statusLine.show(`選んだ行：${layer.rows.toLocaleString()} 行（${layer.task_seconds.toFixed(1)} 秒）`);
-  // A new filter changes the selected rows: the table starts again.
-  const key = filtersKey(meta.filters);
-  if (selection.fresh || selection.filters !== key) {
-    selection.fresh = false;
-    selection.filters = key;
-    table.show(layer.rows);
-  }
-}
-
-// Drops the selection; `server` also tells the server (a new plot drops it there).
-function clearSelection(server = true) {
-  selectionGeneration++;
-  if (!selection) return;
-  closeImages(selection.bitmaps);
-  selection = null;
-  layers.setSelection(null);
-  table.show(null);
-  if (server) {
-    fetch("/api/selection", { method: "DELETE" });
-    if (current) showRows(current);
-  }
-}
+const boxSelection = new BoxSelection({
+  gd,
+  layers,
+  table,
+  statusLine,
+  current: () => current,
+  busy: () => ({ plotting: plotting !== 0, waiting }),
+  showRows,
+});
 
 // Goes back to the overview's images and ranges; no worker runs, unless the
 // overview was aggregated for another size of the plot area.
@@ -1469,7 +1347,7 @@ const filterPane = new FilterPane(
 
 // Removes the figure of a graph that cannot be drawn (`drawable`).
 function clearPlot() {
-  clearSelection();
+  boxSelection.clear();
   generation++;
   plotting = 0;
   // A new cutting or number to a row has no graph to plot again.
@@ -1566,7 +1444,7 @@ async function recolor() {
   if (!overview) return;
   const mine = generation;
   const shown = current;
-  const layerOf = selection?.bitmaps ? selection : null;
+  const layerOf = boxSelection.layerToRecolor();
   const [overviewImages, shownImages_, layerImages] = await Promise.all([
     overview.bitmaps ? fetchImages(overview.meta) : null,
     shown && shown !== overview.meta ? fetchImages(shown) : null,
@@ -1584,13 +1462,7 @@ async function recolor() {
   }
   if (shownImages_ && current === shown) showImages(shown, shownImages_);
   else closeImages(shownImages_);
-  if (layerImages && selection === layerOf) {
-    closeImages(selection.bitmaps);
-    selection.bitmaps = layerImages;
-    layers.setSelection({ ...layers.selection, bitmaps: layerImages });
-  } else {
-    closeImages(layerImages);
-  }
+  if (layerImages) boxSelection.replaceBitmaps(layerOf, layerImages);
 }
 
 // The element icons, made after the builder whose elements they set.
