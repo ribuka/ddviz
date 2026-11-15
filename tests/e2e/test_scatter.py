@@ -8,9 +8,10 @@ import re
 import numpy as np
 import polars as pl
 import pytest
-from playwright.sync_api import ConsoleMessage, Locator, Page, Route, expect
+from playwright.sync_api import ConsoleMessage, Locator, Page, Request, Route, expect
 
 from ddviz.server.settings import LegendSettings, PlotSettings, Settings
+from tests.e2e.conftest import TOKEN
 
 pytestmark = pytest.mark.e2e
 
@@ -1013,8 +1014,7 @@ def test_a_color_level_takes_a_color_picked_on_its_marker(app_page: Page) -> Non
     # The intervals of a numeric column take the scale's colors: their
     # markers open the scale's menu.
     place(page, "x", "color")
-    legend.locator(".colorbar").click(button="right")
-    page.locator(".scale-menu").get_by_text("3 個", exact=True).click()
+    apply_color_bins(page, legend.locator(".colorbar"), "3")
     page.wait_for_function(SETTLED)
     # The title is the column's name alone, without how it is cut.
     expect(legend.locator(".legend-title")).to_have_text("x")
@@ -1022,10 +1022,180 @@ def test_a_color_level_takes_a_color_picked_on_its_marker(app_page: Page) -> Non
     expect(marker).to_have_attribute("title", "右クリックで色の付け方を変える")
     marker.click(button="right")
     menu = page.locator(".scale-menu")
-    expect(menu.locator(".scale-menu-item.checked").first).to_have_text("3 個")
+    expect(menu.get_by_label("区間数")).to_have_value("3")
     expect(menu.get_by_text("点の大きさ（全系列）")).to_be_visible()
     expect(menu.get_by_text("色", exact=True)).to_be_visible()
     expect(page.locator(".color-panel")).to_have_count(0)
+
+
+def watch_color_bins(page: Page) -> list[object]:
+    """Collect the ``color_bins`` of each plot request from now on."""
+    asked: list[object] = []
+
+    def request(r: Request) -> None:
+        if r.method == "POST" and r.url.endswith("/api/plot"):
+            asked.append(r.post_data_json.get("color_bins"))
+
+    page.on("request", request)
+    return asked
+
+
+def test_the_number_of_intervals_is_typed_applied_and_dropped(app_page: Page) -> None:
+    """The scale's menu has a field for the number of intervals in place of fixed counts: blank on a gradient, the number applied on intervals; apply or Enter cuts into a new number, the same number plots nothing, Escape, a click outside or another right click drop the draft, and a wrong number shows the error without a request. The color bar, the title and the markers of the intervals open it; the way to cut picked on a gradient is kept."""
+    page = app_page
+    errors = watch_errors(page)
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    place(page, "x", "x")
+    place(page, "y", "y")
+    place(page, "x", "color")
+    legend = page.locator("#legend")
+    bar = legend.locator(".colorbar")
+    expect(bar).to_be_visible()
+    asked = watch_color_bins(page)
+    menu = page.locator(".scale-menu")
+    number = menu.get_by_label("区間数")
+    # The legend counts the intervals and the missing level (x has a null).
+
+    bar.click(button="right")
+    expect(number).to_have_value("")
+    expect(menu.get_by_text(re.compile(r"^\d+ 個$"))).to_have_count(0)
+    # The way to cut picked on a gradient plots nothing and is kept.
+    menu.get_by_text("行数で等分", exact=True).click()
+    expect(menu).to_have_count(0)
+    apply_color_bins(page, bar, "7")
+    page.wait_for_function(SETTLED)
+    expect(bar).to_have_count(0)
+    expect(legend.locator(".legend-item")).to_have_count(7 + 1)
+    assert asked == [{"n": 7, "by": "rows"}]
+
+    # The title opens the menu on 7; Enter cuts into 4.
+    title = legend.locator(".legend-title")
+    title.click(button="right")
+    expect(number).to_have_value("7")
+    expect(menu.get_by_text("行数で等分", exact=True)).to_have_class(
+        "scale-menu-item checked"
+    )
+    number.fill("4")
+    number.press("Enter")
+    expect(menu).to_have_count(0)
+    page.wait_for_function(SETTLED)
+    expect(legend.locator(".legend-item")).to_have_count(4 + 1)
+    assert asked[-1] == {"n": 4, "by": "rows"}
+
+    # A marker of the intervals opens it on 4; applying 4 again plots nothing.
+    marker = legend.locator(".legend-marker").first
+    count = len(asked)
+    apply_color_bins(page, marker, " 04 ")
+    # Escape, a click outside and another right click drop the draft.
+    marker.click(button="right")
+    number.fill("9")
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
+    title.click(button="right")
+    expect(number).to_have_value("4")
+    number.fill("9")
+    page.locator("#status").click()
+    expect(menu).to_have_count(0)
+    marker.click(button="right")
+    expect(number).to_have_value("4")
+    number.fill("9")
+    title.click(button="right")
+    expect(number).to_have_value("4")
+    # A wrong number keeps the menu with the error, and asks nothing.
+    number.fill("101")
+    menu.get_by_role("button", name="適用").click()
+    expect(menu.locator(".scale-menu-count-error")).to_have_text(
+        "2 以上 100 以下の整数を入力してください"
+    )
+    expect(number).to_be_focused()
+    number.fill("5")
+    expect(menu.locator(".scale-menu-count-error")).to_be_hidden()
+    page.keyboard.press("Escape")
+    page.evaluate(FRAMES)
+    assert len(asked) == count
+
+    # Back to the gradient.
+    title.click(button="right")
+    menu.get_by_text("連続（グラデーション）", exact=True).click()
+    page.wait_for_function(SETTLED)
+    expect(bar).to_be_visible()
+    assert asked[-1] is None
+    bar.click(button="right")
+    expect(number).to_have_value("")
+    page.keyboard.press("Escape")
+    assert errors == []
+
+
+@pytest.mark.parametrize("settings", [Settings(plot=PlotSettings(max_levels=12))])
+def test_the_number_of_intervals_goes_up_to_the_setting(app_page: Page) -> None:
+    """With ``plot.max_levels = 12``, 12 intervals are taken and 13 are refused."""
+    page = app_page
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    place(page, "x", "x")
+    place(page, "y", "y")
+    place(page, "x", "color")
+    bar = page.locator("#legend .colorbar")
+    expect(bar).to_be_visible()
+    asked = watch_color_bins(page)
+    bar.click(button="right")
+    menu = page.locator(".scale-menu")
+    menu.get_by_label("区間数").fill("13")
+    menu.get_by_role("button", name="適用").click()
+    expect(menu.locator(".scale-menu-count-error")).to_have_text(
+        "2 以上 12 以下の整数を入力してください"
+    )
+    page.keyboard.press("Escape")
+    apply_color_bins(page, bar, "12")
+    page.wait_for_function(SETTLED)
+    expect(page.locator("#legend .legend-item")).to_have_count(12 + 1)
+    assert asked == [{"n": 12, "by": "values"}]
+
+
+def _number_is_off(page: Page, note: str) -> None:
+    """Check that the scale's menu of x on Color has the number off with `note`, and the gradient's item on."""
+    place(page, "x", "x")
+    place(page, "y", "y")
+    place(page, "x", "color")
+    bar = page.locator("#legend .colorbar")
+    expect(bar).to_be_visible()
+    bar.click(button="right")
+    menu = page.locator(".scale-menu")
+    expect(menu.get_by_label("区間数")).to_be_disabled()
+    expect(menu.get_by_role("button", name="適用")).to_be_disabled()
+    expect(menu.locator(".scale-menu-count-note")).to_have_text(note)
+    expect(menu.get_by_text("連続（グラデーション）", exact=True)).to_be_enabled()
+    page.keyboard.press("Escape")
+
+
+@pytest.mark.parametrize("settings", [Settings(plot=PlotSettings(max_levels=1))])
+def test_a_limit_of_1_turns_the_number_off(app_page: Page) -> None:
+    """With ``plot.max_levels = 1`` the number of intervals cannot be applied; the rest of the menu can."""
+    expect(app_page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    _number_is_off(app_page, "区間に分けるには plot.max_levels を 2 以上にしてください")
+
+
+def test_the_number_waits_for_the_settings(page: Page, app_url: str) -> None:
+    """Until ``GET /api/settings`` answers the number of intervals is off; once it does it can be applied."""
+    held: list[Route] = []
+    page.route("**/api/settings", lambda route: held.append(route))
+    page.goto(f"{app_url}/?token={TOKEN}")
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    _number_is_off(page, "区間数の上限を取得できません")
+    assert len(held) == 1
+    with page.expect_response("**/api/settings"):
+        held[0].continue_()
+    bar = page.locator("#legend .colorbar")
+    apply_color_bins(page, bar, "3")
+    page.wait_for_function(SETTLED)
+    expect(page.locator("#legend .legend-item")).to_have_count(3 + 1)
+
+
+def test_the_number_is_off_when_the_settings_fail(page: Page, app_url: str) -> None:
+    """A failed ``GET /api/settings`` leaves the number of intervals off; the page draws as before."""
+    page.route("**/api/settings", lambda route: route.abort())
+    page.goto(f"{app_url}/?token={TOKEN}")
+    expect(page.locator("#columns .column").filter(has_text="label")).to_be_visible()
+    _number_is_off(page, "区間数の上限を取得できません")
 
 
 # Holds the decoding of images until `window.releaseImages()`.
@@ -1136,9 +1306,9 @@ def test_points_are_circles_sized_by_the_legend_and_the_color_bar(
     box = menu.bounding_box()
     assert box["y"] >= 0 and box["y"] + box["height"] <= 400
     expect(menu.get_by_text("15 px", exact=True)).not_to_be_in_viewport()
-    item = menu.get_by_text("2 個", exact=True)
-    item.scroll_into_view_if_needed()
-    expect(item).to_be_in_viewport()
+    for item in (menu.get_by_label("区間数"), menu.get_by_role("button", name="適用")):
+        item.scroll_into_view_if_needed()
+        expect(item).to_be_in_viewport()
 
 
 def overlaps(a: dict, b: dict) -> bool:
@@ -1814,6 +1984,15 @@ def test_the_strips_of_a_scrolled_grid_open_the_axis_dialog(app_page: Page) -> N
         assert values == shown
         dialog.get_by_role("button", name="キャンセル").click()
         expect(dialog).to_have_count(0)
+
+
+def apply_color_bins(page: Page, opener: Locator, text: str) -> None:
+    """Open the color scale's menu by a right click on `opener`, type the number of intervals and apply it."""
+    opener.click(button="right")
+    menu = page.locator(".scale-menu")
+    menu.get_by_label("区間数").fill(text)
+    menu.get_by_role("button", name="適用").click()
+    expect(menu).to_have_count(0)
 
 
 def placed_names(page: Page) -> dict[str, list[str]]:

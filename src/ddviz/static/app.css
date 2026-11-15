@@ -1711,6 +1711,37 @@ html.desktop #toasts {
   font: inherit;
 }
 
+/* The number of intervals in the scale's menu (scalemenu.js). */
+.scale-menu-count {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 3px 12px 3px 24px;
+}
+.scale-menu-count-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.scale-menu-count-input {
+  width: 5em;
+  min-width: 0;
+  font: inherit;
+}
+.scale-menu-count-apply {
+  font: inherit;
+}
+.scale-menu-count-error {
+  max-width: 200px;
+  color: var(--error-text);
+  font-size: 11px;
+}
+.scale-menu-count-note {
+  max-width: 200px;
+  color: var(--text-hint);
+  font-size: 11px;
+}
+
 /* An item that opens a submenu beside the menu (shapemenu.js). */
 .scale-menu-item.has-sub {
   padding-right: 28px;

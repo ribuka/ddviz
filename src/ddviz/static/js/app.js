@@ -148,8 +148,7 @@ let current = null;
 const legend = new Legend(
   document.getElementById("legend"),
   () => layers.draw(),
-  (event) =>
-    openScaleMenu(event, options.colorBins, setColorBins, recolor, options.sharedSize(current), setShapeSize),
+  (event) => openColorScaleMenu(event),
   (event, kind, i) => {
     if (kind === "shape") {
       const { column, levels, sizes, shapes, choices } = current.symbol;
@@ -161,7 +160,7 @@ const legend = new Legend(
     } else if (current.color.kind === "bins" && !isMissingLevel(current, i)) {
       // The intervals take their colors from the scale; the missing level
       // takes its own, as a categorical level.
-      openScaleMenu(event, options.colorBins, setColorBins, recolor, options.sharedSize(current), setShapeSize);
+      openColorScaleMenu(event);
     } else {
       const level = current.series[i];
       openShapeMenu(event, SIZE_HEADING, options.sharedSize(current), setShapeSize, {
@@ -173,13 +172,24 @@ const legend = new Legend(
 const layers = new ImageLayers(gd, legend);
 // The DPI of the copied graph image (`plot.image_copy.dpi`); the copy waits for it.
 let imageCopyDpi = null;
+// The most intervals of a numeric color column (`plot.max_levels`); null
+// until the settings come, and when they fail, which turns the number off.
+let maxLevels = null;
+// The menu of a numeric color column's scale (`openScaleMenu`).
+function openColorScaleMenu(event) {
+  openScaleMenu(event, options.colorBins, setColorBins, recolor, options.sharedSize(current), setShapeSize, maxLevels);
+}
 // The opacity of the legend's inactive series (`plot.legend.inactive_opacity`).
 fetch("/api/settings")
-  .then((response) => (response.ok ? response.json() : null))
+  .then(
+    (response) => (response.ok ? response.json() : null),
+    () => null,
+  )
   .then((settings) => {
     if (!settings) return;
     legend.inactiveOpacity = settings.inactive_opacity;
     imageCopyDpi = settings.image_copy_dpi;
+    maxLevels = settings.max_levels;
     layers.draw();
   });
 const sticky = new StickyLabels(document.getElementById("scroller"), gd, (meta, role, index) =>

@@ -7,6 +7,7 @@ from collections.abc import Callable
 import pytest
 
 from ddviz.server.plotoptions import (
+    MAX_SAFE_INTEGER,
     parse_color_bins,
     parse_level_shapes,
     parse_line_width,
@@ -18,13 +19,53 @@ from ddviz.server.plotoptions import (
 from ddviz.shared.scatter import Binning, Smoothing
 
 
-def test_parse_color_bins_takes_known_counts_only() -> None:
-    """The page may cut a color column into 2, 3, 5 or 10 intervals, by rows or by values."""
-    assert parse_color_bins({"n": 5, "by": "rows"}) == Binning(5, "rows")
-    assert parse_color_bins(None) is None
-    for raw in ({"n": 4, "by": "rows"}, {"n": 5, "by": "other"}, {"n": 5}):
-        with pytest.raises(ValueError, match="color bins"):
-            parse_color_bins(raw)
+@pytest.mark.parametrize("by", ["values", "rows"])
+@pytest.mark.parametrize("n", [2, 3, 4, 5, 7, 10, 12, 100])
+def test_parse_color_bins_takes_integers_from_2_to_the_limit(n: int, by: str) -> None:
+    """The page may cut a color column into 2 to ``plot.max_levels`` intervals, by rows or by values."""
+    assert parse_color_bins({"n": n, "by": by}, 100) == Binning(n, by)
+
+
+def test_parse_color_bins_takes_null_for_a_gradient() -> None:
+    """Null asks for a gradient."""
+    assert parse_color_bins(None, 100) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "limit"),
+    [
+        ({"n": 1, "by": "values"}, 100),
+        ({"n": 0, "by": "rows"}, 100),
+        ({"n": -3, "by": "rows"}, 100),
+        ({"n": 101, "by": "values"}, 100),
+        ({"n": 13, "by": "rows"}, 12),
+        ({"n": 2, "by": "rows"}, 1),
+        ({"n": MAX_SAFE_INTEGER + 1, "by": "rows"}, MAX_SAFE_INTEGER + 10),
+        ({"n": 7.0, "by": "rows"}, 100),
+        ({"n": "7", "by": "rows"}, 100),
+        ({"n": True, "by": "rows"}, 100),
+        ({"n": None, "by": "rows"}, 100),
+        ({"n": 5, "by": "other"}, 100),
+        ({"n": 5}, 100),
+        ({"n": 5, "by": "rows", "x": 1}, 100),
+        ([5, "rows"], 100),
+    ],
+)
+def test_parse_color_bins_refuses_other_types_forms_and_ranges(
+    raw: object, limit: int
+) -> None:
+    """Another number, type or form is refused, naming color_bins and the range taken."""
+    top = min(limit, MAX_SAFE_INTEGER)
+    with pytest.raises(ValueError, match=f"color_bins .* from 2 to {top}"):
+        parse_color_bins(raw, limit)
+
+
+def test_parse_color_bins_takes_up_to_the_safe_integers() -> None:
+    """Past the safe integers of JavaScript nothing is taken, whatever the limit."""
+    big = MAX_SAFE_INTEGER + 10
+    assert parse_color_bins({"n": MAX_SAFE_INTEGER, "by": "rows"}, big) == Binning(
+        MAX_SAFE_INTEGER, "rows"
+    )
 
 
 def test_parse_shape_size() -> None:
@@ -116,8 +157,8 @@ def test_parse_level_shapes() -> None:
         (parse_wrap_cols, 2.0, "wrap_cols"),
         (parse_line_width, 2.0, "line_width"),
         (parse_shape_sizes, {"p": 7.0}, "shape_size"),
-        (parse_color_bins, {"n": 3.0, "by": "rows"}, "color bins are n in"),
-        (parse_color_bins, {"n": True, "by": "rows"}, "color bins are n in"),
+        (lambda raw: parse_color_bins(raw, 100), {"n": 3.0, "by": "rows"}, "color_bins"),
+        (lambda raw: parse_color_bins(raw, 100), {"n": True, "by": "rows"}, "color_bins"),
     ],
 )
 def test_integers_are_json_integers_only(
@@ -132,4 +173,4 @@ def test_json_integers_are_taken_as_before() -> None:
     """An int of the allowed values is returned as it is."""
     assert parse_shape_size(7) == 7
     assert parse_wrap_cols(2) == 2
-    assert parse_color_bins({"n": 3, "by": "rows"}) == Binning(3, "rows")
+    assert parse_color_bins({"n": 3, "by": "rows"}, 100) == Binning(3, "rows")

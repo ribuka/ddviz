@@ -7,8 +7,11 @@ import math
 from ddviz.shared.scatter import Binning, Smoothing
 from ddviz.shared.shapes import SHAPES
 
-# Numbers of intervals a numeric color column can be cut into.
-COLOR_BINS = (2, 3, 5, 10)
+# The fewest intervals a numeric color column can be cut into.
+COLOR_BINS_MIN = 2
+# The largest integer JavaScript holds exactly (``Number.MAX_SAFE_INTEGER``),
+# so that the page and the server take the same numbers of intervals.
+MAX_SAFE_INTEGER = 2**53 - 1
 # Methods of the smoothing lines (`ddviz.compute.smooth`).
 SMOOTH_METHODS = ("gcv", "csaps", "lowess")
 # Sizes in pixels the markers can take: the shapes of the symbol levels, or
@@ -34,13 +37,16 @@ def is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def parse_color_bins(raw: dict | None) -> Binning | None:
+def parse_color_bins(raw: dict | None, max_levels: int) -> Binning | None:
     """Return how the page asks to cut a numeric color column, checked.
 
     Parameters
     ----------
     raw : dict or None
         ``{"n": int, "by": "rows" | "values"}``, or None for a gradient.
+    max_levels : int
+        Most intervals taken (``plot.max_levels``); the number is also at most
+        `MAX_SAFE_INTEGER`.
 
     Returns
     -------
@@ -50,19 +56,22 @@ def parse_color_bins(raw: dict | None) -> Binning | None:
     Raises
     ------
     ValueError
-        When `raw` has another form, or `n` is not one of `COLOR_BINS`.
+        When `raw` has another form, or `n` is not an integer from
+        `COLOR_BINS_MIN` to the limit.
     """
     if raw is None:
         return None
+    top = min(max_levels, MAX_SAFE_INTEGER)
     if (
         not isinstance(raw, dict)
         or set(raw) != {"n", "by"}
         or not is_int(raw["n"])
-        or raw["n"] not in COLOR_BINS
+        or not COLOR_BINS_MIN <= raw["n"] <= top
         or raw["by"] not in ("rows", "values")
     ):
         raise ValueError(
-            f"color bins are n in {COLOR_BINS} and by rows or values: {raw}"
+            f"color_bins are n, an integer from {COLOR_BINS_MIN} to {top}, "
+            f"and by rows or values: {raw}"
         )
     return Binning(raw["n"], raw["by"])
 

@@ -140,11 +140,12 @@ def test_columns_carry_their_non_null_rows(
 def test_the_page_reads_the_inactive_opacity(
     tmp_path: Path, scatter_path: Path
 ) -> None:
-    """``GET /api/settings`` gives the page ``plot.legend.inactive_opacity`` and ``plot.image_copy.dpi``."""
+    """``GET /api/settings`` gives the page ``plot.legend.inactive_opacity``, ``plot.image_copy.dpi`` and ``plot.max_levels``."""
     settings = Settings(
         plot=PlotSettings(
             legend=LegendSettings(inactive_opacity=0.0),
             image_copy=ImageCopySettings(dpi=96),
+            max_levels=12,
         )
     )
     app = create_app(
@@ -163,7 +164,85 @@ def test_the_page_reads_the_inactive_opacity(
         assert client.get("/api/settings").json() == {
             "inactive_opacity": 0.0,
             "image_copy_dpi": 96,
+            "max_levels": 12,
         }
+
+
+def test_the_page_reads_the_default_limit_of_levels(client: TestClient) -> None:
+    """By default ``GET /api/settings`` gives ``plot.max_levels`` as 100."""
+    assert client.get("/api/settings").json()["max_levels"] == 100
+
+
+# A numeric color column, cut into intervals by ``color_bins``.
+BINNED = {"x": ["x"], "y": ["y"], "color": "y"}
+
+
+def _bins_server(tmp_path: Path, scatter_path: Path, max_levels: int) -> TestClient:
+    """Return a server of `scatter_path` with ``plot.max_levels`` set, the token already used."""
+    app = create_app(
+        [str(scatter_path)],
+        False,
+        tmp_path / "run",
+        tmp_path / "cache",
+        tmp_path / "history",
+        Settings(plot=PlotSettings(max_levels=max_levels)),
+        TOKEN,
+    )
+    (tmp_path / "run").mkdir()
+    return TestClient(app)
+
+
+@pytest.mark.parametrize(("limit", "good"), [(100, [2, 7, 100]), (12, [2, 4, 12])])
+def test_color_bins_take_integers_up_to_the_limit_and_refuse_the_rest(
+    tmp_path: Path,
+    scatter_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit: int,
+    good: list[int],
+) -> None:
+    """``color_bins`` takes 2 to ``plot.max_levels`` intervals, as the page does; past the limit, or as a float, a string or a bool, it is a 400 before any task runs."""
+    run = TaskBroker.run
+    tasks: list[object] = []
+
+    async def counted(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        """Count the tasks run."""
+        tasks.append(task)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", counted)
+    with _bins_server(tmp_path, scatter_path, limit) as client:
+        client.get("/", params={"token": TOKEN})
+        for by in ("values", "rows"):
+            for n in good:
+                response = client.post(
+                    "/api/plot",
+                    json={
+                        "encoding": BINNED,
+                        **SIZE,
+                        **HIDE_NULLS,
+                        "color_bins": {"n": n, "by": by},
+                    },
+                )
+                assert response.status_code == 200, response.text
+                meta = response.json()["meta"]
+                assert meta["color"]["kind"] == "bins"
+                assert len(meta["series"]) == n
+        tasks.clear()
+        for n in (limit + 1, 1, 7.0, "7", True):
+            response = client.post(
+                "/api/plot",
+                json={
+                    "encoding": BINNED,
+                    **SIZE,
+                    **HIDE_NULLS,
+                    "color_bins": {"n": n, "by": "rows"},
+                },
+            )
+            assert response.status_code == 400
+            detail = response.json()["detail"]
+            assert "color_bins" in detail
+            assert f"from 2 to {limit}" in detail
+        assert tasks == []
 
 
 def test_columns_list_as_many_as_the_settings_allow(

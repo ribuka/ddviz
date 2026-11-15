@@ -11,7 +11,7 @@ import polars as pl
 import pytest
 
 from ddviz.compute.aggregate import COUNT, INDEX, aggregate
-from ddviz.compute.cuts import cut_labels, find_cuts
+from ddviz.compute.cuts import cut_index, cut_labels, find_cuts
 from ddviz.compute.tasks.plot import run_plot, run_selection
 from ddviz.server.encoding import Encoding
 from ddviz.server.plan import FACET_BINS, scatter_spec
@@ -92,6 +92,22 @@ def test_cuts_by_values_are_of_equal_width(path: Path, frame: pl.DataFrame) -> N
     cuts = find_cuts(pl.scan_parquet(path), "v", Binning(4, "values"))
     v = _finite_v(frame)
     assert cuts["breaks"] == pytest.approx(np.linspace(v.min(), v.max(), 5).tolist())
+
+
+@pytest.mark.parametrize("by", ["values", "rows"])
+@pytest.mark.parametrize("n", [4, 7, 12])
+def test_any_number_of_intervals_labels_and_assigns_the_rows(n: int, by: str) -> None:
+    """The values 0 to 84 cut into 4, 7 or 12 intervals, of equal width or of equal rows, break at multiples of 84 / n; each interval holds its 84 / n values, the last one also 84."""
+    step = 84 // n
+    scan = pl.LazyFrame({"a": [float(i) for i in range(85)]})
+    cuts = find_cuts(scan, "a", Binning(n, by))
+    assert cuts == {"breaks": [float(i * step) for i in range(n + 1)], "values": False}
+    labels = cut_labels(cuts)
+    assert labels[0] == f"[0, {step})"
+    assert labels[-1] == f"[{84 - step}, 84]"
+    assert len(labels) == n
+    index = scan.select(cut_index("a", cuts).alias("i")).collect()["i"].to_list()
+    assert index == [min(i // step, n - 1) for i in range(85)]
 
 
 def test_a_column_of_few_values_gets_a_level_per_value(path: Path) -> None:

@@ -11,7 +11,14 @@ from playwright.sync_api import Page, Route, expect
 from tests.e2e.test_axis_chips import spans, wait_aligned
 from tests.e2e.test_axis_format import open_dialog
 from tests.e2e.test_axis_menu import _right_click_tick, add_second_y
-from tests.e2e.test_scatter import SETTLED, drop_at, place, wait_idle, watch_errors
+from tests.e2e.test_scatter import (
+    SETTLED,
+    apply_color_bins,
+    drop_at,
+    place,
+    wait_idle,
+    watch_errors,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -71,7 +78,7 @@ def test_edits_of_the_figure_keep_the_zoomed_ranges(app_page: Page) -> None:
     zoom(page, {"xaxis.range": X_ZOOM, "yaxis.range": Y_ZOOM})
     keeps = lambda edit: edit_keeps(page, edit, [X_ZOOM], [Y_ZOOM])
 
-    keeps(lambda: scale_menu(page, "5 個"))
+    keeps(lambda: apply_color_bins(page, page.locator("#legend .scale").first, "7"))
     keeps(lambda: scale_menu(page, "行数で等分"))
     keeps(lambda: scale_menu(page, "連続（グラデーション）"))
     smooth = page.locator('#elements .element[data-element="smooth"]')
