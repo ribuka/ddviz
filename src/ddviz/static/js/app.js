@@ -461,6 +461,110 @@ let serverAhead = false;
 // is asked for meanwhile, so a failed plot asks for it (`resumeShown`).
 let movedWhilePlotting = false;
 
+// Posts a plot request and returns its answer and text; while an earlier
+// plot converts its columns (409 "converting"), posts it again once the
+// conversion ends, unless a newer request (`mine !== generation`) came.
+// Throws what `fetch` throws.
+async function postPlot(body, mine) {
+  let response;
+  for (;;) {
+    response = await fetch("/api/plot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    // An edit dropped while an earlier plot converts its columns is refused
+    // (it would kill the conversion); it waits for the conversion's end.
+    if (response.status !== 409 || mine !== generation) break;
+    if ((await response.clone().json()).detail !== "converting") break;
+    await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
+  }
+  return { response, text: await response.text() };
+}
+
+// Returns {figure, meta} of an answer's text, timing it (`timings.fetch`,
+// `size`, `task`, `convert`). Throws when the text is not a figure.
+function readPlot(text, started) {
+  const { figure, meta } = JSON.parse(text);
+  timings.fetch = Math.round(performance.now() - started);
+  timings.size = Math.round(text.length / 1024);
+  timings.task = Number(meta.task_seconds.toFixed(2));
+  timings.convert = Number(meta.convert_seconds.toFixed(2));
+  return { figure, meta };
+}
+
+// Plots the figure's events again after `Plotly.newPlot` (which drops them):
+// the chips, the relayout, the selection.
+function listenToFigure() {
+  // The chips of X and Y follow the axes drawn now and on every later draw.
+  for (const event of ["plotly_afterplot", "plotly_relayout"]) gd.on(event, () => builder.layout());
+  builder.layout();
+  gd.on("plotly_relayout", onRelayout);
+  gd.on("plotly_selected", (event) => {
+    if (!ownReact) boxSelection.pick(event);
+  });
+  gd.on("plotly_deselect", () => {
+    if (!ownReact) boxSelection.clear();
+  });
+}
+
+// Draws the plot's result as the committed one: the selection, the
+// overview, the figure and its events, the legend and the images, then
+// commits the graph (`Builder.commit`) and the filter (`RestorePoint`).
+// Returns the view drawn again (`keep` or `carriedView`), or null.
+// Throws what drawing throws; the caller rolls back.
+async function drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, candidate, filterCandidate, settled }) {
+  const drawStarted = performance.now();
+  // The selection and the shapes of another symbol column go with the drawn plot.
+  boxSelection.clear(false);
+  movedWhilePlotting = false;
+  setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
+  requested = { x: [], y: [] };
+  // The legend changes below, once the figure is drawn.
+  setCurrent(meta, { legend: false });
+  shownSize = size;
+  setPending(false);
+  empty.hidden = true;
+  showImages(meta, null);
+  // A plot drawn again after a failure has the view and the box drawn before.
+  const view = keep && sameAxes(keep, meta) ? keep : carried;
+  if (view?.box) boxSelection.restore(view.box);
+  const shaped = (ranged) => withBandTicks(axes.orientedLayout(decorate(ranged, meta, axes.settingsOf, axes.angleOf), meta), meta);
+  const layout = shaped(figure.layout);
+  drawnKey = figureKey(figure.data, layout);
+  Plotly.purge(gd);
+  await Plotly.newPlot(gd, figure.data, forPlotly(boxSelection.withBox(layout, meta)), PLOT_CONFIG);
+  // The view's ranges go on after the whole ones: plotly keeps the ranges
+  // of its first draw for Reset axes and a double click.
+  const zoomedUpdate = view?.zoomed && rangeUpdate(gd, shaped(withRanges(figure.layout, meta, view.ranges)));
+  if (zoomedUpdate) await Plotly.relayout(gd, zoomedUpdate);
+  timings.plot = Math.round(performance.now() - drawStarted);
+  // The legend and the colors and shapes picked change once the figure is
+  // drawn: a figure that fails keeps them for the graph drawn again.
+  legend.set(meta);
+  // The colors picked for the levels stay while the color column does.
+  keepPicked(meta.color.column);
+  // The shapes picked stay while the symbol column does.
+  options.pickedShapes(encoding.symbol);
+  layers.attach();
+  sticky.attach();
+  listenToFigure();
+  showImages(meta, bitmaps);
+  if (view?.box) layers.setSelection({ box: view.box });
+  // The figure drawn is this graph's: a later failure comes back to it.
+  builder.commit(candidate);
+  restorePoint.confirm(filterCandidate);
+  serverAhead = false;
+  settled();
+  showRows(meta);
+  timings.plotAndImages = Math.round(performance.now() - drawStarted);
+  setInfo();
+  // The labels of the new figure set its margin; a new one is aggregated
+  // as a new size is (below), or with the view drawn again.
+  measureMargin(false);
+  return view ?? null;
+}
+
 // Aggregates the overview of a graph (`ddviz.server.encoding.Encoding`) and draws it.
 // The graph and the state derived from it are a candidate (`Builder`) until
 // its result is drawn with its images: only then are they committed, the
@@ -476,14 +580,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   const size = stageSize();
   plottedEncoding = encoding;
   const candidate = builder.snapshot();
-  const body = {
-    encoding,
-    ...size,
-    filters,
-    ...options.request(encoding),
-    axis_scales: axes.scales.request(encoding),
-  };
-
+  const body = { encoding, ...size, filters, ...options.request(encoding), axis_scales: axes.scales.request(encoding) };
   // The filter pane's state of these conditions, which the pane goes back to
   // once the result is drawn (`RestorePoint`).
   const filterCandidate = restorePoint.propose(filterPane.sent);
@@ -501,22 +598,9 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     markBusy();
   };
   const started = performance.now();
-  let response = null;
-  let text;
+  let response, text;
   try {
-    for (;;) {
-      response = await fetch("/api/plot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      // An edit dropped while an earlier plot converts its columns is refused
-      // (it would kill the conversion); it waits for the conversion's end.
-      if (response.status !== 409 || mine !== generation) break;
-      if ((await response.clone().json()).detail !== "converting") break;
-      await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
-    }
-    text = await response.text();
+    ({ response, text } = await postPlot(body, mine));
   } catch (error) {
     console.error(error);
     settled();
@@ -539,19 +623,14 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   converting.hidden = true;
   // The server's results are this plot's until it is drawn.
   serverAhead = true;
-  let figure;
-  let meta;
+  let figure, meta;
   try {
-    ({ figure, meta } = JSON.parse(text));
+    ({ figure, meta } = readPlot(text, started));
   } catch (error) {
     console.error(error);
     settled();
     return plotFailed(`描画の応答を読めなかった（${error.message}）`, askedSize, restoring);
   }
-  timings.fetch = Math.round(performance.now() - started);
-  timings.size = Math.round(text.length / 1024);
-  timings.task = Number(meta.task_seconds.toFixed(2));
-  timings.convert = Number(meta.convert_seconds.toFixed(2));
   // The images come before the drawn figure changes: a failure keeps it.
   const bitmaps = await fetchImages(meta);
   if (mine !== generation) {
@@ -566,64 +645,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   const kept = keptView();
   // The ranges zoomed of the axes this edit kept, read just before the switch.
   const carried = keep ? null : carriedView(meta);
-  const drawStarted = performance.now();
   try {
-    // The selection and the shapes of another symbol column go with the drawn plot.
-    boxSelection.clear(false);
-    movedWhilePlotting = false;
-    setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
-    requested = { x: [], y: [] };
-    // The legend changes below, once the figure is drawn.
-    setCurrent(meta, { legend: false });
-    shownSize = size;
-    setPending(false);
-    empty.hidden = true;
-    showImages(meta, null);
-    // A plot drawn again after a failure has the view and the box drawn before.
-    const view = keep && sameAxes(keep, meta) ? keep : carried;
-    if (view?.box) boxSelection.restore(view.box);
-    const shaped = (ranged) => withBandTicks(axes.orientedLayout(decorate(ranged, meta, axes.settingsOf, axes.angleOf), meta), meta);
-    const layout = shaped(figure.layout);
-    drawnKey = figureKey(figure.data, layout);
-    Plotly.purge(gd);
-    await Plotly.newPlot(gd, figure.data, forPlotly(boxSelection.withBox(layout, meta)), PLOT_CONFIG);
-    // The view's ranges go on after the whole ones: plotly keeps the ranges
-    // of its first draw for Reset axes and a double click.
-    const zoomedUpdate = view?.zoomed && rangeUpdate(gd, shaped(withRanges(figure.layout, meta, view.ranges)));
-    if (zoomedUpdate) await Plotly.relayout(gd, zoomedUpdate);
-    timings.plot = Math.round(performance.now() - drawStarted);
-    // The legend and the colors and shapes picked change once the figure is
-    // drawn: a figure that fails keeps them for the graph drawn again.
-    legend.set(meta);
-    // The colors picked for the levels stay while the color column does.
-    keepPicked(meta.color.column);
-    // The shapes picked stay while the symbol column does.
-    options.pickedShapes(encoding.symbol);
-    layers.attach();
-    sticky.attach();
-    // The chips of X and Y follow the axes drawn now and on every later draw.
-    for (const event of ["plotly_afterplot", "plotly_relayout"]) gd.on(event, () => builder.layout());
-    builder.layout();
-    gd.on("plotly_relayout", onRelayout);
-    gd.on("plotly_selected", (event) => {
-      if (!ownReact) boxSelection.pick(event);
-    });
-    gd.on("plotly_deselect", () => {
-      if (!ownReact) boxSelection.clear();
-    });
-    showImages(meta, bitmaps);
-    if (view?.box) layers.setSelection({ box: view.box });
-    // The figure drawn is this graph's: a later failure comes back to it.
-    builder.commit(candidate);
-    restorePoint.confirm(filterCandidate);
-    serverAhead = false;
-    settled();
-    showRows(meta);
-    timings.plotAndImages = Math.round(performance.now() - drawStarted);
-    setInfo();
-    // The labels of the new figure set its margin; a new one is aggregated
-    // as a new size is (below), or with the view drawn again.
-    measureMargin(false);
+    const view = await drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, candidate, filterCandidate, settled });
     if (view?.zoomed) {
       requestView(view.ranges);
       return meta;
