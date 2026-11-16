@@ -124,6 +124,9 @@ const STAGES = {
   write: "結果を書き出し中…",
 };
 
+// The stages of an aggregation behind a plot, a view or an overview, which the
+// page awaits (`waiting`, `plotting`) while they run.
+const AGGREGATE_STAGES = new Set(["ranges", "levels", "colors", "facets", "boxes", "smooth", "lines", "bins"]);
 const events = new EventSource("/api/events");
 events.onmessage = (event) => {
   const message = JSON.parse(event.data);
@@ -136,6 +139,9 @@ events.onmessage = (event) => {
     showConverting(message);
     return;
   }
+  // A result no longer awaited (a superseded request's, or one whose progress
+  // is late) must not put its stage over the status of the result drawn.
+  if (AGGREGATE_STAGES.has(message.stage) && !waiting && plotting === 0) return;
   converting.hidden = true;
   statusLine.show(STAGES[message.stage] ?? "処理中…");
 };
