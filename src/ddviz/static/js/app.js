@@ -775,7 +775,7 @@ function resumeShown() {
     movedWhilePlotting = false;
     hideHover();
     const shown = shownRanges(gd, overview.meta);
-    if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) showWhole();
+    if (atWhole(shown)) showWhole();
     else requestView(shown);
   } else {
     boxSelection.follow();
@@ -1081,7 +1081,7 @@ function viewFailed(text) {
   const sameFilter = filtersKey(current.filters) === filtersKey(filters);
   if (sameFilter && sameRanges(shown.x, current.x_ranges) && sameRanges(shown.y, current.y_ranges)) return;
   hideHover();
-  if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) showWhole();
+  if (atWhole(shown)) showWhole();
   else requestView(shown);
 }
 
@@ -1203,6 +1203,14 @@ function showWhole() {
   const auto = knownAuto();
   if (auto) return showOverview(auto);
   return requestOverview();
+}
+
+// Whether ranges shown (`shownRanges`) are the whole figure of the page's
+// filter: its automatic ranges, or the overview's while they are not known.
+// An old overview standing in shows the former.
+function atWhole(shown) {
+  const whole = knownAuto() ?? { x: overview.meta.x_ranges, y: overview.meta.y_ranges };
+  return sameRanges(shown.x, whole.x) && sameRanges(shown.y, whole.y);
 }
 
 // Reset axes, and the double click on the plot (`onDoubleClick`): the axes
