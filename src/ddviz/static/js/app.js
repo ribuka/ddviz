@@ -1035,7 +1035,7 @@ async function requestOverview({ onFailed = null } = {}) {
 // drawing the current images stretched to the new axes, faded, and the area
 // they do not cover stays blank. A null range is the automatic range of the
 // filter, which the server finds or knows.
-async function requestView({ x: xRanges, y: yRanges }) {
+async function requestView({ x: xRanges, y: yRanges }, { onFailed = null } = {}) {
   // The server takes values, ascending: the powers of 10 of the exponents of
   // a log axis (`axisscale.js`).
   const logs = overview.meta;
@@ -1049,8 +1049,10 @@ async function requestView({ x: xRanges, y: yRanges }) {
     ranges: { x: xRanges, y: yRanges },
     whole: false,
     status: "表示範囲を集約中…",
+    onFailed,
   });
 }
+
 
 // Tells of a failed view or overview (the latest request), whose answer is
 // `text`. One that the color levels of its filter refused
@@ -1153,34 +1155,49 @@ function showFreeze() {
 }
 
 // Turns the lock on, which keeps the ranges shown now, or off, which takes
-// every axis back to the automatic ranges of the filter at once (the axes
-// set by hand too). Off aggregates the overview of the filter unless it is
-// drawn; a failure puts the lock and the axes set by hand back, with the
-// figure as it was.
+// every continuous axis back to the automatic ranges of the filter at once
+// (those set by hand too); a categorical axis set by hand keeps its range.
+// On while a result is waited for (a new filter's, whose axes not kept
+// would take its automatic ranges), the shown ranges are asked for again,
+// so that the answer of the older request does not move them. Off
+// aggregates the overview of the filter unless it is drawn, or the view of
+// the categorical ranges kept; a failure puts the lock and the axes set by
+// hand back, with the figure as it was.
 function setFrozen(on) {
   if (axisRanges.frozen === on) return;
   const before = axisRanges.snapshot();
-  axisRanges.setFrozen(on);
+  axisRanges.setFrozen(on, current);
   showFreeze();
-  if (on || !overview || !current || !gd._fullLayout) return;
+  if (!overview || !current || !gd._fullLayout) return;
+  const ranges = axisRanges.filterRanges(current, shownRanges(gd, current));
+  if (on) {
+    if (waiting && !plotting) {
+      hideHover();
+      requestView(ranges);
+    }
+    return;
+  }
   hideHover();
   statusLine.release();
+  const auto = knownAuto();
   if (plotting) {
     movedWhilePlotting = true;
-    const auto = knownAuto();
     if (auto) moveAxes(auto);
+    return;
+  }
+  const onFailed = () => {
+    axisRanges.restore(before);
+    showFreeze();
+  };
+  if ([...ranges.x, ...ranges.y].some((range) => range !== null)) {
+    requestView(ranges, { onFailed });
     return;
   }
   if (filtersKey(overview.meta.filters) === filtersKey(filters)) {
     showOverview();
     return;
   }
-  requestOverview({
-    onFailed: () => {
-      axisRanges.restore(before);
-      showFreeze();
-    },
-  });
+  requestOverview({ onFailed });
 }
 freezeButton.addEventListener("click", () => setFrozen(!axisRanges.frozen));
 

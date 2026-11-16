@@ -444,3 +444,60 @@ def test_the_latest_operation_wins_and_a_failure_restores(app_page: Page) -> Non
     assert shown(page, "xaxis") == pytest.approx([30, 35])
     page.unroute("**/api/overview")
     assert errors == []
+
+
+@pytest.mark.parametrize("zoomed", [False, True])
+def test_the_lock_turned_on_while_waiting_keeps_the_ranges_shown(
+    app_page: Page, zoomed: bool
+) -> None:
+    """Locked while the overview (or a view with an automatic axis) of a new filter is held, the axes keep the ranges shown then, under the new filter."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "x", "x")
+    place(page, "y", "y")
+    add_filter(page, "x")
+    if zoomed:
+        # y set by hand: the filter asks for a view with x automatic.
+        with page.expect_request("**/api/view"):
+            page.evaluate("Plotly.relayout('plot', {'yaxis.range': [50, 60]})")
+        settle(page)
+    before = {key: shown(page, key) for key in ("xaxis", "yaxis")}
+    held: list[Route] = []
+    page.route("**/api/*view", lambda route: held.append(route))
+    inputs = card(page, "x").locator(".filter-range input")
+    inputs.first.fill("20")
+    inputs.first.press("Enter")
+    page.wait_for_function(
+        "() => document.getElementById('plot').classList.contains('busy')"
+    )
+    page.locator(LOCK).click()
+    expect(page.locator(LOCK)).to_have_attribute("aria-pressed", "true")
+    page.wait_for_timeout(200)
+    for route in held:
+        route.continue_()
+    page.unroute("**/api/*view")
+    settle(page)
+    for key, range_ in before.items():
+        assert shown(page, key) == pytest.approx(range_)
+    expect(page.locator("#status")).to_contain_text("（フィルタ後）")
+    assert errors == []
+
+
+def test_the_lock_turned_off_keeps_a_categorical_zoom(app_page: Page) -> None:
+    """Off, the continuous axes go back to their automatic ranges, and a categorical axis zoomed keeps its range."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "g", "x")
+    place(page, "y", "y")
+    with page.expect_request("**/api/view"):
+        page.evaluate(
+            "Plotly.relayout('plot', {'xaxis.range': [-0.2, 0.2], 'yaxis.range': [50, 60]})"
+        )
+    settle(page)
+    lock(page)
+    lock(page)
+    settle(page)
+    assert shown(page, "xaxis") == pytest.approx([-0.2, 0.2])
+    assert near(shown(page, "yaxis"), [-4.0, 204.0], 0.01)
+    expect(page.locator(LOCK)).to_have_attribute("aria-pressed", "false")
+    assert errors == []

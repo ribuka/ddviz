@@ -207,3 +207,20 @@ def test_a_failed_change_goes_back_to_the_snapshot(js_page: Page) -> None:
         return [r.frozen, r.byHand(a, "y", 0), m.autoRanges(a)];""",
     )
     assert result == [True, True, {"x": [[0, 10]], "y": [[0, 10]]}]
+
+
+def test_turning_the_lock_off_keeps_a_categorical_axis_set_by_hand(
+    js_page: Page,
+) -> None:
+    """The lock is of the continuous axes: off, a categorical axis set by hand keeps its range."""
+    result = _call(
+        js_page,
+        """const r = new m.AxisRanges();
+        const a = meta(["g"], ["y"], { axis_levels: { g: ["a", "b"] } });
+        r.setByHand(a, "x", 0);
+        r.setByHand(a, "y", 0);
+        r.setFrozen(true);
+        r.setFrozen(false, a);
+        return [r.byHand(a, "x", 0), r.byHand(a, "y", 0), r.filterRanges(a, { x: [[-0.2, 0.2]], y: [[1, 2]] })];""",
+    )
+    assert result == [True, False, {"x": [[-0.2, 0.2]], "y": [None]}]

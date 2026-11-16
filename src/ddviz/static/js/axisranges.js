@@ -89,12 +89,24 @@ export class AxisRanges {
     else this.manual.clear();
   }
 
-  // Turns the lock on or off. Off, no axis keeps its range: those set by
-  // hand go back to the automatic ranges too.
-  setFrozen(on) {
+  // Turns the lock on or off. Off, no continuous axis keeps its range:
+  // those set by hand go back to the automatic ranges too; the categorical
+  // axes of result `meta` set by hand keep theirs, the lock being none of
+  // theirs. Without `meta` (no figure), every axis set by hand is forgotten.
+  setFrozen(on, meta = null) {
     this.frozen = on;
-    if (!on) this.manual.clear();
+    if (on) return;
+    if (!meta) {
+      this.manual.clear();
+      return;
+    }
+    for (const role of ["x", "y"]) {
+      meta[`${role}_columns`].forEach((_, i) => {
+        if (isContinuous(meta, role, i)) this.manual.delete(axisId(meta, role, i));
+      });
+    }
   }
+
 
   // Forgets the axes set by hand that a new result `meta` does not have,
   // so that a column taken off and put back, moved or put on another scale
