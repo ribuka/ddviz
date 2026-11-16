@@ -969,22 +969,33 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
   const filterCandidate = restorePoint.propose(filterPane.sent);
   const started = performance.now();
   let response;
-  try {
-    response = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...body, ...size, filters }),
-    });
-  } catch (error) {
-    console.error(error);
-    if (mine === generation) {
-      setPending(false);
-      statusLine.error(`集約の要求に失敗した（${error.message}）`);
-      onFailed?.();
+  for (;;) {
+    try {
+      response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, ...size, filters }),
+      });
+    } catch (error) {
+      console.error(error);
+      if (mine === generation) {
+        setPending(false);
+        statusLine.error(`集約の要求に失敗した（${error.message}）`);
+        onFailed?.();
+      }
+      return;
     }
-    return;
+    if (mine !== generation) return; // superseded
+    if (response.status !== 409) break;
+    // The server refused or killed the latest request, for an older one of
+    // this page: it checked that one's columns (409 "converting") or started
+    // that one's task later. The older answer is dropped as superseded, so
+    // this one is asked again; else nothing would end the wait.
+    const refused = await response.clone().json().catch(() => ({}));
+    if (refused.detail !== "converting" && !refused.cancelled) break;
+    await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
+    if (mine !== generation) return;
   }
-  if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
     const text = await response.text();
     // A newer request may have come while the answer was read.
@@ -1012,8 +1023,9 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
   autoMeta = meta;
   // The images and the panels' placement change; the axes of a view stay
   // where the user put them, but for those that take the automatic range
-  // of the filter.
-  const shown = shownRanges(gd, meta);
+  // of the filter. The figure on screen is still of the result drawn: a
+  // result with more panels names axes that it lacks.
+  const shown = shownRanges(gd, current);
   const kept = (role) => shown[role].map((range, i) => (ranges[role][i] === null ? meta[`${role}_ranges`][i] : range));
   const view = { x: kept("x"), y: kept("y") };
   if (!whole) requested = view;
