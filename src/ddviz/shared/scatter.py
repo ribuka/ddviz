@@ -151,11 +151,17 @@ class View:
 
     Parameters
     ----------
-    x_ranges, y_ranges : list of list of float
+    x_ranges, y_ranges : list of list of float or None
         Data range of each x and each y column to aggregate: the bins of a
         panel cover exactly the ranges of its columns and rows outside them
         are left out of it. A column on a log axis has the positions of
         its range: the log10 of the values (`ddviz.shared.axisscale`).
+        None for a column shown over its automatic range (``x_auto``),
+        which the worker finds when the view does not know it.
+    x_auto, y_auto : list of list of float or None
+        The automatic range of each x and each y column over the rows of
+        the spec's local filter (`ddviz.compute.aggregate.Aggregation.x_auto`),
+        known from a result of that filter; None to find them again.
     levels : dict
         Levels of the overview over every row
         (`ddviz.compute.aggregate.Aggregation.all_levels`), so that the series stay
@@ -186,10 +192,12 @@ class View:
         ``levels``, which are of another filter.
     """
 
-    x_ranges: list[list[float]]
-    y_ranges: list[list[float]]
+    x_ranges: list[list[float] | None]
+    y_ranges: list[list[float] | None]
     levels: dict[str, list]
     facets: dict[str, list] | None = None
+    x_auto: list[list[float]] | None = None
+    y_auto: list[list[float]] | None = None
     cuts: dict[str, dict] = field(default_factory=dict)
     color_range: list[float] | None = None
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
@@ -308,10 +316,11 @@ class ScatterSpec:
         value of its representative row, in a single series.
     filters : list of Filter
         Conditions of the local filter, all of which a row must meet to be
-        drawn, hovered, selected or listed. They leave the series and the
-        overview's ranges as they are without them, but for the levels of a
-        categorical color column (`filters_color`), and drop the facet
-        panels left without rows (`ddviz.compute.aggregate.aggregate`).
+        drawn, hovered, selected or listed. They leave the series as they
+        are without them, but for the levels of a categorical color column
+        (`filters_color`); the overview's continuous axes span the values of
+        the rows they keep (its automatic ranges), and the facet panels left
+        without rows are dropped (`ddviz.compute.aggregate.aggregate`).
     max_levels : int
         Most levels a color, symbol, row or col column may have; more are refused
         before binning. A numeric column on these roles has about one level

@@ -363,9 +363,16 @@ class FigureMeta(TypedDict):
     nonpositive: list[list[str]]
     # The bin grid (`ddviz.shared.scatter.BinGrid`).
     grid: dict
-    # The data range of each x and y column.
+    # The data range of each x and y column that the images cover (exponents
+    # on a log axis).
     x_ranges: list[list[float]]
     y_ranges: list[list[float]]
+    # The automatic range of each x and y column over the rows of the
+    # result's filter, in the same coordinates
+    # (`ddviz.compute.aggregate.Aggregation.x_auto`): the overview's ranges,
+    # and where Reset axes goes back to (``static/js/axisranges.js``).
+    x_auto: list[list[float]]
+    y_auto: list[list[float]]
     # The color levels as text.
     series: list[str]
     # How the series are colored: ``kind`` is ``"levels"``, ``"bins"`` for the
@@ -648,6 +655,8 @@ def _meta(
         grid=asdict(manifest.grid),
         x_ranges=[list(r) for r in manifest.x_ranges],
         y_ranges=[list(r) for r in manifest.y_ranges],
+        x_auto=[list(r) for r in manifest.x_auto],
+        y_auto=[list(r) for r in manifest.y_auto],
         series=[str(v) for v in manifest.levels["color"]],
         color=_color_scale(manifest),
         symbol=_symbol(manifest),

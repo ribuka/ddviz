@@ -164,7 +164,7 @@ def plot_router(
     async def respec(
         request: SizeRequest, x_ranges: list | None = None, y_ranges: list | None = None
     ) -> ScatterSpec:
-        """Return the overview's spec for a request's size, filter and ranges (by default its own)."""
+        """Return the overview's spec for a request's size, filter and ranges (by default the automatic ranges of the filter)."""
         if results.overview is None:
             raise HTTPException(409, "no plot")
         if source.converting:
@@ -172,8 +172,8 @@ def plot_router(
         filters = await source.filters(request.filters)
         await source.convert([f.column for f in filters])
         manifest = results.overview.manifest
-        # The color levels of the filter, from the view drawn with it while
-        # zoomed (`resized_spec`).
+        # The color levels and the automatic ranges of the filter, from the
+        # view drawn with it while zoomed (`resized_spec`).
         known = results.view.manifest if results.view is not None else None
         try:
             return resized_spec(
@@ -182,8 +182,8 @@ def plot_router(
                 request.height,
                 filters,
                 {f.column: source.parts(f.column) for f in filters},
-                manifest.x_ranges if x_ranges is None else x_ranges,
-                manifest.y_ranges if y_ranges is None else y_ranges,
+                [None] * len(manifest.spec.x) if x_ranges is None else x_ranges,
+                [None] * len(manifest.spec.y) if y_ranges is None else y_ranges,
                 margin_left=request.margin_left,
                 margin_bottom=request.margin_bottom,
                 known=known,
@@ -303,7 +303,8 @@ def plot_router(
         """Aggregate the zoomed view of the overview.
 
         The ranges are of the values themselves: those of a log axis become
-        its positions here (`ddviz.shared.axisscale.axis_positions`).
+        its positions here (`ddviz.shared.axisscale.axis_positions`). A
+        null range is the column's automatic range of the request's filter.
         """
         if results.overview is None:
             raise HTTPException(409, "no plot")
@@ -318,8 +319,11 @@ def plot_router(
 
     @router.post("/api/overview")
     async def overview(request: SizeRequest) -> JSONResponse:
-        """Aggregate the overview again at another size of the plot area."""
-        # The padded data ranges hold every row, so this is the overview.
+        """Aggregate the overview again at another size of the plot area, or for another filter.
+
+        It spans the automatic ranges of the request's filter: those of a
+        result of that filter, or else found by the worker.
+        """
         spec = await respec(request)
         return await aggregate_again(spec, results.overview, results.set_overview)
 

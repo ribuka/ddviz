@@ -232,13 +232,14 @@ def padded_log_range(lo: float, hi: float) -> tuple[float, float]:
 
 def axis_positions(
     ranges: list, columns: list[str], logs: list[str]
-) -> list[tuple[float, float]]:
+) -> list[tuple[float, float] | None]:
     """Return the positions of the ranges of a request, one per axis column (`positions`).
 
     Parameters
     ----------
     ranges : list
-        The ascending values ``(lo, hi)`` of each column's range.
+        The ascending values ``(lo, hi)`` of each column's range, or None
+        for a column over its automatic range, which stays None.
     columns : list of str
         The columns of the role.
     logs : list of str
@@ -246,7 +247,7 @@ def axis_positions(
 
     Returns
     -------
-    list of tuple of float
+    list of tuple of float or None
         The ranges as positions.
 
     Raises
@@ -258,6 +259,6 @@ def axis_positions(
     if len(ranges) != len(columns):
         raise ValueError("one range per x and y column")
     return [
-        positions((float(lo), float(hi)), c in logs)
-        for c, (lo, hi) in zip(columns, ranges, strict=True)
+        None if r is None else positions((float(r[0]), float(r[1])), c in logs)
+        for c, r in zip(columns, ranges, strict=True)
     ]

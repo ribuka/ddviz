@@ -877,6 +877,37 @@ body.filter-reordering * {
 #builder > [data-role="row"] { grid-area: 2 / 3; }
 #builder > [data-role="x"] { grid-area: 3 / 2; }
 
+/* The lock of the continuous axes' ranges (`static/js/axisranges.js`), in
+   the corner left of X and below Y: open while the axes follow the filter,
+   closed on the accent while they keep their ranges. */
+#axis-freeze {
+  grid-area: 3 / 1;
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+#axis-freeze[aria-pressed="true"] {
+  border-color: var(--accent-on-border);
+  background: var(--accent-on-bg);
+  color: var(--accent-on-text);
+}
+#axis-freeze:disabled {
+  color: var(--text-disabled-icon);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+#axis-freeze .lock-closed,
+#axis-freeze[aria-pressed="true"] .lock-open { display: none; }
+#axis-freeze[aria-pressed="true"] .lock-closed { display: block; }
+
 #side {
   grid-area: 1 / 4 / 4 / 5;
   display: flex;

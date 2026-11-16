@@ -1,4 +1,4 @@
-"""Tests of the local filter: aggregation, selection and table follow it; the series and ranges do not."""
+"""Tests of the local filter: aggregation, selection, table and the automatic ranges follow it; the series do not."""
 
 from __future__ import annotations
 
@@ -38,16 +38,28 @@ def _kept(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def test_filter_keeps_the_series_and_ranges_and_bins_only_its_rows(
+def _auto(values: pl.Series) -> tuple[float, float]:
+    """Return the padded range of the finite values (`ddviz.compute.aggregate._padded`)."""
+    finite = values.filter(values.is_finite())
+    lo, hi = finite.min(), finite.max()
+    pad = (hi - lo) * 0.02
+    return (lo - pad, hi + pad)
+
+
+def test_filter_keeps_the_series_and_bins_only_its_rows(
     scatter_spec: ScatterSpec, filtered: ScatterSpec, scatter_frame: pl.DataFrame
 ) -> None:
-    """The series and axes stay those of every row; the panel of facet p, left without rows, goes."""
+    """The series stay those of every row; the axes span the rows of the filter; the panel of facet p, left without rows, goes."""
     whole = aggregate(scatter_spec)
     agg = aggregate(filtered)
     assert agg.levels == {**whole.levels, "col": ["q"]}
     assert agg.all_levels == whole.levels
-    assert agg.x_ranges == whole.x_ranges
-    assert agg.y_ranges == whole.y_ranges
+    rows = scatter_frame.filter(
+        pl.col("facet") == "q", pl.col("x").is_between(-1.0, 0.5)
+    )
+    assert agg.x_ranges == agg.x_auto == [pytest.approx(_auto(rows["x"]))]
+    assert agg.y_ranges == agg.y_auto == [pytest.approx(_auto(rows["y"]))]
+    assert agg.x_ranges != whole.x_ranges
     assert agg.grid.n_panels == 1
     assert agg.grid.n_series == whole.grid.n_series
     kept = _kept(scatter_frame)
@@ -82,7 +94,9 @@ def test_filter_by_contained_text_keeps_the_rows_whose_value_holds_it(
     assert 0 < kept.height < scatter_frame.height
     assert agg.bins[COUNT].sum() == kept.height
     assert set(agg.bins[INDEX].to_list()) <= set(kept[INDEX].to_list())
-    assert agg.x_ranges == whole.x_ranges
+    rows = scatter_frame.filter(pl.col("label").str.contains("r12", literal=True))
+    assert agg.x_ranges == [pytest.approx(_auto(rows["x"]))]
+    assert agg.x_ranges != whole.x_ranges
     literal = aggregate(
         replace(scatter_spec, filters=[Filter("label", contains="r1.")])
     )

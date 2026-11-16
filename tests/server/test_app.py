@@ -1207,7 +1207,7 @@ def test_plot_data_needs_no_hover_files(tmp_path: Path, scatter_path: Path) -> N
 
 
 def test_log_axes_plot_zoom_select_and_refuse(client: TestClient) -> None:
-    """A log x draws its positive rows over exponents, warns of the others, and takes values at its boundary."""
+    """A log x draws its positive rows over exponents, warns of the others, and takes values at its boundary; a filter that leaves it no positive value draws no row over those of every row."""
     meta = _plot(client, axis_scales={"x": {"x": "log"}, "y": {"y": "linear"}})["meta"]
     assert meta["x_log"] == [True]
     assert meta["y_log"] == [False]
@@ -1227,7 +1227,8 @@ def test_log_axes_plot_zoom_select_and_refuse(client: TestClient) -> None:
     selected = client.post("/api/selection", json=box).json()
     assert selected["selection"]["x_range"] == [pytest.approx(-1), pytest.approx(0)]
     assert selected["rows"] > 0
-    # No positive value under the filter: refused with the reason.
+    # No positive value under the filter, but some among every row: no
+    # row, over the positive values of every row.
     filters = [{"column": "x", "range": [-10, -1]}]
     response = client.post(
         "/api/plot",
@@ -1239,8 +1240,11 @@ def test_log_axes_plot_zoom_select_and_refuse(client: TestClient) -> None:
             "axis_scales": {"x": {"x": "log"}},
         },
     )
-    assert response.status_code == 400
-    assert "X の x に正の値がないため" in response.json()["detail"]
+    assert response.status_code == 200
+    empty = response.json()["meta"]
+    assert empty["rows"] == 0
+    assert empty["x_log"] == [True]
+    assert empty["x_ranges"] == empty["x_auto"] == meta["x_ranges"]
 
 
 @pytest.mark.parametrize(
@@ -1488,3 +1492,98 @@ def test_the_page_reads_only_meta_keys_the_plot_returns(client: TestClient) -> N
     read = _meta_keys_the_page_reads()
     assert read
     assert read <= allowed, sorted(read - allowed)
+
+
+def test_the_automatic_ranges_follow_the_filter(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plot spans the rows of its filter; a view of another filter keeps its ranges and finds that filter's automatic ones once, which later views, sizes and the overview reuse."""
+    every = _plot(client)["meta"]
+    filters = [{"column": "x", "range": [-1, 0.5]}]
+    first = _plot(client, filters=filters)["meta"]
+    assert first["x_ranges"] == first["x_auto"]
+    assert first["y_ranges"] == first["y_auto"]
+    ((lo, hi),) = first["x_auto"]
+    assert -1.03 <= lo < -0.9
+    assert 0.4 < hi <= 0.53
+    assert first["x_ranges"] != every["x_ranges"]
+    specs = []
+    run = TaskBroker.run
+
+    async def kept_run(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        if isinstance(task, PlotTask):
+            specs.append(task.spec)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", kept_run)
+    other = [{"column": "x", "range": [0, 2]}]
+    body = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [None], "filters": other}
+    view = client.post("/api/view", json=body).json()["meta"]
+    assert view["x_ranges"] == [[-1, 1]]
+    ((lo, hi),) = view["x_auto"]
+    assert -0.04 <= lo < 0.1
+    assert 1.5 < hi <= 2.04
+    assert view["y_ranges"] == view["y_auto"]
+    assert view["y_auto"] != first["y_auto"]
+    # A zoom and a size of that filter know its automatic ranges.
+    zoom = {**body, "x_ranges": [[-0.5, 0.5]]}
+    assert client.post("/api/view", json=zoom).status_code == 200
+    larger = {**zoom, "width": 500}
+    assert client.post("/api/view", json=larger).status_code == 200
+    # Reset axes: the overview of the filter spans its automatic ranges.
+    reset = client.post("/api/overview", json={**SIZE, "filters": other}).json()
+    assert reset["meta"]["x_ranges"] == view["x_auto"]
+    assert reset["meta"]["y_ranges"] == view["y_auto"]
+    assert [s.view.x_auto is None for s in specs] == [True, False, False, False]
+    # The overview of the filter at its own size is the one drawn.
+    again = client.post("/api/overview", json={**SIZE, "filters": other}).json()
+    assert again["meta"]["task"] == reset["meta"]["task"]
+    assert len(specs) == 4
+    # Back to every row.
+    whole = client.post("/api/overview", json={**SIZE, "filters": []}).json()
+    assert whole["meta"]["x_ranges"] == every["x_ranges"]
+    assert specs[-1].view.x_auto is None
+
+
+def test_a_log_axis_without_positive_values_at_all_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A log axis whose column has no positive value is refused, filtered or not; one whose filter leaves none draws no row."""
+    path = tmp_path / "signs.parquet"
+    pl.DataFrame(
+        {"x": [-2.0, -1.0, 1.0, 10.0], "y": [1.0, 2.0, 3.0, 4.0], "n": [-1.0] * 4}
+    ).write_parquet(path)
+    app = create_app(
+        [str(path)],
+        False,
+        tmp_path / "run",
+        tmp_path / "cache",
+        tmp_path / "history",
+        SettingsStore(Settings()),
+        TOKEN,
+    )
+    (tmp_path / "run").mkdir()
+    with TestClient(app) as signs:
+        signs.get("/", params={"token": TOKEN})
+
+        def plot(scales: dict, filters: list) -> Response:
+            return signs.post(
+                "/api/plot",
+                json={
+                    "encoding": {"x": list(scales), "y": ["y"]},
+                    **SIZE,
+                    "filters": filters,
+                    "axis_scales": {"x": scales},
+                },
+            )
+
+        refused = plot({"n": "log"}, [])
+        assert refused.status_code == 400
+        assert "X の n に正の値がないため" in refused.json()["detail"]
+        filtered = plot({"n": "log"}, [{"column": "y", "range": [3, 4]}])
+        assert filtered.status_code == 400
+        left = plot({"x": "log"}, [{"column": "y", "range": [1, 2]}])
+        assert left.status_code == 200
+        meta = left.json()["meta"]
+        assert meta["rows"] == 0
+        assert meta["x_auto"][0] == plot({"x": "log"}, []).json()["meta"]["x_auto"][0]

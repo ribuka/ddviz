@@ -90,6 +90,11 @@ class PlotManifest:
     x_ranges, y_ranges : list of list of float
         Data range of each x and each y column the bins cover (positions of
         a column on a log axis: the log10 of its values).
+    x_auto, y_auto : list of list of float
+        Automatic range of each x and each y column over the rows of the
+        spec's local filter, in the same coordinates
+        (`ddviz.compute.aggregate.Aggregation.x_auto`): where Reset axes
+        goes back to, and what a later view of that filter reuses.
     levels : dict
         Levels of the color, symbol, row and col roles as drawn
         (`ddviz.compute.aggregate.Aggregation.levels`).
@@ -159,6 +164,8 @@ class PlotManifest:
     axes: AxisGrid
     x_ranges: list[list[float]]
     y_ranges: list[list[float]]
+    x_auto: list[list[float]]
+    y_auto: list[list[float]]
     levels: dict[str, list]
     all_levels: dict[str, list]
     cuts: dict[str, dict]
@@ -206,6 +213,8 @@ class PlotManifest:
             axes=AxisGrid(**data["axes"]),
             x_ranges=[list(r) for r in data["x_ranges"]],
             y_ranges=[list(r) for r in data["y_ranges"]],
+            x_auto=[list(r) for r in data["x_auto"]],
+            y_auto=[list(r) for r in data["y_auto"]],
             levels=data["levels"],
             all_levels=data["all_levels"],
             cuts=data["cuts"],
