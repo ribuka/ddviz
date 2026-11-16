@@ -1182,7 +1182,9 @@ function setFrozen(on) {
   const auto = knownAuto();
   if (plotting) {
     movedWhilePlotting = true;
-    if (auto) moveAxes(auto);
+    // The axes kept (a categorical one set by hand) stay where they are.
+    const pick = (role) => ranges[role].map((range, i) => range ?? auto[role][i]);
+    if (auto) moveAxes({ x: pick("x"), y: pick("y") });
     return;
   }
   const onFailed = () => {

@@ -501,3 +501,38 @@ def test_the_lock_turned_off_keeps_a_categorical_zoom(app_page: Page) -> None:
     assert near(shown(page, "yaxis"), [-4.0, 204.0], 0.01)
     expect(page.locator(LOCK)).to_have_attribute("aria-pressed", "false")
     assert errors == []
+
+
+def test_the_lock_turned_off_during_an_edit_keeps_a_categorical_zoom(
+    app_page: Page,
+) -> None:
+    """Off while an edit's plot is held, the categorical zoom stays, then and once the edit is drawn; the numeric axis takes its automatic range."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "g", "x")
+    place(page, "y", "y")
+    with page.expect_request("**/api/view"):
+        page.evaluate(
+            "Plotly.relayout('plot', {'xaxis.range': [-0.2, 0.2], 'yaxis.range': [50, 60]})"
+        )
+    settle(page)
+    lock(page)
+    held: list[Route] = []
+    page.route("**/api/plot", lambda route: held.append(route))
+    page.locator("#columns .column").filter(
+        has=page.get_by_text("g", exact=True)
+    ).drag_to(page.locator('.zone[data-role="color"]'))
+    page.wait_for_function(
+        "() => document.getElementById('plot').classList.contains('busy')"
+    )
+    page.locator(LOCK).click()
+    expect(page.locator(LOCK)).to_have_attribute("aria-pressed", "false")
+    assert shown(page, "xaxis") == pytest.approx([-0.2, 0.2])
+    assert near(shown(page, "yaxis"), [-4.0, 204.0], 0.01)
+    for route in held:
+        route.continue_()
+    page.unroute("**/api/plot")
+    settle(page)
+    assert shown(page, "xaxis") == pytest.approx([-0.2, 0.2])
+    assert near(shown(page, "yaxis"), [-4.0, 204.0], 0.01)
+    assert errors == []
