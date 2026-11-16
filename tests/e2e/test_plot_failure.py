@@ -12,7 +12,13 @@ import polars as pl
 import pytest
 from playwright.sync_api import APIResponse, Page, Route, expect
 
-from tests.e2e.test_scatter import PAINTED_PIXEL, SETTLED, placed_names, watch_errors
+from tests.e2e.test_scatter import (
+    PAINTED_PIXEL,
+    SETTLED,
+    drop_on_filters,
+    placed_names,
+    watch_errors,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -659,4 +665,105 @@ def test_a_zoom_while_the_images_load_waits_for_the_plot(app_page: Page) -> None
     expect(status).to_have_text("エラー: 集約に失敗した 1")
     assert placed_names(page)["color"] == ["color"]
     expect(page.locator("#legend .legend-title")).to_have_text("color")
+    assert errors == []
+
+
+# Whether the page waits for no result: the plot area is not busy and the
+# stand-in mark of an aggregation is hidden.
+NOT_WAITING = """() => !document.getElementById("plot").classList.contains("busy")
+  && document.getElementById("pending").hidden"""
+
+
+def test_a_refused_latest_aggregation_is_asked_again(app_page: Page) -> None:
+    """The latest aggregation of a new size refused (409 `converting`) or killed (409 `cancelled`) for an older one is asked again, and its result ends the wait."""
+    page = app_page
+    errors = watch_errors(page)
+    start(page)
+    page.wait_for_function(SETTLED)
+    answers = [{"detail": "converting"}, {"cancelled": True}]
+    refused: list[dict] = []
+
+    def handle(route: Route) -> None:
+        if len(refused) < len(answers):
+            refused.append(answers[len(refused)])
+            route.fulfill(
+                status=409, content_type="application/json", body=json.dumps(refused[-1])
+            )
+        else:
+            route.continue_()
+
+    page.route("**/api/overview", handle)
+    with page.expect_response(
+        lambda response: response.url.endswith("/api/overview") and response.ok
+    ):
+        page.set_viewport_size({"width": 1000, "height": 640})
+    page.wait_for_function(NOT_WAITING)
+    page.wait_for_function(SETTLED)
+    assert refused == answers
+    expect(page.locator("#toasts .toast")).to_have_count(0)
+    page.unroute("**/api/overview")
+    assert errors == []
+
+
+def test_another_conflict_of_the_latest_aggregation_ends_the_wait(app_page: Page) -> None:
+    """A 409 of the latest aggregation that asking again cannot mend (no plot on the server) is told as a failure; the page stops waiting."""
+    page = app_page
+    start(page)
+    page.wait_for_function(SETTLED)
+    asked: list[int] = []
+
+    def handle(route: Route) -> None:
+        asked.append(1)
+        fail_with(route, "no plot", status=409)
+
+    page.route("**/api/overview", handle)
+    page.set_viewport_size({"width": 1000, "height": 640})
+    expect(page.locator("#status")).to_have_class(re.compile(r"\berror\b"))
+    expect(page.locator("#status")).to_contain_text("no plot")
+    page.wait_for_function(NOT_WAITING)
+    assert asked == [1]
+    page.unroute("**/api/overview")
+
+
+def pick(page: Page, column: str, item: str) -> None:
+    """Pick an item of a listed column's menu and wait for its plot."""
+    row = page.locator("#columns .column").filter(has=page.get_by_text(column, exact=True))
+    row.click(button="right", position={"x": 20, "y": 5})
+    page.locator(".column-menu .scale-menu-item").get_by_text(item, exact=True).click()
+    page.wait_for_function(NOT_WAITING)
+    page.wait_for_function(SETTLED)
+
+
+def box(page: Page, column: str, level: str):  # noqa: ANN201 - a playwright Locator
+    """Return the check box of a level of a column's filter card."""
+    card = page.locator(".filter-card").filter(
+        has=page.locator(".filter-card-name").get_by_text(column, exact=True)
+    )
+    return card.locator(".filter-level").filter(has=page.get_by_text(level, exact=True)).locator("input")
+
+
+# Number of x axes of the drawn figure: one per panel.
+PANELS = r"""() => Object.keys(document.getElementById("plot")._fullLayout)
+  .filter((key) => /^xaxis\d*$/.test(key)).length"""
+
+
+def test_a_filter_that_adds_panels_draws_them(app_page: Page) -> None:
+    """A filter that brings back a Group X level, with two Y columns, draws its panels: the axes of the new result that the drawn figure lacks do not stop it."""
+    page = app_page
+    errors = watch_errors(page)
+    start(page)
+    pick(page, "z", "Add to Yaxis (Append)")
+    pick(page, "facet", "Add to GroupX")
+    assert page.evaluate(PANELS) == 4
+    drop_on_filters(page, page.locator("#columns .column").filter(has_text="facet"), 1)
+    with page.expect_response("**/api/overview"):
+        box(page, "facet", "p").check()
+    page.wait_for_function(f"() => ({PANELS})() === 2")
+    page.wait_for_function(NOT_WAITING)
+    # The Y axes of two panel columns have other names than those drawn.
+    with page.expect_response("**/api/overview"):
+        box(page, "facet", "q").check()
+    page.wait_for_function(f"() => ({PANELS})() === 4")
+    page.wait_for_function(NOT_WAITING)
+    page.wait_for_function(SETTLED)
     assert errors == []
