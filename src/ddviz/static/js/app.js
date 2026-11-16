@@ -126,7 +126,7 @@ const STAGES = {
 
 // The stages of an aggregation behind a plot, a view or an overview, which the
 // page awaits (`waiting`, `plotting`) while they run.
-const AGGREGATE_STAGES = new Set(["ranges", "levels", "colors", "facets", "boxes", "smooth", "lines", "bins"]);
+const AGGREGATE_STAGES = new Set(["ranges", "levels", "colors", "facets", "boxes", "smooth", "lines", "bins", "raster", "write"]);
 const events = new EventSource("/api/events");
 events.onmessage = (event) => {
   const message = JSON.parse(event.data);
