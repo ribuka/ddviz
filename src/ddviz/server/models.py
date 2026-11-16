@@ -92,7 +92,11 @@ class SelectionRequest(BaseModel):
 
 
 class ViewRequest(SizeRequest):
-    """Body of ``POST /api/view``: the data range of each x and y column of the zoomed view and the plot area size."""
+    """Body of ``POST /api/view``: the data range of each x and y column of the zoomed view and the plot area size.
 
-    x_ranges: list[tuple[float, float]]
-    y_ranges: list[tuple[float, float]]
+    A null range leaves its column at the automatic range of the request's
+    filter (`ddviz.compute.aggregate.Aggregation.x_auto`).
+    """
+
+    x_ranges: list[tuple[float, float] | None]
+    y_ranges: list[tuple[float, float] | None]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import replace
 from pathlib import Path
 
@@ -18,7 +19,9 @@ from ddviz.compute.aggregate import (
     _range_query,
     aggregate,
 )
+from ddviz.shared.axisscale import NoPositiveValuesError
 from ddviz.shared.scatter import (
+    Filter,
     FilteredColorLevelsError,
     ScatterSpec,
     Selection,
@@ -533,3 +536,231 @@ def test_range_skips_nan_inf_and_null(tmp_path: Path) -> None:
     )
     assert _range_query(spec, "v").collect().row(0) == (-2.5, 3.0)
     assert _range_query(spec, "nan").collect().row(0) == (None, None)
+
+
+def _auto_spec(tmp_path: Path, frame: pl.DataFrame, **fields: object) -> ScatterSpec:
+    """Return a spec of x × y over a frame written to a file, with no roles."""
+    path = tmp_path / "auto.parquet"
+    frame.write_parquet(path)
+    return ScatterSpec(
+        files={c: [str(path)] for c in frame.columns},
+        **{
+            "x": ["x"],
+            "y": ["y"],
+            "color": None,
+            "row": None,
+            "col": None,
+            "width": 100,
+            "height": 100,
+            "hover": ["x"],
+            **fields,
+        },
+    )
+
+
+STEPS = pl.DataFrame(
+    {
+        "x": [0.0, 10.0, 20.0, 30.0],
+        "y": [1.0, 2.0, 3.0, 4.0],
+        "g": ["a", "a", "b", "b"],
+    }
+)
+
+
+def test_the_overview_spans_the_rows_of_the_filter(tmp_path: Path) -> None:
+    """An x of 0 to 30 filtered to 10..20 spans 10 to 20 with its 2% margin; the y of those rows too."""
+    spec = _auto_spec(tmp_path, STEPS, filters=[Filter("x", range=[10.0, 20.0])])
+    agg = aggregate(spec)
+    assert agg.x_ranges == agg.x_auto == [pytest.approx((9.8, 20.2))]
+    assert agg.y_ranges == agg.y_auto == [pytest.approx((1.98, 3.02))]
+    assert agg.bins[COUNT].sum() == 2
+
+
+def test_the_filters_and_their_removal_set_the_automatic_ranges(
+    tmp_path: Path,
+) -> None:
+    """Filters meet all together; without them the ranges are those of every row."""
+    spec = _auto_spec(
+        tmp_path,
+        STEPS,
+        filters=[Filter("x", range=[0.0, 20.0]), Filter("g", levels=["a"])],
+    )
+    agg = aggregate(spec)
+    assert agg.x_auto == [pytest.approx((-0.2, 10.2))]
+    assert agg.y_auto == [pytest.approx((0.98, 2.02))]
+    whole = aggregate(replace(spec, filters=[]))
+    assert whole.x_auto == whole.x_ranges == [pytest.approx((-0.6, 30.6))]
+
+
+def test_a_constant_and_invalid_values_under_the_filter(tmp_path: Path) -> None:
+    """A single value spans a unit range; null, NaN and ±inf take no part."""
+    frame = pl.DataFrame(
+        {
+            "x": [5.0, None, float("nan"), float("inf"), float("-inf"), 100.0],
+            "y": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        }
+    )
+    spec = _auto_spec(tmp_path, frame, filters=[Filter("y", range=[1.0, 5.0])])
+    assert aggregate(spec).x_auto == [pytest.approx((4.5, 5.5))]
+
+
+def test_a_missing_other_axis_or_color_does_not_narrow_an_axis(
+    tmp_path: Path,
+) -> None:
+    """Rows not drawn for a null y or color still count in the range of x."""
+    frame = pl.DataFrame(
+        {
+            "x": [0.0, 10.0, 20.0, 30.0],
+            "y": [1.0, None, 3.0, float("nan")],
+            "c": ["a", "b", None, "a"],
+            "f": [1.0, 1.0, 1.0, 2.0],
+        }
+    )
+    spec = _auto_spec(
+        tmp_path, frame, color="c", filters=[Filter("f", range=[1.0, 1.0])]
+    )
+    agg = aggregate(spec)
+    assert agg.x_auto == [pytest.approx((-0.4, 20.4))]
+    assert agg.y_auto == [pytest.approx((0.96, 3.04))]
+    # Only the row with a y and a color is drawn.
+    assert agg.bins[COUNT].sum() == 1
+
+
+def test_an_axis_the_filter_leaves_empty_takes_every_row(tmp_path: Path) -> None:
+    """Only the axis without a value under the filter falls back to every row."""
+    frame = pl.DataFrame({"x": [0.0, 10.0, 20.0], "y": [None, None, 5.0]})
+    spec = _auto_spec(tmp_path, frame, filters=[Filter("x", range=[0.0, 10.0])])
+    agg = aggregate(spec)
+    assert agg.x_auto == [pytest.approx((-0.2, 10.2))]
+    # y has no value in the rows kept: that of every row (one value).
+    assert agg.y_auto == [pytest.approx((4.5, 5.5))]
+    assert agg.bins[COUNT].sum() == 0
+    none = aggregate(replace(spec, filters=[Filter("x", range=[50.0, 60.0])]))
+    assert none.x_auto == [pytest.approx((-0.4, 20.4))]
+    # A column without any value at all spans the unit range.
+    blank = pl.DataFrame({"x": [1.0, 2.0], "y": [None, float("nan")]})
+    empty = aggregate(
+        _auto_spec(tmp_path, blank, filters=[Filter("x", range=[1.0, 1.0])])
+    )
+    assert empty.y_auto == [(0.0, 1.0)]
+
+
+def test_a_log_axis_spans_the_positive_values_of_the_filter(tmp_path: Path) -> None:
+    """A log axis spans the exponents of the filter's positive values, or of every row's when it has none."""
+    frame = pl.DataFrame({"x": [-5.0, 1.0, 10.0, 1000.0], "y": [1.0, 2.0, 3.0, 4.0]})
+    spec = _auto_spec(
+        tmp_path, frame, log_x=["x"], filters=[Filter("y", range=[1.0, 3.0])]
+    )
+    agg = aggregate(spec)
+    assert agg.x_ranges == agg.x_auto == [pytest.approx((-0.02, 1.02))]
+    assert agg.nonpositive == [("x", "x")]
+    empty = aggregate(replace(spec, filters=[Filter("y", range=[1.0, 1.0])]))
+    # No positive value under the filter: those of every row, no row drawn,
+    # still on a log axis.
+    assert empty.x_auto == [pytest.approx((-0.06, 3.06))]
+    assert empty.bins[COUNT].sum() == 0
+
+
+def test_a_log_axis_without_positive_values_at_all_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A column with no positive value among every row is refused, filter or not."""
+    frame = pl.DataFrame({"x": [-5.0, 0.0], "y": [1.0, 2.0]})
+    spec = _auto_spec(
+        tmp_path, frame, log_x=["x"], filters=[Filter("y", range=[1.0, 1.0])]
+    )
+    with pytest.raises(NoPositiveValuesError):
+        aggregate(spec)
+
+
+def test_temporal_axes_span_the_rows_of_the_filter(tmp_path: Path) -> None:
+    """Datetime, date, time and duration axes span their filtered values in their units, the filter's ends included."""
+    start = dt.datetime(2026, 11, 1, tzinfo=dt.UTC)
+    frame = pl.DataFrame(
+        {
+            "at": [start + dt.timedelta(hours=h) for h in range(4)],
+            "day": [dt.date(2026, 11, 1 + d) for d in range(4)],
+            "clock": [dt.time(h, 0) for h in range(4)],
+            "took": [dt.timedelta(seconds=s) for s in (0, 10, 20, 30)],
+            "y": [1.0, 2.0, 3.0, 4.0],
+        }
+    )
+    hour = 3_600_000.0
+    day = 86_400_000.0
+    first = start.timestamp() * 1000
+    # The 2nd and 3rd rows, by the ends of the datetime filter.
+    filters = [Filter("at", range=[first + hour, first + 2 * hour])]
+    spec = _auto_spec(
+        tmp_path,
+        frame,
+        x=["at", "day", "clock"],
+        y=["took"],
+        hover=["y"],
+        filters=filters,
+    )
+    agg = aggregate(spec)
+    second_day = dt.datetime(2026, 11, 2, tzinfo=dt.UTC).timestamp() * 1000
+    assert agg.x_auto == [
+        pytest.approx((first + 0.98 * hour, first + 2.02 * hour)),
+        pytest.approx((second_day - 0.02 * day, second_day + 1.02 * day)),
+        pytest.approx((0.98 * hour, 2.02 * hour)),
+    ]
+    # A duration is in seconds, as on its axis.
+    assert agg.y_auto == [pytest.approx((9.8, 20.2))]
+
+
+def _view(agg: Aggregation, **fields: object) -> View:
+    """Return the view of a result's levels over the given ranges."""
+    return View(
+        **{
+            "x_ranges": [list(r) for r in agg.x_ranges],
+            "y_ranges": [list(r) for r in agg.y_ranges],
+            "levels": agg.all_levels,
+            "axis_levels": agg.axis_levels,
+            **fields,
+        }
+    )
+
+
+def test_a_view_finds_the_automatic_ranges_of_its_filter_unless_known(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A view of another filter finds its automatic ranges, once; one that knows them, or fills a range from them, does not."""
+    spec = _auto_spec(tmp_path, STEPS)
+    overview = aggregate(spec)
+    calls = []
+    found = aggregate_module._found_ranges
+
+    def counted(*args: object, **kwargs: object) -> object:
+        calls.append(args[1])
+        return found(*args, **kwargs)
+
+    monkeypatch.setattr(aggregate_module, "_found_ranges", counted)
+    filtered = replace(
+        spec,
+        filters=[Filter("x", range=[10.0, 20.0])],
+        view=_view(overview, x_ranges=[[0.0, 5.0]], y_ranges=[None]),
+    )
+    stages = []
+    agg = aggregate(filtered, stages.append)
+    assert "ranges" in stages
+    assert calls == [["x", "y"]]
+    # The view keeps its x, and its y is the automatic one of the filter.
+    assert agg.x_ranges == [(0.0, 5.0)]
+    assert agg.x_auto == [pytest.approx((9.8, 20.2))]
+    assert agg.y_ranges == agg.y_auto == [pytest.approx((1.98, 3.02))]
+    calls.clear()
+    known = replace(
+        filtered,
+        view=replace(
+            filtered.view,
+            x_auto=[list(r) for r in agg.x_auto],
+            y_auto=[list(r) for r in agg.y_auto],
+        ),
+    )
+    stages.clear()
+    again = aggregate(known, stages.append)
+    assert calls == []
+    assert "ranges" not in stages
+    assert again.y_ranges == agg.y_ranges
+    assert again.bins[COUNT].sum() == agg.bins[COUNT].sum()

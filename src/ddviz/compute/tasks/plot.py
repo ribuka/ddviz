@@ -209,6 +209,8 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         axes=agg.axes,
         x_ranges=[list(r) for r in agg.x_ranges],
         y_ranges=[list(r) for r in agg.y_ranges],
+        x_auto=[list(r) for r in agg.x_auto],
+        y_auto=[list(r) for r in agg.y_auto],
         levels=agg.levels,
         all_levels=agg.all_levels,
         cuts=agg.cuts,

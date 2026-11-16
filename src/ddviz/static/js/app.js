@@ -2,6 +2,7 @@
 // resize, hover, select rows with a box, and filter rows.
 import { decorate } from "./axisdialog.js";
 import { AxisControls } from "./axiscontrols.js";
+import { AxisRanges, autoRanges, axisColumns, hasContinuous, movedAxes } from "./axisranges.js";
 import { axisKey } from "./axiskey.js";
 import { toValues } from "./axisscale.js";
 import { bandTickUpdate, withBandTicks } from "./bandticks.js";
@@ -26,11 +27,9 @@ import { openPlotMenu } from "./plotmenu.js";
 import { PlotImageCopy } from "./plotimage.js";
 import { PlotOptions } from "./plotoptions.js";
 import {
-  axisCoordinates,
   figureKey,
   rangeUpdate,
   sameAxes,
-  sameRange,
   sameRanges,
   sameSize,
   shownRanges,
@@ -112,6 +111,7 @@ function showConverting(message) {
 const STAGES = {
   schema: "列を読み込み中…",
   levels: "範囲と水準を調べ中…",
+  ranges: "フィルタ後の軸の範囲を調べ中…",
   colors: "フィルタ後の Color の水準を調べ中…",
   facets: "パネルの水準を調べ中…",
   boxes: "箱ひげを計算中…",
@@ -136,6 +136,10 @@ events.onmessage = (event) => {
     showConverting(message);
     return;
   }
+  // The progress of an aggregation no longer awaited (a superseded request's,
+  // or one that comes late) must not put its stage over the status of the
+  // result drawn; the columns' schema is read with no request to await.
+  if (message.stage !== "schema" && !waiting && plotting === 0) return;
   converting.hidden = true;
   statusLine.show(STAGES[message.stage] ?? "処理中…");
 };
@@ -301,6 +305,18 @@ const DOWNLOAD_DATA = {
   click: (_, event) =>
     openDataMenu(event.currentTarget ?? event.target.closest(".modebar-btn"), () => overview?.meta.task ?? null, saves),
 };
+// Reset axes of the mode bar, in place of plotly's own (`resetScale2d`),
+// which goes back to the ranges of the figure's first draw: the page puts
+// the axes back to the automatic ranges of the filter (`resetAxes`). The
+// attributes are plotly's, which the plot's menu clicks (`plotmenu.js`).
+const RESET_AXES = {
+  name: "resetAxes",
+  title: "Reset axes",
+  icon: Plotly.Icons.home,
+  attr: "zoom",
+  val: "reset",
+  click: () => resetAxes(),
+};
 const PLOT_CONFIG = {
   displayModeBar: true,
   displaylogo: false,
@@ -309,7 +325,9 @@ const PLOT_CONFIG = {
   // take the second press of a double click there: the axis dialog
   // (`axisdialog.js`) sets the range instead.
   showAxisRangeEntryBoxes: false,
-  modeBarButtons: [["zoom2d", "pan2d", "select2d", "resetScale2d", DOWNLOAD_DATA]],
+  // A double click resets the axes as Reset axes does (`onDoubleClick`).
+  doubleClick: false,
+  modeBarButtons: [["zoom2d", "pan2d", "select2d", RESET_AXES, DOWNLOAD_DATA]],
 };
 
 // Sets the meta of the result whose images are drawn. Only a grid laid out
@@ -513,6 +531,7 @@ function listenToFigure() {
   for (const event of ["plotly_afterplot", "plotly_relayout"]) gd.on(event, () => builder.layout());
   builder.layout();
   gd.on("plotly_relayout", onRelayout);
+  gd.on("plotly_doubleclick", onDoubleClick);
   gd.on("plotly_selected", (event) => {
     if (!ownReact) boxSelection.pick(event);
   });
@@ -532,6 +551,10 @@ async function drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, 
   boxSelection.clear(false);
   movedWhilePlotting = false;
   setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
+  autoMeta = meta;
+  // The axes set by hand that the new graph no longer has start over.
+  axisRanges.keepOf(meta);
+  showFreeze();
   requested = { x: [], y: [] };
   // The legend changes below, once the figure is drawn.
   setCurrent(meta, { legend: false });
@@ -691,31 +714,12 @@ function keptView() {
 }
 
 // Returns the view of a new result `meta` that keeps the drawn figure's
-// zoomed ranges (`shownRanges`): an axis column keeps its range while it
-// stays in its role on the same coordinates (`axisCoordinates`), unless it
-// was shown over its whole range; any other axis column has the new whole
-// range. Null when no range is kept, or without a figure.
+// ranges (`shownRanges`) of the axes kept: set by hand, or continuous under
+// the lock (`AxisRanges.carried`). Null when no range is kept, or without a
+// figure.
 function carriedView(meta) {
   if (!overview || !gd._fullLayout) return null;
-  const old = overview.meta;
-  const shown = shownRanges(gd, old);
-  const ranges = { x: [], y: [] };
-  let zoomed = false;
-  for (const role of ["x", "y"]) {
-    meta[`${role}_columns`].forEach((column, i) => {
-      const whole = meta[`${role}_ranges`][i];
-      const j = old[`${role}_columns`].indexOf(column);
-      const range = j < 0 ? null : shown[role][j];
-      const keeps =
-        range &&
-        !sameRange(range, old[`${role}_ranges`][j]) &&
-        axisCoordinates(old, role, j) === axisCoordinates(meta, role, i) &&
-        !sameRange(range, whole);
-      ranges[role].push(keeps ? range : whole);
-      zoomed ||= Boolean(keeps);
-    });
-  }
-  return zoomed ? { ranges, zoomed, box: null } : null;
+  return axisRanges.carried(overview.meta, shownRanges(gd, overview.meta), meta);
 }
 
 // A superseded plot that the server finished before the newer request came
@@ -775,7 +779,7 @@ function resumeShown() {
     movedWhilePlotting = false;
     hideHover();
     const shown = shownRanges(gd, overview.meta);
-    if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) showOverview();
+    if (atWhole(shown)) showWhole();
     else requestView(shown);
   } else {
     boxSelection.follow();
@@ -891,8 +895,11 @@ const imageCopy = new PlotImageCopy({
 });
 
 // Goes back to the overview's images and ranges; no worker runs, unless the
-// overview was aggregated for another size of the plot area.
-async function showOverview() {
+// overview was aggregated for another size of the plot area or another
+// filter. The overview of another filter stands in over `ranges`, the
+// automatic ranges of the page's filter (`showWhole`): its images keep
+// their place on the axes, cut at the new ranges' ends.
+async function showOverview(ranges = null) {
   const mine = ++generation;
   requested = { x: [], y: [] };
   const { meta, size, bitmaps } = overview;
@@ -907,7 +914,8 @@ async function showOverview() {
     // The overview of the old size or filter stands in, stretched to the drawn figure.
     setPending(true);
     const { width, height } = gd._fullLayout;
-    await draw(figure.data, { ...figure.layout, width, height }, meta, bitmaps);
+    const layout = otherFilter && ranges ? withRanges(figure.layout, meta, ranges) : figure.layout;
+    await draw(figure.data, { ...layout, width, height }, meta, bitmaps);
     measureMargin(false);
     requestOverview();
     return;
@@ -936,28 +944,46 @@ function isDrawn(meta, layout) {
 
 // Aggregates the drawn plot again, at the stage's size with the page's
 // filters, and draws the result: the overview (`whole`) or the view of
-// `ranges` (`{x, y}`, as the axes show them). `path` is the endpoint,
-// `body` what it takes besides the size and the filters, `status` the
-// text shown meanwhile.
-async function requestAgain({ path, body, ranges, whole, status }) {
+// `ranges` (`{x, y}`, as the axes show them; null for an axis column that
+// takes the automatic range of the filter, which the result brings).
+// `path` is the endpoint, `body` what it takes besides the size and the
+// filters, `status` the text shown meanwhile, `onFailed` what to put back
+// when the request fails.
+async function requestAgain({ path, body, ranges, whole, status, onFailed = null }) {
   const mine = ++generation;
   const size = stageSize();
   requestedSize = size;
-  requested = ranges;
+  // An automatic range is no range asked for yet: any zoom differs from it.
+  const asked = (list) => list.map((range) => range ?? [NaN, NaN]);
+  requested = { x: asked(ranges.x), y: asked(ranges.y) };
   statusLine.show(status);
   setPending(true);
   const filterCandidate = restorePoint.propose(filterPane.sent);
   const started = performance.now();
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...body, ...size, filters }),
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, ...size, filters }),
+    });
+  } catch (error) {
+    console.error(error);
+    if (mine === generation) {
+      setPending(false);
+      statusLine.error(`集約の要求に失敗した（${error.message}）`);
+      onFailed?.();
+    }
+    return;
+  }
   if (response.status === 409 || mine !== generation) return; // superseded
   if (!response.ok) {
     const text = await response.text();
     // A newer request may have come while the answer was read.
-    if (mine === generation) viewFailed(text);
+    if (mine === generation) {
+      viewFailed(text);
+      onFailed?.();
+    }
     return;
   }
   const { figure, meta } = await response.json();
@@ -975,12 +1001,18 @@ async function requestAgain({ path, body, ranges, whole, status }) {
   timings.viewFetch = Math.round(performance.now() - started);
   timings.viewTask = Number(meta.task_seconds.toFixed(2));
   if (whole) setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
+  autoMeta = meta;
+  // The images and the panels' placement change; the axes of a view stay
+  // where the user put them, but for those that take the automatic range
+  // of the filter.
+  const shown = shownRanges(gd, meta);
+  const kept = (role) => shown[role].map((range, i) => (ranges[role][i] === null ? meta[`${role}_ranges`][i] : range));
+  const view = { x: kept("x"), y: kept("y") };
+  if (!whole) requested = view;
   setCurrent(meta);
   shownSize = size;
   hideHover();
-  // The images and the panels' placement change; the axes of a view stay
-  // where the user put them.
-  const layout = whole ? figure.layout : withRanges(figure.layout, meta, shownRanges(gd, meta));
+  const layout = whole ? figure.layout : withRanges(figure.layout, meta, view);
   if (!drawn) await draw(figure.data, layout, meta, bitmaps);
   restorePoint.confirm(filterCandidate);
   if (mine === generation) setPending(false);
@@ -989,28 +1021,31 @@ async function requestAgain({ path, body, ranges, whole, status }) {
   if (mine === generation) followMargin(true);
 }
 
-// Aggregates the overview again for the current size of the plot area. The
-// drawn images stand in, stretched and faded, until the result comes.
-async function requestOverview() {
+// Aggregates the overview again for the current size of the plot area and
+// the page's filter, over the filter's automatic ranges. The drawn images
+// stand in, stretched and faded, until the result comes.
+async function requestOverview({ onFailed = null } = {}) {
   return requestAgain({
     path: "/api/overview",
     body: {},
     ranges: { x: [], y: [] },
     whole: true,
     status: "大きさに合わせて集約中…",
+    onFailed,
   });
 }
 
 // Aggregates the shown ranges again. Until the result comes, plotly keeps
 // drawing the current images stretched to the new axes, faded, and the area
-// they do not cover stays blank.
-async function requestView({ x: xRanges, y: yRanges }) {
+// they do not cover stays blank. A null range is the automatic range of the
+// filter, which the server finds or knows.
+async function requestView({ x: xRanges, y: yRanges }, { onFailed = null } = {}) {
   // The server takes values, ascending: the powers of 10 of the exponents of
   // a log axis (`axisscale.js`).
   const logs = overview.meta;
   const values = {
-    x: xRanges.map((range, i) => toValues(logs.x_log[i], range)),
-    y: yRanges.map((range, i) => toValues(logs.y_log[i], range)),
+    x: xRanges.map((range, i) => range && toValues(logs.x_log[i], range)),
+    y: yRanges.map((range, i) => range && toValues(logs.y_log[i], range)),
   };
   return requestAgain({
     path: "/api/view",
@@ -1018,8 +1053,10 @@ async function requestView({ x: xRanges, y: yRanges }) {
     ranges: { x: xRanges, y: yRanges },
     whole: false,
     status: "表示範囲を集約中…",
+    onFailed,
   });
 }
+
 
 // Tells of a failed view or overview (the latest request), whose answer is
 // `text`. One that the color levels of its filter refused
@@ -1050,7 +1087,7 @@ function viewFailed(text) {
   const sameFilter = filtersKey(current.filters) === filtersKey(filters);
   if (sameFilter && sameRanges(shown.x, current.x_ranges) && sameRanges(shown.y, current.y_ranges)) return;
   hideHover();
-  if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) showOverview();
+  if (atWhole(shown)) showWhole();
   else requestView(shown);
 }
 
@@ -1067,18 +1104,25 @@ function onRelayout(event) {
   if (!autorange && !keys.some((key) => /^[xy]axis\d*\.range/.test(key))) return;
   // The labels of the new range come at once, before its result.
   setTimeout(followBandTicks);
+  if (autorange) {
+    resetAxes();
+    return;
+  }
+  // A zoom, a pan or the axis dialog sets the axes it moved by hand: they
+  // keep their ranges through a new filter (`AxisRanges`).
+  for (const { role, index } of movedAxes(current, event)) axisRanges.setByHand(current, role, index);
   // A view asked for now would kill the plot in flight: a failed plot asks for it.
   if (plotting) {
     movedWhilePlotting = true;
     return;
   }
   statusLine.release();
-  if (autorange) {
-    showOverview();
-    return;
-  }
   const shown = shownRanges(gd, overview.meta);
-  if (sameRanges(shown.x, overview.meta.x_ranges) && sameRanges(shown.y, overview.meta.y_ranges)) {
+  if (
+    filtersKey(overview.meta.filters) === filtersKey(filters) &&
+    sameRanges(shown.x, overview.meta.x_ranges) &&
+    sameRanges(shown.y, overview.meta.y_ranges)
+  ) {
     showOverview();
     return;
   }
@@ -1088,6 +1132,167 @@ function onRelayout(event) {
     return;
   }
   requestView(shown);
+}
+
+// The lock of the continuous axes' ranges and the axes set by hand
+// (`axisranges.js`), and the meta of the result drawn last, whose automatic
+// ranges (`x_auto`, `y_auto`) are those of its filter. An old overview
+// standing in for another filter is no such result.
+const axisRanges = new AxisRanges();
+let autoMeta = null;
+const freezeButton = document.getElementById("axis-freeze");
+
+// Returns the automatic ranges of the page's filter, or null while no result
+// of it has come.
+function knownAuto() {
+  if (!autoMeta || filtersKey(autoMeta.filters) !== filtersKey(filters)) return null;
+  return autoRanges(autoMeta);
+}
+
+// Shows the lock as it is: pressed while on, and of use with a continuous
+// axis drawn.
+function showFreeze() {
+  const on = axisRanges.frozen;
+  freezeButton.setAttribute("aria-pressed", String(on));
+  freezeButton.title = on ? "軸範囲の固定を解除して自動調整する" : "軸範囲を固定する";
+  freezeButton.disabled = !overview || !hasContinuous(overview.meta);
+}
+
+// Turns the lock on, which keeps the ranges shown now, or off, which takes
+// every continuous axis back to the automatic ranges of the filter at once
+// (those set by hand too); a categorical axis set by hand keeps its range.
+// On while a result is waited for (a new filter's, whose axes not kept
+// would take its automatic ranges), the shown ranges are asked for again,
+// so that the answer of the older request does not move them. Off
+// aggregates the overview of the filter unless it is drawn, or the view of
+// the categorical ranges kept; a failure puts the lock and the axes set by
+// hand back, with the figure as it was.
+function setFrozen(on) {
+  if (axisRanges.frozen === on) return;
+  const before = axisRanges.snapshot();
+  axisRanges.setFrozen(on, current);
+  showFreeze();
+  if (!overview || !current || !gd._fullLayout) return;
+  const ranges = axisRanges.filterRanges(current, shownRanges(gd, current));
+  if (on) {
+    if (waiting && !plotting) {
+      hideHover();
+      requestView(ranges);
+    }
+    return;
+  }
+  hideHover();
+  statusLine.release();
+  const auto = knownAuto();
+  if (plotting) {
+    movedWhilePlotting = true;
+    // The axes kept (a categorical one set by hand) stay where they are.
+    const pick = (role) => ranges[role].map((range, i) => range ?? auto[role][i]);
+    if (auto) moveAxes({ x: pick("x"), y: pick("y") });
+    return;
+  }
+  const onFailed = () => {
+    axisRanges.restore(before);
+    showFreeze();
+  };
+  if ([...ranges.x, ...ranges.y].some((range) => range !== null)) {
+    requestView(ranges, { onFailed });
+    return;
+  }
+  if (filtersKey(overview.meta.filters) === filtersKey(filters)) {
+    showOverview();
+    return;
+  }
+  requestOverview({ onFailed });
+}
+freezeButton.addEventListener("click", () => setFrozen(!axisRanges.frozen));
+
+// Moves the drawn figure's axes to `ranges` (`{x, y}`, ascending) as this
+// page's own relayout, which aggregates nothing.
+async function moveAxes(ranges) {
+  const layout = withBandTicks(axes.orientedLayout(withRanges(gd.layout, current, ranges), current), current);
+  const update = rangeUpdate(gd, layout);
+  if (update) await relayoutOwn(update);
+}
+
+// Shows the whole figure of the page's filter: the overview when it is of
+// that filter; else the old overview stands in over the automatic ranges of
+// the filter while the overview of the filter is aggregated, or, when they
+// are not known yet (a result of the filter in flight or cancelled), the
+// figure drawn stays, faded, until the overview comes. The axes never go
+// through the ranges of an old filter.
+function showWhole() {
+  if (filtersKey(overview.meta.filters) === filtersKey(filters)) return showOverview();
+  const auto = knownAuto();
+  if (auto) return showOverview(auto);
+  return requestOverview();
+}
+
+// Whether ranges shown (`shownRanges`) are the whole figure of the page's
+// filter: its automatic ranges, or the overview's while they are not known.
+// An old overview standing in shows the former.
+function atWhole(shown) {
+  const whole = knownAuto() ?? { x: overview.meta.x_ranges, y: overview.meta.y_ranges };
+  return sameRanges(shown.x, whole.x) && sameRanges(shown.y, whole.y);
+}
+
+// Reset axes, and the double click on the plot (`onDoubleClick`): the axes
+// go back to the automatic ranges of the filter (`showWhole`), and are no
+// longer set by hand; `only` lists the axis columns ({role, index}) of a
+// double click on an axis, which alone go back. The lock stays as it is:
+// on, it keeps the ranges gone back to.
+function resetAxes(only = null) {
+  hideHover();
+  if (!overview || !current || !gd._fullLayout) return;
+  statusLine.release();
+  const auto = knownAuto();
+  let ranges = auto;
+  if (only?.length) {
+    for (const { role, index } of only) axisRanges.reset(current, role, index);
+    const shown = shownRanges(gd, current);
+    ranges = { x: [...shown.x], y: [...shown.y] };
+    for (const { role, index } of only) ranges[role][index] = auto ? auto[role][index] : null;
+    if (!auto || !(sameRanges(ranges.x, auto.x) && sameRanges(ranges.y, auto.y))) {
+      if (auto) moveAxes(ranges);
+      if (plotting) movedWhilePlotting = true;
+      else requestView(ranges);
+      return;
+    }
+  } else {
+    axisRanges.reset();
+  }
+  // A view asked for now would kill the plot in flight: a failed plot asks for it.
+  if (plotting) {
+    movedWhilePlotting = true;
+    if (ranges) moveAxes(ranges);
+    return;
+  }
+  showWhole();
+}
+
+// The drag element of plotly's last press on the figure: a double click on
+// an axis resets that axis, one on a corner the axes of its panel, and one
+// on the plot area every axis.
+let pressedDrag = null;
+gd.addEventListener(
+  "mousedown",
+  (event) => {
+    pressedDrag = event.target.closest?.(".drag") ?? null;
+  },
+  { capture: true },
+);
+function onDoubleClick() {
+  const kind = /\b(\w+)drag\b/.exec(pressedDrag?.getAttribute("class") ?? "")?.[1];
+  const ids = /^(x\d*)(y\d*)$/.exec(pressedDrag?.parentNode?.getAttribute?.("class") ?? "");
+  if (!current || !kind || kind === "nsew" || !ids) {
+    resetAxes();
+    return;
+  }
+  const columns = axisColumns(current);
+  const picked = [];
+  if (/[ew]/.test(kind)) picked.push(columns.get(axisKey(ids[1])));
+  if (/[ns]/.test(kind)) picked.push(columns.get(axisKey(ids[2])));
+  resetAxes(picked.filter(Boolean));
 }
 
 // Gives the categorical axes drawn the ticks of their shown ranges (`bandticks.js`).
@@ -1138,20 +1343,21 @@ async function onResizeSettled() {
 
 new ResizeObserver(onResize).observe(stage);
 
-// A new filter aggregates what is shown again: the view when zoomed, else the
-// overview. The levels and the axes' ranges stay those of every row, so only
-// the bins change (`ddviz.compute.aggregate.aggregate`). While zoomed, the overview
-// keeps its old filter until it is shown again.
+// A new filter aggregates the figure again. The axes kept (set by hand, or
+// continuous under the lock: `AxisRanges.holds`) keep their shown ranges;
+// the others take the automatic ranges of the filter, which the server finds
+// (`ddviz.compute.aggregate.Aggregation.x_auto`). With no axis kept, that is
+// the overview of the filter; else a view, and the overview keeps its old
+// filter until it is shown again. The levels stay those of every row
+// (`ddviz.compute.aggregate.aggregate`).
 function applyFilters() {
   clearTimeout(resizeTimer);
   // A plot in flight checks the filter when its result comes.
   if (!overview || plotting === generation) return;
   hideHover();
-  if (requested.x.length) {
-    requestView(shownRanges(gd, current));
-  } else {
-    requestOverview();
-  }
+  const ranges = axisRanges.filterRanges(current, shownRanges(gd, current));
+  if ([...ranges.x, ...ranges.y].every((range) => range === null)) requestOverview();
+  else requestView(ranges);
 }
 
 const leftPane = new LeftPane(document.getElementById("left"));
@@ -1184,6 +1390,10 @@ function clearPlot() {
   if (overview?.bitmaps) closeImages(overview.bitmaps);
   overview = null;
   current = null;
+  autoMeta = null;
+  // The next figure starts unlocked over its automatic ranges.
+  axisRanges.setFrozen(false);
+  showFreeze();
   options.wrapAuto = null;
   setWrapAuto(null);
   elementBar.setPointsText(null);

@@ -29,6 +29,8 @@ def manifest(scatter_spec: ScatterSpec) -> PlotManifest:
         axes=AxisGrid(1, 2),
         x_ranges=[[-4.0, 4.0]],
         y_ranges=[[-3.0, 3.0]],
+        x_auto=[[-4.0, 4.0]],
+        y_auto=[[-3.0, 3.0]],
         levels=levels,
         all_levels=levels,
         cuts={},
@@ -241,3 +243,42 @@ def test_kept_color_levels_stay_with_another_filter(manifest: PlotManifest) -> N
     assert spec.view.levels["color"] == ["a", "b", "c"]
     selected = selection_spec(kept, box_selection(kept, 0, (0.0, 1.0), (0.0, 1.0)))
     assert selected.keep_unfiltered_color_levels
+
+
+def test_the_automatic_ranges_come_from_a_result_of_the_filter(
+    manifest: PlotManifest,
+) -> None:
+    """A view reuses the automatic ranges of a result of its filter and fills its auto columns from them; another filter leaves them to the worker."""
+    filters = [Filter(column="label", levels=["r1"])]
+    files = {"label": ["label.parquet"]}
+    same = resized_spec(manifest, 400, 300, [], {}, [None], [[0, 1]])
+    assert same.view.x_auto == [[-4.0, 4.0]]
+    assert same.view.y_auto == [[-3.0, 3.0]]
+    assert same.view.x_ranges == [[-4.0, 4.0]]
+    assert same.view.y_ranges == [[0, 1]]
+    other = resized_spec(manifest, 400, 300, filters, files, [None], [[0, 1]])
+    assert other.view.x_auto is None
+    assert other.view.x_ranges == [None]
+    known = replace(
+        manifest,
+        spec=replace(manifest.spec, filters=filters),
+        x_auto=[[-1.0, 1.0]],
+        y_auto=[[0.0, 2.0]],
+    )
+    taken = resized_spec(
+        manifest, 400, 300, filters, files, [None], [None], known=known
+    )
+    assert taken.view.x_auto == [[-1.0, 1.0]]
+    assert (taken.view.x_ranges, taken.view.y_ranges) == ([[-1.0, 1.0]], [[0.0, 2.0]])
+    # The overview of the filter at another size is unchanged when it has them.
+    assert not unchanged(manifest, other)
+    assert unchanged(manifest, same) is (same.view.y_ranges == manifest.y_ranges)
+
+
+def test_a_selection_keeps_the_automatic_ranges_of_its_result(
+    manifest: PlotManifest,
+) -> None:
+    """The layer of a selection finds no range again."""
+    spec = selection_spec(manifest, box_selection(manifest, 0, (0.0, 1.0), (0.0, 1.0)))
+    assert spec.view.x_auto == manifest.x_auto
+    assert spec.view.y_auto == manifest.y_auto

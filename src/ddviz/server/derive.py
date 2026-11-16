@@ -46,8 +46,14 @@ def _view(
     y_ranges: list,
     same_filter: bool,
     colors: list | None = None,
+    auto: PlotManifest | None = None,
 ) -> View:
     """Return the view of the given ranges with the result's levels, cuts, color range, boxes and smoothing lines.
+
+    A range None is the column's automatic range: that of `auto`, a result
+    of the view's filter, or else one the worker finds. The view carries
+    the automatic ranges of `auto`, so that the worker does not find them
+    again.
 
     For another filter, the facet levels, the boxes and the smoothing lines
     are left for the worker to find again over the rows it keeps, and so
@@ -64,9 +70,19 @@ def _view(
             find_color = True
         else:
             levels = {**levels, "color": colors}
+    def ranges(given: list, known: list | None) -> list:
+        return [
+            (None if known is None else list(known[i])) if r is None else list(r)
+            for i, r in enumerate(given)
+        ]
+
+    x_auto = None if auto is None else [list(r) for r in auto.x_auto]
+    y_auto = None if auto is None else [list(r) for r in auto.y_auto]
     return View(
-        x_ranges=[list(r) for r in x_ranges],
-        y_ranges=[list(r) for r in y_ranges],
+        x_ranges=ranges(x_ranges, x_auto),
+        y_ranges=ranges(y_ranges, y_auto),
+        x_auto=x_auto,
+        y_auto=y_auto,
         levels=levels,
         facets=facets_of(manifest) if same_filter else None,
         cuts=manifest.cuts,
@@ -98,7 +114,10 @@ def resized_spec(
     filter (`ddviz.shared.scatter.ScatterSpec.filters_color`), unless
     `known` is a result of that filter: a view aggregated with the new
     filter while zoomed gives them to the next views and to the overview,
-    so that the series of one filter stay the same.
+    so that the series of one filter stay the same. The automatic ranges
+    (`ddviz.compute.aggregate.Aggregation.x_auto`) come from the overview
+    or `known`, whichever is of the filter; else the worker finds them,
+    once per filter.
 
     Parameters
     ----------
@@ -111,7 +130,7 @@ def resized_spec(
     filter_files : dict
         Parts of each filter column in the column cache.
     x_ranges, y_ranges : list
-        Data range of each x and y column.
+        Data range of each x and y column, or None for its automatic range.
     margin_left : int, optional
         Left margin the page asks for, in pixels; kept within the width
         (`ddviz.shared.layout.left_margin`).
@@ -119,8 +138,8 @@ def resized_spec(
         Bottom margin the page asks for, in pixels; kept within the height
         (`ddviz.shared.layout.bottom_margin`).
     known : PlotManifest, optional
-        Another result of the plot, whose color levels are taken when its
-        filter is `filters`.
+        Another result of the plot, whose color levels and automatic ranges
+        are taken when its filter is `filters`.
 
     Returns
     -------
@@ -137,8 +156,10 @@ def resized_spec(
         raise ValueError("one range per x and y column")
     same = spec.filters == filters
     colors = None
+    auto = manifest if same else None
     if known is not None and known.spec.filters == filters:
         colors = known.all_levels["color"]
+        auto = known
     return replace(
         spec,
         files={**spec.files, **filter_files},
@@ -147,7 +168,7 @@ def resized_spec(
         height=height,
         margin_left=left_margin(margin_left, width),
         margin_bottom=bottom_margin(margin_bottom, height),
-        view=_view(manifest, x_ranges, y_ranges, same, colors),
+        view=_view(manifest, x_ranges, y_ranges, same, colors, auto),
     )
 
 
@@ -267,6 +288,6 @@ def selection_spec(manifest: PlotManifest, selection: Selection) -> ScatterSpec:
     """
     return replace(
         manifest.spec,
-        view=_view(manifest, manifest.x_ranges, manifest.y_ranges, True),
+        view=_view(manifest, manifest.x_ranges, manifest.y_ranges, True, auto=manifest),
         selection=selection,
     )

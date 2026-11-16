@@ -23,7 +23,9 @@ def test_plot_manifest_reads_back_what_it_wrote(
     levels = {"row": [None], "col": ["p", "q"], "color": [None]}
     spec = replace(
         scatter_spec,
-        view=View([[0.0, 1.0]], [[0.0, 2.0]], levels),
+        view=View(
+            [None], [[0.0, 2.0]], levels, x_auto=[[0.0, 1.0]], y_auto=[[0.0, 3.0]]
+        ),
         binned={"col": Binning(n=2)},
         gradient=True,
     )
@@ -34,6 +36,8 @@ def test_plot_manifest_reads_back_what_it_wrote(
         axes=AxisGrid(1, 2),
         x_ranges=[[0.0, 1.0]],
         y_ranges=[[0.0, 2.0]],
+        x_auto=[[0.0, 1.0]],
+        y_auto=[[0.0, 3.0]],
         levels=levels,
         all_levels=levels,
         cuts={"col": {"breaks": [0.0, 0.5, 1.0]}},
