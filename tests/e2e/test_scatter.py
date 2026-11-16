@@ -623,7 +623,10 @@ def test_the_levels_of_a_card_sort_by_name_or_count(app_page: Page) -> None:
     cards = page.locator(".filter-card")
     expect(cards).to_have_count(2)
     card = cards.nth(1)
-    names = card.locator(".filter-level-name")
+    # The levels; color's (null) row stays last in either order.
+    levels = card.locator(".filter-level:not(.filter-null)")
+    names = levels.locator(".filter-level-name")
+    every = card.locator(".filter-level-name")
     expect(names).to_have_text(["a", "b", "c"])
     expect(cards.nth(0).get_by_role("button", name="Sort by")).to_have_count(0)
     status = page.locator("#status")
@@ -641,7 +644,7 @@ def test_the_levels_of_a_card_sort_by_name_or_count(app_page: Page) -> None:
             names.all_inner_texts(),
             (
                 int(t.replace(",", ""))
-                for t in card.locator(".filter-level-count").all_inner_texts()
+                for t in levels.locator(".filter-level-count").all_inner_texts()
             ),
             strict=True,
         )
@@ -663,6 +666,7 @@ def test_the_levels_of_a_card_sort_by_name_or_count(app_page: Page) -> None:
     menu.get_by_text("Count", exact=True).click()
     expect(menu).to_have_count(0)
     expect(names).to_have_text(by_count)
+    expect(every).to_have_text([*by_count, "(null)"])
     checked = card.locator(".filter-level").filter(has=page.locator("input:checked"))
     expect(checked.locator(".filter-level-name")).to_have_text(["b"])
     button.click()
@@ -716,7 +720,9 @@ def test_the_levels_of_a_card_sort_by_name_or_count(app_page: Page) -> None:
     # A card placed again starts by name.
     card.locator(".filter-card-remove").click()
     columns.filter(has=page.get_by_text("color", exact=True)).drag_to(filters)
-    expect(cards.nth(2).locator(".filter-level-name")).to_have_text(["a", "b", "c"])
+    expect(cards.nth(2).locator(".filter-level-name")).to_have_text(
+        ["a", "b", "c", "(null)"]
+    )
 
 
 @pytest.mark.parametrize(
