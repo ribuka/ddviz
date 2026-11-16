@@ -32,7 +32,6 @@
 ## Github
 
 - Commit: [.agents/docs/commit.md](.agents/docs/commit.md)
-- Pull request: [.agents/docs/pull-request.md](.agents/docs/pull-request.md)
 
 ## Temporary files
 
