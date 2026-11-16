@@ -1143,12 +1143,19 @@ def _pair(
     spec, grid, found = drawn.spec, drawn.grid, drawn.found
     x_col, y_col = spec.x[xi], spec.y[yj]
     outlier = pl.lit(True)
-    if (x_col, y_col) in spec.line_pairs() or spec.draws_points(x_col, y_col):
+    lines_only = (x_col, y_col) in spec.line_pairs() and not (
+        (x_col, y_col) in spec.box_pairs()
+    )
+    if lines_only or spec.draws_points(x_col, y_col):
         # Two numeric axes: the stacks place the points of a categorical
         # one. A pair of lines without points keeps the bins of its rows
-        # for the hover and the selection; its images leave them out
-        # (`ddviz.compute.tasks.plot`).
-        x = pl.col(x_col).cast(pl.Float64)
+        # for the hover and the selection, a categorical x's at the centers
+        # of its bands; its images leave them out
+        # (`ddviz.compute.tasks.plot`), and it has no piles.
+        if x_col in spec.categorical:
+            x = level_index(x_col, found.axis_levels[x_col]).cast(pl.Float64)
+        else:
+            x = pl.col(x_col).cast(pl.Float64)
         y = pl.col(y_col).cast(pl.Float64)
     elif (x_col, y_col) in spec.smooth_pairs():
         # Only the smoothing lines: no row is drawn as a point.
@@ -1316,13 +1323,17 @@ def _lines(
     """Return the pixels of the lines of each pair, over the drawn rows that pass the local filter (`ddviz.compute.lines`).
 
     A pair's series are its facet cells by color level; a gradient's color
-    splits none, and the color of each row is kept instead.
+    splits none, and the color of each row is kept instead. A categorical
+    x joins the centers of its bands, in the order of its levels. The rows
+    are aggregated (`ddviz.shared.scatter.ScatterSpec.line_aggregation`)
+    before the view's ranges, so that a zoom keeps the lines as they are.
     """
     spec, grid = drawn.spec, drawn.grid
     pairs = spec.line_pairs()
     if not pairs:
         return LinePixels.empty(), None
     progress("lines")
+    categorical = set(spec.categorical)
     color = drawn.index("color")
     # A gradient's lines are one series a panel; the others', one a color level.
     n_series = 1 if spec.gradient else len(drawn.found.levels["color"])
@@ -1345,6 +1356,9 @@ def _lines(
                 color,
                 INDEX,
                 pl.col(spec.color) if spec.gradient else None,
+                drawn.found.axis_levels.get(x_col) if x_col in categorical else None,
+                spec.line_aggregation,
+                y_col in spec.log_y,
                 # Not streaming: its sort peaked at 1.34GB on 10M rows,
                 # against 0.90GB in memory (`docs/spec.md`, "点を結ぶ線").
             ).collect()

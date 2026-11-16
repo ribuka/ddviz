@@ -28,7 +28,8 @@ class PlotRequest(BaseModel):
     keeps the levels of a categorical color column over every row
     (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_color_levels`).
     ``wrap_cols``, ``shape_size`` and ``line_width`` are kept as sent, for
-    `ddviz.server.plotoptions` to take JSON integers only.
+    `ddviz.server.plotoptions` to take JSON integers only, and
+    ``line_aggregation`` for it to give the reason of a wrong one.
     """
 
     encoding: dict
@@ -42,6 +43,7 @@ class PlotRequest(BaseModel):
     smooth: dict | None = None
     shape_size: object = None
     line_width: object = None
+    line_aggregation: object = None
     shape_sizes: dict[str, object] | None = None
     level_shapes: dict[str, object] | None = None
     show_null_rows: ShowNullRows = ShowNullRows()

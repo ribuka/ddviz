@@ -1587,3 +1587,36 @@ def test_a_log_axis_without_positive_values_at_all_is_refused(
         meta = left.json()["meta"]
         assert meta["rows"] == 0
         assert meta["x_auto"][0] == plot({"x": "log"}, []).json()["meta"]["x_auto"][0]
+
+
+def test_the_line_aggregation_reaches_the_worker_and_a_wrong_one_is_refused(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Raw, mean and median reach the spec of the plot and of its zooms, null is raw, and anything else answers 400 with its reason."""
+    specs = []
+    run = TaskBroker.run
+
+    async def kept_run(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        if isinstance(task, PlotTask):
+            specs.append(task.spec)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", kept_run)
+    encoding = {"x": ["label"], "y": ["y"], "elements": ["line"]}
+    for asked, expected in ((None, "raw"), ("raw", "raw"), ("mean", "mean"), ("median", "median")):
+        body = {"encoding": encoding, **SIZE, **HIDE_NULLS, "line_aggregation": asked}
+        response = client.post("/api/plot", json=body)
+        assert response.status_code == 200, response.text
+        assert specs[-1].line_aggregation == expected
+        assert specs[-1].line_pairs() == {("label", "y")}
+        assert response.json()["meta"]["line_aggregation"] == expected
+    zoom = {**SIZE, "x_ranges": [[-0.5, 1.5]], "y_ranges": [None]}
+    assert client.post("/api/view", json=zoom).status_code == 200
+    assert specs[-1].line_aggregation == "median"
+    for bad in ("sum", 1, ["mean"]):
+        body = {"encoding": encoding, **SIZE, **HIDE_NULLS, "line_aggregation": bad}
+        response = client.post("/api/plot", json=body)
+        assert response.status_code == 400
+        assert "line_aggregation is one of" in response.json()["detail"]
+    points = {"encoding": {"x": ["x"], "y": ["y"]}, **SIZE, **HIDE_NULLS}
+    assert client.post("/api/plot", json=points).json()["meta"]["line_aggregation"] is None

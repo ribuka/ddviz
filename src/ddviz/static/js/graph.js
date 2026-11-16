@@ -32,11 +32,17 @@ export function hasBoxPair(encoding, numeric) {
   );
 }
 
-// Whether a pair of the graph's axis columns can have smoothing lines, or
-// lines joining the points: a numeric x and a numeric y (a temporal column
-// is numeric; `ddviz.server.plan.has_smooth_pair`,
-// `ddviz.server.plan.has_line_pair`).
+// Whether a pair of the graph's axis columns can have smoothing lines: a
+// numeric x and a numeric y (a temporal column is numeric;
+// `ddviz.server.plan.has_smooth_pair`).
 export function hasSmoothPair(encoding, numeric) {
   const isNumeric = (name) => numeric.get(name) !== false;
   return encoding.x.some(isNumeric) && encoding.y.some(isNumeric);
+}
+
+// Whether a pair of the graph's axis columns can join its points with
+// lines: any x column and a numeric y (`ddviz.server.plan.has_line_pair`).
+export function hasLinePair(encoding, numeric) {
+  const isNumeric = (name) => numeric.get(name) !== false;
+  return encoding.x.length > 0 && encoding.y.some(isNumeric);
 }

@@ -9,7 +9,16 @@ import polars as pl
 import pytest
 
 from ddviz.compute.aggregate import Aggregation, aggregate
-from ddviz.compute.lines import GROUP, LAYER, X, Y, line_pixels, stroke
+from ddviz.compute.lines import (
+    GROUP,
+    LAYER,
+    VALUE,
+    X,
+    Y,
+    line_frame,
+    line_pixels,
+    stroke,
+)
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.scatter import Filter, ScatterSpec, View
@@ -375,3 +384,246 @@ def test_a_segment_at_the_top_of_the_view_is_drawn_in_its_top_row(
     found = line_pixels(frame, False, False, (0.0, 1.0), (0.0, 10.0), 10, 10, 1)
     assert len(found.pixel) > 0
     assert set((found.pixel // 10).tolist()) == {9}
+
+
+def _categorical(tmp_path: Path, frame: pl.DataFrame, **kw: object) -> ScatterSpec:
+    """Return the spec of lines over a categorical x ``g``."""
+    columns = [c for c in frame.columns if c != "keep"]
+    return _spec(tmp_path, frame, x=["g"], categorical=["g"], hover=columns, **kw)
+
+
+@pytest.mark.parametrize("order", [[0, 1, 2, 3], [3, 2, 1, 0], [2, 0, 3, 1]])
+def test_a_categorical_x_joins_its_levels_in_their_order_and_the_rows_of_one_in_theirs(
+    tmp_path: Path, order: list[int]
+) -> None:
+    """The bands are joined item_1, item_2, item_10 whatever the file's order; the rows of one level in the order of the rows."""
+    rows = pl.DataFrame(
+        {"g": ["item_1", "item_2", "item_2", "item_10"], "y": [0.0, 10.0, 0.0, 0.0]}
+    )
+    agg = aggregate(_categorical(tmp_path, rows[order]))
+    assert agg.axis_levels["g"] == ["item_1", "item_2", "item_10"]
+    covered = _covered(agg)
+    # The rows of item_2, in the order they come in the file.
+    first, second = [rows["y"][i] for i in order if i in (1, 2)]
+    # item_1 (0) to item_2's first row, item_2's rows, its last to item_10 (2).
+    assert covered & _at(agg, 0.5, first / 2)
+    assert covered & _at(agg, 1, 5)
+    assert covered & _at(agg, 1.5, second / 2)
+    assert not covered & _at(agg, 0.5, second / 2)
+    # Lines only: no point, and no pile, but the bins of the hover at the
+    # centers of the bands.
+    assert agg.piles == []
+    assert agg.bins.height == 4
+    out = tmp_path / "out"
+    out.mkdir()
+    run_plot(_categorical(tmp_path, rows[order]), out, lambda _: None)
+    manifest = PlotManifest.read(out)
+    assert manifest.images == [None]
+    assert manifest.line_images[0] is not None
+
+
+def test_a_categorical_x_joins_over_a_level_a_series_has_no_row_of(
+    tmp_path: Path,
+) -> None:
+    """A series without rows at a level joins the levels before and after it."""
+    frame = pl.DataFrame(
+        {"g": ["a", "b", "c"], "y": [0.0, 10.0, 0.0], "c": ["p", "q", "p"]}
+    )
+    agg = aggregate(_categorical(tmp_path, frame, color="c"))
+    assert _covered(agg, 0) & _at(agg, 1, 0)
+    assert not _covered(agg, 1)
+
+
+def _frame(x: list, y: list, aggregation: str, *, y_log: bool = False) -> pl.DataFrame:
+    """Return `line_frame` of rows of one panel and series."""
+    rows = pl.LazyFrame({"x": x, "y": y, "i": range(len(x))})
+    return line_frame(
+        rows,
+        "x",
+        "y",
+        pl.lit(0),
+        pl.lit(0),
+        1,
+        pl.lit(0),
+        "i",
+        aggregation=aggregation,
+        y_log=y_log,
+    ).collect()
+
+
+def test_mean_and_median_make_one_point_of_each_x() -> None:
+    """The rows of one x make one point of the mean or the median of their y, the median of an even number the mean of the middle two."""
+    x = [2.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0]
+    y = [10.0, 3.0, 8.0, 5.0, 1.0, 2.0, 3.0]
+    mean = _frame(x, y, "mean")
+    assert mean[X].to_list() == [1.0, 2.0]
+    assert mean[Y].to_list() == pytest.approx([16 / 3, 4.0])
+    assert _frame(x, y, "median")[Y].to_list() == [5.0, 2.5]
+    assert _frame(x, y, "raw")[Y].to_list() == [3.0, 8.0, 5.0, 10.0, 1.0, 2.0, 3.0]
+
+
+@pytest.mark.parametrize("aggregation", ["mean", "median"])
+def test_an_aggregation_counts_the_valid_y_and_breaks_at_an_x_without_one(
+    aggregation: str,
+) -> None:
+    """Only finite y count; an x without one keeps a NaN y; an x not finite is left out."""
+    x = [1.0, 1.0, 2.0, 2.0, 2.0, 3.0, None, float("nan")]
+    y = [None, 4.0, float("nan"), float("inf"), None, 6.0, 1.0, 1.0]
+    found = _frame(x, y, aggregation)
+    assert found[X].to_list() == [1.0, 2.0, 3.0]
+    assert found[Y][0] == 4.0
+    assert np.isnan(found[Y][1])
+    assert found[Y][2] == 6.0
+
+
+def test_an_aggregation_on_a_log_axis_counts_the_positive_y_by_their_values() -> None:
+    """On a log y, only positive rows count, aggregated as values, not as their logs."""
+    x = [1.0, 1.0, 1.0, 2.0]
+    y = [-1.0, 10.0, 1000.0, 0.0]
+    found = _frame(x, y, "mean", y_log=True)
+    assert found[Y][0] == 505.0
+    assert np.isnan(found[Y][1])
+    assert _frame(x, y, "mean")[Y][0] == pytest.approx(1009 / 3)
+
+
+@pytest.mark.parametrize("aggregation", ["mean", "median"])
+def test_an_aggregated_line_breaks_at_an_x_without_a_valid_y(
+    tmp_path: Path, aggregation: str
+) -> None:
+    """The point of an x without a valid y breaks the line on both sides."""
+    frame = pl.DataFrame(
+        {"x": [1.0, 2.0, 2.0, 3.0], "y": [0.0, None, float("nan"), 10.0]}
+    )
+    spec = _spec(tmp_path, frame, line_aggregation=aggregation)
+    assert len(aggregate(spec).lines.pixel) == 0
+    frame = pl.DataFrame({"x": [1.0, 2.0, 2.0, 3.0], "y": [0.0, None, 4.0, 10.0]})
+    agg = aggregate(_spec(tmp_path, frame, line_aggregation=aggregation))
+    assert _covered(agg) & _at(agg, 1.5, 2)
+
+
+def test_an_aggregation_follows_the_filter(tmp_path: Path) -> None:
+    """The rows the filter leaves out do not count."""
+    frame = pl.DataFrame(
+        {"x": [1.0, 1.0, 2.0], "y": [0.0, 10.0, 0.0], "keep": ["a", "b", "a"]}
+    )
+    agg = aggregate(_spec(tmp_path, frame, line_aggregation="mean"))
+    assert _covered(agg) & _at(agg, 1.5, 2.5)
+    filtered = _spec(
+        tmp_path,
+        frame,
+        line_aggregation="mean",
+        filters=[Filter("keep", levels=["a"])],
+    )
+    agg = aggregate(filtered)
+    covered = _covered(agg)
+    assert covered & _at(agg, 1.5, 0)
+    assert not covered & _at(agg, 1.5, 2.5)
+
+
+def test_an_aggregation_keeps_the_facet_cells_and_the_color_levels_apart(
+    tmp_path: Path,
+) -> None:
+    """Each facet cell and color level aggregates its own rows of an x."""
+    frame = pl.DataFrame(
+        {
+            "g": ["a", "a", "b", "b", "a", "b"],
+            "y": [0.0, 10.0, 0.0, 10.0, 6.0, 6.0],
+            "c": ["p", "q", "p", "q", "p", "p"],
+            "f": ["u", "u", "u", "u", "v", "v"],
+        }
+    )
+    spec = _categorical(tmp_path, frame, color="c", row="f", line_aggregation="mean")
+    agg = aggregate(spec)
+    # Facet u: p at 0, q at 10, never their mean 5; facet v: p at 6.
+    assert _covered(agg, 0) & _at(agg, 0.5, 0)
+    assert _covered(agg, 1) & _at(agg, 0.5, 10)
+    assert not _covered(agg) & _at(agg, 0.5, 5)
+    assert _covered(agg, 0) & _at(agg, 0.5, 6, panel=1)
+    assert not _covered(agg, 0) & _at(agg, 0.5, 3, panel=0)
+
+
+def test_a_gradient_colors_an_aggregated_point_by_the_mean_of_its_counted_rows(
+    tmp_path: Path,
+) -> None:
+    """A gradient's point has the mean of the finite colors of the rows its y counts, or the missing color without one."""
+    frame = pl.DataFrame(
+        {
+            "x": [1.0, 1.0, 1.0, 2.0],
+            "y": [0.0, 10.0, None, 0.0],
+            "v": [0.0, 1.0, 0.9, 0.4],
+        }
+    )
+    spec = _spec(
+        tmp_path,
+        frame,
+        color="v",
+        gradient=True,
+        hover=["x", "y", "v"],
+        line_aggregation="mean",
+    )
+    agg = aggregate(spec)
+    # (1, 5) to (2, 0), in the mean of 0 and 1.
+    assert _top(agg, 1.5, 2.5) == (0, 0.5)
+
+    frame = frame.with_columns(pl.Series("v", [None, None, 0.9, 0.4]))
+    spec = _spec(
+        tmp_path,
+        frame,
+        color="v",
+        gradient=True,
+        null_roles=["color"],
+        hover=["x", "y", "v"],
+        line_aggregation="median",
+    )
+    agg = aggregate(spec)
+    missing = len(agg.levels["color"]) - 1
+    assert missing > 0
+    assert _top(agg, 1.5, 2.5) == (missing, None)
+
+
+def test_a_point_without_a_finite_color_of_its_counted_rows_keeps_a_null_value() -> (
+    None
+):
+    """The value of a point is the mean of its counted rows' finite colors only, null without one."""
+    rows = pl.LazyFrame(
+        {
+            "x": [1.0, 1.0, 2.0],
+            "y": [1.0, float("nan"), 2.0],
+            "v": [float("nan"), 3.0, None],
+            "i": [0, 1, 2],
+        }
+    )
+    found = line_frame(
+        rows,
+        "x",
+        "y",
+        pl.lit(0),
+        pl.lit(0),
+        1,
+        pl.lit(0),
+        "i",
+        pl.col("v"),
+        aggregation="mean",
+    ).collect()
+    assert found[VALUE].to_list() == [None, None]
+
+
+@pytest.mark.parametrize("aggregation", ["mean", "median"])
+def test_a_view_aggregates_every_row_before_its_ranges(
+    tmp_path: Path, aggregation: str
+) -> None:
+    """A view joins the points of every row, so that a line from outside it crosses it as in the overview."""
+    frame = pl.DataFrame({"x": [0.0, 0.0, 10.0], "y": [-10.0, 10.0, 10.0]})
+    spec = _spec(tmp_path, frame, line_aggregation=aggregation)
+    overview = aggregate(spec)
+    view = View(
+        x_ranges=[[4.0, 6.0]],
+        y_ranges=[[4.0, 6.0]],
+        levels=overview.all_levels,
+    )
+    agg = aggregate(ScatterSpec(**{**spec.__dict__, "view": view}))
+    # (0, 0) to (10, 10) crosses the view; the rows at x 0 lie outside it.
+    assert agg.bins.height == 0
+    covered = _covered(agg)
+    assert covered & _at(agg, 5, 5)
+    assert covered & _at(agg, 4.1, 4.1)

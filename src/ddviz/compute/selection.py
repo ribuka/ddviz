@@ -40,7 +40,8 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
     (`ddviz.shared.scatter.ScatterSpec.draws_points`), its level's band
     overlaps the box and its y is in the box, inside a box plot or not.
     In a panel of smoothing lines without the points, its x and y are in
-    the box, as if the points were drawn.
+    the box, as if the points were drawn; in a panel of lines without them,
+    too, a categorical axis's at the center of its level's band.
 
     Parameters
     ----------
@@ -68,7 +69,11 @@ def selection_filter(spec: ScatterSpec, index: str) -> list[pl.Expr]:
             band_center(selection.y, axis_levels.get(selection.y)),
             selection.y in spec.log_y,
         )
-        if {selection.x, selection.y} & set(spec.categorical):
+        # A categorical axis stacks the points; a panel of lines without
+        # them keeps its rows at the centers of the bands.
+        if {selection.x, selection.y} & set(spec.categorical) and spec.draws_points(
+            selection.x, selection.y
+        ):
             return [
                 x.is_finite(),
                 y.is_finite(),

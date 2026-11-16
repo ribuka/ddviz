@@ -5,7 +5,9 @@ level (the color column's level, not the symbol's; one for a gradient or
 no color column). Its rows are joined in the order of x, then of the row
 index; a row whose y (or, on a log axis, x) has no position breaks the
 line there, and the view leaves the order as it is: a segment crossing the
-panel is cut at its edges.
+panel is cut at its edges. A categorical x lies at the centers of its
+levels' bands, in their order. The rows of one x may instead make one
+point, of the mean or median of their y (`line_frame`).
 
 The page gets no rows or segments, only a PNG of every panel per color
 level, as the points' images: the lines are drawn here at the pixels of
@@ -22,6 +24,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import polars as pl
+
+from ddviz.compute.bands import level_index
 
 # Columns of the frame `line_frame` returns.
 GROUP = "__line_group"
@@ -82,6 +86,9 @@ def line_frame(
     layer: pl.Expr,
     index: str,
     value: pl.Expr | None = None,
+    x_levels: list[str] | None = None,
+    aggregation: str = "raw",
+    y_log: bool = False,
 ) -> pl.LazyFrame:
     """Return the rows of a pair's lines, in the order they are joined.
 
@@ -104,6 +111,17 @@ def line_frame(
         Column of the row index, which orders the rows of one x.
     value : polars.Expr, optional
         A value each row keeps (`VALUE`): a gradient's color.
+    x_levels : list of str, optional
+        The levels of a categorical x column, in the order of its axis: a
+        row's x is its level's index, the center of its band
+        (`ddviz.compute.bands`).
+    aggregation : str
+        ``"raw"`` keeps every row; ``"mean"`` and ``"median"`` make the
+        rows of one group and x one row of the mean or median of their y
+        (`_aggregated`).
+    y_log : bool
+        Whether y lies on a log axis, where an aggregation leaves out the
+        rows of a y not positive.
 
     Returns
     -------
@@ -114,7 +132,10 @@ def line_frame(
         infinite) are left out. The frame takes 22 bytes a row (and 8 more
         for `VALUE`).
     """
-    x = pl.col(x_col).cast(pl.Float64)
+    if x_levels is None:
+        x = pl.col(x_col).cast(pl.Float64)
+    else:
+        x = level_index(x_col, x_levels).cast(pl.Float64)
     columns = [
         (panel.cast(pl.Int32) * n_series + series.cast(pl.Int32)).alias(GROUP),
         x.alias(X),
@@ -123,10 +144,42 @@ def line_frame(
         layer.cast(pl.Int16).alias(LAYER),
     ]
     if value is not None:
-        columns.append(value.alias(VALUE))
-    return (
-        rows.filter(x.is_finite()).select(columns).sort([GROUP, X, index]).drop(index)
-    )
+        columns.append(value.cast(pl.Float64).alias(VALUE))
+    found = rows.filter(x.is_finite()).select(columns)
+    if aggregation == "raw":
+        return found.sort([GROUP, X, index]).drop(index)
+    return _aggregated(found, aggregation, y_log, value is not None)
+
+
+def _aggregated(
+    rows: pl.LazyFrame, aggregation: str, y_log: bool, with_value: bool
+) -> pl.LazyFrame:
+    """Return one row of each group and x of `line_frame`'s rows: the mean or median of their y.
+
+    Only the rows of a finite y (positive on a log axis) count; an x
+    without one keeps a NaN y, which breaks the line there. The layer is
+    that of the counted rows of a finite value, or of any row without one;
+    the value is the mean of those finite values, null without one.
+    """
+    y = pl.col(Y)
+    counted = y.is_finite()
+    if y_log:
+        counted &= y > 0
+    statistic = y.filter(counted)
+    statistic = statistic.mean() if aggregation == "mean" else statistic.median()
+    found = [statistic.fill_null(float("nan")).alias(Y)]
+    if with_value:
+        valued = counted & pl.col(VALUE).is_finite()
+        found += [
+            pl.coalesce(
+                pl.col(LAYER).filter(valued).first(), pl.col(LAYER).first()
+            ).alias(LAYER),
+            pl.col(VALUE).filter(valued).mean().alias(VALUE),
+        ]
+    else:
+        found.append(pl.col(LAYER).first())
+    columns = [GROUP, X, Y, LAYER] + ([VALUE] if with_value else [])
+    return rows.group_by(GROUP, X).agg(found).sort(GROUP, X).select(columns)
 
 
 def _clip(

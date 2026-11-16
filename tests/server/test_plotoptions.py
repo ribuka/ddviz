@@ -10,6 +10,7 @@ from ddviz.server.plotoptions import (
     MAX_SAFE_INTEGER,
     parse_color_bins,
     parse_level_shapes,
+    parse_line_aggregation,
     parse_line_width,
     parse_shape_size,
     parse_shape_sizes,
@@ -85,6 +86,16 @@ def test_parse_line_width() -> None:
     for bad in (0, 6, True, "2", 2.0, 2.5):
         with pytest.raises(ValueError, match="line_width"):
             parse_line_width(bad)
+
+
+def test_parse_line_aggregation() -> None:
+    """The aggregation is raw, mean or median, raw for null."""
+    assert parse_line_aggregation(None) == "raw"
+    for aggregation in ("raw", "mean", "median"):
+        assert parse_line_aggregation(aggregation) == aggregation
+    for bad in ("sum", "Mean", "", 1, True, ["mean"]):
+        with pytest.raises(ValueError, match="line_aggregation"):
+            parse_line_aggregation(bad)
 
 
 def test_parse_wrap_cols() -> None:

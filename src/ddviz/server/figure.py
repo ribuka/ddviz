@@ -391,6 +391,10 @@ class FigureMeta(TypedDict):
     # them; where the PNG of each color level's lines lies in the images file
     # (none for a level without lines), as ``images``.
     line_width: int | None
+    # How the lines treat the rows of one x
+    # (`ddviz.shared.scatter.ScatterSpec.line_aggregation`), or None without
+    # lines.
+    line_aggregation: str | None
     line_images: list[list[int] | None]
     # The color of each series.
     colors: list[str]
@@ -662,6 +666,7 @@ def _meta(
         symbol=_symbol(manifest),
         marker_size=spec.shape_size,
         line_width=spec.line_width,
+        line_aggregation=None if spec.line_width is None else spec.line_aggregation,
         line_images=manifest.line_images,
         colors=manifest.colors,
         images=manifest.images,

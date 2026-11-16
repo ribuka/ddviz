@@ -396,9 +396,9 @@ def test_box_plots_draw_over_the_bands_and_hover(
     expect(points).to_have_attribute("aria-pressed", "true")
     expect(box).to_be_enabled()
     expect(box).to_have_attribute("aria-pressed", "false")
-    # A categorical x has neither smoothing lines nor lines.
+    # A categorical x has no smoothing lines, but lines (Issue #192).
     expect(page.locator('#elements .element[data-element="smooth"]')).to_be_disabled()
-    expect(page.locator('#elements .element[data-element="line"]')).to_be_disabled()
+    expect(page.locator('#elements .element[data-element="line"]')).to_be_enabled()
     # Points are the only element drawn: they stay on.
     points.click()
     expect(points).to_have_attribute("aria-pressed", "true")

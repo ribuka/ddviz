@@ -14,7 +14,7 @@ import { attachColumnList } from "./columns.js";
 import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
 import { FilterPane, filtersKey, RestorePoint } from "./filters.js";
-import { drawable, drawnRoles, hasBoxPair, hasSmoothPair } from "./graph.js";
+import { drawable, drawnRoles, hasBoxPair, hasLinePair, hasSmoothPair } from "./graph.js";
 import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { fitBottom, fitMargin, MARGIN_BOTTOM, MARGIN_LEFT, neededBottom, neededMargin } from "./leftmargin.js";
@@ -39,7 +39,15 @@ import { markerSizeText, rowsText } from "./resulttext.js";
 import { Saves } from "./saves.js";
 import { openScaleMenu } from "./scalemenu.js";
 import { BoxSelection } from "./boxselection.js";
-import { LINE_HEADING, LINE_WIDTHS, levelHeading, openShapeMenu, SIZE_HEADING } from "./shapemenu.js";
+import {
+  AGGREGATION_HEADING,
+  LINE_AGGREGATIONS,
+  LINE_HEADING,
+  LINE_WIDTHS,
+  levelHeading,
+  openShapeMenu,
+  SIZE_HEADING,
+} from "./shapemenu.js";
 import { openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
@@ -1435,6 +1443,12 @@ function setLineWidth(width) {
   if (plottedEncoding?.elements.includes("line")) plot(plottedEncoding);
 }
 
+// Joins the rows of one X another way: a graph with lines is plotted again.
+function setLineAggregation(aggregation) {
+  options.lineAggregation = aggregation;
+  if (plottedEncoding?.elements.includes("line")) plot(plottedEncoding);
+}
+
 // Fits the smoothing lines another way: a graph with them is plotted again.
 function setSmoothing(picked) {
   options.smoothing = picked;
@@ -1506,7 +1520,8 @@ const builder = new Builder(
   (encoding) => {
     // Elements no longer possible are turned off; that edit comes back here.
     const smooth = hasSmoothPair(encoding, builder.numeric);
-    if (elementBar?.allow({ line: smooth, box: hasBoxPair(encoding, builder.numeric), smooth })) return;
+    const line = hasLinePair(encoding, builder.numeric);
+    if (elementBar?.allow({ line, box: hasBoxPair(encoding, builder.numeric), smooth })) return;
     const key = drawnRoles(encoding);
     if (key === drawnRolesKey) return;
     const drawn = JSON.parse(drawnRolesKey);
@@ -1594,7 +1609,16 @@ elementBar = new ElementBar(
     if (current) openShapeMenu(event, SIZE_HEADING, options.sharedSize(current), setShapeSize);
   },
   (event) => {
-    if (current) openShapeMenu(event, LINE_HEADING, current.line_width, setLineWidth, { sizes: LINE_WIDTHS });
+    if (!current) return;
+    openShapeMenu(event, LINE_HEADING, current.line_width, setLineWidth, {
+      sizes: LINE_WIDTHS,
+      choices: {
+        heading: AGGREGATION_HEADING,
+        items: LINE_AGGREGATIONS,
+        current: current.line_aggregation,
+        onPick: setLineAggregation,
+      },
+    });
   },
 );
 elementBar.setSmoothText(smoothingText(options.smoothing));

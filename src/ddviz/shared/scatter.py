@@ -24,6 +24,10 @@ POINT_SIZE = 5
 # Default width in pixels of the lines joining the points
 # (`ScatterSpec.line_width`).
 LINE_WIDTH = 2
+# How the lines treat the rows of one x (`ScatterSpec.line_aggregation`):
+# each joined in the order of the rows, or their y's mean or median as one
+# point.
+LINE_AGGREGATIONS = ("raw", "mean", "median")
 # The x column of a graph whose X is empty: a categorical column of one
 # level, so that every row lies in one band. It is no column of the data;
 # the scan makes it (`ddviz.compute.scan.scan_columns`).
@@ -348,10 +352,14 @@ class ScatterSpec:
         draws only the lines.
     line_width : int or None
         Width in pixels of the lines joining the points of each series in
-        the panels of a numeric x and a numeric y (`line_pairs`,
-        `ddviz.compute.lines`), or None for no lines. Without points, such
-        a panel draws only the lines, though its rows still have their bins
-        for the hover and the selection.
+        the panels of a numeric y (`line_pairs`, `ddviz.compute.lines`), or
+        None for no lines. Without points, such a panel draws only the
+        lines, though its rows still have their bins for the hover and the
+        selection; a categorical x then draws no piles either.
+    line_aggregation : str
+        How the lines treat the rows of one x (`LINE_AGGREGATIONS`):
+        ``"raw"`` joins every row in the order of the rows, ``"mean"`` and
+        ``"median"`` join one point of the mean or median of their y.
     symbol : str or None
         Column whose levels draw the points in marker shapes
         (`ddviz.shared.shapes`), or None for filled circles. The series are
@@ -426,6 +434,7 @@ class ScatterSpec:
     box: bool = False
     smooth: Smoothing | None = None
     line_width: int | None = None
+    line_aggregation: str = "raw"
     symbol: str | None = None
     shape_size: int = POINT_SIZE
     shape_sizes: dict[str, int] = field(default_factory=dict)
@@ -504,12 +513,14 @@ class ScatterSpec:
         Returns
         -------
         set of tuple of str
-            Each ``(x, y)`` with a numeric x and a numeric y, when the spec
-            draws lines; none otherwise.
+            Each ``(x, y)`` with a numeric y, when the spec draws lines;
+            none otherwise. A categorical x joins its levels' bands in their
+            order.
         """
         if self.line_width is None:
             return set()
-        return self._numeric_pairs()
+        categorical = set(self.categorical)
+        return {(x, y) for x in self.x for y in self.y if y not in categorical}
 
     def draws_points(self, x: str, y: str) -> bool:
         """Return whether the panels of a pair draw the points of every row, not only the outliers or none.

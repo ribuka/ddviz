@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from ddviz.shared.scatter import Binning, Smoothing
+from ddviz.shared.scatter import LINE_AGGREGATIONS, Binning, Smoothing
 from ddviz.shared.shapes import SHAPES
 
 # The fewest intervals a numeric color column can be cut into.
@@ -165,6 +165,34 @@ def parse_line_width(raw: object) -> int | None:
         return None
     if not is_int(raw) or raw not in LINE_WIDTHS:
         raise ValueError(f"line_width is one of {LINE_WIDTHS} or null: {raw}")
+    return raw
+
+
+def parse_line_aggregation(raw: object) -> str:
+    """Return how the lines the page asks for treat the rows of one x, checked.
+
+    Parameters
+    ----------
+    raw : object
+        One of `ddviz.shared.scatter.LINE_AGGREGATIONS`, or None for
+        ``"raw"``.
+
+    Returns
+    -------
+    str
+        The aggregation (`ddviz.shared.scatter.ScatterSpec.line_aggregation`).
+
+    Raises
+    ------
+    ValueError
+        For anything else.
+    """
+    if raw is None:
+        return "raw"
+    if not isinstance(raw, str) or raw not in LINE_AGGREGATIONS:
+        raise ValueError(
+            f"line_aggregation is one of {LINE_AGGREGATIONS} or null: {raw!r}"
+        )
     return raw
 
 

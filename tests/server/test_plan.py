@@ -111,8 +111,8 @@ def test_a_numeric_symbol_beside_color_is_cut_into_intervals() -> None:
     }
 
 
-def test_lines_need_a_numeric_x_and_a_numeric_y() -> None:
-    """Lines join the points with a numeric (or temporal) x and a numeric y; otherwise they are undrawn and the points stay."""
+def test_lines_need_an_x_and_a_numeric_y() -> None:
+    """Lines join the points with any x and a numeric y; otherwise they are undrawn and the points stay."""
     files = {c: [f"{c}.parquet"] for c in ("g", "a", "b")}
     numeric = {"g": False, "a": True, "b": True}
     line = Encoding(x=("a",), y=("b",), elements=("line",))
@@ -130,14 +130,36 @@ def test_lines_need_a_numeric_x_and_a_numeric_y() -> None:
     assert spec.draws_points("a", "b")
     assert spec.line_width == LINE_WIDTH
     banded = Encoding(x=("g",), y=("b",), elements=("line",))
-    assert undrawn(banded, numeric) == ["line"]
+    assert undrawn(banded, numeric) == []
     spec = scatter_spec(banded, files, 400, 300, ["#000000"], numeric=numeric)
-    assert spec.line_width is None
-    assert spec.draws_points("g", "b")
-    nth = Encoding(x=("g", "a"), y=("b",), elements=("line",))
+    assert spec.line_pairs() == {("g", "b")}
+    assert not spec.draws_points("g", "b")
+    nth = Encoding(x=("g", "a"), y=("b", "g"), elements=("line",))
     spec = scatter_spec(nth, files, 400, 300, ["#000000"], numeric=numeric)
-    assert spec.line_pairs() == {("a", "b")}
-    assert spec.draws_points("g", "b")
+    assert spec.line_pairs() == {("a", "b"), ("g", "b")}
+    assert spec.draws_points("a", "g")
+    categorical_y = Encoding(x=("a",), y=("g",), elements=("line",))
+    assert undrawn(categorical_y, numeric) == ["line"]
+    assert (
+        scatter_spec(
+            categorical_y, files, 400, 300, ["#000000"], numeric=numeric
+        ).line_width
+        is None
+    )
+    one_band = Encoding(y=("b",), elements=("line",))
+    assert undrawn(one_band, numeric) == ["line"]
+
+
+def test_the_line_aggregation_reaches_the_spec() -> None:
+    """The aggregation of the lines is raw unless asked, and kept as asked."""
+    files = {c: [f"{c}.parquet"] for c in ("a", "b")}
+    line = Encoding(x=("a",), y=("b",), elements=("line",))
+    assert scatter_spec(line, files, 400, 300, ["#000000"]).line_aggregation == "raw"
+    for aggregation in ("raw", "mean", "median"):
+        spec = scatter_spec(
+            line, files, 400, 300, ["#000000"], line_aggregation=aggregation
+        )
+        assert spec.line_aggregation == aggregation
     assert not spec.draws_points("a", "b")
 
 
