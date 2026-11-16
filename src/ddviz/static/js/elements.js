@@ -5,14 +5,15 @@
 // An element that cannot be drawn yet shows its icon, which cannot be
 // pressed; nor can the last element that can be drawn be turned off. Box
 // plots need a categorical X column and a numeric Y column, or numeric Y
-// columns alone (`ddviz.server.plan.has_box_pair`), smoothing lines and the
-// lines joining the points a numeric X column (a date or a datetime too) and
-// a numeric Y column (`ddviz.server.plan.has_smooth_pair`,
-// `ddviz.server.plan.has_line_pair`): without them, their icon cannot be
-// pressed either. A right click on the smoothing lines' icon opens their
-// menu (smoothmenu.js), one on the points' icon the menu of the size of the
-// markers (shapemenu.js) while a scatter plot is drawn, and one on the
-// lines' icon the menu of their width (shapemenu.js) while lines are drawn;
+// columns alone (`ddviz.server.plan.has_box_pair`), smoothing lines a
+// numeric X column (a date or a datetime too) and a numeric Y column
+// (`ddviz.server.plan.has_smooth_pair`), and the lines joining the points
+// any X column and a numeric Y column (`ddviz.server.plan.has_line_pair`):
+// without them, their icon cannot be pressed either. A right click on the
+// smoothing lines' icon opens their menu (smoothmenu.js), one on the points'
+// icon the menu of the size of the markers (shapemenu.js) while a scatter
+// plot is drawn, and one on the lines' icon the menu of their width and of
+// how they treat the rows of one X (shapemenu.js) while lines are drawn;
 // otherwise, nothing opens.
 
 const ELEMENTS = [

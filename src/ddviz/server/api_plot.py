@@ -33,6 +33,7 @@ from ddviz.server.plan import drawable, drawn_columns, scatter_spec, undrawn
 from ddviz.server.plotoptions import (
     parse_color_bins,
     parse_level_shapes,
+    parse_line_aggregation,
     parse_line_width,
     parse_shape_size,
     parse_shape_sizes,
@@ -230,6 +231,7 @@ def plot_router(
             smoothing = parse_smoothing(request.smooth)
             shape_size = parse_shape_size(request.shape_size)
             line_width = parse_line_width(request.line_width)
+            line_aggregation = parse_line_aggregation(request.line_aggregation)
             shape_sizes = parse_shape_sizes(request.shape_sizes)
             level_shapes = parse_level_shapes(request.level_shapes)
         except ValueError as error:
@@ -273,6 +275,7 @@ def plot_router(
                 margin_left=request.margin_left,
                 margin_bottom=request.margin_bottom,
                 line_width=line_width,
+                line_aggregation=line_aggregation,
                 keep_unfiltered_color_levels=request.keep_unfiltered_color_levels,
             )
         except ValueError as error:

@@ -39,6 +39,21 @@ OVERLAP = {
 }
 
 
+# The choices of how the lines treat the rows of one X, in their menu.
+AGGREGATIONS = ["Raw (row order)", "Mean", "Median"]
+
+# A categorical X, its rows out of the order of its levels: item_1 has a
+# pile of rows at y 0, item_2 rows at y 10, 0 and 2 in this order (mean 4,
+# median 2) and item_10 one at y 0. The lines join item_1, item_2 and
+# item_10 at the centers of their bands, 0, 1 and 2.
+PILE_ROWS = 1000
+BANDS = {
+    "g": ["item_10", "item_2", "item_2", "item_2", *["item_1"] * PILE_ROWS],
+    "y": [0.0, 10.0, 0.0, 2.0, *[0.0] * PILE_ROWS],
+    "v": [None] * (PILE_ROWS + 4),
+}
+
+
 @pytest.fixture
 def scatter_path(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     """Write five rows of a numeric x and y, and a categorical column; or the columns of a test's `scatter_path` parameter."""
@@ -136,7 +151,7 @@ def select_box(
 def test_lines_join_the_points_alone_or_under_them_and_hover_their_rows(
     app_page: Page,
 ) -> None:
-    """Points alone, points and lines, lines alone: the lines follow x; without points the rows still hover and are selected at their points, not along the lines; a categorical X takes the lines off."""
+    """Points alone, points and lines, lines alone: the lines follow x; without points the rows still hover and are selected at their points, not along the lines; a categorical X keeps them."""
     page = app_page
     expect(page.locator("#columns .column").filter(has_text="g")).to_be_visible()
     place(page, "x", "x")
@@ -200,12 +215,11 @@ def test_lines_join_the_points_alone_or_under_them_and_hover_their_rows(
     page.wait_for_function(f"() => Math.max(...({ALPHAS_NEAR})([3.5, 5, 3])) < 64")
     assert opacity(page, 1.5, 5) == 255
 
-    # A categorical X cannot have the lines: they go off, and the points
-    # come back on.
+    # A categorical X keeps the lines, alone.
     place(page, "g", "x")
-    expect(line).to_be_disabled()
-    expect(line).to_have_attribute("aria-pressed", "false")
-    expect(points).to_have_attribute("aria-pressed", "true")
+    expect(line).to_be_enabled()
+    expect(line).to_have_attribute("aria-pressed", "true")
+    expect(points).to_have_attribute("aria-pressed", "false")
     page.wait_for_function(PAINTED_PIXEL)
 
 
@@ -229,11 +243,15 @@ def test_the_width_of_the_lines_is_picked_in_their_icon_menu(app_page: Page) -> 
 
     line.click(button="right")
     menu = page.locator(".scale-menu")
-    expect(menu.locator(".scale-menu-heading")).to_have_text("線の太さ（全系列）")
-    expect(menu.locator(".scale-menu-item")).to_have_text(
-        ["1 px", "2 px", "3 px", "4 px", "5 px"]
+    expect(menu.locator(".scale-menu-heading")).to_have_text(
+        ["線の太さ（全系列）", "同じ X の扱い"]
     )
-    expect(menu.locator(".scale-menu-item.checked")).to_have_text("2 px")
+    expect(menu.locator(".scale-menu-item")).to_have_text(
+        ["1 px", "2 px", "3 px", "4 px", "5 px", *AGGREGATIONS]
+    )
+    expect(menu.locator(".scale-menu-item.checked")).to_have_text(
+        ["2 px", "Raw (row order)"]
+    )
     task = drawn_task(page)
     menu.get_by_text("5 px", exact=True).click()
     expect(menu).to_have_count(0)
@@ -262,7 +280,9 @@ def test_the_width_of_the_lines_is_picked_in_their_icon_menu(app_page: Page) -> 
     new_result(page, task)
     wait_idle(page)
     line.click(button="right")
-    expect(page.locator(".scale-menu .scale-menu-item.checked")).to_have_text("5 px")
+    expect(page.locator(".scale-menu .scale-menu-item.checked")).to_have_text(
+        ["5 px", "Raw (row order)"]
+    )
     page.keyboard.press("Escape")
 
 
@@ -304,7 +324,9 @@ def hover_value(page: Page, x: float, y: float, column: str) -> str | None:
         expect(label).to_be_visible(timeout=1500)
     except AssertionError:
         return None
-    lines = dict(line.split(": ", 1) for line in label.inner_text().splitlines() if ": " in line)
+    lines = dict(
+        line.split(": ", 1) for line in label.inner_text().splitlines() if ": " in line
+    )
     return lines.get(column)
 
 
@@ -362,3 +384,135 @@ def test_the_missing_level_lies_behind_the_values_of_the_same_activity(
     for x, y in [(1, 1), (2, 2)]:
         near = colors_near(page, x, y)
         assert near["gray"] > 0 and near["other"] == 0, (x, y, near)
+
+
+def painted_beside(page: Page, x: float, y: float, dx: float, r: int = 4) -> int:
+    """Return how many pixels are painted around a point `dx` CSS px right of a data point."""
+    return page.evaluate(
+        """([x, y, dx, r]) => {
+          const full = document.getElementById("plot")._fullLayout;
+          const canvas = document.querySelector("canvas.image-layers");
+          const dpr = canvas.width / full.width;
+          const px = Math.round((full.xaxis._offset + full.xaxis.l2p(x) + dx) * dpr);
+          const py = Math.round((full.yaxis._offset + full.yaxis.l2p(y)) * dpr);
+          const side = Math.round(r * dpr);
+          const { data } = canvas.getContext("2d").getImageData(px - side, py - side, 2 * side + 1, 2 * side + 1);
+          return data.filter((v, i) => i % 4 === 3 && v > 0).length;
+        }""",
+        [x, y, dx, r],
+    )
+
+
+def hover_row(page: Page, x: float, y: float) -> dict[str, str] | None:
+    """Hover at a data point; return the label's values of g and y, or None when it stays hidden."""
+    page.mouse.move(0, 0)
+    point = at(page, x, y)
+    page.mouse.move(point["x"], point["y"])
+    label = page.locator("#hover-label")
+    try:
+        expect(label).to_be_visible(timeout=1500)
+    except AssertionError:
+        return None
+    lines = dict(line.split(": ", 1) for line in label.inner_text().splitlines())
+    return {k: v for k, v in lines.items() if k in ("g", "y")}
+
+
+def pick_in_line_menu(page: Page, text: str) -> None:
+    """Pick an item of the lines' icon's menu and wait for the graph drawn with it."""
+    task = drawn_task(page)
+    icon(page, "line").click(button="right")
+    menu = page.locator(".scale-menu")
+    menu.get_by_text(text, exact=True).click()
+    expect(menu).to_have_count(0)
+    new_result(page, task)
+    wait_idle(page)
+
+
+def checked_in_line_menu(page: Page) -> list[str]:
+    """Return the items checked in the lines' icon's menu, closing it."""
+    icon(page, "line").click(button="right")
+    checked = page.locator(".scale-menu .scale-menu-item.checked")
+    expect(checked).to_have_count(2)
+    texts = checked.all_inner_texts()
+    page.keyboard.press("Escape")
+    expect(page.locator(".scale-menu")).to_have_count(0)
+    return texts
+
+
+@pytest.mark.parametrize("scatter_path", [BANDS], indirect=True)
+def test_lines_of_a_categorical_x_join_its_bands_and_aggregate_the_rows_of_one(
+    app_page: Page,
+) -> None:
+    """A categorical X takes the lines: alone they draw no pile but keep the rows' hover and selection; Mean and Median beside the width make one point of each X, kept over a zoom and the lines off and on."""
+    page = app_page
+    expect(page.locator("#columns .column").filter(has_text="g")).to_be_visible()
+    place(page, "g", "x")
+    place(page, "y", "y")
+    page.wait_for_function(PAINTED_PIXEL)
+    points, line = icon(page, "points"), icon(page, "line")
+    expect(line).to_be_enabled()
+    # With the points, item_1's rows are a pile, labeled right of its marker.
+    assert painted_beside(page, 0, 0, 20) > 0
+
+    task = drawn_task(page)
+    line.click()
+    new_result(page, task)
+    task = drawn_task(page)
+    points.click()
+    new_result(page, task)
+    wait_idle(page)
+    expect(page.locator("#status")).to_contain_text("点は描いていない")
+    # Lines alone: no pile; item_1 (0) to the first row of item_2 (10), its
+    # rows in their order, its last (2) to item_10 (0).
+    assert painted_beside(page, 0, 0, 20) == 0
+    assert painted(page, 0.5, 5) > 0
+    assert painted(page, 1, 5) > 0
+    assert painted(page, 1.5, 1) > 0
+    assert painted(page, 0.5, 2) == 0
+    # The rows still hover and are selected where they lie.
+    assert hover_row(page, 2, 0) == {"g": "item_10", "y": "0"}
+    assert hover_row(page, 1, 10) == {"g": "item_2", "y": "10"}
+    select_box(page, (0.9, 9.5), (1.1, 10.15), 1)
+    select_box(page, (0.9, 1.5), (1.1, 10.15), 2)
+
+    assert checked_in_line_menu(page) == ["2 px", "Raw (row order)"]
+    pick_in_line_menu(page, "Mean")
+    # item_1 (0) to the mean of item_2 (4) to item_10 (0).
+    assert painted(page, 0.5, 2) > 0
+    assert painted(page, 1.5, 2) > 0
+    assert painted(page, 0.5, 5) == 0
+    # The width beside it keeps it.
+    pick_in_line_menu(page, "4 px")
+    assert checked_in_line_menu(page) == ["4 px", "Mean"]
+    assert painted(page, 0.5, 2) > 0
+
+    # A zoom keeps it, and joins the mean of every row of item_2.
+    task = drawn_task(page)
+    page.evaluate("Plotly.relayout('plot', {'yaxis.range': [1, 6]})")
+    new_result(page, task)
+    wait_idle(page)
+    assert page.evaluate(
+        "document.getElementById('plot')._fullLayout.yaxis.range[0]"
+    ) == pytest.approx(1)
+    assert painted(page, 0.5, 2) > 0
+    assert checked_in_line_menu(page) == ["4 px", "Mean"]
+
+    # Off and on again with the points: still Mean.
+    task = drawn_task(page)
+    points.click()
+    new_result(page, task)
+    task = drawn_task(page)
+    line.click()
+    new_result(page, task)
+    wait_idle(page)
+    task = drawn_task(page)
+    line.click()
+    new_result(page, task)
+    wait_idle(page)
+    assert checked_in_line_menu(page) == ["4 px", "Mean"]
+
+    pick_in_line_menu(page, "Median")
+    assert checked_in_line_menu(page) == ["4 px", "Median"]
+    # item_1 (0) to the median of item_2 (2) to item_10 (0).
+    assert painted(page, 0.5, 1) > 0
+    assert painted(page, 0.5, 2) == 0

@@ -23,6 +23,10 @@ export class PlotOptions {
   // (`ddviz.server.plotoptions.parse_line_width`), picked in the menu of the
   // lines' element icon; kept for every graph, with the lines on or off.
   lineWidth = 2;
+  // How the lines treat the rows of one X: "raw", "mean" or "median"
+  // (`ddviz.server.plotoptions.parse_line_aggregation`), picked in the same
+  // menu; kept for every graph, with the lines on or off.
+  lineAggregation = "raw";
   // Whether the Color and the Symbol zone draw the rows of a null or NaN
   // value (`ddviz.server.models.ShowNullRows`), set in the zones' menu
   // (zonemenu.js, which changes this object); kept whatever column the zone
@@ -65,6 +69,7 @@ export class PlotOptions {
       smooth: this.smoothing,
       shape_size: this.shapeSize,
       line_width: this.lineWidth,
+      line_aggregation: this.lineAggregation,
       shape_sizes: this.#levelSizes.get(encoding.symbol) || null,
       level_shapes: shapes,
       show_null_rows: { ...this.showNullRows },

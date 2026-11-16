@@ -18,6 +18,14 @@ export const SIZE_HEADING = "点の大きさ（全系列）";
 // in the menu of the lines' element icon, which this menu also is.
 export const LINE_WIDTHS = [1, 2, 3, 4, 5];
 export const LINE_HEADING = "線の太さ（全系列）";
+// How the lines treat the rows of one X (`ddviz.shared.scatter.LINE_AGGREGATIONS`),
+// below their widths in the same menu.
+export const LINE_AGGREGATIONS = [
+  { value: "raw", label: "Raw (row order)" },
+  { value: "mean", label: "Mean" },
+  { value: "median", label: "Median" },
+];
+export const AGGREGATION_HEADING = "同じ X の扱い";
 
 // Heading of the menu of a symbol level's shapes.
 export function levelHeading(level) {
@@ -42,8 +50,11 @@ const popup = new Popup({ onClose: closeSub, inside: () => [sub] });
 // `meta.symbol.choices` and what gets the shape picked, or null for the
 // shape of the level's place), the item that opens the shape panel.
 // `sizes` lists the sizes to pick from: the widths of the lines
-// (`LINE_WIDTHS`) in the menu of the lines' icon.
-export function openShapeMenu(event, heading, size, onPick, { color = null, shape = null, sizes = SIZES } = {}) {
+// (`LINE_WIDTHS`) in the menu of the lines' icon. With `choices`
+// ({heading, items, current, onPick}: the `{value, label}` items to pick one
+// of, under their heading, the value checked and what gets the value
+// picked), the menu ends with them: how the lines treat the rows of one X.
+export function openShapeMenu(event, heading, size, onPick, { color = null, shape = null, sizes = SIZES, choices = null } = {}) {
   const menu = document.createElement("div");
   menu.className = "scale-menu shape-menu";
   if (color) menu.append(colorItem(color), menuSeparator());
@@ -57,6 +68,18 @@ export function openShapeMenu(event, heading, size, onPick, { color = null, shap
     const row = menuItem(`${pick} px`, choose, { checked: pick === size });
     row.addEventListener("pointerenter", closeSub);
     menu.append(row);
+  }
+  if (choices) {
+    menu.append(menuSeparator(), menuHeading(choices.heading));
+    for (const { value, label } of choices.items) {
+      const choose = () => {
+        popup.close();
+        if (value !== choices.current) choices.onPick(value);
+      };
+      const row = menuItem(label, choose, { checked: value === choices.current });
+      row.addEventListener("pointerenter", closeSub);
+      menu.append(row);
+    }
   }
   popup.open(menu, event);
 }

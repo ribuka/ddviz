@@ -79,8 +79,9 @@ def _shown(
     (`ddviz.compute.aggregate.aggregate`).
     """
     # Only the panels of lines: those of box plots without points draw
-    # their outliers, and those of smoothing lines have no bins.
-    lines = spec.line_pairs()
+    # their outliers, with lines or not, and those of smoothing lines have
+    # no bins.
+    lines = spec.line_pairs() - spec.box_pairs()
     hidden = []
     for p in range(axes.panels):
         x, y = spec.x[axes.axes(p)[0]], spec.y[axes.axes(p)[1]]

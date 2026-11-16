@@ -27,6 +27,7 @@ def test_a_new_one_requests_the_defaults(js_page: Page) -> None:
         "smooth": {"method": "gcv"},
         "shape_size": None,
         "line_width": 2,
+        "line_aggregation": "raw",
         "shape_sizes": None,
         "level_shapes": None,
         "show_null_rows": {"color": True, "symbol": True},

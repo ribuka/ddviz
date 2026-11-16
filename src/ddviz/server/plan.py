@@ -109,10 +109,10 @@ def has_smooth_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
 
 
 def has_line_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
-    """Return whether a pair of the graph's axis columns can join its points with lines: a numeric x and a numeric y.
+    """Return whether a pair of the graph's axis columns can join its points with lines: any x column and a numeric y.
 
-    A temporal column is numeric. The pairs are those of the smoothing
-    lines (`has_smooth_pair`).
+    A temporal column is numeric; a categorical x joins its levels' bands
+    in their order. Without an x column, there are no lines.
 
     Parameters
     ----------
@@ -126,7 +126,7 @@ def has_line_pair(encoding: Encoding, numeric: dict[str, bool]) -> bool:
     bool
         Whether such a pair exists.
     """
-    return has_smooth_pair(encoding, numeric)
+    return bool(encoding.x) and any(numeric.get(y, True) for y in encoding.y)
 
 
 def undrawn(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
@@ -144,8 +144,8 @@ def undrawn(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
     list of str
         ``"box"`` without a pair of a categorical x and a numeric y
         (`has_box_pair`), ``"smooth"`` without a pair of a numeric x
-        and a numeric y (`has_smooth_pair`), and ``"line"`` without such a
-        pair either (`has_line_pair`).
+        and a numeric y (`has_smooth_pair`), and ``"line"`` without an x
+        column and a numeric y (`has_line_pair`).
     """
     return [
         e
@@ -278,6 +278,7 @@ def scatter_spec(
     margin_left: int = MARGIN_LEFT,
     margin_bottom: int = MARGIN_BOTTOM,
     line_width: int | None = None,
+    line_aggregation: str = "raw",
     keep_unfiltered_color_levels: bool = False,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
@@ -361,8 +362,11 @@ def scatter_spec(
         Width of the lines joining the points in pixels
         (`ddviz.server.plotoptions.parse_line_width`); None for the
         default, `LINE_WIDTH`. The lines are drawn with the ``"line"``
-        element, in the panels of a numeric x and a numeric y
-        (`ScatterSpec.line_width`).
+        element, in the panels of a numeric y (`ScatterSpec.line_width`).
+    line_aggregation : str, optional
+        How the lines treat the rows of one x
+        (`ddviz.server.plotoptions.parse_line_aggregation`,
+        `ScatterSpec.line_aggregation`).
 
     Returns
     -------
@@ -439,6 +443,7 @@ def scatter_spec(
         line_width=(line_width or LINE_WIDTH)
         if "line" in encoding.elements and has_line_pair(encoding, numeric)
         else None,
+        line_aggregation=line_aggregation,
         symbol=symbol,
         shape_size=shape_size or (POINT_SIZE if symbol is None else SHAPE_SIZE),
         shape_sizes=dict(shape_sizes or {}) if symbol is not None else {},
