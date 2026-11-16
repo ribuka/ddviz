@@ -158,7 +158,8 @@ def _aggregated(
 
     Only the rows of a finite y (positive on a log axis) count; an x
     without one keeps a NaN y, which breaks the line there. The layer is
-    that of the counted rows of a finite value, or of any row without one;
+    that of the counted rows of a finite value, or without one that of the
+    counted rows (a gradient's missing level), or of any row without those;
     the value is the mean of those finite values, null without one.
     """
     y = pl.col(Y)
@@ -171,8 +172,11 @@ def _aggregated(
     if with_value:
         valued = counted & pl.col(VALUE).is_finite()
         found += [
+            # Counted rows without a finite value lie in the missing level.
             pl.coalesce(
-                pl.col(LAYER).filter(valued).first(), pl.col(LAYER).first()
+                pl.col(LAYER).filter(valued).first(),
+                pl.col(LAYER).filter(counted).first(),
+                pl.col(LAYER).first(),
             ).alias(LAYER),
             pl.col(VALUE).filter(valued).mean().alias(VALUE),
         ]

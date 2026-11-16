@@ -627,3 +627,27 @@ def test_a_view_aggregates_every_row_before_its_ranges(
     covered = _covered(agg)
     assert covered & _at(agg, 5, 5)
     assert covered & _at(agg, 4.1, 4.1)
+
+
+@pytest.mark.parametrize("aggregation", ["mean", "median"])
+def test_a_point_whose_counted_rows_have_no_color_lies_in_the_missing_level(
+    tmp_path: Path, aggregation: str
+) -> None:
+    """A row of a color but no valid y leaves the point of its x in the missing level, when the rows its y counts have no color."""
+    frame = pl.DataFrame(
+        {"x": [1.0, 1.0, 2.0], "y": [None, 4.0, 6.0], "v": [0.9, None, 0.4]}
+    )
+    spec = _spec(
+        tmp_path,
+        frame,
+        color="v",
+        gradient=True,
+        null_roles=["color"],
+        hover=["x", "y", "v"],
+        line_aggregation=aggregation,
+    )
+    agg = aggregate(spec)
+    missing = len(agg.levels["color"]) - 1
+    assert missing > 0
+    # (1, 4) to (2, 6), from the row of no color.
+    assert _top(agg, 1.5, 5) == (missing, None)
