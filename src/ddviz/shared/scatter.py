@@ -242,9 +242,14 @@ class Selection:
 class Filter:
     """Condition of the local filter on one column (`ddviz.compute.rowfilter`).
 
-    A row passes when its value of the column is in the range (a numeric
-    column), or, for a categorical column compared as text, is among the
-    levels or contains the text; a row with a null value never passes.
+    The condition on the values is that a row's value of the column is in
+    the range (a numeric column), or, for a categorical column compared as
+    text, is among the levels or contains the text. A row passes when it
+    meets that condition or, with `nulls`, when its value is missing (null,
+    or NaN in a float column; `ddviz.compute.missing.is_missing`); without
+    `nulls`, a missing row never passes. Without a condition on the values,
+    the missing rows alone pass (`nulls`, a categorical column) or every row
+    but them (not `nulls`, a numeric column).
 
     Parameters
     ----------
@@ -253,18 +258,28 @@ class Filter:
     range : list of float or None
         Bounds, both included, for a numeric column.
     levels : list of str or None
-        Levels kept, for a categorical column.
+        Levels kept, for a categorical column; empty only with `nulls`.
     contains : str or None
         Keywords the kept values all contain, in any order, matched literally
         and case-insensitively (`ddviz.shared.keywords`), for a categorical
         column with too many levels to tick
         (`ddviz.compute.summary.MAX_FILTER_LEVELS`); never blank.
+    nulls : bool
+        Whether the rows with a missing value pass too.
     """
 
     column: str
     range: list[float] | None = None
     levels: list[str] | None = None
     contains: str | None = None
+    nulls: bool = False
+
+    @property
+    def numeric(self) -> bool:
+        """Whether the column is numeric: a range, or no condition on the values but not `nulls`."""
+        return self.range is not None or (
+            self.levels is None and self.contains is None and not self.nulls
+        )
 
 
 @dataclass(frozen=True)

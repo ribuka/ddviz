@@ -23,7 +23,7 @@
 import { draggedColumn } from "./builder.js";
 import { attachDrag } from "./dragresize.js";
 import { plainEnter } from "./keys.js";
-import { levelText } from "./names.js";
+import { levelText, MISSING } from "./names.js";
 import { errorText } from "./notice.js";
 import { Popup } from "./popup.js";
 import { formatTemporal, isDateKind, parseTemporal } from "./temporal.js";
@@ -129,8 +129,10 @@ function openLevelMenu(button, order, pick) {
 }
 
 // Returns the row of a level to tick: its box, its name and its rows (none
-// when `count` is null); `toggle` gets whether it is ticked.
-function levelRow(level, count, checked, toggle) {
+// when `count` is null); `toggle` gets whether it is ticked. `missing` tells
+// that the card has the row of the missing values (`MISSING`), for a real
+// "(null)" text to be marked as text (`levelText`).
+function levelRow(level, count, checked, toggle, missing = false) {
   const label = document.createElement("label");
   label.className = "filter-level";
   const box = document.createElement("input");
@@ -139,8 +141,9 @@ function levelRow(level, count, checked, toggle) {
   box.addEventListener("change", () => toggle(box.checked));
   const text = document.createElement("span");
   text.className = "filter-level-name";
-  text.textContent = levelText(level);
-  text.title = levelText(level);
+  const name = levelText(level, missing ? [MISSING] : []);
+  text.textContent = name;
+  text.title = name;
   label.append(box, text);
   if (count !== null) {
     const num = document.createElement("span");
@@ -177,7 +180,9 @@ function byColumn(list) {
 // (`ddviz.server.plan.parse_filters`), from the page's or from a result's
 // meta; conditions in another order have the same key.
 export function filtersKey(list) {
-  return JSON.stringify(byColumn(list).map((f) => [f.column, f.range ?? null, f.levels ?? null, f.contains ?? null]));
+  return JSON.stringify(
+    byColumn(list).map((f) => [f.column, f.range ?? null, f.levels ?? null, f.contains ?? null, f.nulls ?? false]),
+  );
 }
 
 // Returns how a card sets its condition: "range" for a numeric column,
@@ -192,6 +197,25 @@ export function cardKind(card) {
   return "listed";
 }
 
+// Returns whether a card shows the row of its column's missing values
+// (`(null)`): the column has some (null, or NaN in a float column).
+function hasNulls(card) {
+  return (card.summary?.nulls ?? 0) >= 1;
+}
+
+// Returns whether a card's `(null)` row is ticked in the way it sets its
+// condition (`cardKind`): its missing rows are kept besides the rows its
+// values keep. False for a column without missing values.
+function keepsNulls(card) {
+  const kind = cardKind(card);
+  return kind !== null && hasNulls(card) && card.nulls[kind];
+}
+
+// Returns whether a numeric card's range is narrower than the column's.
+function narrowed(card) {
+  return card.range !== null && (card.range[0] > card.summary.min || card.range[1] < card.summary.max);
+}
+
 // Returns a card's state that sets its condition, as `FilterPane.snapshot`
 // keeps it.
 function cardState(card) {
@@ -200,15 +224,18 @@ function cardState(card) {
     range: card.range && [...card.range],
     levels: new Set(card.levels),
     contains: card.contains,
+    nulls: { ...card.nulls },
     mode: card.mode,
     query: card.query,
     order: card.order,
   };
 }
 
-// Returns the note of a column's nulls to put after a card's text.
-function nullsText(nulls) {
-  return nulls >= 1 ? `　null ${nulls.toLocaleString()} 行` : "";
+// Returns the count of a card's ticked levels: `picked` of `total` and the
+// missing rows (`nulls`), or `idle` with nothing ticked.
+function pickedText(picked, total, nulls, idle) {
+  if (picked) return `${picked.toLocaleString()} / ${total} 水準${nulls ? "と null " : ""}を選択`;
+  return nulls ? "null を選択" : idle;
 }
 
 // Returns the row of a card's count of ticked levels and its button that
@@ -373,6 +400,9 @@ export class FilterPane {
       range: null,
       levels: new Set(),
       contains: "",
+      // The tick of the `(null)` row in each way the card sets its
+      // condition (`cardKind`): a card of candidates keeps one per mode.
+      nulls: { range: true, pick: false, contains: false, listed: false },
       order: "name",
       element: null,
       listHeight: null,
@@ -504,9 +534,17 @@ export class FilterPane {
     for (const card of this.cards) {
       if (!this.isActive(card)) continue;
       const kind = cardKind(card);
-      if (kind === "range") out.push({ column: card.name, range: [...card.range] });
-      else if (kind === "contains") out.push({ column: card.name, contains: card.contains });
-      else out.push({ column: card.name, levels: [...card.levels].sort() });
+      const also = keepsNulls(card) ? { nulls: true } : {};
+      if (kind === "range") {
+        if (narrowed(card)) out.push({ column: card.name, range: [...card.range], ...also });
+        else out.push({ column: card.name, nulls: false });
+      } else if (kind === "contains" ? card.contains === "" : card.levels.size === 0) {
+        out.push({ column: card.name, nulls: true });
+      } else if (kind === "contains") {
+        out.push({ column: card.name, contains: card.contains, ...also });
+      } else {
+        out.push({ column: card.name, levels: [...card.levels].sort(), ...also });
+      }
     }
     return byColumn(out);
   }
@@ -514,28 +552,33 @@ export class FilterPane {
   isActive(card) {
     const kind = cardKind(card);
     if (kind === null) return false;
-    if (kind === "range") {
-      return card.range !== null && (card.range[0] > card.summary.min || card.range[1] < card.summary.max);
-    }
-    if (kind === "contains") return card.contains !== "";
-    return card.levels.size > 0;
+    if (kind === "range") return narrowed(card) || (hasNulls(card) && !card.nulls.range);
+    if (kind === "contains") return card.contains !== "" || keepsNulls(card);
+    return card.levels.size > 0 || keepsNulls(card);
   }
 
-  // Returns the conditions in a few words: "g1: 3/10、x: −2〜5、id: 「a1」を含む".
+  // Returns the conditions in a few words: "g1: 3/10、x: −2〜5、id: 「a1」を含む",
+  // with "+null" for a card that keeps the missing rows too, "g1: null" for
+  // one that keeps only them and "x: null を除く" for a numeric card that
+  // only leaves them out.
   summaryText() {
     return this.cards
       .filter((card) => this.isActive(card))
       .map((card) => {
-        switch (cardKind(card)) {
-          case "range":
-            return `${card.name}: ${formatBound(card, card.range[0])}〜${formatBound(card, card.range[1])}`;
-          case "pick":
-            return `${card.name}: ${card.levels.size}/${card.candidates.n_levels}`;
-          case "contains":
-            return `${card.name}: 「${card.contains}」を含む`;
-          default:
-            return `${card.name}: ${card.levels.size}/${card.summary.levels.length}`;
+        const kind = cardKind(card);
+        const plus = keepsNulls(card) ? "+null" : "";
+        if (kind === "range") {
+          if (!narrowed(card)) return `${card.name}: null を除く`;
+          return `${card.name}: ${formatBound(card, card.range[0])}〜${formatBound(card, card.range[1])}${plus}`;
         }
+        let values = null;
+        if (kind === "contains") {
+          if (card.contains !== "") values = `「${card.contains}」を含む`;
+        } else if (card.levels.size > 0) {
+          const total = kind === "pick" ? card.candidates.n_levels : card.summary.levels.length;
+          values = `${card.levels.size}/${total}`;
+        }
+        return values === null ? `${card.name}: null` : `${card.name}: ${values}${plus}`;
       })
       .join("、");
   }
@@ -574,12 +617,13 @@ export class FilterPane {
     clearTimeout(this.timer);
     this.timer = null;
     const refetch = [];
-    this.cards = snapshot.map(({ card, range, levels, contains, mode, query, order }) => {
+    this.cards = snapshot.map(({ card, range, levels, contains, nulls, mode, query, order }) => {
       // A card whose summary came after the snapshot has its whole range.
       const whole = card.summary?.numeric && card.summary.min !== null ? [card.summary.min, card.summary.max] : null;
       card.range = range ? [...range] : whole;
       card.levels = new Set(levels);
       card.contains = contains;
+      card.nulls = { ...nulls };
       if (this.searches(card)) {
         card.mode = mode;
         card.query = query;
@@ -869,7 +913,7 @@ export class FilterPane {
   }
 
   numericBody(card, body) {
-    const { min, max, nulls, integer, temporal } = card.summary;
+    const { min, max, integer, temporal } = card.summary;
     // A datetime, date or time column's bounds are typed as text; its
     // values are milliseconds (`ddviz.compute.temporal`).
     const dates = isDateKind(temporal);
@@ -877,10 +921,11 @@ export class FilterPane {
     const fromText = (text) => (dates ? parseTemporal(temporal, text) : text === "" ? null : Number(text));
     const note = document.createElement("div");
     note.className = "filter-note";
-    note.textContent = `最小 ${formatBound(card, min)}　最大 ${formatBound(card, max)}` + nullsText(nulls);
+    note.textContent = `最小 ${formatBound(card, min)}　最大 ${formatBound(card, max)}`;
     body.append(note);
     if (min === null) {
       note.textContent = "有限な値が無い";
+      if (hasNulls(card)) body.append(this.nullRow(card, () => {}));
       return;
     }
     const span = max - min;
@@ -974,11 +1019,26 @@ export class FilterPane {
     });
     boxes.append(reset);
     body.append(slider, boxes);
+    if (hasNulls(card)) body.append(this.nullRow(card, () => {}));
     show();
   }
 
+  // Returns the `(null)` row of a card, ticked as the card keeps the missing
+  // rows in the way it now sets its condition; a tick calls `after` (which
+  // shows the count again) and sends the conditions soon, as a level's.
+  nullRow(card, after) {
+    const kind = cardKind(card);
+    const row = levelRow(MISSING, card.summary.nulls, card.nulls[kind], (checked) => {
+      card.nulls[kind] = checked;
+      after();
+      this.commitSoon();
+    });
+    row.classList.add("filter-null");
+    return row;
+  }
+
   levelBody(card, body) {
-    const { levels, nulls } = card.summary;
+    const { levels } = card.summary;
     card.refresh = null;
     if (levels === null) {
       if (card.candidates === false) this.containsBody(card, body);
@@ -990,21 +1050,35 @@ export class FilterPane {
     list.className = "filter-levels";
     const labels = new Map();
     const boxes = levels.map(([level, n]) => {
-      const label = levelRow(level, n, card.levels.has(level), (checked) => this.tickLevel(card, level, checked, update));
+      const label = levelRow(
+        level,
+        n,
+        card.levels.has(level),
+        (checked) => this.tickLevel(card, level, checked, update),
+        hasNulls(card),
+      );
       labels.set(level, label);
       return label.querySelector("input");
     });
+    // The missing rows' row, the last in either order.
+    const nullRow = hasNulls(card) ? this.nullRow(card, () => update()) : null;
+    if (nullRow) boxes.push(nullRow.querySelector("input"));
     // Puts the rows in the card's order; the ticks stay as they are.
-    card.arrange = () => list.replaceChildren(...sortLevels(levels, card.order).map(([level]) => labels.get(level)));
+    card.arrange = () =>
+      list.replaceChildren(
+        ...sortLevels(levels, card.order).map(([level]) => labels.get(level)),
+        ...(nullRow ? [nullRow] : []),
+      );
     card.arrange();
     const update = () => {
       const picked = card.levels.size;
-      counter.textContent = picked ? `${picked} / ${levels.length} 水準を選択` : `${levels.length} 水準（選ぶと絞る）`;
-      counter.textContent += nullsText(nulls);
-      clear.disabled = picked === 0;
+      const nulls = keepsNulls(card);
+      counter.textContent = pickedText(picked, levels.length, nulls, `${levels.length} 水準（選ぶと絞る）`);
+      clear.disabled = picked === 0 && !nulls;
     };
     clear.addEventListener("click", () => {
       card.levels.clear();
+      card.nulls.listed = false;
       for (const box of boxes) box.checked = false;
       update();
       this.commit();
@@ -1029,7 +1103,6 @@ export class FilterPane {
       this.containsBody(card, body);
       return;
     }
-    const { nulls } = card.summary;
     const { bar, counter, clear } = clearBar("選んだ水準を、候補に無いものも含めて外す（絞らない）");
     const search = document.createElement("div");
     search.className = "filter-search";
@@ -1075,10 +1148,10 @@ export class FilterPane {
 
     const count = () => {
       const size = card.levels.size;
+      const nulls = keepsNulls(card);
       const total = card.candidates.n_levels.toLocaleString();
-      counter.textContent = size ? `${size.toLocaleString()} / ${total} 水準を選択` : `${total} 水準（検索して選ぶと絞る）`;
-      counter.textContent += nullsText(nulls);
-      clear.disabled = size === 0;
+      counter.textContent = pickedText(size, total, nulls, `${total} 水準（検索して選ぶと絞る）`);
+      clear.disabled = size === 0 && !nulls;
     };
     // A ticked level the candidates do not list, to untick.
     const showPicked = () => {
@@ -1086,12 +1159,18 @@ export class FilterPane {
       const outside = [...card.levels].filter((level) => !listed.has(level));
       pickedList.replaceChildren(
         ...outside.map((level) =>
-          levelRow(level, null, true, () => {
-            card.levels.delete(level);
-            showPicked();
-            count();
-            this.commitSoon();
-          }),
+          levelRow(
+            level,
+            null,
+            true,
+            () => {
+              card.levels.delete(level);
+              showPicked();
+              count();
+              this.commitSoon();
+            },
+            hasNulls(card),
+          ),
         ),
       );
       picked.hidden = outside.length === 0;
@@ -1104,19 +1183,24 @@ export class FilterPane {
       else if (levels.length === 0) status.textContent = "一致する候補がありません";
       status.hidden = !status.hasChildNodes();
       list.classList.toggle("loading", card.loading);
+      // The missing rows' row comes last whatever the search, past the
+      // candidates it does not count.
+      const missing = hasNulls(card);
       list.replaceChildren(
         ...levels.map(([level, n]) =>
-          levelRow(level, n, card.levels.has(level), (checked) => this.tickLevel(card, level, checked, count)),
+          levelRow(level, n, card.levels.has(level), (checked) => this.tickLevel(card, level, checked, count), missing),
         ),
+        ...(missing ? [this.nullRow(card, count)] : []),
       );
       // A list dragged to a height keeps it with no candidate.
-      list.hidden = levels.length === 0 && card.listHeight === null;
+      list.hidden = levels.length === 0 && !missing && card.listHeight === null;
       more.hidden = !truncated;
       showPicked();
       count();
     };
     clear.addEventListener("click", () => {
       card.levels.clear();
+      card.nulls.pick = false;
       card.refresh();
       this.commit();
     });
@@ -1182,7 +1266,7 @@ export class FilterPane {
   // values contain: every word of it, in any order, literally and ignoring
   // case (`ddviz.shared.keywords`); a blank box keeps every row.
   containsBody(card, body) {
-    const { n_levels: count, nulls } = card.summary;
+    const { n_levels: count } = card.summary;
     const note = document.createElement("div");
     note.className = "filter-note";
     if (card.candidates) {
@@ -1190,7 +1274,6 @@ export class FilterPane {
     } else {
       note.textContent = `水準が多すぎる（約 ${count.toLocaleString()} 個）ため、部分一致で絞る`;
     }
-    note.textContent += nullsText(nulls);
     const bar = document.createElement("div");
     bar.className = "filter-contains";
     const input = document.createElement("input");
@@ -1208,6 +1291,7 @@ export class FilterPane {
     });
     bar.append(input);
     body.append(note, bar);
+    if (hasNulls(card)) body.append(this.nullRow(card, () => {}));
   }
 }
 

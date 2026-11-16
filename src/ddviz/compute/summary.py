@@ -26,7 +26,8 @@ def summarize_column(files: list[str], column: str) -> dict:
     Returns
     -------
     dict
-        ``rows`` and ``nulls`` (the count of null values) and, for a numeric
+        ``rows`` and ``nulls`` (the count of missing values: null, or NaN
+        in a float column; `ddviz.compute.missing.is_missing`) and, for a numeric
         column, ``numeric: True``, ``integer``, ``temporal`` (the kind of a
         temporal column, `ddviz.compute.temporal`, else None) and the finite
         ``min`` and ``max`` (None without finite values), a temporal column's
@@ -43,9 +44,12 @@ def summarize_column(files: list[str], column: str) -> dict:
     if dtype.is_numeric() or kind is not None:
         number = value.cast(pl.Float64) if kind is None else as_number(column, dtype)
         finite = number.filter(number.is_finite())
+        missing = (
+            value.is_null() | value.is_nan() if dtype.is_float() else value.is_null()
+        )
         found = scan.select(
             pl.len().alias("rows"),
-            value.null_count().alias("nulls"),
+            missing.sum().alias("nulls"),
             finite.min().alias("min"),
             finite.max().alias("max"),
         ).collect(engine="streaming")

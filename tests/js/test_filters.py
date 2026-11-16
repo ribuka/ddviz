@@ -289,7 +289,8 @@ CANDIDATES = """async () => {
       return e && !e.hidden ? e.textContent : null;
     };
     return {
-      listed: rows(".filter-card-body > .filter-levels .filter-level"),
+      listed: rows(".filter-card-body > .filter-levels .filter-level:not(.filter-null)"),
+      nulls: rows(".filter-card-body > .filter-levels .filter-null"),
       picked: rows(".filter-picked .filter-level"),
       status: shown(".filter-candidates-status"),
       more: shown(".filter-truncated"),
@@ -369,7 +370,10 @@ def test_the_ticks_stay_over_searches_and_orders(js_page: Page) -> None:
     )
     searched = result["searched"]
     assert searched["listed"][0] == {"name": "v7", "checked": True}
-    assert [r["name"] for r in searched["listed"]] == ["v7", *[f"v7{i}" for i in range(10)]]
+    assert [r["name"] for r in searched["listed"]] == [
+        "v7",
+        *[f"v7{i}" for i in range(10)],
+    ]
     assert searched["picked"] == [{"name": "v5", "checked": True}]
     assert searched["more"] is None
     sorted_ = result["sorted"]
@@ -454,10 +458,14 @@ def test_a_column_with_too_many_levels_gets_the_text_box_alone(js_page: Page) ->
     assert not view["search"]
     assert view["modes"] == []
     assert not view["sort"]
-    assert view["body"].startswith("水準が多すぎる（約 3,000,000 個）ため、部分一致で絞る")
+    assert view["body"].startswith(
+        "水準が多すぎる（約 3,000,000 個）ため、部分一致で絞る"
+    )
 
 
-def test_a_failure_shows_the_error_and_retries_with_the_same_search(js_page: Page) -> None:
+def test_a_failure_shows_the_error_and_retries_with_the_same_search(
+    js_page: Page,
+) -> None:
     """A failed search shows its error and a retry, keeps the ticks, and the retry asks the same query and order."""
     page = js_page
     _candidates(page)
@@ -686,7 +694,9 @@ FOUR_KINDS = """async () => {
 }"""
 
 
-def test_the_four_kinds_of_cards_give_their_conditions_and_summary(js_page: Page) -> None:
+def test_the_four_kinds_of_cards_give_their_conditions_and_summary(
+    js_page: Page,
+) -> None:
     """Each kind of card sends its own condition, in the order of the columns, and says it in its own words, in the order of the cards."""
     got = js_page.evaluate(FOUR_KINDS)
     assert got["conditions"] == [
@@ -710,3 +720,260 @@ def test_enter_in_an_end_of_a_numeric_card_leaves_it_unless_it_commits_a_convers
     assert low.evaluate("(field) => document.activeElement === field")
     press_plain_enter(low)
     assert not low.evaluate("(field) => document.activeElement === field")
+
+
+# A filter pane of cards whose columns have missing values: a numeric one (n,
+# 3 missing), one of levels (g, 2 missing, with a real "(null)" text), one of
+# text (t, 4 missing) and a numeric one without finite values (e, 5
+# missing), whose summaries come from a stub of `fetch`. `window.nullRow(name)`
+# is a card's `(null)` row, `window.counter(name)` its count of ticked levels.
+NULLS = """async () => {
+  const summaries = {
+    n: { numeric: true, min: 0, max: 10, nulls: 3, integer: true, temporal: null },
+    g: { numeric: false, levels: [["(null)", 1], ["a", 2], ["b", 9]], n_levels: 3, nulls: 2 },
+    t: { numeric: false, levels: null, n_levels: 90000, nulls: 4 },
+    e: { numeric: true, min: null, max: null, nulls: 5, integer: false, temporal: null },
+  };
+  const candidates = { t: { levels: null, n_levels: 90000 } };
+  window.fetch = async (url) => {
+    const u = new URL(url, location.href);
+    const column = u.searchParams.get("column");
+    const body = u.pathname === "/api/summary" ? summaries[column] : candidates[column];
+    return new Response(JSON.stringify(body));
+  };
+  document.body.innerHTML = `
+    <div id="filters"><div class="filter-head"><span class="filter-summary"></span>
+    <button class="filter-up"></button><button class="filter-down"></button></div>
+    <div class="filter-resize"></div><div class="filter-list"></div></div>
+    <div id="drop-tip"></div>`;
+  const { FilterPane } = await import("/static/js/filters.js");
+  const pane = new FilterPane(document.getElementById("filters"), () => {}, () => {});
+  for (const [name, numeric] of [["n", true], ["g", false], ["t", false], ["e", true]]) pane.add({ name, numeric });
+  const ready = () => pane.cards.every((c) => c.summary && (c.summary.levels !== null || c.candidates !== null));
+  while (!ready()) await new Promise((r) => setTimeout(r, 10));
+  window.pane = pane;
+  const card = (name) => pane.cards.find((c) => c.name === name);
+  window.nullRow = (name) => card(name).element.querySelector(".filter-null");
+  window.counter = (name) => card(name).element.querySelector(".filter-note > span")?.textContent;
+  window.names = (name) =>
+    [...card(name).element.querySelectorAll(".filter-level-name")].map((e) => e.textContent);
+  window.untick = (name) => window.nullRow(name).querySelector("input").click();
+}"""
+
+
+def test_the_null_row_of_a_card_of_levels(js_page: Page) -> None:
+    """The (null) row comes last in either order, unticked, marks a real "(null)" text, and sets the condition and its words with the levels or alone; すべて外す unticks it."""
+    page = js_page
+    page.evaluate(NULLS)
+    result = page.evaluate(
+        """async () => {
+          const pane = window.pane;
+          const g = pane.cards[1];
+          const out = { names: window.names("g"), idle: window.counter("g") };
+          out.ticked = window.nullRow("g").querySelector("input").checked;
+          out.count = window.nullRow("g").querySelector(".filter-level-count").textContent;
+          g.order = "count";
+          g.arrange();
+          out.byCount = window.names("g");
+          window.untick("g");
+          out.alone = { conditions: pane.conditions(), summary: pane.summaryText(), counter: window.counter("g") };
+          const boxes = [...g.element.querySelectorAll(".filter-level input")];
+          boxes[0].click();
+          boxes[2].click();
+          out.both = { conditions: pane.conditions(), summary: pane.summaryText(), counter: window.counter("g") };
+          g.element.querySelector(".filter-note .filter-reset").click();
+          out.cleared = {
+            conditions: pane.conditions(),
+            counter: window.counter("g"),
+            ticked: window.nullRow("g").querySelector("input").checked,
+          };
+          return out;
+        }"""
+    )
+    assert result["names"] == ["(null)（文字列）", "a", "b", "(null)"]
+    assert result["byCount"] == ["b", "a", "(null)（文字列）", "(null)"]
+    assert result["idle"] == "3 水準（選ぶと絞る）"
+    assert not result["ticked"]
+    assert result["count"] == "2"
+    assert result["alone"] == {
+        "conditions": [{"column": "g", "nulls": True}],
+        "summary": "g: null",
+        "counter": "null を選択",
+    }
+    assert result["both"] == {
+        "conditions": [{"column": "g", "levels": ["(null)", "b"], "nulls": True}],
+        "summary": "g: 2/3+null",
+        "counter": "2 / 3 水準と null を選択",
+    }
+    assert result["cleared"] == {
+        "conditions": [],
+        "counter": "3 水準（選ぶと絞る）",
+        "ticked": False,
+    }
+
+
+def test_the_null_row_of_a_numeric_card(js_page: Page) -> None:
+    """The (null) row of a numeric card is ticked: unticked it leaves the missing rows out, ticked with a range narrowed it keeps them too; 全範囲 keeps the tick; a column without finite values has it too."""
+    page = js_page
+    page.evaluate(NULLS)
+    result = page.evaluate(
+        """async () => {
+          const pane = window.pane;
+          const n = pane.cards[0];
+          const state = () => ({
+            conditions: pane.conditions().filter((c) => c.column === "n"),
+            summary: pane.summaryText(),
+          });
+          const out = { ticked: window.nullRow("n").querySelector("input").checked, whole: state() };
+          n.range = [2, 7];
+          out.narrowed = state();
+          window.untick("n");
+          out.narrowedOff = state();
+          n.element.querySelector(".filter-range .filter-reset").click();
+          out.wholeOff = { ...state(), ticked: window.nullRow("n").querySelector("input").checked };
+          out.empty = !!window.nullRow("e");
+          out.note = n.element.querySelector(".filter-note").textContent;
+          return out;
+        }"""
+    )
+    assert result["ticked"]
+    assert result["whole"] == {"conditions": [], "summary": ""}
+    assert result["narrowed"] == {
+        "conditions": [{"column": "n", "range": [2, 7], "nulls": True}],
+        "summary": "n: 2〜7+null",
+    }
+    assert result["narrowedOff"] == {
+        "conditions": [{"column": "n", "range": [2, 7]}],
+        "summary": "n: 2〜7",
+    }
+    assert result["wholeOff"] == {
+        "conditions": [{"column": "n", "nulls": False}],
+        "summary": "n: null を除く",
+        "ticked": False,
+    }
+    assert result["empty"]
+    assert "null" not in result["note"]
+
+
+def test_the_null_row_of_a_text_box(js_page: Page) -> None:
+    """The (null) row under the text box keeps the missing rows alone with a blank box, or besides the text."""
+    page = js_page
+    page.evaluate(NULLS)
+    result = page.evaluate(
+        """async () => {
+          const pane = window.pane;
+          const t = pane.cards[2];
+          const row = window.nullRow("t");
+          const out = { below: row.previousElementSibling.className, ticked: row.querySelector("input").checked };
+          window.untick("t");
+          out.alone = { conditions: pane.conditions(), summary: pane.summaryText() };
+          const box = t.element.querySelector(".filter-contains input");
+          box.value = "a1";
+          box.dispatchEvent(new Event("change"));
+          out.both = { conditions: pane.conditions(), summary: pane.summaryText() };
+          out.note = t.element.querySelector(".filter-note").textContent;
+          return out;
+        }"""
+    )
+    assert result["below"] == "filter-contains"
+    assert not result["ticked"]
+    assert result["alone"] == {
+        "conditions": [{"column": "t", "nulls": True}],
+        "summary": "t: null",
+    }
+    assert result["both"] == {
+        "conditions": [{"column": "t", "contains": "a1", "nulls": True}],
+        "summary": "t: 「a1」を含む+null",
+    }
+    assert "null" not in result["note"]
+
+
+def test_a_card_without_missing_values_has_no_null_row(js_page: Page) -> None:
+    """A column with no missing values gets no (null) row and no note of nulls."""
+    page = js_page
+    page.evaluate(PANE)
+    rows = page.evaluate(
+        """() => [...document.querySelectorAll('.filter-card')].map((c) =>
+          [!!c.querySelector('.filter-null'), c.textContent.includes('null')])"""
+    )
+    assert rows == [[False, False], [False, False], [False, False]]
+
+
+def test_the_null_row_of_candidates(js_page: Page) -> None:
+    """The (null) row comes last past the 100 candidates and with none found, is not one of them nor of the picked ones, keeps its tick per mode and is unticked by すべて外す."""
+    page = js_page
+    _candidates(page)
+    result = page.evaluate(
+        """async () => {
+          await window.answer(0);
+          const pane = window.pane;
+          const rows = () => [...window.card.element.querySelectorAll(".filter-card-body > .filter-levels .filter-level")];
+          const counter = () => window.card.element.querySelector(".filter-note > span").textContent;
+          const out = { first: window.view(), last: rows().at(-1).classList.contains("filter-null") };
+          window.tick("(null)");
+          window.tick("v2");
+          out.ticked = { conditions: pane.conditions(), summary: pane.summaryText(), counter: counter() };
+          window.search("zzz");
+          await window.answer(1);
+          out.none = window.view();
+          const mode = (m) => window.card.element.querySelector(`.filter-mode [data-mode="${m}"]`).click();
+          mode("contains");
+          out.contains = {
+            nulls: window.card.element.querySelector(".filter-null input").checked,
+            conditions: pane.conditions(),
+          };
+          mode("pick");
+          out.back = window.view().nulls;
+          window.card.element.querySelector(".filter-note .filter-reset").click();
+          out.cleared = { nulls: window.view().nulls, conditions: pane.conditions() };
+          return out;
+        }"""
+    )
+    assert len(result["first"]["listed"]) == 100
+    assert result["first"]["nulls"] == [{"name": "(null)", "checked": False}]
+    assert result["last"]
+    assert result["ticked"] == {
+        "conditions": [{"column": "id", "levels": ["v2"], "nulls": True}],
+        "summary": "id: 1/300+null",
+        "counter": "1 / 300 水準と null を選択",
+    }
+    assert result["none"]["status"] == "一致する候補がありません"
+    assert result["none"]["listed"] == []
+    assert result["none"]["nulls"] == [{"name": "(null)", "checked": True}]
+    assert result["none"]["picked"] == [{"name": "v2", "checked": True}]
+    assert result["contains"] == {"nulls": False, "conditions": []}
+    assert result["back"] == [{"name": "(null)", "checked": True}]
+    assert result["cleared"] == {
+        "nulls": [{"name": "(null)", "checked": False}],
+        "conditions": [],
+    }
+
+
+def test_snapshot_and_filters_key_hold_the_null_ticks(js_page: Page) -> None:
+    """`restore` puts back the (null) ticks, and `filtersKey` tells conditions apart by `nulls`."""
+    page = js_page
+    page.evaluate(NULLS)
+    result = page.evaluate(
+        """async () => {
+          const { filtersKey } = await import("/static/js/filters.js");
+          const pane = window.pane;
+          const before = pane.snapshot();
+          window.untick("n");
+          window.untick("g");
+          const changed = pane.conditions();
+          const after = pane.snapshot();
+          pane.restore(before);
+          const back = { conditions: pane.conditions(), tick: window.nullRow("n").querySelector("input").checked };
+          pane.restore(after);
+          const again = { conditions: pane.conditions(), tick: window.nullRow("g").querySelector("input").checked };
+          const key = (nulls) => filtersKey([{ column: "g", levels: ["a"], ...(nulls === undefined ? {} : { nulls }) }]);
+          return { changed, back, again, keys: [key() === key(false), key() === key(true)] };
+        }"""
+    )
+    assert result["changed"] == [
+        {"column": "g", "nulls": True},
+        {"column": "n", "nulls": False},
+    ]
+    assert result["back"] == {"conditions": [], "tick": True}
+    assert result["again"] == {"conditions": result["changed"], "tick": True}
+    assert result["keys"] == [True, False]

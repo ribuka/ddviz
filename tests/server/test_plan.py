@@ -220,6 +220,32 @@ def test_parse_filters_takes_a_range_or_levels_by_column_type() -> None:
     assert parse_filters(raw, NUMERIC) == [Filter("g", contains="p.")]
 
 
+def test_parse_filters_takes_whether_the_missing_rows_pass() -> None:
+    """`nulls` keeps the missing rows besides the values, or alone (a categorical column); a numeric column takes `nulls: false` alone."""
+    raw = [
+        {"column": "a", "range": [0, 1], "nulls": True},
+        {"column": "g", "levels": ["p"], "nulls": True},
+    ]
+    assert parse_filters(raw, NUMERIC) == [
+        Filter("a", range=[0.0, 1.0], nulls=True),
+        Filter("g", levels=["p"], nulls=True),
+    ]
+    raw = [{"column": "a", "range": [0, 1], "nulls": False}]
+    assert parse_filters(raw, NUMERIC) == [Filter("a", range=[0.0, 1.0])]
+    raw = [
+        {"column": "a", "nulls": False},
+        {"column": "g", "levels": [], "nulls": True},
+    ]
+    assert parse_filters(raw, NUMERIC) == [
+        Filter("a"),
+        Filter("g", levels=[], nulls=True),
+    ]
+    raw = [{"column": "g", "contains": "p", "nulls": True}]
+    assert parse_filters(raw, NUMERIC) == [Filter("g", contains="p", nulls=True)]
+    raw = [{"column": "g", "nulls": True}]
+    assert parse_filters(raw, NUMERIC) == [Filter("g", nulls=True)]
+
+
 @pytest.mark.parametrize(
     "raw",
     [
@@ -236,6 +262,15 @@ def test_parse_filters_takes_a_range_or_levels_by_column_type() -> None:
         [{"column": "g", "contains": 1}],
         [{"column": "g", "contains": "p", "levels": ["p"]}],
         [{"column": "g", "levels": ["p"]}, {"column": "g", "levels": ["q"]}],
+        [{"column": "g", "levels": ["p"], "nulls": 1}],
+        [{"column": "a", "range": [0, 1], "nulls": "true"}],
+        [{"column": "a"}],
+        [{"column": "a", "nulls": True}],
+        [{"column": "a", "levels": [], "nulls": False}],
+        [{"column": "a", "contains": "1", "nulls": False}],
+        [{"column": "g", "levels": [], "nulls": False}],
+        [{"column": "g"}],
+        [{"column": "g", "nulls": False}],
     ],
 )
 def test_parse_filters_refuses_what_does_not_fit(raw: list) -> None:
