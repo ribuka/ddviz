@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from ddviz.compute.missing import is_missing
 from ddviz.shared.keywords import keywords
 from ddviz.shared.scatter import Filter
 
@@ -19,22 +20,27 @@ def filter_conditions(filters: list[Filter]) -> list[pl.Expr]:
     Returns
     -------
     list of polars.Expr
-        One condition per filter; a null value fails each of them.
+        One condition per filter: the condition on the values (if any) or,
+        with `Filter.nulls`, a missing value; without it, the condition on
+        the values and a value that is not missing.
     """
     conditions = []
     for f in filters:
         column = pl.col(f.column)
+        missing = is_missing(f.column, f.numeric)
         if f.range is not None:
-            conditions.append(column.cast(pl.Float64).is_between(*f.range))
+            values = column.cast(pl.Float64).is_between(*f.range)
         elif f.contains is not None:
             text = column.cast(pl.String).str.to_lowercase()
-            conditions.append(
-                pl.all_horizontal(
-                    text.str.contains(w, literal=True) for w in keywords(f.contains)
-                )
+            values = pl.all_horizontal(
+                text.str.contains(w, literal=True) for w in keywords(f.contains)
             )
+        elif f.levels is not None:
+            values = column.cast(pl.String).is_in(f.levels)
         else:
-            conditions.append(column.cast(pl.String).is_in(f.levels))
+            conditions.append(missing if f.nulls else ~missing)
+            continue
+        conditions.append(values | missing if f.nulls else values & ~missing)
     return conditions
 
 

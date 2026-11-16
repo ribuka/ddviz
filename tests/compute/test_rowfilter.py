@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import replace
 from pathlib import Path
 
@@ -236,3 +237,59 @@ def test_summary_lists_levels_with_long_runs_of_digits(tmp_path: Path) -> None:
     long = "1" * 4301
     pl.DataFrame({"g": [long, "2"]}).write_parquet(path)
     assert summarize_column([str(path)], "g")["levels"] == [["2", 1], [long, 1]]
+
+
+# Rows of every kind of missing value: g a categorical column, f a float one
+# with null and NaN, i an integer one and d a datetime one, each with nulls.
+MISSING_FRAME = pl.DataFrame(
+    {
+        "g": ["a", "b", None, "a", None, "ab", "c", "b"],
+        "f": [1.0, None, float("nan"), 5.0, float("inf"), -float("inf"), 2.0, 3.0],
+        "i": [1, None, 3, None, 5, 6, 7, 8],
+        "d": pl.Series(
+            [
+                dt.datetime(2024, 1, d, tzinfo=dt.UTC) if d else None
+                for d in [1, 2, 0, 4, 5, 0, 7, 8]
+            ],
+            dtype=pl.Datetime("ms", "UTC"),
+        ),
+    }
+)
+MS_PER_DAY = 86_400_000.0
+
+
+def _rows(*filters: Filter) -> list[int]:
+    """Return the indices of the rows of `MISSING_FRAME` that pass `filters`."""
+    frame = MISSING_FRAME.with_row_index("row")
+    return frame.filter(*filter_conditions(list(filters)))["row"].to_list()
+
+
+def _day(d: int) -> float:
+    """Return 2024-01-<d> as the milliseconds a datetime range is in."""
+    return dt.datetime(2024, 1, d, tzinfo=dt.UTC).timestamp() * 1000
+
+
+@pytest.mark.parametrize(
+    ("f", "rows"),
+    [
+        (Filter("g", levels=["a"]), [0, 3]),
+        (Filter("g", levels=["a"], nulls=True), [0, 2, 3, 4]),
+        (Filter("g", levels=[], nulls=True), [2, 4]),
+        (Filter("g", nulls=True), [2, 4]),
+        (Filter("g", contains="a"), [0, 3, 5]),
+        (Filter("g", contains="a", nulls=True), [0, 2, 3, 4, 5]),
+        # A float column's NaN is missing; ±inf is not.
+        (Filter("f", range=[1.0, 3.0]), [0, 6, 7]),
+        (Filter("f", range=[1.0, 3.0], nulls=True), [0, 1, 2, 6, 7]),
+        (Filter("f", nulls=False), [0, 3, 4, 5, 6, 7]),
+        (Filter("i", range=[3.0, 6.0]), [2, 4, 5]),
+        (Filter("i", range=[3.0, 6.0], nulls=True), [1, 2, 3, 4, 5]),
+        (Filter("i", nulls=False), [0, 2, 4, 5, 6, 7]),
+        (Filter("d", range=[_day(1), _day(4)]), [0, 1, 3]),
+        (Filter("d", range=[_day(1), _day(4)], nulls=True), [0, 1, 2, 3, 5]),
+        (Filter("d", nulls=False), [0, 1, 3, 4, 6, 7]),
+    ],
+)
+def test_the_missing_rows_pass_with_nulls_only(f: Filter, rows: list[int]) -> None:
+    """A filter keeps the missing rows (null, NaN of a float column) besides its values with `nulls`, else leaves them out."""
+    assert _rows(f) == rows

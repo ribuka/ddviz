@@ -190,7 +190,11 @@ def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
     raw : list of dict
         ``{"column", "range"}`` for a numeric column, ``{"column",
         "levels"}`` or ``{"column", "contains"}`` (a text that is not blank) for a
-        categorical one; one per column.
+        categorical one; one per column. Each may hold ``"nulls"`` (bool,
+        default False): whether the missing rows pass too
+        (`ddviz.shared.scatter.Filter`). A numeric column may hold only
+        ``"nulls": False`` (its rows that are not missing), a categorical one
+        only ``"nulls": True`` or empty ``levels`` with it (its missing rows).
     numeric : dict of str to bool
         Whether each column of the data is numeric.
 
@@ -207,28 +211,38 @@ def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
     """
     filters = []
     for item in raw:
-        keys = {"column", "range", "levels", "contains"}
+        keys = {"column", "range", "levels", "contains", "nulls"}
         if not isinstance(item, dict) or not set(item) <= keys:
             raise ValueError(
-                f"a filter has a column and a range, levels or contains: {item}"
+                f"a filter has a column and a range, levels, contains or nulls: {item}"
             )
         column = item.get("column")
         if column not in numeric:
             raise ValueError(f"unknown filter column: {column}")
         bounds, levels = item.get("range"), item.get("levels")
-        contains = item.get("contains")
+        contains, nulls = item.get("contains"), item.get("nulls", False)
+        ok = isinstance(nulls, bool)
+        if not ok:
+            raise ValueError(f"{column}: nulls must be true or false")
         if numeric[column]:
+            if levels is not None or contains is not None:
+                raise ValueError(f"{column} needs a range [lo, hi]")
+            if bounds is None:
+                if item.get("nulls") is not False:
+                    raise ValueError(f"{column} needs a range [lo, hi]")
+                filters.append(Filter(column))
+                continue
             ok = (
-                levels is None
-                and contains is None
-                and isinstance(bounds, list)
+                isinstance(bounds, list)
                 and len(bounds) == 2
                 and all(isinstance(b, int | float) and math.isfinite(b) for b in bounds)
                 and bounds[0] <= bounds[1]
             )
             if not ok:
                 raise ValueError(f"{column} needs a range [lo, hi]")
-            filters.append(Filter(column, range=[float(b) for b in bounds]))
+            filters.append(
+                Filter(column, range=[float(b) for b in bounds], nulls=nulls)
+            )
         elif contains is not None:
             ok = (
                 bounds is None
@@ -238,17 +252,21 @@ def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
             )
             if not ok:
                 raise ValueError(f"{column} needs a text that is not blank to contain")
-            filters.append(Filter(column, contains=contains))
+            filters.append(Filter(column, contains=contains, nulls=nulls))
+        elif levels is None and bounds is None:
+            if not nulls:
+                raise ValueError(f"{column} needs a list of levels")
+            filters.append(Filter(column, nulls=True))
         else:
             ok = (
                 bounds is None
                 and isinstance(levels, list)
-                and len(levels) > 0
+                and (len(levels) > 0 or nulls)
                 and all(isinstance(v, str) for v in levels)
             )
             if not ok:
                 raise ValueError(f"{column} needs a list of levels")
-            filters.append(Filter(column, levels=list(levels)))
+            filters.append(Filter(column, levels=list(levels), nulls=nulls))
     columns = [f.column for f in filters]
     if len(set(columns)) != len(columns):
         raise ValueError("one filter per column")
