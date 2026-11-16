@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
@@ -74,6 +75,31 @@ def whole_range(page: Page, column: str) -> None:
     """Take a card back to its whole range, and wait for the result."""
     card(page, column).get_by_role("button", name="全範囲").click()
     settle(page)
+
+
+def hold(page: Page, pattern: str) -> Callable[[], None]:
+    """Hold the requests of `pattern` from now on; return the function that releases them and every one that comes later.
+
+    `page.unroute` after the release would leave a gap in which a request that
+    comes in is held for ever.
+    """
+    held: list[Route] = []
+    state = {"open": False}
+
+    def handler(route: Route) -> None:
+        if state["open"]:
+            route.continue_()
+        else:
+            held.append(route)
+
+    page.route(pattern, handler)
+
+    def release() -> None:
+        state["open"] = True
+        for route in held:
+            route.continue_()
+
+    return release
 
 
 def lock(page: Page) -> None:
@@ -304,8 +330,7 @@ def test_reset_waits_while_the_ranges_of_the_filter_are_not_known(
     with page.expect_request("**/api/view"):
         page.evaluate("Plotly.relayout('plot', {'xaxis.range': [10, 50]})")
     settle(page)
-    held: list[Route] = []
-    page.route("**/api/view", lambda route: held.append(route))
+    release = hold(page, "**/api/view")
     inputs = card(page, "x").locator(".filter-range input")
     inputs.first.fill("20")
     inputs.first.press("Enter")
@@ -323,9 +348,7 @@ def test_reset_waits_while_the_ranges_of_the_filter_are_not_known(
     assert near(shown(page, "xaxis"), NARROW_X, 0.01)
     ranges = page.evaluate("window.xRanges")
     assert not any(near(r, WHOLE_X, 0.01) for r in ranges)
-    for route in held:
-        route.continue_()
-    page.unroute("**/api/view")
+    release()
     settle(page)
     assert near(shown(page, "xaxis"), NARROW_X, 0.01)
     assert errors == []
@@ -412,8 +435,7 @@ def test_the_latest_operation_wins_and_a_failure_restores(app_page: Page) -> Non
     place(page, "x", "x")
     place(page, "y", "y")
     add_filter(page, "x")
-    held: list[Route] = []
-    page.route("**/api/*view", lambda route: held.append(route))
+    release = hold(page, "**/api/*view")
     inputs = card(page, "x").locator(".filter-range input")
     inputs.first.fill("20")
     inputs.first.press("Enter")
@@ -422,9 +444,7 @@ def test_the_latest_operation_wins_and_a_failure_restores(app_page: Page) -> Non
     )
     page.evaluate("Plotly.relayout('plot', {'xaxis.range': [30, 35]})")
     page.wait_for_timeout(300)
-    for route in held:
-        route.continue_()
-    page.unroute("**/api/*view")
+    release()
     settle(page)
     assert shown(page, "xaxis") == pytest.approx([30, 35])
     expect(page.locator("#status")).to_contain_text("（フィルタ後）")
@@ -462,8 +482,7 @@ def test_the_lock_turned_on_while_waiting_keeps_the_ranges_shown(
             page.evaluate("Plotly.relayout('plot', {'yaxis.range': [50, 60]})")
         settle(page)
     before = {key: shown(page, key) for key in ("xaxis", "yaxis")}
-    held: list[Route] = []
-    page.route("**/api/*view", lambda route: held.append(route))
+    release = hold(page, "**/api/*view")
     inputs = card(page, "x").locator(".filter-range input")
     inputs.first.fill("20")
     inputs.first.press("Enter")
@@ -473,9 +492,7 @@ def test_the_lock_turned_on_while_waiting_keeps_the_ranges_shown(
     page.locator(LOCK).click()
     expect(page.locator(LOCK)).to_have_attribute("aria-pressed", "true")
     page.wait_for_timeout(200)
-    for route in held:
-        route.continue_()
-    page.unroute("**/api/*view")
+    release()
     settle(page)
     for key, range_ in before.items():
         assert shown(page, key) == pytest.approx(range_)
@@ -517,8 +534,7 @@ def test_the_lock_turned_off_during_an_edit_keeps_a_categorical_zoom(
         )
     settle(page)
     lock(page)
-    held: list[Route] = []
-    page.route("**/api/plot", lambda route: held.append(route))
+    release = hold(page, "**/api/plot")
     page.locator("#columns .column").filter(
         has=page.get_by_text("g", exact=True)
     ).drag_to(page.locator('.zone[data-role="color"]'))
@@ -529,9 +545,7 @@ def test_the_lock_turned_off_during_an_edit_keeps_a_categorical_zoom(
     expect(page.locator(LOCK)).to_have_attribute("aria-pressed", "false")
     assert shown(page, "xaxis") == pytest.approx([-0.2, 0.2])
     assert near(shown(page, "yaxis"), [-4.0, 204.0], 0.01)
-    for route in held:
-        route.continue_()
-    page.unroute("**/api/plot")
+    release()
     settle(page)
     assert shown(page, "xaxis") == pytest.approx([-0.2, 0.2])
     assert near(shown(page, "yaxis"), [-4.0, 204.0], 0.01)
