@@ -78,7 +78,7 @@ def whole_range(page: Page, column: str) -> None:
 
 
 def hold(page: Page, pattern: str) -> Callable[[], None]:
-    """Hold the requests of `pattern` from now on; return the function that releases them and every one that comes later.
+    """Hold the requests of `pattern` from now on; return the function that releases them, one by one, and every one that comes later.
 
     `page.unroute` after the release would leave a gap in which a request that
     comes in is held for ever.
@@ -96,8 +96,12 @@ def hold(page: Page, pattern: str) -> Callable[[], None]:
 
     def release() -> None:
         state["open"] = True
+        # In the order they were held, each one reaching the server before the
+        # next (the server answers 409 to the one it finds older than another
+        # it has seen, and a page awaits the answer of its latest request).
         for route in held:
             route.continue_()
+            page.wait_for_timeout(300)
 
     return release
 
