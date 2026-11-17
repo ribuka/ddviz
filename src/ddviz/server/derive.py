@@ -257,7 +257,9 @@ def resized_spec(
     Returns
     -------
     ScatterSpec
-        The spec.
+        The spec, with the overview's limits of levels
+        (`ddviz.shared.scatter.ScatterSpec.max_levels`); the caller puts
+        those of the settings in effect (`ddviz.server.api_plot`).
 
     Raises
     ------

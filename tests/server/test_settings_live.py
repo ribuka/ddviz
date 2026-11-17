@@ -103,6 +103,43 @@ def test_the_limit_of_levels_follows_a_save_and_keeps_the_drawn_plot(
     assert _plot(client).status_code == 200
 
 
+def _filtered_plot(client: TestClient, levels: list[str]) -> object:
+    """Draw `ENCODING` with the filter keeping the color `levels` and return the response."""
+    filters = [{"column": "color", "levels": levels}]
+    return client.post(
+        "/api/plot", json={"encoding": ENCODING, **SIZE, **HIDE_NULLS, "filters": filters}
+    )
+
+
+def test_a_higher_limit_of_levels_reaches_a_new_filter_of_the_drawn_plot(
+    client: TestClient, store: SettingsStore
+) -> None:
+    """A plot drawn under ``plot.max_levels = 2`` with 2 color levels takes, after a save of 3, the filter of all 3."""
+    store.save({"plot.max_levels": 2})
+    drawn = _filtered_plot(client, ["a", "b"])
+    assert drawn.status_code == 200, drawn.text
+    assert drawn.json()["meta"]["series"] == ["a", "b"]
+    store.save({"plot.max_levels": 3})
+    overview = client.post("/api/overview", json={**SIZE, "filters": []})
+    assert overview.status_code == 200, overview.text
+    assert overview.json()["meta"]["series"] == ["a", "b", "c"]
+
+
+def test_a_lower_limit_of_levels_refuses_a_new_filter_of_the_drawn_plot(
+    client: TestClient, store: SettingsStore
+) -> None:
+    """A plot drawn under ``plot.max_levels = 3`` with 2 color levels refuses, after a save of 2, a filter of 3 levels with the new limit."""
+    store.save({"plot.max_levels": 3})
+    drawn = _filtered_plot(client, ["a", "b"])
+    assert drawn.status_code == 200, drawn.text
+    store.save({"plot.max_levels": 2})
+    filters = [{"column": "color", "levels": ["a", "b", "c"]}]
+    refused = client.post("/api/overview", json={**SIZE, "filters": filters})
+    assert refused.status_code == 400
+    assert refused.json()["error"] == "filtered_color_levels"
+    assert "上限の 2 個" in refused.json()["detail"]
+
+
 def test_the_limit_of_axis_levels_follows_a_save(
     client: TestClient, store: SettingsStore
 ) -> None:

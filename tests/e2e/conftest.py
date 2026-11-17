@@ -46,6 +46,12 @@ def settings() -> Settings:
 
 
 @pytest.fixture
+def settings_store(settings: Settings) -> SettingsStore:
+    """Return the settings store of the served app, holding `settings`; a test overrides it to save to a file."""
+    return SettingsStore(settings)
+
+
+@pytest.fixture
 def desktop() -> bool:
     """Return whether the served page is the desktop window's, with its title bar; a test overrides it."""
     return False
@@ -53,7 +59,7 @@ def desktop() -> bool:
 
 @pytest.fixture
 def app_url(
-    tmp_path: Path, scatter_path: Path, settings: Settings, desktop: bool
+    tmp_path: Path, scatter_path: Path, settings_store: SettingsStore, desktop: bool
 ) -> Iterator[str]:
     """Serve `scatter_path` in a thread on a free port and return its URL."""
     root = tmp_path / "run"
@@ -64,7 +70,7 @@ def app_url(
         root,
         tmp_path / "cache",
         tmp_path / "history",
-        SettingsStore(settings),
+        settings_store,
         TOKEN,
         desktop=desktop,
     )

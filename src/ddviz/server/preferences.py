@@ -81,7 +81,7 @@ ITEMS = (
         "グラフ表示",
         "色・形・グループの水準上限",
         "integer",
-        "次のグラフ作成から反映。Colorの区間数の入力上限は適用後すぐ",
+        "次のグラフ作成・フィルタの変更から反映。Colorの区間数の入力上限は適用後すぐ",
         note="Color / Symbol / Group X / Group Y / Wrap に適用",
     ),
     PreferenceItem(

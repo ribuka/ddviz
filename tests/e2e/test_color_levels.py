@@ -12,10 +12,14 @@ import polars as pl
 import pytest
 from playwright.sync_api import Locator, Page, Route, expect
 
+from ddviz.server.preferences import Preferences
+from ddviz.server.settings_store import SettingsStore
 from ddviz.shared.palette import DEFAULT_COLORS
+from tests.e2e.test_app_menu import GEOMETRY
 from tests.e2e.test_column_menu import pick
 from tests.e2e.test_line_element import at
 from tests.e2e.test_plot_failure import LAYOUT, X_RANGE, move
+from tests.e2e.test_preferences import open_preferences
 from tests.e2e.test_scatter import (
     HAS_COLOR,
     SETTLED,
@@ -47,6 +51,27 @@ def rgb(hex_color: str) -> str:
 
 
 PALETTE = [rgb(c) for c in DEFAULT_COLORS]
+
+
+@pytest.fixture
+def settings_store(tmp_path: Path) -> SettingsStore:
+    """Return the default settings of a shared file, missing, in a folder of its own, which saves write beside."""
+    folder = tmp_path / "config"
+    folder.mkdir()
+    return SettingsStore.load(folder / "settings.toml")
+
+
+# pywebview's JS API of the window, its settings and saves going to the
+# served app's store as the window's do (`ddviz.desktop.window._Api`).
+WINDOW_API = """
+window.pywebview = { api: {
+  new: async () => {},
+  quit: async () => {},
+  version: async () => "9.9.9",
+  settings: async () => window.preferencesState(),
+  save_settings: async (changes) => window.preferencesSave(changes),
+} };
+"""
 
 
 @pytest.fixture
@@ -398,6 +423,45 @@ def test_a_filter_past_the_limit_goes_back_to_the_last_drawn(app_page: Page) -> 
     assert page.evaluate(X_RANGE) == pytest.approx(shown)
     assert page.evaluate(LAYOUT) == layout
     expect(page.locator(LEGEND_NAMES)).to_have_count(70)
+    assert errors == []
+
+
+@pytest.mark.parametrize("desktop", [True])
+def test_a_higher_limit_saved_draws_the_refused_filter(
+    app_page: Page, settings_store: SettingsStore
+) -> None:
+    """A filter past 100 levels is refused; after ``plot.max_levels`` of 200 is applied in Preferences, the same tick draws its 150 levels (Issue #273)."""
+    page = app_page
+    preferences = Preferences(settings_store)
+    page.expose_function("preferencesState", preferences.state)
+    page.expose_function("preferencesSave", preferences.save)
+    page.add_init_script(GEOMETRY)
+    page.add_init_script(WINDOW_API)
+    page.reload()
+    expect(page.locator("#titlebar")).to_be_visible()
+    errors = watch_errors(page)
+    status = page.locator("#status")
+    lo_drawn(page)
+
+    with page.expect_response("**/api/overview") as refused:
+        box(page, "half", "hi").check()
+    assert refused.value.status == 400
+    expect(status).to_have_text(REFUSED)
+    expect_lo(page)
+    settle(page)
+
+    open_preferences(page)
+    page.locator('.prefs-item[data-key="plot.max_levels"] .prefs-text').fill("200")
+    page.get_by_role("button", name="適用").click()
+    expect(page.locator(".prefs-dialog")).to_have_count(0)
+    assert settings_store.current.plot.max_levels == 200
+
+    with page.expect_response("**/api/overview") as drawn:
+        box(page, "half", "hi").check()
+    assert drawn.value.status == 200
+    expect(page.locator(LEGEND_NAMES)).to_have_count(150)
+    settle(page)
+    expect(status).not_to_contain_text("エラー")
     assert errors == []
 
 
