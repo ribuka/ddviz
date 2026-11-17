@@ -10,6 +10,7 @@ from ddviz.server.plotoptions import (
     MAX_SAFE_INTEGER,
     parse_color_bins,
     parse_color_scale,
+    parse_cuts,
     parse_level_shapes,
     parse_line_aggregation,
     parse_line_width,
@@ -283,3 +284,40 @@ def test_parse_color_scale_refuses_another_form(raw: object, spec: ScatterSpec) 
     """Another type, order, length or kind than the spec's is refused, naming ``color_scale``."""
     with pytest.raises(ValueError, match="color_scale"):
         parse_color_scale(raw, spec_color_kind(spec), 12)
+
+
+def test_parse_cuts_takes_those_of_the_roles_cut() -> None:
+    """The cuts of the roles cut into intervals are kept by role with float breaks; a role left out, or null, is none kept."""
+    cuts = {"breaks": [0, 1.5, 3], "values": False}
+    assert parse_cuts({"col": cuts}, ["col", "symbol"], 5) == {
+        "col": {"breaks": [0.0, 1.5, 3.0], "values": False}
+    }
+    assert parse_cuts(None, ["col"], 5) == {}
+    assert parse_cuts({}, ["col"], 5) == {}
+    most = {"breaks": list(range(6)), "values": False}
+    assert parse_cuts({"row": most}, ["row"], 5)["row"]["breaks"] == [
+        float(b) for b in range(6)
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        [],
+        "col",
+        {"row": {"breaks": [0, 1], "values": False}},
+        {"color": {"breaks": [0, 1], "values": False}},
+        {"col": {"breaks": [1, 0], "values": False}},
+        {"col": {"breaks": [0], "values": False}},
+        {"col": {"breaks": list(range(7)), "values": False}},
+        {"col": {"breaks": [0, float("inf")], "values": False}},
+        {"col": {"breaks": [0, 1]}},
+        {"col": {"breaks": [0, 1], "values": 1}},
+        {"col": [0, 1]},
+        {"col": None},
+    ],
+)
+def test_parse_cuts_refuses_another_form(raw: object) -> None:
+    """Cuts of a role not cut, or not of the form of intervals, are refused naming ``cuts``."""
+    with pytest.raises(ValueError, match="cuts"):
+        parse_cuts(raw, ["col"], 5)

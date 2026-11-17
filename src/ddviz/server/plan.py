@@ -297,6 +297,33 @@ def color_kind(
     return "gradient" if color_bins is None else "bins"
 
 
+def cut_roles(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
+    """Return the roles cut into intervals by `FACET_BINS`: those of a numeric symbol, row and col (wrap's) column.
+
+    Parameters
+    ----------
+    encoding : Encoding
+        The graph.
+    numeric : dict of str to bool
+        Whether each column is numeric (a temporal one is).
+
+    Returns
+    -------
+    list of str
+        The roles, as `scatter_spec` cuts them.
+    """
+    col = encoding.wrap if encoding.wrap is not None else encoding.col
+    return [
+        role
+        for role, column in (
+            ("symbol", encoding.symbol),
+            ("row", encoding.row),
+            ("col", col),
+        )
+        if numeric.get(column)
+    ]
+
+
 def scatter_spec(
     encoding: Encoding,
     files: dict[str, list[str]],
@@ -445,8 +472,7 @@ def scatter_spec(
     filters = list(filters or [])
     binned = {
         role: Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
-        for role, column in (("symbol", symbol), ("row", encoding.row), ("col", col))
-        if numeric.get(column)
+        for role in cut_roles(encoding, numeric)
     }
     kind = color_kind(color, numeric, color_bins)
     gradient = kind == "gradient"

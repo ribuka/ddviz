@@ -5,7 +5,8 @@ levels, the cuts, the color range); a derived spec reuses them, so that the
 worker does not find them again. The color scale of a numeric color column
 (the gradient's range, or the color's cuts) is that of the rows of the
 filter, unless the page keeps one under the lock of the axes
-(`ddviz.shared.scatter.ScatterSpec.color_scale`).
+(`ddviz.shared.scatter.ScatterSpec.color_scale`); so are the cuts of a
+numeric symbol, row or col column (`ddviz.shared.scatter.ScatterSpec.kept_cuts`).
 """
 
 from __future__ import annotations
@@ -67,6 +68,38 @@ def drawn_scale(manifest: PlotManifest) -> dict | None:
     return None
 
 
+def drawn_cuts(manifest: PlotManifest) -> dict[str, dict]:
+    """Return the cuts a result draws its numeric symbol, row and col columns with.
+
+    Parameters
+    ----------
+    manifest : PlotManifest
+        Manifest of a plot task.
+
+    Returns
+    -------
+    dict of str to dict
+        The cuts (``{"breaks", "values"}``) of each role of the spec's
+        ``binned`` but the color (`ddviz.shared.scatter.ScatterSpec.kept_cuts`).
+    """
+    return {
+        role: {
+            "breaks": list(manifest.cuts[role]["breaks"]),
+            "values": manifest.cuts[role]["values"],
+        }
+        for role in manifest.spec.binned
+        if role != "color"
+    }
+
+
+def _own_cuts(manifest: PlotManifest | None, filters: list[Filter]) -> dict[str, dict]:
+    """Return the cuts a result draws of the roles whose cuts are those of the rows of `filters`; none for a result of another filter, or the cuts kept by the page."""
+    if manifest is None or manifest.spec.filters != filters:
+        return {}
+    kept = manifest.spec.kept_cuts
+    return {r: c for r, c in drawn_cuts(manifest).items() if r not in kept}
+
+
 def _own_scale(manifest: PlotManifest | None, filters: list[Filter]) -> dict | None:
     """Return the color scale a result draws when it is that of the rows of `filters`; None for one of another filter, or kept by the page."""
     if (
@@ -86,6 +119,7 @@ def _view(
     colors: list | None = None,
     auto: PlotManifest | None = None,
     scale: dict | None = None,
+    role_cuts: dict[str, dict] | None = None,
 ) -> View:
     """Return the view of the given ranges with the result's levels, cuts, color range, boxes and smoothing lines.
 
@@ -104,7 +138,12 @@ def _view(
 
     A numeric color column draws with the color scale `scale`
     (`drawn_scale`); without one, the worker finds that of the rows of the
-    view's filter (`ddviz.shared.scatter.View.find_color_scale`).
+    view's filter (`ddviz.shared.scatter.View.find_color_scale`). So do
+    the numeric symbol, row and col columns with the cuts of `role_cuts`
+    (`drawn_cuts`), the worker finding those of the roles left out
+    (`ddviz.shared.scatter.View.find_cuts`). The facet levels, the boxes
+    and the smoothing lines of the same filter are those of other panels
+    when the cuts differ from the result's: the worker finds them again.
     """
     levels = manifest.all_levels
     cuts, color_range = manifest.cuts, manifest.color_range
@@ -113,6 +152,14 @@ def _view(
         color_range = list(scale["range"])
     elif scale is not None and numeric:
         cuts = {**cuts, "color": scale}
+    role_cuts = role_cuts or {}
+    find_cuts = [r for r in drawn_cuts(manifest) if r not in role_cuts]
+    cuts = {**cuts, **role_cuts}
+    same_panels = (
+        same_filter
+        and not find_cuts
+        and all(cuts[r] == manifest.cuts[r] for r in role_cuts)
+    )
     find_color = False
     if manifest.spec.filters_color() and not same_filter:
         if colors is None:
@@ -134,14 +181,15 @@ def _view(
         x_auto=x_auto,
         y_auto=y_auto,
         levels=levels,
-        facets=facets_of(manifest) if same_filter else None,
+        facets=facets_of(manifest) if same_panels else None,
         cuts=cuts,
         color_range=color_range,
         axis_levels=manifest.axis_levels,
-        boxes=manifest.boxes if same_filter else [],
-        smooths=manifest.smooths if same_filter else [],
+        boxes=manifest.boxes if same_panels else [],
+        smooths=manifest.smooths if same_panels else [],
         find_color=find_color,
         find_color_scale=numeric and scale is None,
+        find_cuts=find_cuts,
     )
 
 
@@ -157,6 +205,7 @@ def resized_spec(
     margin_bottom: int = MARGIN_BOTTOM,
     known: PlotManifest | None = None,
     color_scale: dict | None = None,
+    cuts: dict[str, dict] | None = None,
 ) -> ScatterSpec:
     """Return the spec of the overview for other ranges, size or filter, reusing its levels.
 
@@ -173,7 +222,9 @@ def resized_spec(
     (`drawn_scale`): that of the rows of the filter which the overview or
     `known` draws, else found by the worker; or `color_scale`, kept by the
     page, which the spec holds (`ddviz.shared.scatter.ScatterSpec.color_scale`)
-    unless it is that of the filter.
+    unless it is that of the filter. The cuts of the numeric symbol, row
+    and col columns (`drawn_cuts`) are found so too, role by role, or kept
+    by the page (`cuts`, `ddviz.shared.scatter.ScatterSpec.kept_cuts`).
 
     Parameters
     ----------
@@ -199,6 +250,9 @@ def resized_spec(
     color_scale : dict, optional
         The color scale the page keeps (`ddviz.server.plotoptions.parse_color_scale`),
         for a numeric color column; None for that of the filter.
+    cuts : dict of str to dict, optional
+        The cuts the page keeps (`ddviz.server.plotoptions.parse_cuts`), by
+        role; a role left out takes those of the filter.
 
     Returns
     -------
@@ -222,17 +276,22 @@ def resized_spec(
     own = _own_scale(manifest, filters) or _own_scale(known, filters)
     scale = own if color_scale is None else color_scale
     numeric = drawn_scale(manifest) is not None
+    own_cuts = {**_own_cuts(known, filters), **_own_cuts(manifest, filters)}
+    cuts = cuts or {}
     return replace(
         spec,
         files={**spec.files, **filter_files},
         filters=list(filters),
         # A scale kept that is the filter's own is none kept.
         color_scale=color_scale if numeric and color_scale != own else None,
+        kept_cuts={r: c for r, c in cuts.items() if c != own_cuts.get(r)},
         width=width,
         height=height,
         margin_left=left_margin(margin_left, width),
         margin_bottom=bottom_margin(margin_bottom, height),
-        view=_view(manifest, x_ranges, y_ranges, same, colors, auto, scale),
+        view=_view(
+            manifest, x_ranges, y_ranges, same, colors, auto, scale, own_cuts | cuts
+        ),
     )
 
 
@@ -289,6 +348,12 @@ def unchanged(manifest: PlotManifest | None, spec: ScatterSpec) -> bool:
             manifest.spec.color_scale is None
             if spec.color_scale is None
             else drawn_scale(manifest) == spec.color_scale
+        )
+        and all(
+            drawn_cuts(manifest)[r] == spec.kept_cuts[r]
+            if r in spec.kept_cuts
+            else r not in manifest.spec.kept_cuts
+            for r in drawn_cuts(manifest)
         )
     )
 
@@ -364,6 +429,7 @@ def selection_spec(manifest: PlotManifest, selection: Selection) -> ScatterSpec:
             True,
             auto=manifest,
             scale=drawn_scale(manifest),
+            role_cuts=drawn_cuts(manifest),
         ),
         selection=selection,
     )

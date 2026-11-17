@@ -207,11 +207,13 @@ def test_numeric_facet_of_few_values_and_its_selection(
 
 
 def test_filter_drops_numeric_facet_intervals(path: Path, frame: pl.DataFrame) -> None:
-    """A filter keeping only low values drops the intervals left without rows; the bins land in the kept panels."""
+    """Under the cuts kept by the page, a filter keeping only low values drops the intervals left without rows; the bins land in the kept panels."""
     whole = aggregate(_spec(path, col="v"))
     breaks = whole.cuts["col"]["breaks"]
     spec = replace(
-        _spec(path, col="v"), filters=[Filter("v", range=[breaks[0], breaks[1]])]
+        _spec(path, col="v"),
+        filters=[Filter("v", range=[breaks[0], breaks[1]])],
+        kept_cuts={"col": whole.cuts["col"]},
     )
     agg = aggregate(spec)
     assert agg.levels["col"] == whole.levels["col"][:2]

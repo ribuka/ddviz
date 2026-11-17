@@ -1718,3 +1718,93 @@ def test_a_wrong_color_scale_is_refused_before_any_task(
         assert response.status_code == 400, path
         assert "color_scale" in response.json()["detail"]
     assert tasks == []
+
+
+FACETED = {"x": ["x"], "y": ["y"], "col": "y", "symbol": "x"}
+
+
+def test_the_cuts_follow_the_filter_unless_kept(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A numeric col and symbol are cut from the rows of the filter; a view or an overview given the cuts drawn (``cuts``) draws them, finding none, and tells they are kept."""
+    every = _plot(client, encoding=FACETED)["meta"]
+    assert set(every["cuts"]) == {"col", "symbol"}
+    assert every["cut_columns"] == {"col": "y", "symbol": "x"}
+    assert not every["cuts_kept"]
+    filters = [{"column": "y", "range": [-1, 0.5]}]
+    first = _plot(client, encoding=FACETED, filters=filters)["meta"]
+    breaks = first["cuts"]["col"]["breaks"]
+    assert len(breaks) == 6
+    assert -1 <= breaks[0] < -0.9
+    assert 0.4 < breaks[-1] <= 0.5
+    assert first["cuts"]["symbol"] != every["cuts"]["symbol"]
+    assert len({tuple(p["facet"]) for p in first["panels"]}) == 5
+    specs = []
+    run = TaskBroker.run
+
+    async def kept_run(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        if isinstance(task, PlotTask):
+            specs.append(task.spec)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", kept_run)
+    other = [{"column": "y", "range": [0, 2]}]
+    body = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [None], "filters": other}
+    view = client.post("/api/view", json={**body, "cuts": first["cuts"]}).json()["meta"]
+    assert view["cuts"] == first["cuts"]
+    assert view["cuts_kept"]
+    assert specs[-1].view.find_cuts == []
+    # Kept, the intervals the filter leaves without rows have no panel.
+    labels = {tuple(p["facet"]) for p in view["panels"]}
+    assert labels < {tuple(p["facet"]) for p in first["panels"]}
+    # The overview of that filter, its own cuts: found once, then reused.
+    whole = client.post("/api/overview", json={**SIZE, "filters": other}).json()["meta"]
+    assert not whole["cuts_kept"]
+    assert 0 <= whole["cuts"]["col"]["breaks"][0] < 0.1
+    assert sorted(specs[-1].view.find_cuts) == ["col", "symbol"]
+    zoom = client.post("/api/view", json=body).json()["meta"]
+    assert zoom["cuts"] == whole["cuts"]
+    assert specs[-1].view.find_cuts == []
+    # A plot keeping the cuts of a role whose column stays draws them.
+    kept = _plot(
+        client, encoding=FACETED, filters=other, cuts={"col": first["cuts"]["col"]}
+    )["meta"]
+    assert kept["cuts"]["col"] == first["cuts"]["col"]
+    assert kept["cuts"]["symbol"] == whole["cuts"]["symbol"]
+    assert kept["cuts_kept"]
+
+
+def test_wrong_cuts_are_refused_before_any_task(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``cuts`` of a role not cut into intervals, or of another form, are a 400 naming them, for a plot, a view and an overview; no task runs."""
+    tasks: list[object] = []
+    run = TaskBroker.run
+
+    async def counted(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        tasks.append(task)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", counted)
+    assert client.get("/api/schema").status_code == 200
+    tasks.clear()
+    cut = {"breaks": [0, 1], "values": False}
+    first = {"encoding": FACETED, **SIZE, **HIDE_NULLS, "cuts": {"row": cut}}
+    response = client.post("/api/plot", json=first)
+    assert response.status_code == 400
+    assert "cuts" in response.json()["detail"]
+    assert tasks == []
+    _plot(client, encoding=FACETED)
+    tasks.clear()
+    view = {**SIZE, "x_ranges": [None], "y_ranges": [None]}
+    for path, body in (
+        ("/api/view", {**view, "cuts": {"row": cut}}),
+        ("/api/view", {**view, "cuts": {"col": {"breaks": [1, 0], "values": False}}}),
+        ("/api/overview", {**SIZE, "cuts": {"col": {"breaks": [0, 1]}}}),
+        ("/api/overview", {**SIZE, "cuts": [cut]}),
+        ("/api/plot", first),
+    ):
+        response = client.post(path, json=body)
+        assert response.status_code == 400, path
+        assert "cuts" in response.json()["detail"]
+    assert tasks == []

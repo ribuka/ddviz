@@ -275,3 +275,57 @@ def test_an_edit_carries_the_color_scale_of_the_same_color_only(js_page: Page) -
     )
     cuts = {"breaks": [0, 1, 2], "values": False}
     assert result == [None, cuts, None, None, None, None, {"range": [0, 2]}, None, None]
+
+
+def test_the_lock_is_of_use_with_a_role_cut_into_intervals(js_page: Page) -> None:
+    """A figure without a continuous axis nor a numeric color is lockable with a numeric symbol, row or col cut into intervals."""
+    result = _call(
+        js_page,
+        """const bands = { one_band: true, axis_levels: { one: [""], g: ["a"] }, color: { kind: "levels" } };
+        const cut = { breaks: [0, 1], values: false };
+        return [
+          m.lockable(meta(["one"], ["g"], { ...bands, cuts: { col: cut } })),
+          m.lockable(meta(["one"], ["g"], { ...bands, cuts: {} })),
+          m.hasCuts(meta(["x"], ["y"], { cuts: { symbol: cut } })),
+        ];""",
+    )
+    assert result == [True, False, True]
+
+
+def test_the_cuts_are_kept_under_the_lock_only(js_page: Page) -> None:
+    """A view or an overview asks for the cuts drawn with the lock on, and for none off or without a role cut."""
+    result = _call(
+        js_page,
+        """const ranges = new m.AxisRanges();
+        const cuts = { col: { breaks: [0, 1, 2], values: false } };
+        const drawn = meta(["x"], ["y"], { cuts });
+        const none = meta(["x"], ["y"], { cuts: {} });
+        const off = ranges.cuts(drawn);
+        ranges.setFrozen(true);
+        return [off, ranges.cuts(drawn), ranges.cuts(none), ranges.cuts(null)];""",
+    )
+    assert result == [None, {"col": {"breaks": [0, 1, 2], "values": False}}, None, None]
+
+
+def test_an_edit_carries_the_cuts_of_the_roles_whose_column_stays(js_page: Page) -> None:
+    """Under the lock, a new graph keeps the cuts of each role whose column stays on it, wrap's on col; none of a column moved."""
+    result = _call(
+        js_page,
+        """const ranges = new m.AxisRanges();
+        const a = { breaks: [0, 1, 2], values: false };
+        const b = { breaks: [5, 6], values: true };
+        const old = meta(["x"], ["y"], { cuts: { col: a, symbol: b }, cut_columns: { col: "g", symbol: "h" } });
+        const off = ranges.carriedCuts(old, { col: "g", symbol: "h" });
+        ranges.setFrozen(true);
+        return [
+          off,
+          ranges.carriedCuts(old, { col: "g", symbol: "h" }),
+          ranges.carriedCuts(old, { wrap: "g", symbol: "x" }),
+          ranges.carriedCuts(old, { row: "g", symbol: "h" }),
+          ranges.carriedCuts(old, { row: "g" }),
+          ranges.carriedCuts(null, { col: "g" }),
+        ];""",
+    )
+    a = {"breaks": [0, 1, 2], "values": False}
+    b = {"breaks": [5, 6], "values": True}
+    assert result == [None, {"col": a, "symbol": b}, {"col": a}, {"symbol": b}, None, None]

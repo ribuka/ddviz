@@ -26,10 +26,22 @@ export function hasNumericColor(meta) {
   return ["gradient", "bins"].includes(meta.color?.kind);
 }
 
-// Whether the lock is of use for a result: with a continuous axis or a
-// numeric color.
+// Whether a result cuts a numeric symbol, row or col (wrap's) column into
+// intervals, whose cuts (`meta.cuts`) the lock keeps too (Issue #265).
+export function hasCuts(meta) {
+  return Object.keys(meta.cuts ?? {}).length > 0;
+}
+
+// Whether the lock is of use for a result: with a continuous axis, a
+// numeric color or a role cut into intervals.
 export function lockable(meta) {
-  return hasContinuous(meta) || hasNumericColor(meta);
+  return hasContinuous(meta) || hasNumericColor(meta) || hasCuts(meta);
+}
+
+// The column of each role cut into intervals of a graph (an encoding):
+// wrap's is on the col role.
+function cutColumn(encoding, role) {
+  return role === "col" ? (encoding.wrap ?? encoding.col) : encoding[role];
 }
 
 // Returns the key of an axis column of a result: its role, its column and
@@ -180,6 +192,25 @@ export class AxisRanges {
     if (old.color.kind !== kind) return null;
     if (bins && (old.color.bins?.n !== bins.n || old.color.bins?.by !== bins.by)) return null;
     return old.color.scale ?? null;
+  }
+
+  // Returns the cuts that a view or an overview of result `meta` keeps
+  // (`cuts` of `/api/view` and `/api/overview`): those drawn, under the
+  // lock; null for those of the filter.
+  cuts(meta) {
+    return this.frozen && meta && hasCuts(meta) ? meta.cuts : null;
+  }
+
+  // Returns the cuts that an edit of the graph keeps from the drawn result
+  // `old` (`cuts` of `/api/plot`): under the lock, those of each role cut
+  // into intervals whose column stays on that role of the new graph
+  // (`encoding`); null when none stays, for those of the new graph's filter.
+  carriedCuts(old, encoding) {
+    if (!this.frozen || !old || !hasCuts(old)) return null;
+    const kept = Object.fromEntries(
+      Object.entries(old.cuts).filter(([role]) => old.cut_columns[role] === cutColumn(encoding, role)),
+    );
+    return Object.keys(kept).length > 0 ? kept : null;
   }
 
   // The state, to go back to when a change of it fails (`restore`).
