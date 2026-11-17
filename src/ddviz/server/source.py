@@ -105,7 +105,7 @@ class Source:
         self.nonnull: dict | None = None
         self.shares_state = "pending"
         self._shares_task: asyncio.Task | None = None
-        # True while a conversion for a plot runs; plots are refused meanwhile.
+        # True while the plot pool converts missing parts; plots are refused meanwhile.
         self.converting = False
         # One conversion at a time: the filter pane's and a plot's could
         # write the same parts.
@@ -264,21 +264,24 @@ class Source:
         columns : list of str
             Columns a task is about to read; they stay in the cache.
         pool : str
-            Pool to run the conversion in. Plots are refused while the plot
-            pool converts, since the page shows its progress and takes no
-            edits meanwhile.
+            Pool to run the conversion in. While the plot pool converts
+            parts that were missing, plots are refused, since the page shows
+            its progress and takes no edits meanwhile. Checking for missing
+            parts refuses nothing: a request let through meanwhile waits for
+            the same lock before it sends a task to the plot pool, so it
+            kills no conversion.
         """
-        plot = pool == "plot"
-        if plot:
-            self.converting = True
-        try:
-            async with self._convert_lock:
-                missing = await asyncio.to_thread(self.missing, columns)
-                if missing:
+        async with self._convert_lock:
+            missing = await asyncio.to_thread(self.missing, columns)
+            if missing:
+                plot = pool == "plot"
+                if plot:
+                    self.converting = True
+                try:
                     await self._convert(missing, pool)
-        finally:
-            if plot:
-                self.converting = False
+                finally:
+                    if plot:
+                        self.converting = False
         keep = [Path(p) for c in dict.fromkeys(columns) for p in self.parts(c)]
         await asyncio.to_thread(self.evict, keep)
 
