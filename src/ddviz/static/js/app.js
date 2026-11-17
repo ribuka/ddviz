@@ -701,7 +701,9 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     return plotFailed("図の画像を読み込めなかった", askedSize, restoring);
   }
   const kept = keptView();
-  // The ranges zoomed of the axes this edit kept, read just before the switch.
+  // The ranges zoomed of the axes this edit kept, read just before the switch:
+  // a result of a new filter keeps no categorical axis set by hand.
+  adoptFilter(meta);
   const carried = keep ? null : carriedView(meta);
   try {
     const view = await drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, candidate, filterCandidate, settled });
@@ -1092,12 +1094,7 @@ async function showAgain({ figure, meta, size, bitmaps, ranges, whole, drawn, mi
   const kept = (role) => shown[role].map((range, i) => (ranges[role][i] === null ? meta[`${role}_ranges`][i] : range));
   const view = { x: kept("x"), y: kept("y") };
   if (!whole) requested = view;
-  // A result of a new filter draws the bands of its levels: a categorical
-  // axis set by hand under the old one is so no longer, but under the lock,
-  // which kept its levels (`AxisRanges.holdsThroughFilter`).
-  if (!axisRanges.frozen && current && filtersKey(current.filters) !== filtersKey(meta.filters)) {
-    axisRanges.forgetCategorical(current);
-  }
+  adoptFilter(meta);
   setCurrent(meta);
   shownSize = size;
   hideHover();
@@ -1244,6 +1241,19 @@ function knownAuto() {
 // stay those of the result shown before it.
 function shownScale() {
   return legend.meta;
+}
+
+// Takes in the filter of a result about to be drawn, of a view, an overview
+// or a plot: a result of a new filter draws the bands of its levels, so a
+// categorical axis set by hand under the old one, in the figure drawn and in
+// the overview, is so no longer, but under the lock, which kept its levels
+// (`AxisRanges.holdsThroughFilter`). A refused filter is never drawn, and
+// leaves them so.
+function adoptFilter(meta) {
+  if (axisRanges.frozen) return;
+  for (const old of [current, overview?.meta]) {
+    if (old && filtersKey(old.filters) !== filtersKey(meta.filters)) axisRanges.forgetCategorical(old);
+  }
 }
 
 // Whether a result was drawn with something the lock kept, not that of its
