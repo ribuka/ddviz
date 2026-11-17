@@ -56,9 +56,14 @@ function cutColumn(encoding, role) {
 // Returns the key of an axis column of a result: its role, its column and
 // what its coordinates mean (`axisCoordinates`). The same column moved to
 // the other role, on a log axis instead of a linear one, or with other
-// levels, is another axis.
+// levels, is another axis. A categorical axis is also of the filter of the
+// result (`meta.filters`): its bands are the levels of the rows of that
+// filter, so one set by hand under a filter is not so under another, even
+// with the same levels; nothing has to forget it when the filter changes,
+// whichever way a result of the new filter comes.
 export function axisId(meta, role, index) {
-  return JSON.stringify([role, meta[`${role}_columns`][index], axisCoordinates(meta, role, index)]);
+  const filter = isCategorical(meta, role, index) ? (meta.filters ?? []) : null;
+  return JSON.stringify([role, meta[`${role}_columns`][index], axisCoordinates(meta, role, index), filter]);
 }
 
 // Returns the automatic ranges of a result (`{x, y}`, one per axis column).
@@ -126,16 +131,6 @@ export class AxisRanges {
     return isCategorical(meta, role, index) ? this.frozen : this.holds(meta, role, index);
   }
 
-  // Forgets the categorical axes of a result set by hand, which a new filter
-  // without the lock puts back to their automatic ranges (`holdsThroughFilter`).
-  forgetCategorical(meta) {
-    for (const role of ["x", "y"]) {
-      meta[`${role}_columns`].forEach((_, i) => {
-        if (isCategorical(meta, role, i)) this.manual.delete(axisId(meta, role, i));
-      });
-    }
-  }
-
   // Puts every axis back to the automatic ranges (Reset axes), or the axis
   // column `index` of `role` only. The lock stays as it is.
   reset(meta = null, role = null, index = null) {
@@ -184,8 +179,10 @@ export class AxisRanges {
   // Returns the view of a new result `meta` of an edit of the graph that
   // keeps the shown ranges (`shown`) of the drawn result `old`: an axis
   // column keeps its range while it stays in its role on the same
-  // coordinates and is kept (`holds`); any other has its new automatic
-  // range. Null when no range differs from the new automatic ones.
+  // coordinates and is kept (`holds`; a categorical one set by hand under
+  // the filter of `meta`, which may be newer than that of `old`); any other
+  // has its new automatic range. Null when no range differs from the new
+  // automatic ones.
   carried(old, shown, meta) {
     const ranges = { x: [], y: [] };
     let zoomed = false;
@@ -197,7 +194,7 @@ export class AxisRanges {
         const keeps =
           range &&
           axisCoordinates(old, role, j) === axisCoordinates(meta, role, i) &&
-          this.holds(old, role, j) &&
+          (isCategorical(meta, role, i) ? this.holds(meta, role, i) : this.holds(old, role, j)) &&
           !sameRange(range, whole);
         ranges[role].push(keeps ? range : whole);
         zoomed ||= Boolean(keeps);

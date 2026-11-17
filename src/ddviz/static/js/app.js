@@ -702,8 +702,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   }
   const kept = keptView();
   // The ranges zoomed of the axes this edit kept, read just before the switch:
-  // a result of a new filter keeps no categorical axis set by hand.
-  adoptFilter(meta);
+  // a result of a new filter keeps no categorical axis set by hand under the
+  // old one (`AxisRanges.carried`).
   const carried = keep ? null : carriedView(meta);
   try {
     const view = await drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, candidate, filterCandidate, settled });
@@ -1094,7 +1094,6 @@ async function showAgain({ figure, meta, size, bitmaps, ranges, whole, drawn, mi
   const kept = (role) => shown[role].map((range, i) => (ranges[role][i] === null ? meta[`${role}_ranges`][i] : range));
   const view = { x: kept("x"), y: kept("y") };
   if (!whole) requested = view;
-  adoptFilter(meta);
   setCurrent(meta);
   shownSize = size;
   hideHover();
@@ -1241,19 +1240,6 @@ function knownAuto() {
 // stay those of the result shown before it.
 function shownScale() {
   return legend.meta;
-}
-
-// Takes in the filter of a result about to be drawn, of a view, an overview
-// or a plot: a result of a new filter draws the bands of its levels, so a
-// categorical axis set by hand under the old one, in the figure drawn and in
-// the overview, is so no longer, but under the lock, which kept its levels
-// (`AxisRanges.holdsThroughFilter`). A refused filter is never drawn, and
-// leaves them so.
-function adoptFilter(meta) {
-  if (axisRanges.frozen) return;
-  for (const old of [current, overview?.meta]) {
-    if (old && filtersKey(old.filters) !== filtersKey(meta.filters)) axisRanges.forgetCategorical(old);
-  }
 }
 
 // Whether a result was drawn with something the lock kept, not that of its
@@ -1476,8 +1462,8 @@ function applyFilters() {
   hideHover();
   const ranges = axisRanges.heldRanges(current, shownRanges(gd, current), { filter: true });
   // A categorical axis set by hand takes the bands of the new filter
-  // (`holdsThroughFilter`); it is no longer set by hand once a result of the
-  // filter is drawn (`showAgain`), so that a refused filter leaves it so.
+  // (`holdsThroughFilter`): it was set by hand under the old filter alone
+  // (`axisId`), which a refused filter leaves drawn.
   if ([...ranges.x, ...ranges.y].every((range) => range === null)) requestOverview();
   else requestView(ranges);
 }

@@ -94,25 +94,53 @@ def test_on_the_lock_keeps_every_axis_even_over_its_whole_range(
 
 
 def test_a_new_filter_puts_a_categorical_axis_set_by_hand_back(js_page: Page) -> None:
-    """Unlocked, a categorical axis set by hand keeps its range through a zoom but not through a new filter, whose levels are other bands; it is then forgotten."""
+    """Unlocked, a categorical axis set by hand keeps its range through a zoom but not through a new filter, whose levels are other bands; it is set by hand under its filter alone, with the same levels too."""
     result = _call(
         js_page,
         """const r = new m.AxisRanges();
-        const a = meta(["g"], ["y"], { axis_levels: { g: ["a", "b"] } });
+        const f1 = [{ column: "c", levels: ["a"] }];
+        const f2 = [{ column: "c", levels: ["b"] }];
+        const a = meta(["g"], ["y"], { axis_levels: { g: ["a", "b"] }, filters: f1 });
+        const b = meta(["g"], ["y"], { axis_levels: { g: ["a", "b"] }, filters: f2 });
         const shown = { x: [[-0.2, 0.2]], y: [[1, 2]] };
         r.setByHand(a, "x", 0);
         r.setByHand(a, "y", 0);
-        const held = r.heldRanges(a, shown);
-        const filtered = r.heldRanges(a, shown, { filter: true });
-        r.forgetCategorical(a);
-        return [held, filtered, r.byHand(a, "x", 0), r.byHand(a, "y", 0)];""",
+        return [
+          r.heldRanges(a, shown),
+          r.heldRanges(a, shown, { filter: true }),
+          [r.byHand(a, "x", 0), r.byHand(b, "x", 0), r.byHand(b, "y", 0)],
+        ];""",
     )
     assert result == [
         {"x": [[-0.2, 0.2]], "y": [[1, 2]]},
         {"x": [None], "y": [[1, 2]]},
-        False,
-        True,
+        [True, False, True],
     ]
+
+
+def test_an_edit_carries_a_categorical_axis_set_by_hand_under_its_filter(
+    js_page: Page,
+) -> None:
+    """An edit keeps the range of a categorical axis set by hand under the filter of the new result, whichever filter the old result has; not one set under another filter."""
+    result = _call(
+        js_page,
+        """const r = new m.AxisRanges();
+        const f1 = [{ column: "c", levels: ["a"] }];
+        const f2 = [{ column: "c", levels: ["b"] }];
+        const levels = { axis_levels: { g: ["a", "b", "c"] } };
+        const old1 = meta(["g"], ["y"], { ...levels, filters: f1 });
+        const new1 = meta(["g"], ["y"], { ...levels, filters: f1 });
+        const new2 = meta(["g"], ["y"], { ...levels, filters: f2 });
+        const shown = { x: [[0, 1]], y: [[0, 10]] };
+        r.setByHand(old1, "x", 0);
+        const same = r.carried(old1, shown, new1);
+        const other = r.carried(old1, shown, new2);
+        // Set under f2 while the overview is still of f1.
+        r.manual.clear();
+        r.setByHand(new2, "x", 0);
+        return [same?.ranges.x, other, r.carried(old1, shown, new2)?.ranges.x];""",
+    )
+    assert result == [[[0, 1]], None, [[0, 1]]]
 
 
 def test_turning_the_lock_off_drops_the_axes_set_by_hand(js_page: Page) -> None:

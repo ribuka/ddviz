@@ -738,3 +738,36 @@ def test_an_edit_drawn_before_a_new_filter_drops_a_categorical_axis_set_by_hand(
     assert x == pytest.approx([-0.5, 149.5])
     # The overview the edit superseded lost its images to the edit's result.
     assert [e for e in errors if ": 404" not in e] == []
+
+
+def test_a_categorical_axis_set_by_hand_under_a_new_filter_stays_so(
+    app_page: Page,
+) -> None:
+    """A categorical x zoomed by hand under a new filter, drawn as a view while the overview is of the old one, keeps its range through an edit of the graph (PR #276 review)."""
+    page = app_page
+    errors = watch_errors(page)
+    expect(page.locator("#columns .column").filter(has_text="half")).to_be_visible()
+    place(page, "g", "x")
+    place(page, "y", "y")
+    pick(page, "x", "Add to Local filter")
+    inputs = card(page, "x").locator(".filter-range input")
+    expect(inputs.first).to_be_visible()
+    # y set by hand keeps the overview of the old filter: the new one is a view.
+    with page.expect_response("**/api/view"):
+        page.evaluate("Plotly.relayout('plot', {'yaxis.range': [0, 3]})")
+    page.wait_for_function(SETTLED)
+    with page.expect_response("**/api/view"):
+        inputs.first.fill("150")
+        inputs.first.press("Enter")
+    page.wait_for_function(SETTLED)
+    zoom(page, 0, 3)
+    with page.expect_response("**/api/plot"):
+        place(page, "v", "color")
+    page.wait_for_function(SETTLED)
+    wait_idle(page)
+    x = page.evaluate(
+        "() => { const a = document.getElementById('plot')._fullLayout.xaxis;"
+        " return a.range.map((v) => a.r2l(v)); }"
+    )
+    assert x == pytest.approx([0, 3])
+    assert errors == []
