@@ -562,3 +562,38 @@ def test_the_meta_has_the_keys_of_figure_meta(
     """The meta has every key `FigureMeta` writes down, and no other."""
     result = _figure(scatter_spec, tmp_path / "task")
     assert set(result["meta"]) == set(FigureMeta.__annotations__)
+
+
+@pytest.mark.parametrize("wrap", [False, True])
+def test_the_missing_panel_is_labeled_null_apart_from_the_null_text(
+    tmp_path: Path, wrap: bool
+) -> None:
+    """The missing panel's label is "(null)"; a real "(null)" text beside it is marked as text."""
+    path = tmp_path / "nulls.parquet"
+    pl.DataFrame(
+        {"x": [1.0, 2.0, 3.0], "y": [1.0, 2.0, 3.0], "g": ["(null)", "a", None]}
+    ).write_parquet(path)
+    spec = ScatterSpec(
+        files={c: [str(path)] for c in ["x", "y", "g"]},
+        x=["x"],
+        y=["y"],
+        color=None,
+        row=None,
+        col="g",
+        wrap=wrap,
+        width=800,
+        height=400,
+        hover=["x", "y"],
+        null_roles=["col"],
+    )
+    result = _figure(spec, tmp_path / "task")
+    labels = [
+        a["text"]
+        for a in [
+            *result["meta"]["facet_labels"],
+            *result["figure"]["layout"].get("annotations", []),
+        ]
+    ]
+    shown = ["(null)（文字列）", "a", "(null)"]
+    expected = shown if wrap else [f"g = {s}" for s in shown]
+    assert labels[: len(shown)] == expected

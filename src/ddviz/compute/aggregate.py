@@ -725,29 +725,35 @@ def _facet_levels(
 
     Reads only the facet columns and the filter's columns, in a pass of its
     own: on 100M rows it took at most 0.55s, peaking under 2.0GB.
-    A filter that keeps no rows keeps every panel.
+    A filter that keeps no rows keeps every panel. A role that draws its
+    missing rows (`ddviz.shared.scatter.ScatterSpec.null_roles`) keeps its
+    missing level only while a row of the filter is missing.
     """
     facets = {r: getattr(spec, r) for r in ("row", "col") if getattr(spec, r)}
     if not spec.filters or not facets:
         return levels
-    numeric = {c for r, c in facets.items() if r in spec.binned}
-    keys = [
-        (
-            cut_index(c, cuts[r]) if r in spec.binned else pl.col(c).cast(pl.String)
-        ).alias(r)
-        for r, c in facets.items()
-    ]
+    keys = []
+    conditions = {}
+    for r, c in facets.items():
+        numeric = r in spec.binned
+        draws_missing = r in spec.null_roles
+        if numeric:
+            key = cut_index(c, cuts[r])
+            valid = pl.col(c).cast(pl.Float64).is_finite()
+        else:
+            key = pl.col(c).cast(pl.String)
+            valid = pl.col(c).is_not_null()
+        if draws_missing:
+            # The rows of the missing level count in it: -1 for a cut
+            # column, whose levels are the cuts' indexes.
+            missing = is_missing(c, numeric)
+            key = pl.when(missing).then(pl.lit(-1 if numeric else MISSING)).otherwise(key)
+            valid = valid | missing
+        keys.append(key.alias(r))
+        conditions[(c, numeric, draws_missing)] = valid
     found = (
         _scan(spec, [*facets.values(), *filter_columns(spec.filters)])
-        .filter(
-            *[
-                pl.col(c).cast(pl.Float64).is_finite()
-                if c in numeric
-                else pl.col(c).is_not_null()
-                for c in dict.fromkeys(facets.values())
-            ],
-            *filter_conditions(spec.filters),
-        )
+        .filter(*conditions.values(), *filter_conditions(spec.filters))
         .group_by(keys)
         .len()
         .collect(engine="streaming")
@@ -758,7 +764,7 @@ def _facet_levels(
     for role in facets:
         present = set(found[role].to_list())
         if role in spec.binned:
-            present = {levels[role][i] for i in present}
+            present = {MISSING if i == -1 else levels[role][i] for i in present}
         kept[role] = [v for v in levels[role] if v in present]
     return kept
 

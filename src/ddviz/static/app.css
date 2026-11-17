@@ -1775,7 +1775,8 @@ html.desktop #toasts {
 .wrap-menu .scale-menu-heading {
   padding: 2px 0;
 }
-.wrap-menu-choice {
+.wrap-menu-choice,
+.wrap-menu-null-rows {
   display: flex;
   align-items: center;
   gap: 6px;

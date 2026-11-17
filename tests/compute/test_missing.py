@@ -1,4 +1,4 @@
-"""Tests of the missing level: the rows of a null or NaN color or symbol drawn with Show null rows."""
+"""Tests of the missing level: the rows of a null or NaN color, symbol, row or col drawn with Show null rows."""
 
 from __future__ import annotations
 
@@ -14,7 +14,14 @@ from ddviz.compute.tasks.table import run_table
 from ddviz.shared.manifest import PlotManifest, read_manifest
 from ddviz.shared.missing import MISSING, MISSING_COLOR, MISSING_SHAPE
 from ddviz.shared.palette import DEFAULT_COLORS
-from ddviz.shared.scatter import Binning, ScatterSpec, Selection, Smoothing, View
+from ddviz.shared.scatter import (
+    Binning,
+    Filter,
+    ScatterSpec,
+    Selection,
+    Smoothing,
+    View,
+)
 from ddviz.shared.shapes import AUTO_SHAPES
 from ddviz.shared.tasks import SourceFiles, TableTask
 
@@ -204,7 +211,7 @@ def test_one_column_on_color_and_symbol_meets_both_settings(path: Path) -> None:
 
 
 def test_a_facet_of_the_same_column_still_leaves_the_nulls_out(path: Path) -> None:
-    """Row and col keep leaving out their nulls, whatever the color draws."""
+    """Row and col not in null_roles keep leaving out their nulls, whatever the color draws."""
     agg = aggregate(_spec(path, color="g", col="g", null_roles=["color"]))
     assert MISSING in agg.levels["color"]
     assert MISSING not in agg.levels["col"]
@@ -317,3 +324,136 @@ def test_a_text_equal_to_the_missing_level_is_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="内部名"):
         aggregate(spec)
+
+
+def _panel_counts(agg) -> dict[int, int]:  # noqa: ANN001
+    """Return the rows drawn in each panel."""
+    panel, _, _, _ = agg.grid.unpack(agg.bins[KEY].to_numpy())
+    counts: dict[int, int] = {}
+    for p, n in zip(panel.tolist(), agg.bins[COUNT].to_list(), strict=True):
+        counts[p] = counts.get(p, 0) + n
+    return counts
+
+
+FACETS = [
+    pytest.param({"row": "g"}, "row", id="row"),
+    pytest.param({"col": "g"}, "col", id="col"),
+    pytest.param({"col": "g", "wrap": True}, "col", id="wrap"),
+]
+
+
+@pytest.mark.parametrize(("fields", "role"), FACETS)
+def test_a_categorical_facet_draws_its_nulls_in_a_last_panel(
+    path: Path, fields: dict, role: str
+) -> None:
+    """A row, col or wrap column in null_roles has the missing level last, its 3 null rows in the last panel."""
+    agg = aggregate(_spec(path, **fields, null_roles=[role]))
+    assert agg.levels[role] == ["p", "q", MISSING]
+    assert _panel_counts(agg) == {0: 5, 1: 4, 2: 3}
+
+
+@pytest.mark.parametrize(("fields", "role"), FACETS)
+def test_a_facet_not_in_null_roles_leaves_its_nulls_out(
+    path: Path, fields: dict, role: str
+) -> None:
+    """Without the role in null_roles, the null rows are left out and no panel is added."""
+    agg = aggregate(_spec(path, **fields))
+    assert agg.levels[role] == ["p", "q"]
+    assert _panel_counts(agg) == {0: 5, 1: 4}
+
+
+@pytest.mark.parametrize("role", ["row", "col"])
+def test_a_binned_facet_puts_null_and_nan_in_a_last_panel_and_leaves_infinities_out(
+    path: Path, role: str
+) -> None:
+    """Null and NaN are one panel after the intervals, which cut the finite values only; infinities stay out."""
+    spec = _spec(path, **{role: "v"}, binned={role: Binning(2)}, null_roles=[role])
+    agg = aggregate(spec)
+    assert agg.levels[role][-1] == MISSING
+    assert len(agg.levels[role]) == 3
+    assert agg.cuts[role]["breaks"][0] == 1.0
+    assert agg.cuts[role]["breaks"][-1] == 6.0
+    counts = _panel_counts(agg)
+    # 4 missing (2 nulls, 2 NaN), 6 finite, 2 infinite left out.
+    assert counts[2] == 4
+    assert sum(counts.values()) == 10
+
+
+def test_a_facet_column_at_the_limit_fails_with_its_missing_level(path: Path) -> None:
+    """The drawn missing panel counts as one level against max_levels."""
+    spec = _spec(path, col="g", max_levels=2)
+    assert aggregate(spec).levels["col"] == ["p", "q"]
+    with pytest.raises(ValueError, match="上限"):
+        aggregate(replace(spec, null_roles=["col"]))
+
+
+@pytest.mark.parametrize(
+    ("filters", "levels"),
+    [
+        # Rows 0 and 1: p and q, no null.
+        ([Filter("x", range=[0.0, 1.0])], ["p", "q"]),
+        # Row 2 is null.
+        ([Filter("x", range=[0.0, 2.0])], ["p", "q", MISSING]),
+        ([Filter("g", levels=["p"], nulls=True)], ["p", MISSING]),
+        ([Filter("g", levels=["p"])], ["p"]),
+    ],
+)
+def test_the_filter_keeps_the_missing_panel_only_with_a_missing_row(
+    path: Path, filters: list, levels: list
+) -> None:
+    """The missing panel stays while a row of the filter is missing, and goes with the filter's (null) unchecked."""
+    agg = aggregate(_spec(path, col="g", null_roles=["col"], filters=filters))
+    assert agg.levels["col"] == levels
+    assert agg.all_levels["col"] == ["p", "q", MISSING]
+
+
+@pytest.mark.parametrize(("nulls", "missing"), [(True, 4), (False, 0)])
+def test_the_filter_keeps_a_binned_missing_panel_only_with_a_missing_row(
+    path: Path, nulls: bool, missing: int
+) -> None:
+    """A binned col keeps its missing panel, with its rows, while the filter lets missing rows through."""
+    spec = _spec(path, col="v", binned={"col": Binning(2)}, null_roles=["col"])
+    whole = aggregate(spec)
+    agg = aggregate(
+        replace(
+            spec,
+            filters=[Filter("v", range=[0.0, 10.0], nulls=nulls)],
+            kept_cuts={"col": whole.cuts["col"]},
+        )
+    )
+    assert (agg.levels["col"][-1] == MISSING) == bool(missing)
+    assert sum(_panel_counts(agg).values()) == 6 + missing
+    if missing:
+        assert _panel_counts(agg)[len(agg.levels["col"]) - 1] == missing
+
+
+@pytest.mark.parametrize(
+    ("fields", "level", "rows"),
+    [
+        ({"col": "g"}, MISSING, 3),
+        ({"col": "g"}, "p", 5),
+        ({"row": "g"}, MISSING, 3),
+        ({"col": "v", "binned": {"col": Binning(2)}}, MISSING, 4),
+    ],
+)
+def test_a_box_in_the_missing_panel_selects_its_missing_rows_only(
+    path: Path, fields: dict, level: str, rows: int
+) -> None:
+    """A box over the whole missing panel selects its missing rows, none of the other panels."""
+    role = "row" if "row" in fields else "col"
+    spec = _spec(path, **fields, null_roles=[role])
+    overview = aggregate(spec)
+    view = replace(
+        spec,
+        view=View(
+            x_ranges=[list(r) for r in overview.x_ranges],
+            y_ranges=[list(r) for r in overview.y_ranges],
+            levels=overview.all_levels,
+            facets={"row": overview.levels["row"], "col": overview.levels["col"]},
+            cuts=overview.cuts,
+        ),
+        selection=Selection(
+            x="x", y="y", x_range=[-1.0, 12.0], y_range=[-1.0, 5.0], **{role: level}
+        ),
+    )
+    assert aggregate(view, selection_only=True).selected_rows == rows

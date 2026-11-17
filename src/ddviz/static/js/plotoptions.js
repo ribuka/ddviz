@@ -27,11 +27,12 @@ export class PlotOptions {
   // (`ddviz.server.plotoptions.parse_line_aggregation`), picked in the same
   // menu; kept for every graph, with the lines on or off.
   lineAggregation = "raw";
-  // Whether the Color and the Symbol zone draw the rows of a null or NaN
-  // value (`ddviz.server.models.ShowNullRows`), set in the zones' menu
-  // (zonemenu.js, which changes this object); kept whatever column the zone
-  // holds, true after a reload.
-  showNullRows = { color: true, symbol: true };
+  // Whether the Color, Symbol, Group Y (row), Group X (col) and Wrap zones
+  // draw the rows of a null or NaN value (`ddviz.server.models.ShowNullRows`),
+  // set in the zones' menu (zonemenu.js, which changes this object) or in the
+  // Wrap zone's form (wrapmenu.js); kept whatever column the zone holds, true
+  // after a reload. A failed plot turns it back (`saved`).
+  showNullRows = { color: true, symbol: true, row: true, col: true, wrap: true };
   // Whether a categorical color column keeps its levels over every row, those
   // the filter leaves without rows staying in the legend
   // (`ddviz.server.models.PlotRequest.keep_unfiltered_color_levels`), set in
@@ -121,11 +122,18 @@ export class PlotOptions {
   // Returns the settings derived from the graph, which a failed plot rolls
   // back with it (`Builder`'s save).
   saved() {
-    return { colorBins: this.colorBins, wrapCols: this.wrapCols, keepColorLevels: this.keepColorLevels };
+    return {
+      colorBins: this.colorBins,
+      wrapCols: this.wrapCols,
+      keepColorLevels: this.keepColorLevels,
+      showNullRows: { ...this.showNullRows },
+    };
   }
 
   // Sets back the settings `saved` returned, from `state` (`Builder`'s load).
   load(state) {
     ({ colorBins: this.colorBins, wrapCols: this.wrapCols, keepColorLevels: this.keepColorLevels } = state);
+    // In place: the zones' menu holds the object (zonemenu.js).
+    Object.assign(this.showNullRows, state.showNullRows);
   }
 }

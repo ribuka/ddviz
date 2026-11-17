@@ -14,11 +14,12 @@ import polars as pl
 from ddviz.compute.axisposition import position, within
 from ddviz.compute.bands import band_center, level_index
 from ddviz.compute.cuts import in_level
-from ddviz.compute.missing import drawn_conditions, role_index
+from ddviz.compute.missing import drawn_conditions, is_missing, role_index
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.stacked import marker_boxes, stack_frame
 from ddviz.compute.stacks import DX, DY, PX, PY, Axis, ranked, stack_groups
 from ddviz.shared.layout import GAP, WRAP_GAP, facet_grid, grid_layout
+from ddviz.shared.missing import MISSING
 from ddviz.shared.scatter import BAND, ScatterSpec
 
 # Whether a row's center is in the box along x and along y (`_stacked`).
@@ -101,7 +102,9 @@ def _cell_conditions(spec: ScatterSpec) -> list[pl.Expr]:
         column = getattr(spec, role)
         if column is None or level is None:
             continue
-        if role in spec.binned:
+        if level == MISSING:
+            conditions.append(is_missing(column, role in spec.binned))
+        elif role in spec.binned:
             index = spec.view.levels[role].index(level)
             conditions.append(in_level(column, spec.view.cuts[role], index))
         else:

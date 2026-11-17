@@ -475,3 +475,22 @@ def test_keep_unfiltered_color_levels_goes_to_the_spec() -> None:
     assert not cut.filters_color()
     bare = scatter_spec(Encoding(x=("a",), y=("b",)), files, 400, 300, [])
     assert not bare.filters_color()
+
+
+def test_show_null_rows_of_the_facets_is_on_by_default_and_wrap_takes_its_own() -> None:
+    """Group Y and Group X draw their null rows unless turned off; the wrap's col takes the wrap setting, not the col one."""
+    grid = Encoding(x=("a",), y=("b",), row="r", col="c")
+    files = {c: [f"{c}.parquet"] for c in [*grid.columns(), "w"]}
+    assert scatter_spec(grid, files, 400, 300, []).null_roles == ["row", "col"]
+    for row in (True, False):
+        for col in (True, False):
+            show = {"row": row, "col": col, "wrap": not col}
+            spec = scatter_spec(grid, files, 400, 300, [], show_null_rows=show)
+            assert spec.null_roles == [r for r in ("row", "col") if show[r]]
+    wrapped = Encoding(x=("a",), y=("b",), wrap="w")
+    assert scatter_spec(wrapped, files, 400, 300, []).null_roles == ["col"]
+    for wrap in (True, False):
+        for col in (True, False):
+            show = {"col": col, "wrap": wrap}
+            spec = scatter_spec(wrapped, files, 400, 300, [], show_null_rows=show)
+            assert spec.null_roles == (["col"] if wrap else [])

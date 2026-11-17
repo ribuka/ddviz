@@ -1808,3 +1808,48 @@ def test_wrong_cuts_are_refused_before_any_task(
         assert response.status_code == 400, path
         assert "cuts" in response.json()["detail"]
     assert tasks == []
+
+
+@pytest.mark.parametrize(
+    ("role", "setting"), [("row", "row"), ("col", "col"), ("wrap", "wrap")]
+)
+def test_show_null_rows_of_a_facet_adds_a_null_panel_unless_off(
+    client: TestClient, role: str, setting: str
+) -> None:
+    """A facet column with a null draws a last "(null)" panel by default and when asked, none when off; a non-boolean or unknown key is refused."""
+    encoding = {"x": ["x"], "y": ["y"], role: "color"}
+    side = 0 if role == "row" else 1
+
+    def facets(show: dict | None) -> tuple[list, list]:
+        extra = {} if show is None else {"show_null_rows": show}
+        response = client.post(
+            "/api/plot", json={"encoding": encoding, **SIZE, **extra}
+        )
+        assert response.status_code == 200, response.text
+        meta = response.json()["meta"]
+        panels = [p["facet"][side] for p in meta["panels"]]
+        # A wrapped grid has its labels in the figure, over each panel.
+        figure = response.json()["figure"]["layout"].get("annotations", [])
+        return panels, [a["text"] for a in [*meta["facet_labels"], *figure]]
+
+    for show in (None, {}, {setting: True}):
+        panels, labels = facets(show)
+        assert panels == ["a", "b", "c", MISSING]
+        assert labels[-1].endswith("(null)")
+    panels, labels = facets({setting: False})
+    assert panels == ["a", "b", "c"]
+    assert not any("(null)" in t for t in labels)
+    for bad in ("yes", 1, None):
+        response = client.post(
+            "/api/plot",
+            json={"encoding": encoding, **SIZE, "show_null_rows": {setting: bad}},
+        )
+        assert response.status_code == 422, bad
+    response = client.post(
+        "/api/plot",
+        json={"encoding": encoding, **SIZE, "show_null_rows": {"group": True}},
+    )
+    assert response.status_code == 422
+    if role == "wrap":
+        # The col setting does not reach the wrap.
+        assert facets({"col": False})[0] == ["a", "b", "c", MISSING]

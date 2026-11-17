@@ -52,7 +52,7 @@ import { openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
 import { forPlotly } from "./temporal.js";
-import { closeWrapMenu, openWrapMenu, setWrapAuto } from "./wrapmenu.js";
+import { closeWrapMenu, openWrapMenu, setWrapAuto, setWrapNullRows } from "./wrapmenu.js";
 import { attachZoneMenu } from "./zonemenu.js";
 
 const toasts = new Toasts(document.getElementById("toasts"));
@@ -1645,28 +1645,57 @@ const builder = new Builder(
     },
   },
 );
+// Plots the graph again for the "Show null rows" of `role` just toggled: its
+// levels change. As keeping the levels the filter leaves out, a plot that
+// fails turns the setting back, unless it was toggled again meanwhile: the
+// rollback of the graph does (`PlotOptions.saved`), and so does this when
+// nothing was rolled back. The drawn figure, legend, selection and ranges
+// stay (`plotFailed`). Without a graph to plot, the setting is committed for
+// the next plot to take.
+async function plotNullRows(role) {
+  if (!plottedEncoding) {
+    builder.commit();
+    return;
+  }
+  const toggled = options.showNullRows[role];
+  if ((await plot(plottedEncoding)) === "refused" && options.showNullRows[role] === toggled) {
+    options.showNullRows[role] = !toggled;
+    if (role === "wrap") setWrapNullRows(!toggled);
+  }
+}
 // A right click on the Wrap zone while it holds a column opens the form of
-// the number to a row; a new number plots the graph again.
+// the number to a row; a new number plots the graph again. Its "Show null
+// rows" plots the graph again at once, as that of the other zones' menu.
 document.querySelector('#builder .zone[data-role="wrap"]').addEventListener("contextmenu", (event) => {
   event.preventDefault();
   closeWrapMenu();
   if (!builder.placed("wrap").length) return;
-  openWrapMenu(event, options.wrapCols, options.wrapAuto, (cols) => {
-    if (cols === options.wrapCols) return;
-    options.wrapCols = cols;
-    if (plottedEncoding?.wrap) plot(plottedEncoding);
-  });
+  openWrapMenu(
+    event,
+    options.wrapCols,
+    options.wrapAuto,
+    (cols) => {
+      if (cols === options.wrapCols) return;
+      options.wrapCols = cols;
+      if (plottedEncoding?.wrap) plot(plottedEncoding);
+    },
+    {
+      showNullRows: options.showNullRows.wrap,
+      onNullRows: (checked) => {
+        options.showNullRows.wrap = checked;
+        plotNullRows("wrap");
+      },
+    },
+  );
 });
-// A changed "Show null rows", or keeping the levels the filter leaves out,
-// plots the graph again: its levels change. A plot that fails turns the
-// setting back (`plotFailed` keeps the drawn figure); without a graph to
-// plot, the next plot takes it.
+// A changed "Show null rows" (`plotNullRows`), or keeping the levels the
+// filter leaves out, plots the graph again: its levels change. A plot that
+// fails turns the setting back (`plotFailed` keeps the drawn figure);
+// without a graph to plot, the next plot takes it.
 attachZoneMenu(builderRoot, {
   hasColumn: (role) => builder.placed(role).length > 0,
   showNullRows: options.showNullRows,
-  onNullRows: () => {
-    if (plottedEncoding) plot(plottedEncoding);
-  },
+  onNullRows: plotNullRows,
   categoricalColor: () => {
     const [column] = builder.placed("color");
     return column !== undefined && !builder.numeric.get(column);

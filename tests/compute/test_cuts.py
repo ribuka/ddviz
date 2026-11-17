@@ -162,7 +162,8 @@ def test_numeric_facet_panels_hold_their_intervals(
     path: Path, frame: pl.DataFrame
 ) -> None:
     """Each panel of a binned col holds the rows of its interval; rows with a non-finite value are left out."""
-    agg = aggregate(_spec(path, col="v"))
+    # Without Show null rows (`test_missing.py` has the missing panel).
+    agg = aggregate(replace(_spec(path, col="v"), null_roles=[]))
     assert agg.levels["col"] == cut_labels(agg.cuts["col"])
     assert len(agg.levels["col"]) == FACET_BINS
     panels, *_ = agg.grid.unpack(agg.bins["__key"].to_numpy())

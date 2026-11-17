@@ -740,7 +740,7 @@ plotly との分担：plotly.js はそのまま埋め込み、軸、ズーム・
   - 実装（2026-10-29、`src/ddviz/shared/scatter.py` の `Selection`、`src/ddviz/compute/selection.py` の `selection_filter`、`tasks/plot.py` の `run_selection`、`tasks/table.py` の `run_table`、`static/js/table.js`）：
     - 画面は `plotly_selected` の `range`（キーは軸の id）から矩形のパネルと範囲を求め、`POST /api/selection` に描いている結果のタスク番号と一緒に送る。UI のサーバーは、結果の manifest（`AxisGrid`、水準、軸の列）から、そのパネルの facet の水準と x・y の列を求める。
     - 選択の層は、描いている結果の spec に、その結果の範囲と水準を `View` として付け、選択の条件で絞って、組ごとに順に集約する（`selection_only`。水準の段と代表行の段は飛ばす）。系列ごとの PNG を描いている結果と同じ形で書き、画面は結果の画像を不透明度 0.25 に下げてから、選択の層を上に描く（`static/js/layers.js`）。非アクティブの系列は、選んだ行も凡例と同じ不透明度（`plot.legend.inactive_opacity`、既定 0.1）。
-    - 選んだ行の数は、選択の条件を満たす行の数（1 行は第 n 軸の組をまたいでも 1 回）。color、row、col が null の行は描かないので、選ばない（Color と symbol は「Show null rows」で描く欠損の水準の行を選ぶ。「欠損の水準」）。凡例で非アクティブの系列の行も選ぶ（表に出る）。ローカルフィルタで除いた行は選ばない（`selection_filter` がフィルタの条件も足す。2026-10-29）。
+    - 選んだ行の数は、選択の条件を満たす行の数（1 行は第 n 軸の組をまたいでも 1 回）。color、row、col が null の行は描かないので、選ばない（Color、symbol、Group X、Group Y、Wrap は「Show null rows」で描く欠損の水準の行を選ぶ。「欠損の水準」「facet の欠損のパネル」）。凡例で非アクティブの系列の行も選ぶ（表に出る）。ローカルフィルタで除いた行は選ばない（`selection_filter` がフィルタの条件も足す。2026-10-29）。
     - 選択の層が来るまでは、矩形のパネルだけ、矩形の中の今の画像を元の濃さで描く。
     - ズーム・パンや大きさの変更で新しい結果を描いたら、画面は同じ選択の層を新しい結果について作り直させる（サーバーが選択を受けた後は、パネルの番号ではなく、サーバーが持つ選択の水準と範囲で。ローカルフィルタでパネルの並びが変わるため。「ローカルフィルタ」）。集約の子は同時に 1 つしか走らず、新しいタスクは前のタスクを kill するので、表示範囲の集約が走っている間は選択を送らず、その結果を描いてから送る。新しいグラフを描くと、選択は消える。描画に失敗したときは、選択も図も残す（「描画に失敗した D&D の取り消し」。2026-11-08、Issue #101）。
     - 解除：矩形の外をクリック（plotly 4 は範囲の無い `plotly_selected` を出す）、ダブルクリック（`plotly_deselect`）、グラフの X と Y を外したとき。
@@ -792,7 +792,7 @@ plotly との分担：plotly.js はそのまま埋め込み、軸、ズーム・
 - 条件は `Encoding` ではなく `ScatterSpec.filters` に入れる。画面は、図・表示範囲・大きさの変更の要求（`POST /api/plot`、`/api/view`、`/api/overview`）のたびに、いまの条件を `filters` として付けて送る。UI のサーバーは条件を状態として持たない。形を確かめて（`ddviz.server.plan.parse_filters`。合わなければ 400）、spec に入れる。結果の manifest の spec に条件が残るので、その結果の範囲選択と表は、何もしなくてもその結果の条件に従う。
 - 連続軸の範囲は、絞った行に合わせる（2026-11-16 から。下の「フィルタ後の軸範囲と軸範囲の固定」。それまでは絞る前のまま残していた）。カテゴリ軸の範囲は、絞る前のまま残す。色の水準（凡例の系列）は、2026-11-13 から Color 欄の右クリックの設定「フィルタで除外された水準も凡例に残す」で選ぶ（Issue #124。下の「Color の水準とフィルタ」）。オンなら絞る前のまま残し、凡例では行の無い系列を灰色にして「（行なし）」と添える（結果に画像が無い系列。表示範囲に行が無いときも同じ）。理由：色が跳ねないので、条件を変えた前後を比べやすい。オフ（既定）なら、カテゴリの Color の水準はフィルタ後の行のものになる。Color 以外の水準（オンの Color も）は、全行から求める段（levels）で決まり、この段にはフィルタを掛けない。そのため、条件を変えたときは全体図の水準を使い回し、levels の段を飛ばせる（`POST /api/overview` と同じ経路。1 億行で約 1 秒速い）。連続軸の自動範囲は、levels の段とは別の走査でフィルタ後の行から求める。比べた案（2026-10-29）：水準は残し、軸は絞った行に合わせる。行の無い系列とパネルを消す。それまで（2026-10-29〜11-13）は、Color の水準も常に絞る前のまま残していた。
 - 絞り込みで行が無くなった facet（Group X / Group Y）の水準は、パネルごと消す（2026-10-29 ユーザー要望。計測は「facet の水準を求める段」）。残った水準は全行の水準の順に並べ、パネルの大きさは残ったパネルの数で決める。理由：はじめは facet のパネルも残していたが、色を固定したいという要望を超えていた。行の無いパネルは空の枠が並ぶだけで、ほかのパネルを小さくする。
-  - 段：フィルタがあり、Group X か Group Y に列があるときだけ、levels の段の後に facets の段を足す（`ddviz.compute.aggregate._facet_levels`）。facet の列とフィルタの列だけを読み、facet の列が null でなくフィルタの条件に合う行を、facet の列で `group_by` する。levels の段とは別の問い合わせにする（同じ問い合わせにフィルタを足すと膨らむため。下の「worker での掛け方」）。1 億行で約 0.5 秒、ピークは子のピークを超えない。
+  - 段：フィルタがあり、Group X か Group Y に列があるときだけ、levels の段の後に facets の段を足す（`ddviz.compute.aggregate._facet_levels`）。facet の列とフィルタの列だけを読み、facet の列が null でなく（数値の区間の列は有限）フィルタの条件に合う行を、facet の列で `group_by` する。欠損を描く facet の役割（`null_roles` の `row` / `col`）では欠損の行も通して欠損の水準に数え、フィルタに合う行に欠損があるときだけ欠損のパネルを残す（2026-11-18。Issue #274。「facet の欠損のパネル」）。levels の段とは別の問い合わせにする（同じ問い合わせにフィルタを足すと膨らむため。下の「worker での掛け方」）。1 億行で約 0.5 秒、ピークは子のピークを超えない。
   - 行のある水準は、facet の列とフィルタの列だけで決める。x、y が null の行や、color が null の行しか残らない水準は、空のパネルとして残る（読む列を増やさないため）。条件に合う行が 1 行も無いときは、全部のパネルを空で残す（パネルが 0 枚の図は作れないため）。
   - 結果は、描いた水準（`Aggregation.levels`。row と col は残った水準）と、全行の水準（`all_levels`）の両方を manifest に持つ。ズーム・大きさの変更・条件の変更は、全体図の `all_levels` を `View.levels` に使い回す。条件が全体図と同じなら、全体図の row と col の水準も `View.facets` に渡して facets の段を飛ばす。条件が違えば facets の段だけを走らせる（levels の段は飛ばす）。範囲選択の層は、描いている結果の水準をそのまま使う。
   - 条件を変えてパネルが変わると、図が変わるので `Plotly.react` で描き直す（「画像の層」。同じ図かどうかは軸と注記まで比べている）。
@@ -930,7 +930,7 @@ plotly との分担：plotly.js はそのまま埋め込み、軸、ズーム・
 - 区間（`ddviz.compute.cuts`）：区切り `[b0, ..., bk]` で、`[b0, b1)`、…、`[b(k-1), bk]`（最後だけ閉じる）。水準の名前はこの表記で、区切りは見分けられる最小の有効桁（3 桁から）で書く。値ごとの水準は値そのもの。区切りは、ローカルフィルタ後の行で求める（Color は下の「フィルタ後の色のスケールと固定」、Group X・Group Y・Wrap・Symbol は「フィルタ後の区間と固定」。2026-11-17 までは、Group X・Group Y・Wrap・Symbol は全行の有限な値から全体図の levels の段で 1 回だけ求め、条件を変えても使い回していた）。ズーム・大きさの変更・範囲選択では、同じフィルタの区切りを使い回す（`View.cuts`）。
   - 行数で等分：有限な値を 1 回並べ替えて、分位点の位置の行を取り出す（正確な分位点。同じ値で区切りが重なれば 1 つにまとめ、区間は減る）。値の幅で等分：有限な最小と最大の間を等分する。
   - 値の種類の判定は、先に `approx_n_unique` で見積もり、10 個以下に見えるときだけ値を列挙する（値がすべて違う列を列挙しないため）。
-- 行の扱い：数値の Color、Group X、Group Y の列が null か有限でない（NaN、±inf）行は描かない（カテゴリの列が null の行と同じ）。ただし Color と symbol は「Show null rows」が true なら null と NaN の行を欠損の水準として描く（±inf は描かない。「欠損の水準」）。範囲選択の条件は、facet の区間の条件（`ddviz.compute.cuts.in_level`）になる。ローカルフィルタで行の無くなった区間のパネルは消える（「ローカルフィルタ」）。
+- 行の扱い：数値の Color、Group X、Group Y の列が null か有限でない（NaN、±inf）行は描かない（カテゴリの列が null の行と同じ）。ただし Color、symbol、Group X、Group Y（と Wrap）は「Show null rows」が true なら null と NaN の行を欠損の水準として描く（±inf は描かない。「欠損の水準」「facet の欠損のパネル」）。範囲選択の条件は、facet の区間の条件（`ddviz.compute.cuts.in_level`）になる。ローカルフィルタで行の無くなった区間のパネルは消える（「ローカルフィルタ」）。
 - 画面の色の付け方（`static/js/colorscale.js`）：グラデーションの画像は、代表行の値をローカルフィルタ後の行の有限な最小〜最大（下の「フィルタ後の色のスケールと固定」）で 1〜255 の灰色にした 8 ビットのパレット PNG（0 は空のピクセル）で送る（`ddviz.compute.png.encode_levels`）。画面は灰色をカラーセットの色に置き換えてから描く。区間の画像は今までどおり系列ごとのマスクで、画面がカラーセットの色で塗る。カラーセットや向きを変えると、全体図・表示中の結果・選択の層の画像を取り直して塗り直す（サーバーにファイルが残っているので集約は要らない）。ホバーのラベルの色も、グラデーションでは代表行の値の色にする。
 - 比べた案：
   - Color の既定を区間（行数で 5 等分）にする：凡例と層の仕組みをそのまま使えて作りが小さい。ユーザーは連続を既定に選び、区間をメニューに置くことにした。
@@ -1214,7 +1214,7 @@ X / Y のカテゴリの軸の水準の上限を Color などの上限から分�
 
 - 理由：それまでは文字列の辞書順で、`1_`, `10_`, `2_` と並んでいた（Issue #32）。フォルダのファイルの順（「入力がフォルダのとき」）と同じ規則にそろえ、キーは `ddviz.shared.natural.natural_key` 1 つを使う（ファイルの順は、パスの部分ごとにこのキーを並べた `ddviz.shared.inputs.path_key`）。
 - 並べるところ：集約の水準を数える段（`ddviz.compute.aggregate` の `_overview`）と、フィルタ欄の集計（`ddviz.compute.summary`）。図の凡例・パネル・帯・形の順や、絞り込みで残った facet の水準の順（「ローカルフィルタ」）は、この順を使い回す。
-- null の行は今までどおり並べる水準に入れない（Color と symbol の欠損の水準は、並べた水準の末尾に足す。「欠損の水準」）。数値・日時の列の区間の水準は区間の順のままで、この規則は掛からない（「数値の列の色と facet」）。
+- null の行は今までどおり並べる水準に入れない（Color、symbol、Group X、Group Y、Wrap の欠損の水準は、並べた水準の末尾に足す。「欠損の水準」）。数値・日時の列の区間の水準は区間の順のままで、この規則は掛からない（「数値の列の色と facet」）。
 - 数字の判定は Unicode の 10 進数字（`str.isdecimal`、正規表現の `\d` と同じ）。`²` のような上付き数字は文字として比べる（以前のファイルの順のキーは `isdigit` で判定していて、`²` を含む名前で例外になった）。数字の並びは `int` に直さず、先頭の 0 を除いた桁数と数字（ASCII に直した文字列）で比べる。理由：`int` は 4300 桁を超える文字列を断るので、そういう水準を持つ列で集約やフィルタの集計が失敗した（2026-11-01 のクロスレビューの指摘）。
 - 文字列として揃えた列（数値と文字列が混ざった列。「入力がフォルダのとき」）の `-1` や `1.5` も同じ規則で並ぶ（符号や小数点は文字として比べるので、数としての大小とは限らない）。
 - ホバーの非数値の列のラベル（`ddviz.compute.tasks.plot` の `_column_array`）は、ラベルの番号を引くための表で、画面に順が出ないので辞書順のまま。
@@ -1419,8 +1419,9 @@ Color と symbol の列が null（浮動小数点の NaN も同じ）の行を�
 
 - 操作：Color と Symbol の欄（ラベル、列のチップ、欄の余白）の右クリックで、チェック付きの `Show null rows` を出す（`static/js/zonemenu.js`。2026-11-13 に `nullmenu.js` から改名し、カテゴリの Color のときは「フィルタで除外された水準も凡例に残す」も出す。Issue #124）。欄に列があるときだけ出す。列の種類（カテゴリ、数値、日時）は問わない。メニューの閉じ方と画面端での位置は、ほかの右クリックメニューと同じ。
 - 設定：欄ごとの boolean で、どちらも既定 true（ユーザー判断：欠損のある行も既定で見せる）。列の差し替え・削除・移動・交換でも欄に残し、ページを読み直すと両方 true に戻る（保存しない）。切り替えは全体図を集約し直す（選択は解除）。以後のズーム・パン・大きさの変更・フィルタ・選択は、その結果の spec を引き継ぐ。
-- API：`POST /api/plot` の `show_null_rows: {"color": bool, "symbol": bool}`（`ddviz.server.models.ShowNullRows`）。オブジェクトや欄を省けば true。値は真偽値だけ（`StrictBool`。1 や "yes" も）で、ほかの型や知らない欄はリクエストの検証エラー（422）。変換層が `ScatterSpec.null_roles`（欠損を描く役割の一覧）にする（`ddviz.server.plan.scatter_spec`）。symbol だけのときも symbol 側の設定に従う（Color 側の設定は効かない。2026-11-08 までは symbol を Color に置き、symbol 側の設定を color の役割に移していた）。派生の spec（ズーム、大きさ、選択）は spec ごと引き継ぐ。
-- 描く行（`ddviz.compute.missing.drawn_conditions`）：役割ごとに条件を作る。カテゴリの列は null でない、数値の列（区間、グラデーション）は有限、に加えて、欠損を描く役割なら null と NaN も通す。±inf はいつも描かない。同じ列が複数の役割にあれば、すべての役割の条件を満たす行だけ描く（Color だけ true なら、同じ列の symbol が false で除く）。X / Y、Group X / Group Y、Wrap の欠損の除外と、ローカルフィルタの欠損の扱い（「ローカルフィルタ」の「欠損の行の選択」）は変えない。点、箱ひげ図、平滑線、カテゴリの軸の積み上げ、ホバー、範囲選択、選択の表、データの保存（`Drawn rows`）は、この同じ条件と水準を使う。
+  - 失敗したとき（2026-11-18 ユーザー判断。Issue #274）：切り替えた描画が失敗したら（オンにして欠損の水準で上限を超えるなど）、設定を切り替え前の値に戻し、図・凡例・選択・軸の範囲を保ってエラーを出す（「フィルタで除外された水準も凡例に残す」と同じ）。設定は `PlotOptions.saved` / `load` で `Builder` の関係する状態に入れ（`rollback` で戻る。欄のメニュー（`zonemenu.js`）が同じオブジェクトを持つので、その中に書き戻す）、`app.js` の `plotNullRows` は描画の結果が refused で、その間に別の切り替えが無いときにも戻す（ロールバックの無い失敗のため）。戻すのは設定だけで、そのための描き直しはしない。描ける配置でなければ、切り替えは `Builder` に commit して次の描画で使う。Color / Symbol / Group X / Group Y / Wrap のすべてに掛かる（それまでの Color / Symbol は戻さず、チェックが描かれた図と食い違った）。比べた案：戻さない（それまでの Color / Symbol の挙動）。
+- API：`POST /api/plot` の `show_null_rows: {"color": bool, "symbol": bool}`（`ddviz.server.models.ShowNullRows`。2026-11-18 に `row`・`col`・`wrap` を足した。「facet の欠損のパネル」）。オブジェクトや欄を省けば true。値は真偽値だけ（`StrictBool`。1 や "yes" も）で、ほかの型や知らない欄はリクエストの検証エラー（422）。変換層が `ScatterSpec.null_roles`（欠損を描く役割の一覧）にする（`ddviz.server.plan.scatter_spec`）。symbol だけのときも symbol 側の設定に従う（Color 側の設定は効かない。2026-11-08 までは symbol を Color に置き、symbol 側の設定を color の役割に移していた）。派生の spec（ズーム、大きさ、選択）は spec ごと引き継ぐ。
+- 描く行（`ddviz.compute.missing.drawn_conditions`）：役割ごとに条件を作る。カテゴリの列は null でない、数値の列（区間、グラデーション）は有限、に加えて、欠損を描く役割なら null と NaN も通す。±inf はいつも描かない。同じ列が複数の役割にあれば、すべての役割の条件を満たす行だけ描く（Color だけ true なら、同じ列の symbol が false で除く）。X / Y の欠損の除外と、ローカルフィルタの欠損の扱い（「ローカルフィルタ」の「欠損の行の選択」）は変えない。点、箱ひげ図、平滑線、カテゴリの軸の積み上げ、ホバー、範囲選択、選択の表、データの保存（`Drawn rows`）は、この同じ条件と水準を使う。
 - 水準：欠損の水準は、その列に null か NaN があり、設定が true のときだけ作り、並べた水準（区間、カテゴリの自然順）の末尾に足す（`ddviz.compute.aggregate` の `_overview`）。カテゴリの列は水準を数える集計の null の組から、数値の列は null か NaN があるかを数える問い合わせ（全体図の同じ `collect_all`）から分かる。区間の切り目、グラデーションの最小・最大は有限の値だけで決め、欠損を含めない。各行の水準の番号は `ddviz.compute.missing.role_index`（欠損なら末尾の番号）。
   - 識別：欠損の水準は内部名 `"\x00null"`（`ddviz.shared.missing.MISSING`）で持ち、表示名 `(null)` とは別にする。データの文字列 `(null)`、`None`、`nan`、空文字列はそれぞれ普通の水準のまま。データに内部名と同じ文字列があれば、取り違えないよう集約を断る。実データの `(null)` と欠損の水準が並ぶときは、凡例・ホバー・帯の目盛りで実データ側を `(null)（文字列）` と出す（`static/js/names.js` の `levelText`、`ddviz.shared.missing.shown_level`）。色・形・大きさの個別の設定も内部名で持つので、実データの `(null)` と別に保つ。
   - 上限：カテゴリの列で描く欠損の水準は、その列の上限（`plot.max_levels`。同じ列を X / Y にも置けば `plot.max_axis_levels` も）の 1 水準に数える（ちょうど上限の列に欠損が足されると上限のエラー）。フィルタ後の水準で判定するカテゴリの Color（Issue #124）では、フィルタの条件に合う行に欠損があるときだけ足し、上限に数える。
@@ -1432,6 +1433,22 @@ Color と symbol の列が null（浮動小数点の NaN も同じ）の行を�
   - false で描く行が無くなれば、今までどおりの空の表示。
 - 比べた案：データの欠損を文字列 `(null)` に置き換える（実データの `(null)` と混ざる）。欠損の水準を JSON の null で持つ（役割の列が無いときの `[None]` と全欠損のときの区別がつかない）。
 - 確かめたこと：`tests/compute/test_missing.py`（水準・条件の 4 通りと同じ列の 2 役割・区間・グラデーション・全欠損・上限・選択の表）、`tests/server/test_app.py` と `test_plan.py`（API の既定・型・symbol だけのときの設定）、`tests/e2e/test_nulls.py`（右クリックでの切り替え、欄の移動での保持、凡例の切り替えと色の変更、カラーバーの下の項目）。
+
+### facet の欠損のパネル（2026-11-18 ユーザー判断・実装。Issue #274）
+
+Group X / Group Y / Wrap の列が欠損（null。数値・日時の区間の列は NaN も）の行を、末尾の `(null)` のパネルとして描く。規則は Color / symbol の「欠損の水準」と同じ（`ddviz.compute.missing.is_missing`、`drawn_conditions`、`role_index`）。±inf は今までどおり描かない。
+
+- 設定：欄ごとの boolean で、3 つとも既定 true（ユーザー判断：欠損の行を既定で見せ、隠したいときも切り替えられる）。Color / Symbol と同じく、列の差し替え・削除・移動・交換でも欄に残り、ページを読み直すと true に戻る（保存しない。`static/js/plotoptions.js` の `PlotOptions.showNullRows` の `row` / `col` / `wrap`）。切り替えると全体図を集約し直す（選択は解除）。失敗したら設定を戻す（「欠損の水準」の「失敗したとき」。Wrap のフォームが開いていればチェックも戻る：`wrapmenu.js` の `setWrapNullRows`）。
+- 操作：
+  - Group X / Group Y：欄（ラベル、チップ、余白）の右クリックで、Color / Symbol と同じメニュー（`static/js/zonemenu.js` の `NULL_ROLES`）にチェック付きの `Show null rows` を出す。欄に列があるときだけ開く。「フィルタで除外された水準も凡例に残す」は Color だけのまま。
+  - Wrap：右クリックのフォーム（`static/js/wrapmenu.js`）の見出し「1 行のパネル数」の上にチェックボックス `Show null rows` を足す。切り替えた時点で集約し直し、フォームは閉じない（適用ボタンを待たない。ユーザー判断：Color / Symbol のメニューと同じ即時の動きで、右クリックの入口は 1 つのまま）。パネル数の下書きは残る。
+- API：`POST /api/plot` の `show_null_rows` に `row`、`col`、`wrap` を足した（`ddviz.server.models.ShowNullRows`。省けば true、`StrictBool`、知らないキーは 422）。`ddviz.server.plan.scatter_spec` は、列があり設定が true の役割を `ScatterSpec.null_roles` に入れる。Wrap の列は spec の `col` に入り、`show_null_rows["wrap"]` だけで決める（`show_null_rows["col"]` は効かない）。
+- 水準・パネル：欠損の水準（`MISSING`）は、その列に欠損があり設定が true のときだけ、並べた水準（自然順、または区間の順）の末尾に足す（`_overview` の既存の処理）。パネルは最後の列（Group X）・最後の行（Group Y）・Wrap の最後のセル。カテゴリの列では上限（`plot.max_levels`）の 1 水準に数え、数値・日時の区間の数（5）には数えない（区間の外の末尾の水準）。区切りは有限の値だけで決め、フィルタ後の区間（Issue #265）でも欠損の水準は末尾に残す（`_scaled`）。
+- 見出し：`(null)`。実データの文字列 `(null)` と欠損のパネルが並ぶときは、実データ側を `(null)（文字列）` と出す。facet の見出しはサーバーが作るので（`ddviz.server.figure._facet_labels`）、`ddviz.shared.missing.shown_level` を通す（Issue の時点では `app.js` の `levelText` と書いていたが、見出しはサーバー側だった）。ホバーの facet の列の値は、null をもともと `(null)` と出す（`static/js/hover.js` の `formatValue`）。
+- ローカルフィルタ（`ddviz.compute.aggregate._facet_levels`）：欠損を描く役割では欠損の行も通して欠損の水準に数え、フィルタに合う行に欠損があるときだけ欠損のパネルを残す。フィルタの (null) のチェックを外せば欠損のパネルは消える。
+- 範囲選択（`ddviz.compute.selection._cell_conditions`）：欠損のパネルで選んだときは、そのパネルの条件を「列が欠損」（`is_missing`）にする（文字列の一致や区間の条件ではない）。
+- 描く行：`drawn_conditions` が `row` / `col` も `null_roles` を見るので、点・箱ひげ図・平滑線・折れ線・カテゴリの軸の積み上げ・ホバー・範囲選択・選択の表・データの保存（`Drawn rows`）は同じ条件に従う。false なら今までどおり欠損の行を描かない。
+- 確かめたこと（2026-11-18）：`tests/compute/test_missing.py`（カテゴリの Group X / Group Y / Wrap と数値の Group X / Group Y で、`null_roles` に役割があれば水準の末尾が `MISSING` で欠損の行がそのパネルに入り、無ければ除かれること、±inf を描かないこと、上限のエラー、フィルタで欠損のパネルが残る・消えること、欠損のパネルの範囲選択がそのパネルの欠損の行だけを選ぶこと）、`tests/server/test_plan.py` と `test_app.py`（既定 true、false での除外、Wrap は `wrap` の設定だけが効くこと、非 bool と知らないキーで 422）、`tests/server/test_figure.py`（見出しの `(null)` と `(null)（文字列）`）、Chrome の E2E `tests/e2e/test_nulls.py`（Group X / Group Y の欄の右クリックでの切り替えで `(null)` のパネルが出入りすること、Wrap のフォームのチェックで即座に集約し直しフォームが開いたままのこと、欄の移動で設定が残ること、`plot.max_levels` を超える切り替えが失敗すると Color・Group X・Wrap の設定が戻り図が保たれること）。
 
 ### カテゴリの軸の点の重なり（2026-11-05 ユーザー判断・実装。Issue #86。計測は「カテゴリの軸の点の重なりの集約」）
 
