@@ -2,7 +2,7 @@
 // resize, hover, select rows with a box, and filter rows.
 import { decorate } from "./axisdialog.js";
 import { AxisControls } from "./axiscontrols.js";
-import { AxisRanges, autoRanges, axisColumns, lockable, movedAxes } from "./axisranges.js";
+import { AxisRanges, autoRanges, axisColumns, movedAxes } from "./axisranges.js";
 import { axisKey } from "./axiskey.js";
 import { toValues } from "./axisscale.js";
 import { bandTickUpdate, withBandTicks } from "./bandticks.js";
@@ -122,7 +122,7 @@ const STAGES = {
   ranges: "フィルタ後の軸の範囲を調べ中…",
   scale: "フィルタ後の色の範囲を調べ中…",
   cuts: "フィルタ後の区間を調べ中…",
-  colors: "フィルタ後の Color の水準を調べ中…",
+  filtered_levels: "フィルタ後の水準を調べ中…",
   facets: "パネルの水準を調べ中…",
   boxes: "箱ひげを計算中…",
   smooth: "平滑化を計算中…",
@@ -634,8 +634,10 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     axis_scales: axes.scales.request(encoding),
     // Under the lock, the color scale shown (`shownScale`) stays while the color does.
     color_scale: axisRanges.carriedColorScale(shownScale(), encoding.color, options.colorBins),
-    // So do the cuts of a numeric symbol, row or col column on its role.
+    // So do the cuts of a numeric symbol, row or col column on its role,
+    // and the levels of a categorical axis column on its role.
     cuts: axisRanges.carriedCuts(shownScale(), encoding),
+    axis_levels: axisRanges.carriedAxisLevels(shownScale(), encoding),
   };
   // The filter pane's state of these conditions, which the pane goes back to
   // once the result is drawn (`RestorePoint`).
@@ -718,7 +720,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   // aggregated, or the lock gone off, which drops the color scale and the
   // cuts kept.
   if (filtersKey(meta.filters) !== filtersKey(filters)) applyFilters();
-  else if ((meta.color.kept || meta.cuts_kept) && !axisRanges.frozen) requestOverview();
+  else if (keptByLock(meta) && !axisRanges.frozen) requestOverview();
   else if (!sameSize(stageSize(), size)) onResize();
   else boxSelection.follow();
   return meta;
@@ -997,6 +999,7 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
           filters,
           color_scale: axisRanges.colorScale(shownScale()),
           cuts: axisRanges.cuts(shownScale()),
+          axis_levels: axisRanges.axisLevels(shownScale()),
         }),
       });
     } catch (error) {
@@ -1139,8 +1142,8 @@ async function requestView({ x: xRanges, y: yRanges }, { onFailed = null } = {})
 
 
 // Tells of a failed view or overview (the latest request), whose answer is
-// `text`. One that the color levels of its filter refused
-// (`ddviz.compute.aggregate.FilteredColorLevelsError`) leaves the figure, the
+// `text`. One that the levels of its filter refused
+// (`ddviz.shared.scatter.FilteredLevelsError`) leaves the figure, the
 // legend and the selection drawn, and puts the filter pane back to the
 // conditions of the result drawn last (`RestorePoint`), without asking for
 // anything; but when the axes were moved meanwhile, or the result shown is
@@ -1151,7 +1154,7 @@ function viewFailed(text) {
   statusLine.error(errorText(text));
   let refused = false;
   try {
-    refused = JSON.parse(text).error === "filtered_color_levels";
+    refused = JSON.parse(text).error === "filtered_levels";
   } catch {
     // Not the server's JSON: no filter to go back from.
   }
@@ -1237,25 +1240,32 @@ function shownScale() {
   return legend.meta;
 }
 
-// Shows the lock as it is: pressed while on, and of use with a continuous
-// axis or a numeric color drawn (`lockable`).
+// Whether a result was drawn with something the lock kept, not that of its
+// filter: a color scale, cuts or levels of categorical axes.
+function keptByLock(meta) {
+  return Boolean(meta.color.kept || meta.cuts_kept || meta.axis_levels_kept);
+}
+
+// Shows the lock as it is: pressed while on, and of use with a figure drawn,
+// whose every axis is continuous or categorical (`AxisRanges`).
 function showFreeze() {
   const on = axisRanges.frozen;
   freezeButton.setAttribute("aria-pressed", String(on));
   freezeButton.title = on ? "軸と色の範囲の固定を解除して自動調整する" : "軸と色の範囲を固定する";
-  freezeButton.disabled = !overview || !lockable(overview.meta);
+  freezeButton.disabled = !overview;
 }
 
 // Turns the lock on, which keeps the ranges shown now, or off, which takes
 // every continuous axis back to the automatic ranges of the filter at once
-// (those set by hand too); a categorical axis set by hand keeps its range.
+// (those set by hand too); a categorical axis set by hand keeps its range
+// unless the figure draws levels kept (`AxisRanges.setFrozen`).
 // On while a result is waited for (a new filter's, whose axes not kept
 // would take its automatic ranges), the shown ranges are asked for again,
 // so that the answer of the older request does not move them. Off
 // aggregates the overview of the filter unless it is drawn, or the view of
-// the categorical ranges kept; a figure drawn with a color scale or cuts
-// kept (`meta.color.kept`, `meta.cuts_kept`), not those of its filter, is
-// aggregated again too. A
+// the categorical ranges kept; a figure drawn with a color scale, cuts or
+// axis levels kept (`keptByLock`), not those of its filter, is aggregated
+// again too. A
 // failure puts the lock and the axes set by hand back, with the figure as
 // it was.
 function setFrozen(on) {
@@ -1264,7 +1274,7 @@ function setFrozen(on) {
   axisRanges.setFrozen(on, current);
   showFreeze();
   if (!overview || !current || !gd._fullLayout) return;
-  const ranges = axisRanges.filterRanges(current, shownRanges(gd, current));
+  const ranges = axisRanges.heldRanges(current, shownRanges(gd, current));
   if (on) {
     if (waiting && !plotting) {
       hideHover();
@@ -1290,7 +1300,7 @@ function setFrozen(on) {
     requestView(ranges, { onFailed });
     return;
   }
-  const kept = [overview.meta, current, shownScale()].some((meta) => meta?.color.kept || meta?.cuts_kept);
+  const kept = [overview.meta, current, shownScale()].some((meta) => meta && keptByLock(meta));
   if (filtersKey(overview.meta.filters) === filtersKey(filters) && !kept) {
     showOverview();
     return;
@@ -1436,18 +1446,21 @@ async function onResizeSettled() {
 new ResizeObserver(onResize).observe(stage);
 
 // A new filter aggregates the figure again. The axes kept (set by hand, or
-// continuous under the lock: `AxisRanges.holds`) keep their shown ranges;
+// under the lock: `AxisRanges.holdsThroughFilter`) keep their shown ranges;
 // the others take the automatic ranges of the filter, which the server finds
 // (`ddviz.compute.aggregate.Aggregation.x_auto`). With no axis kept, that is
 // the overview of the filter; else a view, and the overview keeps its old
-// filter until it is shown again. The levels stay those of every row
+// filter until it is shown again. The levels of the roles and of the
+// categorical axes are those of the rows of the filter, but for those kept
 // (`ddviz.compute.aggregate.aggregate`).
 function applyFilters() {
   clearTimeout(resizeTimer);
   // A plot in flight checks the filter when its result comes.
   if (!overview || plotting === generation) return;
   hideHover();
-  const ranges = axisRanges.filterRanges(current, shownRanges(gd, current));
+  const ranges = axisRanges.heldRanges(current, shownRanges(gd, current), { filter: true });
+  // A categorical axis set by hand takes the bands of the new filter.
+  if (!axisRanges.frozen) axisRanges.forgetCategorical(current);
   if ([...ranges.x, ...ranges.y].every((range) => range === null)) requestOverview();
   else requestView(ranges);
 }
@@ -1667,21 +1680,21 @@ attachZoneMenu(builderRoot, {
   onNullRows: () => {
     if (plottedEncoding) plot(plottedEncoding);
   },
-  categoricalColor: () => {
-    const [column] = builder.placed("color");
+  categorical: (role) => {
+    const [column] = builder.placed(role);
     return column !== undefined && !builder.numeric.get(column);
   },
-  keepLevels: () => options.keepColorLevels,
-  onKeepLevels: async () => {
-    const before = options.keepColorLevels;
-    options.keepColorLevels = !before;
+  keepLevels: (role) => options.keepLevels[role],
+  onKeepLevels: async (role) => {
+    const before = options.keepLevels[role];
+    options.keepLevels[role] = !before;
     if (!plottedEncoding) {
       builder.commit();
       return;
     }
-    const toggled = options.keepColorLevels;
-    if ((await plot(plottedEncoding)) === "refused" && options.keepColorLevels === toggled) {
-      options.keepColorLevels = before;
+    const toggled = options.keepLevels[role];
+    if ((await plot(plottedEncoding)) === "refused" && options.keepLevels[role] === toggled) {
+      options.keepLevels[role] = before;
     }
   },
 });

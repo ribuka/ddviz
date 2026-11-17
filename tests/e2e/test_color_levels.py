@@ -35,7 +35,7 @@ LEGEND_NAMES = "#legend .legend-item .legend-name"
 SWATCHES = """() => [...document.querySelectorAll('#legend .legend-item .swatch')].map(
   (s) => getComputedStyle(s).backgroundColor)"""
 REFUSED = (
-    "エラー: Color の水準がフィルタの後も上限の 100 個を超えるため描けない（g）。"
+    "エラー: 水準がフィルタの後も上限を超えるため描けない（Color の g は上限 100 個）。"
     "フィルタで水準を絞るか、別の列を使う"
 )
 
@@ -162,7 +162,7 @@ def settle(page: Page) -> None:
 
 
 def test_the_levels_of_the_filter_and_the_menu_item(app_page: Page) -> None:
-    """A column of 150 levels filtered to 10 colors by those 10; the item is on Color's menu for a categorical column alone, and keeping the 150 is refused, the figure and the axes kept."""
+    """A column of 150 levels filtered to 10 colors by those 10; the item is on the Color and Symbol menus for a categorical column alone, and keeping the 150 is refused, the figure and the axes kept."""
     page = app_page
     errors = watch_errors(page)
     expect(page.locator("#columns .column").filter(has_text="half")).to_be_visible()
@@ -173,11 +173,12 @@ def test_the_levels_of_the_filter_and_the_menu_item(app_page: Page) -> None:
     place(page, "g", "color")
     expect(page.locator(LEGEND_NAMES)).to_have_text([f"g{i}" for i in range(1, 11)])
 
-    # Symbol's menu has Show null rows alone.
+    # Symbol's menu has the item too, for its categorical column.
     place(page, "s", "symbol")
     page.locator('.zone[data-role="symbol"] .chip').click(button="right")
     expect(page.locator(NULL_ROWS)).to_be_visible()
-    expect(page.locator(KEEP)).to_have_count(0)
+    expect(page.locator(KEEP)).to_have_count(1)
+    expect(page.locator(KEEP)).not_to_have_class(re.compile(r"\bchecked\b"))
     page.keyboard.press("Escape")
     move(page, "symbol", "#columns")
     wait_idle(page)
@@ -353,7 +354,7 @@ def test_a_filter_past_the_limit_goes_back_to_the_last_drawn(app_page: Page) -> 
     with page.expect_response("**/api/overview") as refused:
         box(page, "half", "hi").check()
     assert refused.value.status == 400
-    assert refused.value.json()["error"] == "filtered_color_levels"
+    assert refused.value.json()["error"] == "filtered_levels"
     expect(status).to_have_text(REFUSED)
     expect_lo(page)
     settle(page)
@@ -463,7 +464,7 @@ def test_an_older_refusal_after_a_newer_success_changes_nothing(app_page: Page) 
         body=json.dumps(
             {
                 "detail": REFUSED.removeprefix("エラー: "),
-                "error": "filtered_color_levels",
+                "error": "filtered_levels",
             }
         ),
     )

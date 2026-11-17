@@ -31,6 +31,7 @@ from ddviz.server.hover import HoverIndex
 from ddviz.server.models import PlotRequest, SizeRequest, ViewRequest
 from ddviz.server.plan import (
     FACET_BINS,
+    axis_level_columns,
     color_kind,
     cut_roles,
     drawable,
@@ -39,6 +40,7 @@ from ddviz.server.plan import (
     undrawn,
 )
 from ddviz.server.plotoptions import (
+    parse_axis_levels,
     parse_color_bins,
     parse_color_scale,
     parse_cuts,
@@ -57,17 +59,17 @@ from ddviz.server.source import Source
 from ddviz.shared.axisscale import NoPositiveValuesError, axis_positions
 from ddviz.shared.manifest import IMAGES
 from ddviz.shared.palette import DEFAULT_COLORS
-from ddviz.shared.scatter import FilteredColorLevelsError, ScatterSpec
+from ddviz.shared.scatter import ONE_BAND, FilteredLevelsError, ScatterSpec
 from ddviz.shared.tasks import PlotTask
 
 
-class _ColorLevelsRefused(Exception):
-    """A plot task refused for too many color levels among the rows of the filter (`ddviz.compute.aggregate.FilteredColorLevelsError`)."""
+class _LevelsRefused(Exception):
+    """A plot task refused for too many levels among the rows of the filter (`ddviz.shared.scatter.FilteredLevelsError`)."""
 
     def response(self) -> JSONResponse:
         """Return the 400 that tells the page so, by its ``error``."""
         return JSONResponse(
-            {"detail": str(self), "error": "filtered_color_levels"}, status_code=400
+            {"detail": str(self), "error": "filtered_levels"}, status_code=400
         )
 
 
@@ -125,11 +127,11 @@ def plot_router(
         if end.type == "error" and (end.error or "").startswith(refused):
             # A log axis without a positive value: the page keeps its plot.
             raise HTTPException(400, end.error.removeprefix(refused))
-        too_many = f"{FilteredColorLevelsError.__name__}: "
+        too_many = f"{FilteredLevelsError.__name__}: "
         if end.type == "error" and (end.error or "").startswith(too_many):
-            # Too many color levels among the rows of the filter: the page
-            # keeps its plot and goes back to the filter it was drawn with.
-            raise _ColorLevelsRefused(end.error.removeprefix(too_many))
+            # Too many levels among the rows of the filter: the page keeps
+            # its plot and goes back to the filter it was drawn with.
+            raise _LevelsRefused(end.error.removeprefix(too_many))
         ensure_done(end)
         timing = {"task_seconds": time.perf_counter() - started}
         await asyncio.to_thread(source.touch, spec.hover)
@@ -194,6 +196,11 @@ def plot_router(
                 [r for r in manifest.spec.binned if r != "color"],
                 FACET_BINS,
             )
+            axis_levels = parse_axis_levels(
+                request.axis_levels,
+                [c for c in manifest.spec.categorical if c != ONE_BAND],
+                manifest.spec.max_axis_levels,
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         filters = await source.filters(request.filters)
@@ -216,6 +223,7 @@ def plot_router(
                 known=known,
                 color_scale=color_scale,
                 cuts=cuts,
+                axis_levels=axis_levels,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -233,7 +241,7 @@ def plot_router(
             return figure(shown, {"task_seconds": 0.0}, max_hover_bytes)
         try:
             index, timing = await run_again(spec, max_hover_bytes)
-        except _ColorLevelsRefused as error:
+        except _LevelsRefused as error:
             return error.response()
         if index is None:
             return JSONResponse({"cancelled": True}, status_code=409)
@@ -281,6 +289,11 @@ def plot_router(
                 max_levels,
             )
             cuts = parse_cuts(request.cuts, cut_roles(encoding, numeric), FACET_BINS)
+            axis_levels = parse_axis_levels(
+                request.axis_levels,
+                axis_level_columns(encoding, numeric),
+                current.plot.max_axis_levels,
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         # The page refuses edits while converting; a plot now would kill the conversion.
@@ -316,13 +329,19 @@ def plot_router(
                 line_width=line_width,
                 line_aggregation=line_aggregation,
                 keep_unfiltered_color_levels=request.keep_unfiltered_color_levels,
+                keep_unfiltered_symbol_levels=request.keep_unfiltered_symbol_levels,
             )
-            spec = replace(spec, color_scale=color_scale, kept_cuts=cuts)
+            spec = replace(
+                spec,
+                color_scale=color_scale,
+                kept_cuts=cuts,
+                kept_axis_levels=axis_levels,
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         try:
             index, timing = await run_plot(spec, current.hover.max_temp_bytes)
-        except _ColorLevelsRefused as error:
+        except _LevelsRefused as error:
             return error.response()
         if index is not None and mine != latest:
             drop(index)

@@ -1,22 +1,24 @@
 // Which axis ranges the page keeps when the filter or the graph changes
-// (Issue #228): the lock of the continuous axes' ranges, and the axes set by
-// hand (a zoom, a pan or the range of the axis dialog). An axis not kept
-// takes the automatic range of the filter (the result's `x_auto`, `y_auto`:
-// `ddviz.compute.aggregate.Aggregation.x_auto`).
+// (Issue #228): the lock of the axes' ranges, and the axes set by hand (a
+// zoom, a pan or the range of the axis dialog). An axis not kept takes the
+// automatic range of the filter (the result's `x_auto`, `y_auto`:
+// `ddviz.compute.aggregate.Aggregation.x_auto`). A categorical axis has the
+// levels of the rows of the filter as its bands; the lock keeps those drawn
+// (`axis_levels`), so that its range keeps its meaning.
 import { axisKey } from "./axiskey.js";
 import { axisCoordinates, sameRange } from "./ranges.js";
 
 // Whether the axis column `index` of `role` of a result is continuous: not
-// categorical, nor the one band of a figure without x. The lock acts on
-// these only.
+// categorical, nor the one band of a figure without x.
 export function isContinuous(meta, role, index) {
   const column = meta[`${role}_columns`][index];
   return !(role === "x" && meta.one_band) && !meta.axis_levels?.[column];
 }
 
-// Whether a result has a continuous axis: the lock is of no use without one.
-export function hasContinuous(meta) {
-  return ["x", "y"].some((role) => meta[`${role}_columns`].some((_, i) => isContinuous(meta, role, i)));
+// Whether the axis column `index` of `role` of a result is categorical: drawn
+// by its levels, in bands, but for the one band of a figure without x.
+export function isCategorical(meta, role, index) {
+  return !(role === "x" && meta.one_band) && !isContinuous(meta, role, index);
 }
 
 // Whether a result colors by a numeric column: a gradient or intervals,
@@ -32,10 +34,17 @@ export function hasCuts(meta) {
   return Object.keys(meta.cuts ?? {}).length > 0;
 }
 
-// Whether the lock is of use for a result: with a continuous axis, a
-// numeric color or a role cut into intervals.
-export function lockable(meta) {
-  return hasContinuous(meta) || hasNumericColor(meta) || hasCuts(meta);
+// Returns the levels a result draws of its categorical axis columns that
+// stay on their role among `columns` (`{x, y}`, lists of columns), by
+// column; null for none.
+function keptLevels(meta, columns) {
+  const kept = {};
+  for (const role of ["x", "y"]) {
+    meta[`${role}_columns`].forEach((column, i) => {
+      if (isCategorical(meta, role, i) && columns[role].includes(column)) kept[column] = meta.axis_levels[column];
+    });
+  }
+  return Object.keys(kept).length > 0 ? kept : null;
 }
 
 // The column of each role cut into intervals of a graph (an encoding):
@@ -46,7 +55,8 @@ function cutColumn(encoding, role) {
 
 // Returns the key of an axis column of a result: its role, its column and
 // what its coordinates mean (`axisCoordinates`). The same column moved to
-// the other role, or on a log axis instead of a linear one, is another axis.
+// the other role, on a log axis instead of a linear one, or with other
+// levels, is another axis.
 export function axisId(meta, role, index) {
   return JSON.stringify([role, meta[`${role}_columns`][index], axisCoordinates(meta, role, index)]);
 }
@@ -85,7 +95,8 @@ export function movedAxes(meta, event) {
 
 export class AxisRanges {
   constructor() {
-    // The lock: the continuous axes keep their shown ranges.
+    // The lock: the axes keep their shown ranges, and the categorical ones
+    // their levels.
     this.frozen = false;
     // The axes set by hand (`axisId`), which keep their ranges with the lock off.
     this.manual = new Set();
@@ -101,10 +112,28 @@ export class AxisRanges {
     return this.manual.has(axisId(meta, role, index));
   }
 
-  // Whether an axis column of a result keeps its shown range through a new
-  // filter or graph: set by hand, or continuous under the lock.
+  // Whether an axis column of a result keeps its shown range: set by hand,
+  // or under the lock.
   holds(meta, role, index) {
-    return this.byHand(meta, role, index) || (this.frozen && isContinuous(meta, role, index));
+    return this.byHand(meta, role, index) || this.frozen;
+  }
+
+  // Whether an axis column of a result keeps its shown range through a new
+  // filter: as `holds`, but a categorical one under the lock only, which
+  // keeps its levels. One set by hand takes the bands of the levels of the
+  // new filter, of which its range would mean other levels.
+  holdsThroughFilter(meta, role, index) {
+    return isCategorical(meta, role, index) ? this.frozen : this.holds(meta, role, index);
+  }
+
+  // Forgets the categorical axes of a result set by hand, which a new filter
+  // without the lock puts back to their automatic ranges (`holdsThroughFilter`).
+  forgetCategorical(meta) {
+    for (const role of ["x", "y"]) {
+      meta[`${role}_columns`].forEach((_, i) => {
+        if (isCategorical(meta, role, i)) this.manual.delete(axisId(meta, role, i));
+      });
+    }
   }
 
   // Puts every axis back to the automatic ranges (Reset axes), or the axis
@@ -115,9 +144,11 @@ export class AxisRanges {
   }
 
   // Turns the lock on or off. Off, no continuous axis keeps its range:
-  // those set by hand go back to the automatic ranges too; the categorical
-  // axes of result `meta` set by hand keep theirs, the lock being none of
-  // theirs. Without `meta` (no figure), every axis set by hand is forgotten.
+  // those set by hand go back to the automatic ranges too. The categorical
+  // axes of result `meta` set by hand keep theirs while it draws the levels
+  // of its filter; drawn with levels kept (`axis_levels_kept`), they go back
+  // to the bands of the filter's own levels. Without `meta` (no figure),
+  // every axis set by hand is forgotten.
   setFrozen(on, meta = null) {
     this.frozen = on;
     if (on) return;
@@ -127,11 +158,10 @@ export class AxisRanges {
     }
     for (const role of ["x", "y"]) {
       meta[`${role}_columns`].forEach((_, i) => {
-        if (isContinuous(meta, role, i)) this.manual.delete(axisId(meta, role, i));
+        if (isContinuous(meta, role, i) || meta.axis_levels_kept) this.manual.delete(axisId(meta, role, i));
       });
     }
   }
-
 
   // Forgets the axes set by hand that a new result `meta` does not have,
   // so that a column taken off and put back, moved or put on another scale
@@ -141,11 +171,13 @@ export class AxisRanges {
     for (const id of [...this.manual]) if (!ids.has(id)) this.manual.delete(id);
   }
 
-  // Returns the ranges to aggregate for a new filter, from the ranges shown
+  // Returns the ranges to aggregate again from the ranges shown
   // (`shownRanges`) of result `meta`: the shown range of each axis kept
-  // (`holds`), null for one to take the automatic range of the filter.
-  filterRanges(meta, shown) {
-    const pick = (role) => shown[role].map((range, i) => (this.holds(meta, role, i) ? range : null));
+  // (`holds`; `holdsThroughFilter` for a new `filter`), null for one to
+  // take the automatic range of the filter.
+  heldRanges(meta, shown, { filter = false } = {}) {
+    const keeps = (role, i) => (filter ? this.holdsThroughFilter(meta, role, i) : this.holds(meta, role, i));
+    const pick = (role) => shown[role].map((range, i) => (keeps(role, i) ? range : null));
     return { x: pick("x"), y: pick("y") };
   }
 
@@ -192,6 +224,24 @@ export class AxisRanges {
     if (old.color.kind !== kind) return null;
     if (bins && (old.color.bins?.n !== bins.n || old.color.bins?.by !== bins.by)) return null;
     return old.color.scale ?? null;
+  }
+
+  // Returns the levels of the categorical axis columns that a view or an
+  // overview of result `meta` keeps (`axis_levels` of `/api/view` and
+  // `/api/overview`): those drawn, under the lock; null for those of the
+  // filter.
+  axisLevels(meta) {
+    if (!this.frozen || !meta) return null;
+    return keptLevels(meta, { x: meta.x_columns, y: meta.y_columns });
+  }
+
+  // Returns the levels of the categorical axis columns that an edit of the
+  // graph keeps from the drawn result `old` (`axis_levels` of `/api/plot`):
+  // under the lock, those of each column that stays on its role, x or y, of
+  // the new graph (`encoding`); null when none stays.
+  carriedAxisLevels(old, encoding) {
+    if (!this.frozen || !old) return null;
+    return keptLevels(old, { x: encoding.x ?? [], y: encoding.y ?? [] });
   }
 
   // Returns the cuts that a view or an overview of result `meta` keeps

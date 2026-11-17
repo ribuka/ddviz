@@ -5,12 +5,13 @@
 //   null or NaN as a level of their own (`ddviz.shared.missing`). Each zone
 //   keeps its setting, true until changed, whatever column it holds; a reload
 //   sets both true again (`POST /api/plot`'s `show_null_rows`).
-// - "フィルタで除外された水準も凡例に残す", on the Color zone alone while it holds
-//   a categorical column: checked, the color levels are those of every row,
-//   the ones the local filter leaves without rows staying in the legend;
-//   unchecked (the default), they are those of the rows of the filter
-//   (`POST /api/plot`'s `keep_unfiltered_color_levels`). The page keeps it
-//   whatever column the zone holds, off again after a reload.
+// - "フィルタで除外された水準も凡例に残す", while the zone holds a categorical
+//   column: checked, its levels are those of every row, the ones the local
+//   filter leaves without rows staying in the legend; unchecked (the
+//   default), they are those of the rows of the filter (`POST /api/plot`'s
+//   `keep_unfiltered_color_levels` and `keep_unfiltered_symbol_levels`).
+//   Each zone keeps its setting whatever column it holds, off again after a
+//   reload.
 //
 // The menu closes and stays in the window as the other right-click menus
 // (smoothmenu.js).
@@ -38,10 +39,10 @@ function item(name, text, checked, pick) {
 // Attaches the menu to the zones `[data-role]` of `NULL_ROLES` in `root`.
 // `hasColumn(role)` tells whether a zone holds a column, `showNullRows` maps
 // each role to its setting and `onNullRows(role)` runs after one changed.
-// `categoricalColor()` tells whether the Color zone holds a categorical
-// column, `keepLevels()` returns the setting of keeping the levels left out
-// by the filter, and `onKeepLevels()` turns it the other way.
-export function attachZoneMenu(root, { hasColumn, showNullRows, onNullRows, categoricalColor, keepLevels, onKeepLevels }) {
+// `categorical(role)` tells whether a zone holds a categorical column,
+// `keepLevels(role)` returns its setting of keeping the levels left out by
+// the filter, and `onKeepLevels(role)` turns it the other way.
+export function attachZoneMenu(root, { hasColumn, showNullRows, onNullRows, categorical, keepLevels, onKeepLevels }) {
   for (const role of NULL_ROLES) {
     const zone = root.querySelector(`.zone[data-role="${role}"]`);
     zone.addEventListener("contextmenu", (event) => {
@@ -56,8 +57,8 @@ export function attachZoneMenu(root, { hasColumn, showNullRows, onNullRows, cate
           onNullRows(role);
         }),
       );
-      if (role === "color" && categoricalColor()) {
-        menu.append(item("keep-levels", KEEP_LEVELS_TEXT, keepLevels(), onKeepLevels));
+      if (categorical(role)) {
+        menu.append(item("keep-levels", KEEP_LEVELS_TEXT, keepLevels(role), () => onKeepLevels(role)));
       }
       popup.open(menu, event);
     });

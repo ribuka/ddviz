@@ -121,15 +121,15 @@ def test_intervals_follow_the_filter_and_the_lock_keeps_them_through_edits(
     assert errors == []
 
 
-def test_the_lock_is_of_use_with_a_numeric_color_alone(app_page: Page) -> None:
-    """Without a continuous axis, a numeric color makes the lock usable; a categorical one does not."""
+def test_the_lock_is_of_use_without_a_continuous_axis(app_page: Page) -> None:
+    """Without a continuous axis, the lock is usable with a categorical color (it keeps the axes' levels) as with a numeric one."""
     page = app_page
     errors = watch_errors(page)
     place(page, "g", "x")
     place(page, "g", "y")
     place(page, "g", "color")
     settle(page)
-    expect(page.locator(LOCK)).to_be_disabled()
+    expect(page.locator(LOCK)).to_be_enabled()
     place(page, "c", "color")
     settle(page)
     expect(page.locator(LOCK)).to_be_enabled()

@@ -8,6 +8,7 @@ import pytest
 
 from ddviz.server.plotoptions import (
     MAX_SAFE_INTEGER,
+    parse_axis_levels,
     parse_color_bins,
     parse_color_scale,
     parse_cuts,
@@ -321,3 +322,29 @@ def test_parse_cuts_refuses_another_form(raw: object) -> None:
     """Cuts of a role not cut, or not of the form of intervals, are refused naming ``cuts``."""
     with pytest.raises(ValueError, match="cuts"):
         parse_cuts(raw, ["col"], 5)
+
+
+def test_parse_axis_levels_takes_distinct_texts_of_the_categorical_axes() -> None:
+    """``axis_levels`` is null or a dict of a categorical axis column to its distinct texts, up to the limit; none kept is the filter's levels."""
+    assert parse_axis_levels(None, ["g"], 3) == {}
+    assert parse_axis_levels({"g": ["b", "a", ""]}, ["g", "h"], 3) == {
+        "g": ["b", "a", ""]
+    }
+    assert parse_axis_levels({"g": []}, ["g"], 3) == {}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"x": ["a"]},
+        ["a"],
+        {"g": "a"},
+        {"g": ["a", "a"]},
+        {"g": ["a", 1]},
+        {"g": ["a", "b", "c", "d"]},
+    ],
+)
+def test_parse_axis_levels_refuses_other_forms(raw: object) -> None:
+    """Another column, form, a repeated level or more levels than the limit are refused, naming ``axis_levels``."""
+    with pytest.raises(ValueError, match="axis_levels"):
+        parse_axis_levels(raw, ["g"], 3)

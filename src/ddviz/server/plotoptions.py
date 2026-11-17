@@ -221,6 +221,63 @@ def parse_cuts(raw: object, roles: Iterable[str], max_levels: int) -> dict[str, 
     }
 
 
+def parse_axis_levels(
+    raw: object, columns: Iterable[str], max_axis_levels: int
+) -> dict[str, list[str]]:
+    """Return the levels of the categorical axis columns the page keeps under the lock of the axes, checked against the spec they are for.
+
+    Parameters
+    ----------
+    raw : object
+        The ``axis_levels`` of the meta of a result (`ddviz.server.figure`):
+        a dict of a categorical x or y column to its levels, a list of
+        distinct texts; or None for the levels of the filter.
+    columns : iterable of str
+        The categorical x and y columns of the spec
+        (`ddviz.server.plan.axis_level_columns`). A column left out of
+        `raw` takes the levels of the filter.
+    max_axis_levels : int
+        Most levels of a categorical axis column (``plot.max_axis_levels``).
+
+    Returns
+    -------
+    dict of str to list of str
+        The levels by column (`ddviz.shared.scatter.ScatterSpec.kept_axis_levels`).
+
+    Raises
+    ------
+    ValueError
+        When `raw` is neither a dict nor None, has a column not in
+        `columns`, or levels that are not a list of at most
+        `max_axis_levels` distinct texts.
+    """
+    if raw is None:
+        return {}
+    columns = set(columns)
+    unknown = sorted(c for c in raw if c not in columns) if isinstance(raw, dict) else []
+    if not isinstance(raw, dict) or unknown:
+        raise ValueError(
+            "axis_levels is a dict of the categorical axis columns "
+            f"({sorted(columns)}) or null: {raw!r}"
+        )
+    out = {}
+    for column, levels in raw.items():
+        if (
+            not isinstance(levels, list)
+            or len(levels) > max_axis_levels
+            or not all(isinstance(v, str) for v in levels)
+            or len(set(levels)) != len(levels)
+        ):
+            raise ValueError(
+                f"axis_levels of {column} is a list of at most {max_axis_levels:,} "
+                "distinct texts"
+            )
+        # No level kept is the levels of the filter.
+        if levels:
+            out[column] = list(levels)
+    return out
+
+
 def parse_smoothing(raw: dict | None) -> Smoothing | None:
     """Return how the page asks to fit the smoothing lines, checked.
 

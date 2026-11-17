@@ -16,7 +16,7 @@ from ddviz.shared.manifest import PlotManifest
 from ddviz.shared.missing import MISSING
 from ddviz.shared.scatter import (
     Filter,
-    FilteredColorLevelsError,
+    FilteredLevelsError,
     ScatterSpec,
 )
 
@@ -103,10 +103,10 @@ def test_exactly_the_limit_draws_and_one_more_is_refused(tmp_path: Path) -> None
     """100 levels of the filter draw; 101 are refused with the message of the spec."""
     spec = _spec(tmp_path, _frame(), filters=[_first(100)])
     assert len(aggregate(spec).levels["color"]) == 100
-    with pytest.raises(FilteredColorLevelsError) as refused:
+    with pytest.raises(FilteredLevelsError) as refused:
         aggregate(replace(spec, filters=[_first(101)]))
     assert str(refused.value) == (
-        "Color の水準がフィルタの後も上限の 100 個を超えるため描けない（g）。"
+        "水準がフィルタの後も上限を超えるため描けない（Color の g は上限 100 個）。"
         "フィルタで水準を絞るか、別の列を使う"
     )
 
@@ -114,7 +114,7 @@ def test_exactly_the_limit_draws_and_one_more_is_refused(tmp_path: Path) -> None
 def test_the_limit_comes_from_the_spec(tmp_path: Path) -> None:
     """``max_levels`` sets the limit and its number in the message."""
     spec = _spec(tmp_path, _frame(), filters=[_first(4)], max_levels=3)
-    with pytest.raises(FilteredColorLevelsError, match="上限の 3 個を超える"):
+    with pytest.raises(FilteredLevelsError, match="g は上限 3 個"):
         aggregate(spec)
     assert len(aggregate(replace(spec, max_levels=4)).levels["color"]) == 4
 
@@ -147,7 +147,7 @@ def test_the_missing_level_counts_when_drawn(
         null_roles=null_roles,
     )
     if drawn is None:
-        with pytest.raises(FilteredColorLevelsError):
+        with pytest.raises(FilteredLevelsError):
             aggregate(spec)
         return
     levels = aggregate(spec).levels["color"]
@@ -195,18 +195,34 @@ def test_every_condition_of_the_filter_counts(tmp_path: Path) -> None:
     assert aggregate(spec).levels["color"] == [f"v{i + 1}" for i in range(5, 30)]
 
 
-@pytest.mark.parametrize(("role", "name"), [("symbol", "symbol"), ("col", "col")])
-def test_the_same_column_on_another_role_keeps_its_limit_over_every_row(
-    tmp_path: Path, role: str, name: str
+@pytest.mark.parametrize("role", ["symbol", "col"])
+def test_the_same_column_on_another_role_has_the_levels_of_the_filter(
+    tmp_path: Path, role: str
 ) -> None:
-    """``g`` on color and on symbol (or Group X) is refused by the other role's limit over every row, in its own words."""
+    """``g`` on color and on symbol (or Group X) has the 10 levels of the filter on both, though it has 150 over every row."""
     spec = _spec(tmp_path, _frame(), filters=[_first(10)], **{role: "g"})
+    agg = aggregate(spec)
+    assert agg.levels["color"] == agg.levels[role] == [f"v{i + 1}" for i in range(10)]
+
+
+def test_a_symbol_that_keeps_its_levels_has_its_limit_over_every_row(
+    tmp_path: Path,
+) -> None:
+    """``g`` on color and on a symbol that keeps its levels is refused by the symbol's limit over every row, in its own words."""
+    spec = _spec(
+        tmp_path,
+        _frame(),
+        filters=[_first(10)],
+        symbol="g",
+        keep_unfiltered_symbol_levels=True,
+    )
     with pytest.raises(ValueError) as refused:
         aggregate(spec)
-    assert not isinstance(refused.value, FilteredColorLevelsError)
+    assert not isinstance(refused.value, FilteredLevelsError)
     assert str(refused.value) == (
         "水準が上限を超えるため描けない（g は 150 個で、Color・Symbol・Group・Wrap の"
-        "上限は 100 個）。水準はフィルタの前の行から数えるため、別の列を使う"
+        "上限は 100 個）。水準はフィルタの前の行から数える設定のため、別の列を使うか、"
+        "「フィルタで除外された水準も凡例に残す」を外す"
     )
 
 
@@ -214,24 +230,24 @@ def test_the_reading_stops_once_past_the_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Read 100 rows at a time, the second slice passes 100 levels: no slice after it is read, and nothing is binned."""
-    monkeypatch.setattr(aggregate_module, "COLOR_ROWS_PER_PASS", 100)
+    monkeypatch.setattr(aggregate_module, "LEVEL_ROWS_PER_PASS", 100)
     read = []
-    values = aggregate_module._color_values
+    values = aggregate_module._values_among_filter
 
-    def counted(spec: ScatterSpec, start: int, length: int) -> pl.Series:
+    def counted(spec: ScatterSpec, column: str, start: int, length: int) -> pl.Series:
         read.append(start)
-        return values(spec, start, length)
+        return values(spec, column, start, length)
 
     def no_bins(*args: object, **kwargs: object) -> None:
         raise AssertionError("binned")
 
-    monkeypatch.setattr(aggregate_module, "_color_values", counted)
+    monkeypatch.setattr(aggregate_module, "_values_among_filter", counted)
     monkeypatch.setattr(aggregate_module, "_binned", no_bins)
     monkeypatch.setattr(aggregate_module, "stacked_bins", no_bins)
     # Every level is kept: the first slice has v1 to v100, the second v101
     # to v150 and v1 to v50.
     spec = _spec(tmp_path, _frame(), filters=[Filter("n", range=[0.0, N])])
-    with pytest.raises(FilteredColorLevelsError):
+    with pytest.raises(FilteredLevelsError):
         aggregate(spec)
     assert read == [0, 100]
 
@@ -240,6 +256,6 @@ def test_the_levels_of_slices_are_merged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Read 100 rows at a time, the levels are those of every slice, in natural order."""
-    monkeypatch.setattr(aggregate_module, "COLOR_ROWS_PER_PASS", 100)
+    monkeypatch.setattr(aggregate_module, "LEVEL_ROWS_PER_PASS", 100)
     spec = _spec(tmp_path, _frame(), filters=[Filter("k", levels=["149", "3", "120"])])
     assert aggregate(spec).levels["color"] == ["v4", "v121", "v150"]

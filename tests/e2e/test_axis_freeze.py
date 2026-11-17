@@ -125,18 +125,17 @@ def near(range_: list[float], expected: list[float], tol: float = 0.05) -> bool:
 
 
 def test_the_lock_sits_in_the_corner_and_toggles(app_page: Page) -> None:
-    """Off at first and unusable without a continuous axis, the lock fits the cell left of X and below Y, and toggles by click, Enter and Space."""
+    """Off at first and unusable without a figure, the lock fits the cell left of X and below Y, and toggles by click, Enter and Space."""
     page = app_page
     errors = watch_errors(page)
     button = page.locator(LOCK)
     expect(button).to_be_disabled()
     expect(button).to_have_attribute("aria-pressed", "false")
     expect(button).to_have_attribute("aria-label", "軸と色の範囲を固定")
-    # Two categorical axes: nothing to lock.
+    # Two categorical axes: the lock keeps their levels.
     place(page, "g", "x")
     place(page, "g", "y")
-    expect(button).to_be_disabled()
-    # A categorical x and a numeric y in its place: the lock is of y.
+    expect(button).to_be_enabled()
     place(page, "y", "y")
     expect(button).to_be_enabled()
     box = button.bounding_box()

@@ -1,4 +1,4 @@
-"""JS: axisranges.js keeps the axes set by hand and, under the lock, every continuous axis through a new filter or graph."""
+"""JS: axisranges.js keeps the axes set by hand and, under the lock, every axis (the levels of a categorical one too) through a new filter or graph."""
 
 from __future__ import annotations
 
@@ -46,17 +46,18 @@ def _call(page: Page, body: str) -> object:
 
 
 def test_continuous_axes_are_not_categorical_nor_the_one_band(js_page: Page) -> None:
-    """A categorical axis and the one band are not continuous; a figure of those only has no continuous axis."""
+    """A categorical axis and the one band are not continuous; the one band is not categorical either."""
     result = _call(
         js_page,
         """const mixed = meta(["g", "x"], ["y"], { axis_levels: { g: ["a", "b"] } });
         const bands = meta(["one"], ["g"], { one_band: true, axis_levels: { one: [""], g: ["a"] } });
         return [
           m.isContinuous(mixed, "x", 0), m.isContinuous(mixed, "x", 1), m.isContinuous(mixed, "y", 0),
-          m.hasContinuous(mixed), m.hasContinuous(bands),
+          m.isCategorical(mixed, "x", 0), m.isCategorical(mixed, "x", 1),
+          m.isContinuous(bands, "x", 0), m.isCategorical(bands, "x", 0), m.isCategorical(bands, "y", 0),
         ];""",
     )
-    assert result == [False, True, True, True, False]
+    assert result == [False, True, True, True, False, False, False, True]
 
 
 def test_off_a_new_filter_keeps_only_the_axes_set_by_hand(js_page: Page) -> None:
@@ -66,9 +67,9 @@ def test_off_a_new_filter_keeps_only_the_axes_set_by_hand(js_page: Page) -> None
         """const r = new m.AxisRanges();
         const a = meta(["x"], ["y"]);
         const shown = { x: [[2, 3]], y: [[4, 5]] };
-        const before = r.filterRanges(a, shown);
+        const before = r.heldRanges(a, shown, { filter: true });
         r.setByHand(a, "x", 0);
-        return [before, r.filterRanges(a, shown)];""",
+        return [before, r.heldRanges(a, shown, { filter: true })];""",
     )
     assert result == [
         {"x": [None], "y": [None]},
@@ -76,18 +77,42 @@ def test_off_a_new_filter_keeps_only_the_axes_set_by_hand(js_page: Page) -> None
     ]
 
 
-def test_on_the_lock_keeps_every_continuous_axis_even_over_its_whole_range(
+def test_on_the_lock_keeps_every_axis_even_over_its_whole_range(
     js_page: Page,
 ) -> None:
-    """Locked, every continuous axis keeps its shown range, whole or zoomed; a categorical axis is not locked."""
+    """Locked, every axis keeps its shown range, whole or zoomed, through a new filter too: a categorical one keeps its levels with it."""
     result = _call(
         js_page,
         """const r = new m.AxisRanges();
         const a = meta(["g", "x"], ["y"], { axis_levels: { g: ["a", "b"] } });
+        const shown = { x: [[-0.5, 1.5], [0, 10]], y: [[1, 2]] };
         r.setFrozen(true);
-        return r.filterRanges(a, { x: [[-0.5, 1.5], [0, 10]], y: [[1, 2]] });""",
+        return [r.heldRanges(a, shown), r.heldRanges(a, shown, { filter: true })];""",
     )
-    assert result == {"x": [None, [0, 10]], "y": [[1, 2]]}
+    kept = {"x": [[-0.5, 1.5], [0, 10]], "y": [[1, 2]]}
+    assert result == [kept, kept]
+
+
+def test_a_new_filter_puts_a_categorical_axis_set_by_hand_back(js_page: Page) -> None:
+    """Unlocked, a categorical axis set by hand keeps its range through a zoom but not through a new filter, whose levels are other bands; it is then forgotten."""
+    result = _call(
+        js_page,
+        """const r = new m.AxisRanges();
+        const a = meta(["g"], ["y"], { axis_levels: { g: ["a", "b"] } });
+        const shown = { x: [[-0.2, 0.2]], y: [[1, 2]] };
+        r.setByHand(a, "x", 0);
+        r.setByHand(a, "y", 0);
+        const held = r.heldRanges(a, shown);
+        const filtered = r.heldRanges(a, shown, { filter: true });
+        r.forgetCategorical(a);
+        return [held, filtered, r.byHand(a, "x", 0), r.byHand(a, "y", 0)];""",
+    )
+    assert result == [
+        {"x": [[-0.2, 0.2]], "y": [[1, 2]]},
+        {"x": [None], "y": [[1, 2]]},
+        False,
+        True,
+    ]
 
 
 def test_turning_the_lock_off_drops_the_axes_set_by_hand(js_page: Page) -> None:
@@ -99,11 +124,11 @@ def test_turning_the_lock_off_drops_the_axes_set_by_hand(js_page: Page) -> None:
         const shown = { x: [[2, 3]], y: [[4, 5]] };
         r.setByHand(a, "x", 0);
         r.setFrozen(true);
-        const on = r.filterRanges(a, shown);
+        const on = r.heldRanges(a, shown);
         r.setFrozen(false);
-        const off = r.filterRanges(a, shown);
+        const off = r.heldRanges(a, shown);
         r.setFrozen(true);
-        return [on, off, r.filterRanges(a, shown)];""",
+        return [on, off, r.heldRanges(a, shown)];""",
     )
     assert result == [
         {"x": [[2, 3]], "y": [[4, 5]]},
@@ -126,7 +151,7 @@ def test_reset_drops_the_axes_set_by_hand_and_keeps_the_lock(js_page: Page) -> N
         const all = [r.byHand(a, "x", 0), r.frozen];
         r.setFrozen(true);
         r.reset();
-        return [one, all, r.frozen, r.filterRanges(a, { x: [[0, 10], [0, 10]], y: [[0, 10]] })];""",
+        return [one, all, r.frozen, r.heldRanges(a, { x: [[0, 10], [0, 10]], y: [[0, 10]] })];""",
     )
     assert result == [
         [True, False],
@@ -212,29 +237,59 @@ def test_a_failed_change_goes_back_to_the_snapshot(js_page: Page) -> None:
 def test_turning_the_lock_off_keeps_a_categorical_axis_set_by_hand(
     js_page: Page,
 ) -> None:
-    """The lock is of the continuous axes: off, a categorical axis set by hand keeps its range."""
+    """Off, a categorical axis set by hand keeps its range while the figure draws the levels of its filter, and not when it draws levels kept."""
     result = _call(
         js_page,
         """const r = new m.AxisRanges();
-        const a = meta(["g"], ["y"], { axis_levels: { g: ["a", "b"] } });
-        r.setByHand(a, "x", 0);
-        r.setByHand(a, "y", 0);
-        r.setFrozen(true);
-        r.setFrozen(false, a);
-        return [r.byHand(a, "x", 0), r.byHand(a, "y", 0), r.filterRanges(a, { x: [[-0.2, 0.2]], y: [[1, 2]] })];""",
+        const own = meta(["g"], ["y"], { axis_levels: { g: ["a", "b"] } });
+        const kept = meta(["g"], ["y"], { axis_levels: { g: ["a", "b"] }, axis_levels_kept: true });
+        const off = (a) => {
+          r.setByHand(a, "x", 0);
+          r.setByHand(a, "y", 0);
+          r.setFrozen(true);
+          r.setFrozen(false, a);
+          return [r.byHand(a, "x", 0), r.byHand(a, "y", 0), r.heldRanges(a, { x: [[-0.2, 0.2]], y: [[1, 2]] })];
+        };
+        return [off(own), off(kept)];""",
     )
-    assert result == [True, False, {"x": [[-0.2, 0.2]], "y": [None]}]
+    assert result == [
+        [True, False, {"x": [[-0.2, 0.2]], "y": [None]}],
+        [False, False, {"x": [None], "y": [None]}],
+    ]
 
 
-def test_the_lock_is_of_use_with_a_numeric_color(js_page: Page) -> None:
-    """A figure without a continuous axis is lockable with a gradient or intervals, not with a categorical color only."""
+def test_the_axis_levels_are_kept_under_the_lock_only(js_page: Page) -> None:
+    """A view or an overview asks for the levels drawn of the categorical axes with the lock on, and for none off; the one band and a continuous axis have none."""
     result = _call(
         js_page,
-        """const bands = { one_band: true, axis_levels: { one: [""], g: ["a"] } };
-        const of = (kind) => m.lockable(meta(["one"], ["g"], { ...bands, color: { kind } }));
-        return [of("gradient"), of("bins"), of("levels"), m.lockable(meta(["x"], ["y"], { color: { kind: "levels" } }))];""",
+        """const r = new m.AxisRanges();
+        const a = meta(["g", "x"], ["h"], { axis_levels: { g: ["b", "a"], h: ["u"] } });
+        const bands = meta(["one"], ["y"], { one_band: true, axis_levels: { one: [""] } });
+        const off = r.axisLevels(a);
+        r.setFrozen(true);
+        return [off, r.axisLevels(a), r.axisLevels(bands), r.axisLevels(null)];""",
     )
-    assert result == [True, True, False, True]
+    assert result == [None, {"g": ["b", "a"], "h": ["u"]}, None, None]
+
+
+def test_an_edit_carries_the_levels_of_the_axes_that_stay_on_their_role(
+    js_page: Page,
+) -> None:
+    """Under the lock, a new graph keeps the levels of each categorical column that stays on its role, x or y."""
+    result = _call(
+        js_page,
+        """const r = new m.AxisRanges();
+        const a = meta(["g"], ["h"], { axis_levels: { g: ["b", "a"], h: ["u"] } });
+        const off = r.carriedAxisLevels(a, { x: ["g"], y: ["h"] });
+        r.setFrozen(true);
+        return [
+          off,
+          r.carriedAxisLevels(a, { x: ["g", "x"], y: ["y"] }),
+          r.carriedAxisLevels(a, { x: ["h"], y: ["g"] }),
+          r.carriedAxisLevels(null, { x: ["g"], y: [] }),
+        ];""",
+    )
+    assert result == [None, {"g": ["b", "a"]}, None, None]
 
 
 def test_the_color_scale_is_kept_under_the_lock_only(js_page: Page) -> None:
@@ -277,19 +332,14 @@ def test_an_edit_carries_the_color_scale_of_the_same_color_only(js_page: Page) -
     assert result == [None, cuts, None, None, None, None, {"range": [0, 2]}, None, None]
 
 
-def test_the_lock_is_of_use_with_a_role_cut_into_intervals(js_page: Page) -> None:
-    """A figure without a continuous axis nor a numeric color is lockable with a numeric symbol, row or col cut into intervals."""
+def test_a_result_has_cuts_with_a_role_cut_into_intervals(js_page: Page) -> None:
+    """A result has cuts with a numeric symbol, row or col cut into intervals."""
     result = _call(
         js_page,
-        """const bands = { one_band: true, axis_levels: { one: [""], g: ["a"] }, color: { kind: "levels" } };
-        const cut = { breaks: [0, 1], values: false };
-        return [
-          m.lockable(meta(["one"], ["g"], { ...bands, cuts: { col: cut } })),
-          m.lockable(meta(["one"], ["g"], { ...bands, cuts: {} })),
-          m.hasCuts(meta(["x"], ["y"], { cuts: { symbol: cut } })),
-        ];""",
+        """const cut = { breaks: [0, 1], values: false };
+        return [m.hasCuts(meta(["x"], ["y"], { cuts: { symbol: cut } })), m.hasCuts(meta(["x"], ["y"], { cuts: {} }))];""",
     )
-    assert result == [True, False, True]
+    assert result == [True, False]
 
 
 def test_the_cuts_are_kept_under_the_lock_only(js_page: Page) -> None:

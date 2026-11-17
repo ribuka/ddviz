@@ -324,6 +324,28 @@ def cut_roles(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
     ]
 
 
+def axis_level_columns(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
+    """Return the categorical x and y columns of a graph: those drawn by their levels, in bands (`ScatterSpec.categorical` but the one band).
+
+    Parameters
+    ----------
+    encoding : Encoding
+        The graph.
+    numeric : dict of str to bool
+        Whether each column is numeric (a temporal one is).
+
+    Returns
+    -------
+    list of str
+        The columns, once each.
+    """
+    return [
+        c
+        for c in dict.fromkeys([*encoding.x, *encoding.y])
+        if not numeric.get(c, True)
+    ]
+
+
 def scatter_spec(
     encoding: Encoding,
     files: dict[str, list[str]],
@@ -349,6 +371,7 @@ def scatter_spec(
     line_width: int | None = None,
     line_aggregation: str = "raw",
     keep_unfiltered_color_levels: bool = False,
+    keep_unfiltered_symbol_levels: bool = False,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -436,6 +459,9 @@ def scatter_spec(
         How the lines treat the rows of one x
         (`ddviz.server.plotoptions.parse_line_aggregation`,
         `ScatterSpec.line_aggregation`).
+    keep_unfiltered_color_levels, keep_unfiltered_symbol_levels : bool, optional
+        Whether a categorical color or symbol column keeps its levels over
+        every row (`ScatterSpec.levels_of_filter`).
 
     Returns
     -------
@@ -523,4 +549,5 @@ def scatter_spec(
         margin_left=left_margin(margin_left, width),
         margin_bottom=bottom_margin(margin_bottom, height),
         keep_unfiltered_color_levels=keep_unfiltered_color_levels,
+        keep_unfiltered_symbol_levels=keep_unfiltered_symbol_levels,
     )

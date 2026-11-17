@@ -32,12 +32,13 @@ export class PlotOptions {
   // (zonemenu.js, which changes this object); kept whatever column the zone
   // holds, true after a reload.
   showNullRows = { color: true, symbol: true };
-  // Whether a categorical color column keeps its levels over every row, those
-  // the filter leaves without rows staying in the legend
-  // (`ddviz.server.models.PlotRequest.keep_unfiltered_color_levels`), set in
-  // the Color zone's menu (zonemenu.js); kept whatever column the zone holds,
-  // off after a reload. Off, the levels are those of the filter's rows.
-  keepColorLevels = false;
+  // Whether a categorical color and symbol column keep their levels over
+  // every row, those the filter leaves without rows staying in the legend
+  // (`ddviz.server.models.PlotRequest.keep_unfiltered_color_levels` and
+  // `keep_unfiltered_symbol_levels`), set in the zones' menu (zonemenu.js);
+  // kept whatever column the zone holds, off after a reload. Off, the levels
+  // are those of the filter's rows.
+  keepLevels = { color: false, symbol: false };
   // Wrapped panels to a row, or null to make them closest to square
   // (`ddviz.server.plotoptions.parse_wrap_cols`); back to null for another
   // wrap column. The user sets it in the Wrap zone's form (wrapmenu.js).
@@ -73,7 +74,8 @@ export class PlotOptions {
       shape_sizes: this.#levelSizes.get(encoding.symbol) || null,
       level_shapes: shapes,
       show_null_rows: { ...this.showNullRows },
-      keep_unfiltered_color_levels: this.keepColorLevels,
+      keep_unfiltered_color_levels: this.keepLevels.color,
+      keep_unfiltered_symbol_levels: this.keepLevels.symbol,
     };
   }
 
@@ -121,11 +123,13 @@ export class PlotOptions {
   // Returns the settings derived from the graph, which a failed plot rolls
   // back with it (`Builder`'s save).
   saved() {
-    return { colorBins: this.colorBins, wrapCols: this.wrapCols, keepColorLevels: this.keepColorLevels };
+    return { colorBins: this.colorBins, wrapCols: this.wrapCols, keepLevels: { ...this.keepLevels } };
   }
 
   // Sets back the settings `saved` returned, from `state` (`Builder`'s load).
   load(state) {
-    ({ colorBins: this.colorBins, wrapCols: this.wrapCols, keepColorLevels: this.keepColorLevels } = state);
+    this.colorBins = state.colorBins;
+    this.wrapCols = state.wrapCols;
+    this.keepLevels = { ...state.keepLevels };
   }
 }

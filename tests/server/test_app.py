@@ -1427,12 +1427,12 @@ def test_a_view_of_the_same_filter_does_not_find_the_color_levels(
     zoom = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
     client.post("/api/view", json={**zoom, "filters": _labels("r1", "r2")})
     client.post("/api/overview", json={**SIZE, "filters": _labels("r3")})
-    assert [s.view.find_color for s in specs] == [False, True]
+    assert ["color" in s.view.find_levels for s in specs] == [False, True]
     assert specs[0].view.levels["color"] == ["r1", "r2"]
     assert not specs[0].keep_unfiltered_color_levels
 
 
-def test_too_many_color_levels_of_a_filter_keep_the_drawn_results(
+def test_too_many_levels_of_a_filter_keep_the_drawn_results(
     client: TestClient,
 ) -> None:
     """A filter whose color levels pass the limit answers 400 with its error; the overview, the view and the selection stay."""
@@ -1445,7 +1445,7 @@ def test_too_many_color_levels_of_a_filter_keep_the_drawn_results(
 
     every = [{"column": "label", "contains": "r"}]
     message = (
-        "Color の水準がフィルタの後も上限の 100 個を超えるため描けない（label）。"
+        "水準がフィルタの後も上限を超えるため描けない（Color の label は上限 100 個）。"
         "フィルタで水準を絞るか、別の列を使う"
     )
     for path, request in (
@@ -1454,7 +1454,7 @@ def test_too_many_color_levels_of_a_filter_keep_the_drawn_results(
     ):
         refused = client.post(path, json=request)
         assert refused.status_code == 400
-        assert refused.json() == {"detail": message, "error": "filtered_color_levels"}
+        assert refused.json() == {"detail": message, "error": "filtered_levels"}
 
     again = client.post("/api/view", json=zoom).json()["meta"]
     assert again["task"] == view["task"]
@@ -1808,3 +1808,119 @@ def test_wrong_cuts_are_refused_before_any_task(
         assert response.status_code == 400, path
         assert "cuts" in response.json()["detail"]
     assert tasks == []
+
+
+CATEGORICAL_X = {"x": ["color"], "y": ["y"], "symbol": "facet"}
+
+
+def _colors(*names: str) -> list[dict]:
+    """Return the filter keeping the rows of the colors `names`."""
+    return [{"column": "color", "levels": list(names)}]
+
+
+def test_the_axis_levels_follow_the_filter_unless_kept(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A categorical x has the levels of the rows of the filter; a view or an overview given the levels drawn (``axis_levels``) keeps them in their places and tells they are kept."""
+    every = _plot(client, encoding=CATEGORICAL_X)["meta"]
+    assert every["axis_levels"] == {"color": ["a", "b", "c"]}
+    assert not every["axis_levels_kept"]
+    first = _plot(client, encoding=CATEGORICAL_X, filters=_colors("b", "c"))["meta"]
+    assert first["axis_levels"] == {"color": ["b", "c"]}
+    assert first["x_auto"] == [[-0.5, 1.5]]
+    specs = []
+    run = TaskBroker.run
+
+    async def kept_run(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        if isinstance(task, PlotTask):
+            specs.append(task.spec)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", kept_run)
+    body = {**SIZE, "x_ranges": [None], "y_ranges": [[-1, 1]], "filters": _colors("a")}
+    kept = {"color": ["b", "c"]}
+    view = client.post("/api/view", json={**body, "axis_levels": kept}).json()["meta"]
+    assert view["axis_levels"] == {"color": ["b", "c", "a"]}
+    assert view["axis_levels_kept"]
+    assert view["x_ranges"] == [[-0.5, 2.5]]
+    assert specs[-1].view.find_axis_levels == ["color"]
+    # The overview of that filter, its own levels: found once, then reused.
+    whole = client.post("/api/overview", json={**SIZE, "filters": _colors("a")}).json()
+    assert whole["meta"]["axis_levels"] == {"color": ["a"]}
+    assert not whole["meta"]["axis_levels_kept"]
+    zoom = client.post("/api/view", json=body).json()["meta"]
+    assert zoom["axis_levels"] == {"color": ["a"]}
+    assert specs[-1].view.find_axis_levels == []
+    # Kept levels that are the filter's own are none kept.
+    own = {**body, "axis_levels": {"color": ["a"]}}
+    assert not client.post("/api/view", json=own).json()["meta"]["axis_levels_kept"]
+    # A plot keeping the levels of a column that stays on x draws them.
+    plotted = _plot(
+        client, encoding=CATEGORICAL_X, filters=_colors("a"), axis_levels=kept
+    )["meta"]
+    assert plotted["axis_levels"] == {"color": ["b", "c", "a"]}
+    assert plotted["axis_levels_kept"]
+
+
+def test_wrong_axis_levels_are_refused_before_any_task(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``axis_levels`` of a column not on a categorical axis, or of another form, are a 400 naming them, for a plot, a view and an overview; no task runs."""
+    tasks: list[object] = []
+    run = TaskBroker.run
+
+    async def counted(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        tasks.append(task)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", counted)
+    assert client.get("/api/schema").status_code == 200
+    tasks.clear()
+    first = {
+        "encoding": CATEGORICAL_X,
+        **SIZE,
+        **HIDE_NULLS,
+        "axis_levels": {"y": ["a"]},
+    }
+    response = client.post("/api/plot", json=first)
+    assert response.status_code == 400
+    assert "axis_levels" in response.json()["detail"]
+    assert tasks == []
+    _plot(client, encoding=CATEGORICAL_X)
+    tasks.clear()
+    view = {**SIZE, "x_ranges": [None], "y_ranges": [None]}
+    for path, body in (
+        ("/api/view", {**view, "axis_levels": {"facet": ["p"]}}),
+        ("/api/view", {**view, "axis_levels": {"color": ["a", "a"]}}),
+        ("/api/overview", {**SIZE, "axis_levels": {"color": "a"}}),
+        ("/api/overview", {**SIZE, "axis_levels": {"color": [1]}}),
+        ("/api/overview", {**SIZE, "axis_levels": [["a"]]}),
+        ("/api/plot", first),
+    ):
+        response = client.post(path, json=body)
+        assert response.status_code == 400, path
+        assert "axis_levels" in response.json()["detail"]
+    assert tasks == []
+
+
+def test_the_symbol_levels_follow_the_filter_unless_kept(client: TestClient) -> None:
+    """A categorical symbol has the levels of the rows of the filter; ``keep_unfiltered_symbol_levels`` keeps those of every row."""
+    filters = [{"column": "facet", "levels": ["q"]}]
+    meta = _plot(client, encoding=CATEGORICAL_X, filters=filters)["meta"]
+    assert meta["symbol"]["levels"] == ["q"]
+    kept = _plot(
+        client,
+        encoding=CATEGORICAL_X,
+        filters=filters,
+        keep_unfiltered_symbol_levels=True,
+    )["meta"]
+    assert kept["symbol"]["levels"] == ["p", "q"]
+    response = client.post(
+        "/api/plot",
+        json={
+            "encoding": CATEGORICAL_X,
+            **SIZE,
+            "keep_unfiltered_symbol_levels": "yes",
+        },
+    )
+    assert response.status_code == 422

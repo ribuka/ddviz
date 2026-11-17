@@ -32,6 +32,7 @@ def test_a_new_one_requests_the_defaults(js_page: Page) -> None:
         "level_shapes": None,
         "show_null_rows": {"color": True, "symbol": True},
         "keep_unfiltered_color_levels": False,
+        "keep_unfiltered_symbol_levels": False,
     }
 
 
@@ -92,21 +93,30 @@ def test_the_request_copies_show_null_rows(js_page: Page) -> None:
 
 
 def test_load_sets_back_what_saved_returned(js_page: Page) -> None:
-    """`load(saved())` sets back the color's cutting, the number to a row and keeping the levels."""
+    """`load(saved())` sets back the color's cutting, the number to a row and keeping the levels of each zone, as a copy."""
     result = _call(
         js_page,
         """o.colorBins = { n: 5, by: "range" };
         o.wrapCols = 3;
-        o.keepColorLevels = true;
+        o.keepLevels.symbol = true;
         const state = o.saved();
         o.colorBins = null;
         o.wrapCols = null;
-        o.keepColorLevels = false;
+        o.keepLevels.symbol = false;
         o.load(state);
-        return [state, o.colorBins, o.wrapCols, o.keepColorLevels];""",
+        const loaded = { ...o.keepLevels };
+        o.keepLevels.color = true;
+        return [state, o.colorBins, o.wrapCols, loaded, o.request({}).keep_unfiltered_symbol_levels];""",
     )
     bins = {"n": 5, "by": "range"}
-    assert result == [{"colorBins": bins, "wrapCols": 3, "keepColorLevels": True}, bins, 3, True]
+    keep = {"color": False, "symbol": True}
+    assert result == [
+        {"colorBins": bins, "wrapCols": 3, "keepLevels": keep},
+        bins,
+        3,
+        keep,
+        True,
+    ]
 
 
 def test_shared_size_is_null_with_level_sizes(js_page: Page) -> None:

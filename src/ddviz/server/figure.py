@@ -435,8 +435,12 @@ class FigureMeta(TypedDict):
     # figure has them instead when the grid fits, and a wrapped grid has
     # them in the figure only.
     facet_labels: list[dict]
-    # The levels of each categorical axis column.
+    # The levels of each categorical axis column, which the page keeps
+    # under the lock of the axes as it sends them back
+    # (`ddviz.server.plotoptions.parse_axis_levels`); and whether some were
+    # so kept, not those of the rows of the filter.
     axis_levels: dict[str, list[str]]
+    axis_levels_kept: bool
     # Whether the x axis is the one band (`ddviz.shared.scatter.ONE_BAND`).
     one_band: bool
     # The kind of each temporal column (`ddviz.shared.temporal.KINDS`): a
@@ -704,6 +708,7 @@ def _meta(
         scroll=layout.scroll,
         facet_labels=labels,
         axis_levels=manifest.axis_levels,
+        axis_levels_kept=bool(spec.kept_axis_levels),
         one_band=spec.x == [ONE_BAND],
         temporal=spec.temporal,
     )

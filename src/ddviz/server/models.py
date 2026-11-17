@@ -25,8 +25,9 @@ class PlotRequest(BaseModel):
     labels it measured (`ddviz.shared.layout.left_margin`), and
     ``margin_bottom`` the bottom margin, for the x tick labels at an angle
     set (`ddviz.shared.layout.bottom_margin`). ``keep_unfiltered_color_levels``
-    keeps the levels of a categorical color column over every row
-    (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_color_levels`).
+    and ``keep_unfiltered_symbol_levels`` keep the levels of a categorical
+    color or symbol column over every row
+    (`ddviz.shared.scatter.ScatterSpec.levels_of_filter`).
     ``wrap_cols``, ``shape_size`` and ``line_width`` are kept as sent, for
     `ddviz.server.plotoptions` to take JSON integers only, and
     ``line_aggregation`` for it to give the reason of a wrong one.
@@ -34,7 +35,9 @@ class PlotRequest(BaseModel):
     keeps under the lock of the axes (`ddviz.server.plotoptions.parse_color_scale`),
     kept as sent for it to check; null for that of the filter. ``cuts``
     are so the cuts of the numeric symbol, row and col columns, by role
-    (`ddviz.server.plotoptions.parse_cuts`).
+    (`ddviz.server.plotoptions.parse_cuts`), and ``axis_levels`` the
+    levels of the categorical axis columns, by column
+    (`ddviz.server.plotoptions.parse_axis_levels`).
     """
 
     encoding: dict
@@ -54,8 +57,10 @@ class PlotRequest(BaseModel):
     show_null_rows: ShowNullRows = ShowNullRows()
     axis_scales: object = None
     keep_unfiltered_color_levels: StrictBool = False
+    keep_unfiltered_symbol_levels: StrictBool = False
     color_scale: object = None
     cuts: object = None
+    axis_levels: object = None
 
 
 class PlotDataRequest(BaseModel):
@@ -78,7 +83,7 @@ class ExportCancel(BaseModel):
 
 
 class SizeRequest(BaseModel):
-    """Body of ``POST /api/overview``: the size of the plot area in pixels, the left and bottom margins asked for, the local filter, the color scale and the cuts kept (`PlotRequest`)."""
+    """Body of ``POST /api/overview``: the size of the plot area in pixels, the left and bottom margins asked for, the local filter, and the color scale, the cuts and the axis levels kept (`PlotRequest`)."""
 
     width: int
     height: int
@@ -87,6 +92,7 @@ class SizeRequest(BaseModel):
     filters: list[dict] = []
     color_scale: object = None
     cuts: object = None
+    axis_levels: object = None
 
 
 class SelectionRequest(BaseModel):
