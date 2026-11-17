@@ -1031,9 +1031,14 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
   let figure, meta, drawn;
   try {
     ({ figure, meta } = await response.json());
-    drawn = isDrawn(meta, figure.layout);
   } catch (error) {
     return againFailed(mine, `集約の応答を読めなかった（${error.message}）`, onFailed, error);
+  }
+  const drawFailed = (error) => againFailed(mine, `図を描けなかった（${error.message}）`, onFailed, error);
+  try {
+    drawn = isDrawn(meta, figure.layout);
+  } catch (error) {
+    return drawFailed(error);
   }
   const images = drawn ? Promise.resolve(shownImages) : fetchImages(meta);
   await noDrag();
@@ -1054,7 +1059,7 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
     // The images not drawn yet are freed; the state switched before the
     // failure stays (docs/spec.md).
     if (!drawn && bitmaps !== shownImages && bitmaps !== overview?.bitmaps) closeImages(bitmaps);
-    againFailed(mine, `図を描けなかった（${error.message}）`, onFailed, error);
+    drawFailed(error);
   }
 }
 
