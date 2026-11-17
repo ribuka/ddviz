@@ -209,3 +209,64 @@ def test_settings_that_cannot_be_read_warn_and_stop_before_the_window(
         f"{entry.SETTINGS_UNREADABLE}\n\nplot.max_levels needs a positive integer: 0"
     ]
     assert steps == []
+
+
+@pytest.fixture
+def splash_closes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the closes of the exe's splash screen."""
+    from ddviz.desktop import splash
+
+    closes: list[str] = []
+    monkeypatch.setattr(splash, "close_splash", lambda: closes.append("close"))
+    return closes
+
+
+def test_a_worker_closes_the_splash(
+    monkeypatch: pytest.MonkeyPatch, no_unblock: None, splash_closes: list[str]
+) -> None:
+    """``--worker`` opens no window: a splash, if any, is closed at once."""
+    from ddviz.workers import worker
+
+    monkeypatch.setattr(worker, "main", lambda: splash_closes.append("worker") or 0)
+    _argv(monkeypatch, "--worker")
+    assert entry.main() == 0
+    assert splash_closes == ["close", "worker"]
+
+
+def test_the_check_closes_the_splash(
+    monkeypatch: pytest.MonkeyPatch, steps: list[str], splash_closes: list[str]
+) -> None:
+    """``--check-desktop-runtime`` opens no window: the splash is closed before the check."""
+    monkeypatch.setattr(
+        runtime_check, "check_desktop_runtime", lambda: splash_closes.append("check") or 0
+    )
+    _argv(monkeypatch, "--check-desktop-runtime")
+    assert entry.main() == 0
+    assert splash_closes == ["close", "check"]
+
+
+def test_the_port_closes_the_splash(
+    monkeypatch: pytest.MonkeyPatch,
+    no_unblock: None,
+    tmp_path: Path,
+    steps: list[str],
+    splash_closes: list[str],
+) -> None:
+    """``--port`` opens no window: the splash is closed before serving."""
+    import uvicorn
+
+    monkeypatch.setattr(entry, "make_app", lambda *a: "app")
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: splash_closes.append("serve"))
+    _argv(monkeypatch, str(tmp_path), "--port", "8000")
+    assert entry.main() == 0
+    assert splash_closes == ["close", "serve"]
+
+
+def test_the_window_start_leaves_the_splash_to_the_window(
+    monkeypatch: pytest.MonkeyPatch, steps: list[str], splash_closes: list[str]
+) -> None:
+    """The window start does not close the splash: the window does when it shows."""
+    monkeypatch.setattr(dll_access, "unblock_or_warn", lambda warn: True)
+    _argv(monkeypatch)
+    assert entry.main() == 0
+    assert splash_closes == []

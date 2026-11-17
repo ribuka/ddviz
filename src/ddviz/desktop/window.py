@@ -28,6 +28,7 @@ from ddviz.desktop.downloads import Downloads
 from ddviz.desktop.messages import show_warning
 from ddviz.desktop.runlog import RunLog, app_data_dir
 from ddviz.desktop.single_instance import IN_USE_MESSAGE, Outcome, claim, record_window
+from ddviz.desktop.splash import close_splash
 from ddviz.desktop.titlebar import TitleBar
 from ddviz.desktop.webview2_access import (
     denied_message,
@@ -509,6 +510,7 @@ def run_window(
     # claim keeps the mutex for the whole process.
     instance = claim()
     if instance.outcome is Outcome.FRONT:
+        close_splash()
         return 0
     if instance.outcome is Outcome.IN_USE:
         show_warning(IN_USE_MESSAGE)
@@ -657,6 +659,8 @@ def _run(
     frontend = FrontendProcesses()
     frontend.attach(window)
     window.events.shown += lambda: _record(window)
+    # The window itself now shows that ddviz is starting.
+    window.events.shown += close_splash
     TitleBar().attach(window)
     # The plot's data is saved to Downloads without pywebview's dialog; the
     # page opens, shows or cancels the saves through the server.

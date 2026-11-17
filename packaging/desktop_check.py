@@ -14,6 +14,7 @@ download, Explorer passing the mark on, or a WebView2 window on screen.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -36,6 +37,20 @@ REQUIRED = (
 Run = Callable[..., subprocess.CompletedProcess]
 
 
+def no_splash_env() -> dict[str, str]:
+    """Return this environment with the exe's splash screen turned off.
+
+    The bootloader shows no splash with this variable: a start that opens no
+    window shows none, on CI's runner neither.
+
+    Returns
+    -------
+    dict of str to str
+        A copy of `os.environ` with ``PYINSTALLER_SUPPRESS_SPLASH_SCREEN=1``.
+    """
+    return {**os.environ, "PYINSTALLER_SUPPRESS_SPLASH_SCREEN": "1"}
+
+
 def run_check(exe: Path, run: Run = subprocess.run, timeout: float = TIMEOUT_S) -> None:
     """Run ``exe --check-desktop-runtime`` and fail unless it prints its success line.
 
@@ -56,6 +71,7 @@ def run_check(exe: Path, run: Run = subprocess.run, timeout: float = TIMEOUT_S) 
     try:
         proc = run(
             [str(exe), "--check-desktop-runtime"],
+            env=no_splash_env(),
             capture_output=True,
             text=True,
             timeout=timeout,

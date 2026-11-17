@@ -98,3 +98,28 @@ def test_the_config_copy_leaves_out_the_local_settings(tmp_path: Path) -> None:
     assert (source / "settings.local.toml").read_text(encoding="utf-8") == (
         "[cache]\nmax_gb = 2\n"
     )
+
+
+def test_the_splash_image_is_a_plain_rectangle(tmp_path: Path) -> None:
+    """The splash's PNG is 360 x 100 px, every pixel #f3f3f3."""
+    import struct
+    import zlib
+
+    path = tmp_path / "build" / "splash.png"
+    _load_build().write_splash_png(path)
+    data = path.read_bytes()
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    chunks = {}
+    at = 8
+    while at < len(data):
+        (length,) = struct.unpack(">I", data[at : at + 4])
+        kind = data[at + 4 : at + 8]
+        body = data[at + 8 : at + 8 + length]
+        (crc,) = struct.unpack(">I", data[at + 8 + length : at + 12 + length])
+        assert crc == zlib.crc32(kind + body)
+        chunks[kind] = chunks.get(kind, b"") + body
+        at += 12 + length
+    width, height, depth, colour, *_ = struct.unpack(">IIBBBBB", chunks[b"IHDR"])
+    assert (width, height, depth, colour) == (360, 100, 8, 2)  # 8-bit RGB
+    row = bytes(1) + bytes([0xF3, 0xF3, 0xF3]) * width  # filter type 0, then pixels
+    assert zlib.decompress(chunks[b"IDAT"]) == row * height
