@@ -121,6 +121,7 @@ const STAGES = {
   levels: "範囲と水準を調べ中…",
   ranges: "フィルタ後の軸の範囲を調べ中…",
   scale: "フィルタ後の色の範囲を調べ中…",
+  cuts: "フィルタ後の区間を調べ中…",
   colors: "フィルタ後の Color の水準を調べ中…",
   facets: "パネルの水準を調べ中…",
   boxes: "箱ひげを計算中…",
@@ -633,6 +634,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     axis_scales: axes.scales.request(encoding),
     // Under the lock, the color scale shown (`shownScale`) stays while the color does.
     color_scale: axisRanges.carriedColorScale(shownScale(), encoding.color, options.colorBins),
+    // So do the cuts of a numeric symbol, row or col column on its role.
+    cuts: axisRanges.carriedCuts(shownScale(), encoding),
   };
   // The filter pane's state of these conditions, which the pane goes back to
   // once the result is drawn (`RestorePoint`).
@@ -712,9 +715,10 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     return plotFailed(`図を描けなかった（${error.message}）`, askedSize, restoring, kept);
   }
   // The area may have changed size, or the filter, while the plot was
-  // aggregated, or the lock gone off, which drops the color scale kept.
+  // aggregated, or the lock gone off, which drops the color scale and the
+  // cuts kept.
   if (filtersKey(meta.filters) !== filtersKey(filters)) applyFilters();
-  else if (meta.color.kept && !axisRanges.frozen) requestOverview();
+  else if ((meta.color.kept || meta.cuts_kept) && !axisRanges.frozen) requestOverview();
   else if (!sameSize(stageSize(), size)) onResize();
   else boxSelection.follow();
   return meta;
@@ -985,8 +989,15 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
       response = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Under the lock, the color scale shown stays (`AxisRanges.colorScale`).
-        body: JSON.stringify({ ...body, ...size, filters, color_scale: axisRanges.colorScale(shownScale()) }),
+        // Under the lock, the color scale and the cuts shown stay
+        // (`AxisRanges.colorScale`, `AxisRanges.cuts`).
+        body: JSON.stringify({
+          ...body,
+          ...size,
+          filters,
+          color_scale: axisRanges.colorScale(shownScale()),
+          cuts: axisRanges.cuts(shownScale()),
+        }),
       });
     } catch (error) {
       console.error(error);
@@ -1181,8 +1192,8 @@ function knownAuto() {
   return autoRanges(autoMeta);
 }
 
-// Returns the meta of the result whose color scale the page shows: that of
-// the legend. An old overview standing in for another filter (`showOverview`)
+// Returns the meta of the result whose color scale and cuts (`meta.cuts`)
+// the page shows: that of the legend. An old overview standing in for another filter (`showOverview`)
 // is drawn with its own, but the legend, and so the scale the lock keeps,
 // stay those of the result shown before it.
 function shownScale() {
@@ -1205,8 +1216,9 @@ function showFreeze() {
 // would take its automatic ranges), the shown ranges are asked for again,
 // so that the answer of the older request does not move them. Off
 // aggregates the overview of the filter unless it is drawn, or the view of
-// the categorical ranges kept; a figure drawn with a color scale kept
-// (`meta.color.kept`), not that of its filter, is aggregated again too. A
+// the categorical ranges kept; a figure drawn with a color scale or cuts
+// kept (`meta.color.kept`, `meta.cuts_kept`), not those of its filter, is
+// aggregated again too. A
 // failure puts the lock and the axes set by hand back, with the figure as
 // it was.
 function setFrozen(on) {
@@ -1241,7 +1253,7 @@ function setFrozen(on) {
     requestView(ranges, { onFailed });
     return;
   }
-  const kept = [overview.meta, current, shownScale()].some((meta) => meta?.color.kept);
+  const kept = [overview.meta, current, shownScale()].some((meta) => meta?.color.kept || meta?.cuts_kept);
   if (filtersKey(overview.meta.filters) === filtersKey(filters) && !kept) {
     showOverview();
     return;

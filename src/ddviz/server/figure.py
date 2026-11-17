@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import TypedDict
 
-from ddviz.server.derive import drawn_scale
+from ddviz.server.derive import drawn_cuts, drawn_scale
 from ddviz.server.labeltext import facet_text, fit_text, level_text, plotly_text
 from ddviz.shared.layout import (
     MARGIN_LEFT,
@@ -385,6 +385,14 @@ class FigureMeta(TypedDict):
     # intervals of a numeric column, or ``"gradient"``, whose images hold
     # grays from 1 to 255 over ``range``; ``shapes`` series per color level.
     color: dict
+    # The cuts of each numeric symbol, row and col column (role to
+    # ``{"breaks", "values"}``: `ddviz.server.derive.drawn_cuts`), which
+    # the page keeps under the lock of the axes as it sends them back
+    # (`ddviz.server.plotoptions.parse_cuts`); the column of each; and
+    # whether some were so kept, not those of the rows of the filter.
+    cuts: dict
+    cut_columns: dict
+    cuts_kept: bool
     # The symbol levels with their marker shapes, or None: series ``s`` is
     # color level ``s // shapes`` (of ``series``) and symbol level
     # ``s % shapes``.
@@ -669,6 +677,9 @@ def _meta(
         y_auto=[list(r) for r in manifest.y_auto],
         series=[str(v) for v in manifest.levels["color"]],
         color=_color_scale(manifest),
+        cuts=drawn_cuts(manifest),
+        cut_columns={r: getattr(spec, r) for r in drawn_cuts(manifest)},
+        cuts_kept=bool(spec.kept_cuts),
         symbol=_symbol(manifest),
         marker_size=spec.shape_size,
         line_width=spec.line_width,

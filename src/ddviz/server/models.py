@@ -32,7 +32,9 @@ class PlotRequest(BaseModel):
     ``line_aggregation`` for it to give the reason of a wrong one.
     ``color_scale`` is the color scale of a numeric color column the page
     keeps under the lock of the axes (`ddviz.server.plotoptions.parse_color_scale`),
-    kept as sent for it to check; null for that of the filter.
+    kept as sent for it to check; null for that of the filter. ``cuts``
+    are so the cuts of the numeric symbol, row and col columns, by role
+    (`ddviz.server.plotoptions.parse_cuts`).
     """
 
     encoding: dict
@@ -53,6 +55,7 @@ class PlotRequest(BaseModel):
     axis_scales: object = None
     keep_unfiltered_color_levels: StrictBool = False
     color_scale: object = None
+    cuts: object = None
 
 
 class PlotDataRequest(BaseModel):
@@ -75,7 +78,7 @@ class ExportCancel(BaseModel):
 
 
 class SizeRequest(BaseModel):
-    """Body of ``POST /api/overview``: the size of the plot area in pixels, the left and bottom margins asked for, the local filter and the color scale kept (`PlotRequest`)."""
+    """Body of ``POST /api/overview``: the size of the plot area in pixels, the left and bottom margins asked for, the local filter, the color scale and the cuts kept (`PlotRequest`)."""
 
     width: int
     height: int
@@ -83,6 +86,7 @@ class SizeRequest(BaseModel):
     margin_bottom: int = MARGIN_BOTTOM
     filters: list[dict] = []
     color_scale: object = None
+    cuts: object = None
 
 
 class SelectionRequest(BaseModel):

@@ -200,6 +200,11 @@ class View:
         again over the rows of the local filter (the gradient's range, or
         the cuts of the color) in place of ``color_range`` and the color's
         ``cuts``, which are of another filter.
+    find_cuts : list of str
+        The roles of ``binned`` but the color (``"symbol"``, ``"row"``,
+        ``"col"``) whose cuts the worker finds again over the rows of the
+        local filter in place of those of ``cuts``, which are of another
+        filter.
     """
 
     x_ranges: list[list[float] | None]
@@ -215,6 +220,7 @@ class View:
     smooths: list[Smooths] = field(default_factory=list)
     find_color: bool = False
     find_color_scale: bool = False
+    find_cuts: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -435,6 +441,11 @@ class ScatterSpec:
         a gradient, the cuts of the color (``{"breaks", "values"}``:
         `ddviz.compute.cuts`) for one cut into intervals. None for that of
         the rows of the local filter (`ddviz.compute.aggregate`).
+    kept_cuts : dict of str to dict
+        The cuts (``{"breaks", "values"}``) of the roles of ``binned`` but
+        the color (``"symbol"``, ``"row"``, ``"col"``) that the page keeps
+        under the lock of the axes; a role left out takes those of the rows
+        of the local filter (`ddviz.compute.aggregate`).
     """
 
     files: dict[str, list[str]]
@@ -475,6 +486,7 @@ class ScatterSpec:
     margin_bottom: int = MARGIN_BOTTOM
     keep_unfiltered_color_levels: bool = False
     color_scale: dict | None = None
+    kept_cuts: dict[str, dict] = field(default_factory=dict)
 
     def filters_color(self) -> bool:
         """Return whether the color levels are found over the rows of the local filter.

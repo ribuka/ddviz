@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from itertools import pairwise
 
 from ddviz.shared.scatter import LINE_AGGREGATIONS, Binning, ScatterSpec, Smoothing
@@ -153,10 +154,16 @@ def parse_color_scale(raw: object, kind: str | None, max_levels: int) -> dict | 
                 f"lo <= hi: {raw!r}"
             )
         return {"range": [float(v) for v in lo_hi]}
-    breaks = raw.get("breaks")
+    return _parse_breaks(raw, max_levels, "color_scale of intervals")
+
+
+def _parse_breaks(raw: object, max_levels: int, name: str) -> dict:
+    """Return the cuts ``{"breaks": [...], "values": bool}`` of `raw` with float breaks: finite numbers in ascending order, none or from 2 to ``max_levels + 1`` of them; a ValueError naming `name` otherwise."""
+    breaks = raw.get("breaks") if isinstance(raw, dict) else None
     top = max_levels + 1
     if (
-        set(raw) != {"breaks", "values"}
+        not isinstance(raw, dict)
+        or set(raw) != {"breaks", "values"}
         or not isinstance(breaks, list)
         or not all(_finite_number(v) for v in breaks)
         or any(a > b for a, b in pairwise(breaks))
@@ -165,10 +172,53 @@ def parse_color_scale(raw: object, kind: str | None, max_levels: int) -> dict | 
         or not isinstance(raw["values"], bool)
     ):
         raise ValueError(
-            "color_scale of intervals is breaks, finite numbers in ascending "
-            f"order, none or from 2 to {top} of them, and values a bool: {raw!r}"
+            f"{name} is breaks, finite numbers in ascending order, none or "
+            f"from 2 to {top} of them, and values a bool: {raw!r}"
         )
     return {"breaks": [float(v) for v in breaks], "values": raw["values"]}
+
+
+def parse_cuts(raw: object, roles: Iterable[str], max_levels: int) -> dict[str, dict]:
+    """Return the cuts of the numeric symbol, row and col columns the page keeps under the lock of the axes, checked against the spec they are for.
+
+    Parameters
+    ----------
+    raw : object
+        The ``cuts`` of the meta of a result (`ddviz.server.figure`): a
+        dict of a role to its cuts, as `parse_color_scale` takes those of
+        intervals; or None for the cuts of the filter.
+    roles : iterable of str
+        The roles of the spec's ``binned`` but the color (``"symbol"``,
+        ``"row"``, ``"col"``). A role left out of `raw` takes the cuts of
+        the filter.
+    max_levels : int
+        Most intervals of these roles (``ddviz.server.plan.FACET_BINS``).
+
+    Returns
+    -------
+    dict of str to dict
+        The cuts with float breaks, by role
+        (`ddviz.shared.scatter.ScatterSpec.kept_cuts`).
+
+    Raises
+    ------
+    ValueError
+        When `raw` is neither a dict nor None, has a role not in `roles`,
+        or cuts not of the form of `parse_color_scale`.
+    """
+    if raw is None:
+        return {}
+    roles = set(roles)
+    unknown = sorted(r for r in raw if r not in roles) if isinstance(raw, dict) else []
+    if not isinstance(raw, dict) or unknown:
+        raise ValueError(
+            f"cuts is a dict of the roles cut into intervals ({sorted(roles)}) "
+            f"or null: {raw!r}"
+        )
+    return {
+        role: _parse_breaks(cuts, max_levels, f"cuts of {role}")
+        for role, cuts in raw.items()
+    }
 
 
 def parse_smoothing(raw: dict | None) -> Smoothing | None:

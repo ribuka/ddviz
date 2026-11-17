@@ -30,7 +30,9 @@ from ddviz.server.figure import build_figure
 from ddviz.server.hover import HoverIndex
 from ddviz.server.models import PlotRequest, SizeRequest, ViewRequest
 from ddviz.server.plan import (
+    FACET_BINS,
     color_kind,
+    cut_roles,
     drawable,
     drawn_columns,
     scatter_spec,
@@ -39,6 +41,7 @@ from ddviz.server.plan import (
 from ddviz.server.plotoptions import (
     parse_color_bins,
     parse_color_scale,
+    parse_cuts,
     parse_level_shapes,
     parse_line_aggregation,
     parse_line_width,
@@ -186,6 +189,11 @@ def plot_router(
                 spec_color_kind(manifest.spec),
                 settings().plot.max_levels,
             )
+            cuts = parse_cuts(
+                request.cuts,
+                [r for r in manifest.spec.binned if r != "color"],
+                FACET_BINS,
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         filters = await source.filters(request.filters)
@@ -207,6 +215,7 @@ def plot_router(
                 margin_bottom=request.margin_bottom,
                 known=known,
                 color_scale=color_scale,
+                cuts=cuts,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -271,6 +280,7 @@ def plot_router(
                 color_kind(encoding.color, numeric, color_bins),
                 max_levels,
             )
+            cuts = parse_cuts(request.cuts, cut_roles(encoding, numeric), FACET_BINS)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         # The page refuses edits while converting; a plot now would kill the conversion.
@@ -307,7 +317,7 @@ def plot_router(
                 line_aggregation=line_aggregation,
                 keep_unfiltered_color_levels=request.keep_unfiltered_color_levels,
             )
-            spec = replace(spec, color_scale=color_scale)
+            spec = replace(spec, color_scale=color_scale, kept_cuts=cuts)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         try:

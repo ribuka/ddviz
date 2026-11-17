@@ -8,6 +8,7 @@ import pytest
 
 from ddviz.server.derive import (
     box_selection,
+    drawn_cuts,
     resized_spec,
     selection_spec,
     unchanged,
@@ -403,3 +404,114 @@ def test_a_categorical_color_has_no_scale(manifest: PlotManifest) -> None:
     )
     assert not spec.view.find_color_scale
     assert spec.color_scale is None
+
+
+ALL_ROWS = {"breaks": [0.0, 20.0, 40.0, 60.0, 80.0, 99.0], "values": False}
+FILTERED = {"breaks": [0.0, 2.0, 4.0, 6.0, 8.0, 9.0], "values": False}
+G_0_9 = [Filter(column="g", range=[0.0, 9.0])]
+
+
+@pytest.fixture
+def faceted(manifest: PlotManifest) -> PlotManifest:
+    """Return the overview of `manifest` with a numeric col g cut over every row, with a box of its first panel."""
+    binned = {"col": Binning(5, "rows", values_up_to=5)}
+    return replace(
+        manifest,
+        spec=replace(manifest.spec, col="g", binned=binned),
+        cuts={"col": ALL_ROWS},
+        boxes=[Boxes(x="x", y="y", stats=[])],
+    )
+
+
+def _filtered(faceted: PlotManifest, **spec: object) -> PlotManifest:
+    """Return a result of g 0..9 of `faceted`, with its own cuts."""
+    return replace(
+        faceted,
+        spec=replace(faceted.spec, filters=G_0_9, **spec),
+        cuts={"col": FILTERED},
+    )
+
+
+def test_the_cuts_come_from_a_result_of_the_filter(faceted: PlotManifest) -> None:
+    """A view of the overview's filter draws its cuts and panels; another filter asks the worker, unless a result of that filter gives them; a result drawn with cuts kept gives none."""
+    files = {"g": ["g.parquet"]}
+    same = resized_spec(faceted, 400, 300, [], {}, [[0, 1]], [[0, 1]])
+    assert same.view.find_cuts == []
+    assert same.view.cuts == {"col": ALL_ROWS}
+    assert same.view.facets is not None
+    assert same.view.boxes == faceted.boxes
+    assert same.kept_cuts == {}
+    other = resized_spec(faceted, 400, 300, G_0_9, files, [[0, 1]], [[0, 1]])
+    assert other.view.find_cuts == ["col"]
+    known = _filtered(faceted)
+    taken = resized_spec(
+        faceted, 400, 300, G_0_9, files, [[0, 1]], [[0, 1]], known=known
+    )
+    assert taken.view.find_cuts == []
+    assert taken.view.cuts == {"col": FILTERED}
+    assert taken.kept_cuts == {}
+    # Another filter's result gives none, nor one drawn with the cuts kept.
+    elsewhere = resized_spec(faceted, 400, 300, [], {}, [[0, 1]], [[0, 1]], known=known)
+    assert elsewhere.view.cuts == {"col": ALL_ROWS}
+    held = _filtered(faceted, kept_cuts={"col": FILTERED})
+    unknown = resized_spec(
+        faceted, 400, 300, G_0_9, files, [[0, 1]], [[0, 1]], known=held
+    )
+    assert unknown.view.find_cuts == ["col"]
+
+
+def test_the_cuts_kept_by_the_page_are_drawn(faceted: PlotManifest) -> None:
+    """Cuts kept are drawn as they are and held by the spec; those of the filter's own are none kept; other cuts of the same filter find their panels and boxes again."""
+    frozen = resized_spec(
+        faceted,
+        400,
+        300,
+        G_0_9,
+        {"g": ["g"]},
+        [[0, 1]],
+        [[0, 1]],
+        cuts={"col": ALL_ROWS},
+    )
+    assert frozen.view.find_cuts == []
+    assert frozen.view.cuts == {"col": ALL_ROWS}
+    assert frozen.kept_cuts == {"col": ALL_ROWS}
+    own = resized_spec(
+        faceted, 400, 300, [], {}, [[0, 1]], [[0, 1]], cuts={"col": ALL_ROWS}
+    )
+    assert own.kept_cuts == {}
+    assert own.view.facets is not None
+    moved = resized_spec(
+        faceted, 400, 300, [], {}, [[0, 1]], [[0, 1]], cuts={"col": FILTERED}
+    )
+    assert moved.kept_cuts == {"col": FILTERED}
+    assert moved.view.facets is None
+    assert moved.view.boxes == []
+
+
+def test_a_result_with_cuts_kept_stands_only_for_them(faceted: PlotManifest) -> None:
+    """A result drawn with cuts kept stands for a request keeping them, not for one of the filter's own."""
+    held = replace(
+        faceted,
+        spec=replace(faceted.spec, kept_cuts={"col": FILTERED}),
+        cuts={"col": FILTERED},
+    )
+    ranges = (held.x_ranges, held.y_ranges)
+    kept = resized_spec(held, 400, 300, [], {}, *ranges, cuts={"col": FILTERED})
+    assert unchanged(held, kept)
+    own = resized_spec(held, 400, 300, [], {}, *ranges)
+    assert own.view.find_cuts == ["col"]
+    assert not unchanged(held, own)
+    assert not unchanged(
+        faceted,
+        resized_spec(faceted, 400, 300, [], {}, *ranges, cuts={"col": FILTERED}),
+    )
+    assert unchanged(faceted, resized_spec(faceted, 400, 300, [], {}, *ranges))
+
+
+def test_a_selection_keeps_the_cuts_drawn(faceted: PlotManifest) -> None:
+    """A selection selects with the cuts of its result, found again by no one."""
+    drawn = _filtered(faceted, kept_cuts={})
+    spec = selection_spec(drawn, box_selection(drawn, 0, (0.0, 1.0), (0.0, 1.0)))
+    assert spec.view.find_cuts == []
+    assert spec.view.cuts == {"col": FILTERED}
+    assert drawn_cuts(drawn) == {"col": FILTERED}
