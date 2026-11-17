@@ -636,3 +636,34 @@ def test_a_refusal_read_after_a_newer_request_changes_nothing(
     expect(box(page, "half", "hi")).to_be_checked()
     expect(box(page, "half", "lo")).not_to_be_checked()
     assert errors == []
+
+
+def test_a_refused_filter_keeps_a_categorical_axis_set_by_hand(
+    app_page: Page,
+) -> None:
+    """A categorical x zoomed by hand stays so when a filter is refused for its color levels: an edit of the graph then keeps its range (PR #276 review)."""
+    page = app_page
+    errors = watch_errors(page)
+    expect(page.locator("#columns .column").filter(has_text="half")).to_be_visible()
+    place(page, "g", "x")
+    place(page, "y", "y")
+    add_filter(page, "half")
+    tick(page, "half", ["lo"])
+    place(page, "g", "color")
+    expect(page.locator(LEGEND_NAMES)).to_have_count(80)
+    zoom(page, 0, 3)
+    with page.expect_response("**/api/overview") as refused:
+        box(page, "half", "hi").check()
+    assert refused.value.json()["error"] == "filtered_levels"
+    settle(page)
+    expect(box(page, "half", "hi")).not_to_be_checked()
+    with page.expect_response("**/api/plot"):
+        place(page, "v", "color")
+    page.wait_for_function(SETTLED)
+    wait_idle(page)
+    x = page.evaluate(
+        "() => { const a = document.getElementById('plot')._fullLayout.xaxis;"
+        " return a.range.map((v) => a.r2l(v)); }"
+    )
+    assert x == pytest.approx([0, 3])
+    assert errors == []

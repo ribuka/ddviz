@@ -1026,8 +1026,10 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
     const text = await response.text();
     // A newer request may have come while the answer was read.
     if (mine === generation) {
-      viewFailed(text);
+      // What the caller puts back comes first: the refusal of a filter may
+      // aggregate the shown ranges again (`viewFailed`).
       onFailed?.();
+      viewFailed(text);
     }
     return;
   }
@@ -1459,10 +1461,14 @@ function applyFilters() {
   if (!overview || plotting === generation) return;
   hideHover();
   const ranges = axisRanges.heldRanges(current, shownRanges(gd, current), { filter: true });
-  // A categorical axis set by hand takes the bands of the new filter.
+  // A categorical axis set by hand takes the bands of the new filter; a
+  // request that fails (a filter refused for its levels) leaves the figure
+  // drawn, whose axes set by hand stay so.
+  const before = axisRanges.snapshot();
   if (!axisRanges.frozen) axisRanges.forgetCategorical(current);
-  if ([...ranges.x, ...ranges.y].every((range) => range === null)) requestOverview();
-  else requestView(ranges);
+  const onFailed = () => axisRanges.restore(before);
+  if ([...ranges.x, ...ranges.y].every((range) => range === null)) requestOverview({ onFailed });
+  else requestView(ranges, { onFailed });
 }
 
 const leftPane = new LeftPane(document.getElementById("left"));
