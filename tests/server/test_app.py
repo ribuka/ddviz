@@ -1687,8 +1687,7 @@ def test_the_scale_of_intervals_is_their_cuts(client: TestClient) -> None:
 def test_a_wrong_color_scale_is_refused_before_any_task(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A ``color_scale`` of another form or kind than the plot's color is a 400 naming it, for a plot, a view and an overview; no task runs."""
-    _plot(client, encoding=GRADIENT)
+    """A ``color_scale`` of another form or kind than the plot's color is a 400 naming it, for a plot, a view and an overview; no task runs, a plot's columns not yet converted included."""
     tasks: list[object] = []
     run = TaskBroker.run
 
@@ -1697,16 +1696,23 @@ def test_a_wrong_color_scale_is_refused_before_any_task(
         return await run(self, task, pool)
 
     monkeypatch.setattr(TaskBroker, "run", counted)
+    # The schema only: no column of the plot is converted yet.
+    assert client.get("/api/schema").status_code == 200
+    tasks.clear()
     wrong = {"breaks": [0, 1], "values": False}
+    first = {"encoding": GRADIENT, **SIZE, **HIDE_NULLS, "color_scale": wrong}
+    response = client.post("/api/plot", json=first)
+    assert response.status_code == 400
+    assert "color_scale" in response.json()["detail"]
+    assert tasks == []
+    _plot(client, encoding=GRADIENT)
+    tasks.clear()
     view = {**SIZE, "x_ranges": [None], "y_ranges": [None]}
     for path, body in (
         ("/api/view", {**view, "color_scale": wrong}),
         ("/api/overview", {**SIZE, "color_scale": {"range": [1, 0]}}),
         ("/api/overview", {**SIZE, "color_scale": [0, 1]}),
-        (
-            "/api/plot",
-            {"encoding": GRADIENT, **SIZE, **HIDE_NULLS, "color_scale": wrong},
-        ),
+        ("/api/plot", first),
     ):
         response = client.post(path, json=body)
         assert response.status_code == 400, path

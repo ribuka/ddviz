@@ -631,8 +631,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     filters,
     ...options.request(encoding),
     axis_scales: axes.scales.request(encoding),
-    // Under the lock, the color scale drawn stays while the color does.
-    color_scale: axisRanges.carriedColorScale(overview?.meta, encoding.color, options.colorBins),
+    // Under the lock, the color scale shown (`shownScale`) stays while the color does.
+    color_scale: axisRanges.carriedColorScale(shownScale(), encoding.color, options.colorBins),
   };
   // The filter pane's state of these conditions, which the pane goes back to
   // once the result is drawn (`RestorePoint`).
@@ -985,8 +985,8 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
       response = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Under the lock, the color scale drawn stays (`AxisRanges.colorScale`).
-        body: JSON.stringify({ ...body, ...size, filters, color_scale: axisRanges.colorScale(current) }),
+        // Under the lock, the color scale shown stays (`AxisRanges.colorScale`).
+        body: JSON.stringify({ ...body, ...size, filters, color_scale: axisRanges.colorScale(shownScale()) }),
       });
     } catch (error) {
       console.error(error);
@@ -1181,6 +1181,14 @@ function knownAuto() {
   return autoRanges(autoMeta);
 }
 
+// Returns the meta of the result whose color scale the page shows: that of
+// the legend. An old overview standing in for another filter (`showOverview`)
+// is drawn with its own, but the legend, and so the scale the lock keeps,
+// stay those of the result shown before it.
+function shownScale() {
+  return legend.meta;
+}
+
 // Shows the lock as it is: pressed while on, and of use with a continuous
 // axis or a numeric color drawn (`lockable`).
 function showFreeze() {
@@ -1233,7 +1241,8 @@ function setFrozen(on) {
     requestView(ranges, { onFailed });
     return;
   }
-  if (filtersKey(overview.meta.filters) === filtersKey(filters) && !overview.meta.color.kept && !current.color.kept) {
+  const kept = [overview.meta, current, shownScale()].some((meta) => meta?.color.kept);
+  if (filtersKey(overview.meta.filters) === filtersKey(filters) && !kept) {
     showOverview();
     return;
   }

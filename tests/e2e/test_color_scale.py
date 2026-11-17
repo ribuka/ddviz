@@ -12,10 +12,11 @@ from tests.e2e.test_axis_freeze import (
     LOCK,
     add_filter,
     lock,
+    reset_axes,
     set_range,
     whole_range,
 )
-from tests.e2e.test_kept_ranges import settle
+from tests.e2e.test_kept_ranges import settle, zoom
 from tests.e2e.test_scatter import apply_color_bins, place, watch_errors
 
 pytestmark = pytest.mark.e2e
@@ -134,4 +135,33 @@ def test_the_lock_is_of_use_with_a_numeric_color_alone(app_page: Page) -> None:
     expect(page.locator(LOCK)).to_be_enabled()
     expect(page.locator(LOCK)).to_have_attribute("title", "軸と色の範囲を固定する")
     expect(page.locator(LOCK)).to_have_attribute("aria-label", "軸と色の範囲を固定")
+    assert errors == []
+
+
+@pytest.mark.parametrize("then", ["edit", "reset", "double-click"])
+def test_the_lock_keeps_the_scale_of_a_filter_set_while_zoomed(
+    app_page: Page, then: str
+) -> None:
+    """Zoomed, a filter colors over its rows while the overview is of the old one; locked then, an edit of the graph, Reset axes or a double click keeps the scale shown, not the old overview's."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "x", "x")
+    place(page, "y", "y")
+    place(page, "c", "color")
+    settle(page)
+    zoom(page, {"xaxis.range": [10, 90]})
+    add_filter(page, "c")
+    set_range(page, "c", "20", "40")
+    narrow = ticks(page)
+    assert min(narrow) >= 20
+    assert max(narrow) <= 40
+    lock(page)
+    if then == "edit":
+        page.locator('#elements .element[data-element="smooth"]').click()
+    elif then == "reset":
+        reset_axes(page)
+    else:
+        page.locator("#plot .nsewdrag").first.dblclick()
+    settle(page)
+    assert ticks(page) == narrow
     assert errors == []

@@ -29,7 +29,13 @@ from ddviz.server.errors import ensure_done
 from ddviz.server.figure import build_figure
 from ddviz.server.hover import HoverIndex
 from ddviz.server.models import PlotRequest, SizeRequest, ViewRequest
-from ddviz.server.plan import drawable, drawn_columns, scatter_spec, undrawn
+from ddviz.server.plan import (
+    color_kind,
+    drawable,
+    drawn_columns,
+    scatter_spec,
+    undrawn,
+)
 from ddviz.server.plotoptions import (
     parse_color_bins,
     parse_color_scale,
@@ -40,6 +46,7 @@ from ddviz.server.plotoptions import (
     parse_shape_sizes,
     parse_smoothing,
     parse_wrap_cols,
+    spec_color_kind,
 )
 from ddviz.server.results import Results, drop
 from ddviz.server.settings import Settings
@@ -175,7 +182,9 @@ def plot_router(
         # Checked before any task, the conversion's included.
         try:
             color_scale = parse_color_scale(
-                request.color_scale, manifest.spec, settings().plot.max_levels
+                request.color_scale,
+                spec_color_kind(manifest.spec),
+                settings().plot.max_levels,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -254,6 +263,16 @@ def plot_router(
             raise HTTPException(
                 400, "x and y need a column, or y numeric columns alone"
             )
+        # Checked before the conversion: the scale kept of a color neither a
+        # gradient nor cut is none.
+        try:
+            color_scale = parse_color_scale(
+                request.color_scale,
+                color_kind(encoding.color, numeric, color_bins),
+                max_levels,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
         # The page refuses edits while converting; a plot now would kill the conversion.
         if source.converting:
             raise HTTPException(409, "converting")
@@ -288,11 +307,7 @@ def plot_router(
                 line_aggregation=line_aggregation,
                 keep_unfiltered_color_levels=request.keep_unfiltered_color_levels,
             )
-            # The scale kept of a color neither a gradient nor cut is none.
-            spec = replace(
-                spec,
-                color_scale=parse_color_scale(request.color_scale, spec, max_levels),
-            )
+            spec = replace(spec, color_scale=color_scale)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         try:

@@ -86,7 +86,25 @@ def _finite_number(value: object) -> bool:
     )
 
 
-def parse_color_scale(raw: object, spec: ScatterSpec, max_levels: int) -> dict | None:
+def spec_color_kind(spec: ScatterSpec) -> str | None:
+    """Return how a spec colors by a numeric column: ``"gradient"``, ``"bins"`` (intervals), or None for another color.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The spec.
+
+    Returns
+    -------
+    str or None
+        The kind, as `parse_color_scale` takes it.
+    """
+    if spec.gradient:
+        return "gradient"
+    return "bins" if "color" in spec.binned else None
+
+
+def parse_color_scale(raw: object, kind: str | None, max_levels: int) -> dict | None:
     """Return the color scale the page keeps under the lock of the axes, checked against the spec it is for.
 
     Parameters
@@ -94,12 +112,13 @@ def parse_color_scale(raw: object, spec: ScatterSpec, max_levels: int) -> dict |
     raw : object
         The ``color`` ``scale`` of the meta of a result
         (`ddviz.server.figure`), or None for the color scale of the filter.
-    spec : ScatterSpec
-        The spec it is for: a gradient takes ``{"range": [lo, hi]}``, two
-        finite numbers with ``lo <= hi``; a color cut into intervals the
-        cuts ``{"breaks": [...], "values": bool}``, the breaks finite
-        numbers in ascending order, none or from 2 to ``max_levels + 1`` of
-        them. Any other spec has no color scale and leaves it out.
+    kind : str or None
+        The color it is for (`spec_color_kind`, `ddviz.server.plan.color_kind`): a gradient takes
+        ``{"range": [lo, hi]}``, two finite numbers with ``lo <= hi``;
+        intervals (``"bins"``) the cuts ``{"breaks": [...], "values": bool}``,
+        the breaks finite numbers in ascending order, none or from 2 to
+        ``max_levels + 1`` of them. Another color (None) has no color scale
+        and leaves it out.
     max_levels : int
         Most intervals of a numeric color column (``plot.max_levels``).
 
@@ -116,11 +135,11 @@ def parse_color_scale(raw: object, spec: ScatterSpec, max_levels: int) -> dict |
     """
     if raw is None:
         return None
-    if not isinstance(raw, dict) or not (spec.gradient or "color" in spec.binned):
+    if not isinstance(raw, dict) or kind is None:
         if isinstance(raw, dict):
             return None
         raise ValueError(f"color_scale is a dict or null: {raw!r}")
-    if spec.gradient:
+    if kind == "gradient":
         lo_hi = raw.get("range")
         if (
             set(raw) != {"range"}
