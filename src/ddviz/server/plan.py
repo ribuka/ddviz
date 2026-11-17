@@ -273,6 +273,30 @@ def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
     return filters
 
 
+def color_kind(
+    color: str | None, numeric: dict[str, bool], color_bins: Binning | None
+) -> str | None:
+    """Return how a color column draws: ``"gradient"``, ``"bins"`` (intervals), or None for a categorical one or none.
+
+    Parameters
+    ----------
+    color : str or None
+        The color column.
+    numeric : dict of str to bool
+        Whether each column is numeric (a temporal one is).
+    color_bins : Binning or None
+        How a numeric color column is cut, or None for a gradient.
+
+    Returns
+    -------
+    str or None
+        The kind, as `scatter_spec` makes it.
+    """
+    if not numeric.get(color):
+        return None
+    return "gradient" if color_bins is None else "bins"
+
+
 def scatter_spec(
     encoding: Encoding,
     files: dict[str, list[str]],
@@ -424,10 +448,10 @@ def scatter_spec(
         for role, column in (("symbol", symbol), ("row", encoding.row), ("col", col))
         if numeric.get(column)
     }
-    gradient = bool(numeric.get(color))
-    if gradient and color_bins is not None:
+    kind = color_kind(color, numeric, color_bins)
+    gradient = kind == "gradient"
+    if kind == "bins":
         binned["color"] = color_bins
-        gradient = False
     read = dict.fromkeys([*hover, *(f.column for f in filters)])
     band = {ONE_BAND: []} if x == [ONE_BAND] else {}
     return ScatterSpec(

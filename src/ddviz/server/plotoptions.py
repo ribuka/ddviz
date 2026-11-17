@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
+from itertools import pairwise
 
-from ddviz.shared.scatter import LINE_AGGREGATIONS, Binning, Smoothing
+from ddviz.shared.scatter import LINE_AGGREGATIONS, Binning, ScatterSpec, Smoothing
 from ddviz.shared.shapes import SHAPES
 
 # The fewest intervals a numeric color column can be cut into.
@@ -76,6 +77,100 @@ def parse_color_bins(raw: dict | None, max_levels: int) -> Binning | None:
     return Binning(raw["n"], raw["by"])
 
 
+def _finite_number(value: object) -> bool:
+    """Return whether a value is a finite JSON number: an int or a float, not a bool."""
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def spec_color_kind(spec: ScatterSpec) -> str | None:
+    """Return how a spec colors by a numeric column: ``"gradient"``, ``"bins"`` (intervals), or None for another color.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The spec.
+
+    Returns
+    -------
+    str or None
+        The kind, as `parse_color_scale` takes it.
+    """
+    if spec.gradient:
+        return "gradient"
+    return "bins" if "color" in spec.binned else None
+
+
+def parse_color_scale(raw: object, kind: str | None, max_levels: int) -> dict | None:
+    """Return the color scale the page keeps under the lock of the axes, checked against the spec it is for.
+
+    Parameters
+    ----------
+    raw : object
+        The ``color`` ``scale`` of the meta of a result
+        (`ddviz.server.figure`), or None for the color scale of the filter.
+    kind : str or None
+        The color it is for (`spec_color_kind`, `ddviz.server.plan.color_kind`): a gradient takes
+        ``{"range": [lo, hi]}``, two finite numbers with ``lo <= hi``;
+        intervals (``"bins"``) the cuts ``{"breaks": [...], "values": bool}``,
+        the breaks finite numbers in ascending order, none or from 2 to
+        ``max_levels + 1`` of them. Another color (None) has no color scale
+        and leaves it out.
+    max_levels : int
+        Most intervals of a numeric color column (``plot.max_levels``).
+
+    Returns
+    -------
+    dict or None
+        The color scale with float numbers
+        (`ddviz.shared.scatter.ScatterSpec.color_scale`), or None.
+
+    Raises
+    ------
+    ValueError
+        When `raw` is neither a dict nor None, or not of the form above.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or kind is None:
+        if isinstance(raw, dict):
+            return None
+        raise ValueError(f"color_scale is a dict or null: {raw!r}")
+    if kind == "gradient":
+        lo_hi = raw.get("range")
+        if (
+            set(raw) != {"range"}
+            or not isinstance(lo_hi, list)
+            or len(lo_hi) != 2
+            or not all(_finite_number(v) for v in lo_hi)
+            or lo_hi[0] > lo_hi[1]
+        ):
+            raise ValueError(
+                "color_scale of a gradient is a range of two finite numbers "
+                f"lo <= hi: {raw!r}"
+            )
+        return {"range": [float(v) for v in lo_hi]}
+    breaks = raw.get("breaks")
+    top = max_levels + 1
+    if (
+        set(raw) != {"breaks", "values"}
+        or not isinstance(breaks, list)
+        or not all(_finite_number(v) for v in breaks)
+        or any(a > b for a, b in pairwise(breaks))
+        or len(breaks) == 1
+        or len(breaks) > top
+        or not isinstance(raw["values"], bool)
+    ):
+        raise ValueError(
+            "color_scale of intervals is breaks, finite numbers in ascending "
+            f"order, none or from 2 to {top} of them, and values a bool: {raw!r}"
+        )
+    return {"breaks": [float(v) for v in breaks], "values": raw["values"]}
+
+
 def parse_smoothing(raw: dict | None) -> Smoothing | None:
     """Return how the page asks to fit the smoothing lines, checked.
 
@@ -105,15 +200,9 @@ def parse_smoothing(raw: dict | None) -> Smoothing | None:
     if not set(raw) - {"method"} <= allowed:
         raise ValueError(f"{method} takes only {sorted(allowed)}: {raw}")
     p, frac = raw.get("p"), raw.get("frac", Smoothing.frac)
-
-    def number(v: object) -> bool:
-        return (
-            isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
-        )
-
-    if p is not None and not (number(p) and 0 <= p <= 1):
+    if p is not None and not (_finite_number(p) and 0 <= p <= 1):
         raise ValueError(f"p is from 0 to 1 or null: {p}")
-    if not (number(frac) and 0 < frac <= 1):
+    if not (_finite_number(frac) and 0 < frac <= 1):
         raise ValueError(f"frac is above 0 and at most 1: {frac}")
     return Smoothing(method, None if p is None else float(p), float(frac))
 

@@ -178,10 +178,11 @@ class View:
         same local filter; None to find them again from the filter.
     cuts : dict
         Cuts of each role in ``binned`` of the spec (`ddviz.compute.cuts`), from the
-        overview.
+        overview; those of the color, of the color scale the view draws with.
     color_range : list of float or None
-        Finite minimum and maximum of a gradient's color column, from the
-        overview.
+        Finite minimum and maximum of a gradient's color column that the
+        view draws with: of the rows of its filter, from a result of that
+        filter, or kept by the page (`ScatterSpec.color_scale`).
     axis_levels : dict of str to list of str
         Levels of each categorical axis column, from the overview.
     boxes : list of Boxes
@@ -194,6 +195,11 @@ class View:
         Whether the worker finds the color levels again over the rows of
         the local filter (`ScatterSpec.filters_color`) in place of those of
         ``levels``, which are of another filter.
+    find_color_scale : bool
+        Whether the worker finds the color scale of a numeric color column
+        again over the rows of the local filter (the gradient's range, or
+        the cuts of the color) in place of ``color_range`` and the color's
+        ``cuts``, which are of another filter.
     """
 
     x_ranges: list[list[float] | None]
@@ -208,6 +214,7 @@ class View:
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
     find_color: bool = False
+    find_color_scale: bool = False
 
 
 @dataclass(frozen=True)
@@ -422,6 +429,12 @@ class ScatterSpec:
         the local filter aside, with those left without rows in the legend;
         otherwise its levels are those of the rows of the local filter
         (`filters_color`).
+    color_scale : dict or None
+        The color scale of a numeric color column that the page keeps under
+        the lock of the axes (``#axis-freeze``): ``{"range": [lo, hi]}`` for
+        a gradient, the cuts of the color (``{"breaks", "values"}``:
+        `ddviz.compute.cuts`) for one cut into intervals. None for that of
+        the rows of the local filter (`ddviz.compute.aggregate`).
     """
 
     files: dict[str, list[str]]
@@ -461,6 +474,7 @@ class ScatterSpec:
     margin_left: int = MARGIN_LEFT
     margin_bottom: int = MARGIN_BOTTOM
     keep_unfiltered_color_levels: bool = False
+    color_scale: dict | None = None
 
     def filters_color(self) -> bool:
         """Return whether the color levels are found over the rows of the local filter.

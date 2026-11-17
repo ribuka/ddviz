@@ -19,6 +19,19 @@ export function hasContinuous(meta) {
   return ["x", "y"].some((role) => meta[`${role}_columns`].some((_, i) => isContinuous(meta, role, i)));
 }
 
+// Whether a result colors by a numeric column: a gradient or intervals,
+// whose color scale (the range, or the breaks: `meta.color.scale`) the
+// lock keeps too (Issue #264).
+export function hasNumericColor(meta) {
+  return ["gradient", "bins"].includes(meta.color?.kind);
+}
+
+// Whether the lock is of use for a result: with a continuous axis or a
+// numeric color.
+export function lockable(meta) {
+  return hasContinuous(meta) || hasNumericColor(meta);
+}
+
 // Returns the key of an axis column of a result: its role, its column and
 // what its coordinates mean (`axisCoordinates`). The same column moved to
 // the other role, or on a log axis instead of a linear one, is another axis.
@@ -147,6 +160,26 @@ export class AxisRanges {
       });
     }
     return zoomed ? { ranges, zoomed, box: null } : null;
+  }
+
+  // Returns the color scale that a view or an overview of result `meta`
+  // keeps (`color_scale` of `/api/view` and `/api/overview`): that drawn,
+  // under the lock; null for that of the filter.
+  colorScale(meta) {
+    return (this.frozen && meta?.color?.scale) || null;
+  }
+
+  // Returns the color scale that an edit of the graph keeps from the drawn
+  // result `old` (`color_scale` of `/api/plot`): that drawn, under the lock,
+  // while the color stays the same column of the same kind, cut the same
+  // way (`bins`: `{n, by}`, null for a gradient); null for that of the
+  // new graph's filter.
+  carriedColorScale(old, column, bins) {
+    if (!this.frozen || !old || !hasNumericColor(old) || old.color.column !== column) return null;
+    const kind = bins ? "bins" : "gradient";
+    if (old.color.kind !== kind) return null;
+    if (bins && (old.color.bins?.n !== bins.n || old.color.bins?.by !== bins.by)) return null;
+    return old.color.scale ?? null;
   }
 
   // The state, to go back to when a change of it fails (`restore`).

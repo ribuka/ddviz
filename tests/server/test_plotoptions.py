@@ -9,6 +9,7 @@ import pytest
 from ddviz.server.plotoptions import (
     MAX_SAFE_INTEGER,
     parse_color_bins,
+    parse_color_scale,
     parse_level_shapes,
     parse_line_aggregation,
     parse_line_width,
@@ -16,8 +17,9 @@ from ddviz.server.plotoptions import (
     parse_shape_sizes,
     parse_smoothing,
     parse_wrap_cols,
+    spec_color_kind,
 )
-from ddviz.shared.scatter import Binning, Smoothing
+from ddviz.shared.scatter import Binning, ScatterSpec, Smoothing
 
 
 @pytest.mark.parametrize("by", ["values", "rows"])
@@ -185,3 +187,99 @@ def test_json_integers_are_taken_as_before() -> None:
     assert parse_shape_size(7) == 7
     assert parse_wrap_cols(2) == 2
     assert parse_color_bins({"n": 3, "by": "rows"}, 100) == Binning(3, "rows")
+
+
+def _color_spec(**fields: object) -> ScatterSpec:
+    """Return a spec of x × y colored by c, as `fields` set it."""
+    return ScatterSpec(
+        **{
+            "files": {},
+            "x": ["x"],
+            "y": ["y"],
+            "color": "c",
+            "row": None,
+            "col": None,
+            "width": 1,
+            "height": 1,
+            **fields,
+        }
+    )
+
+
+GRADIENT = _color_spec(gradient=True)
+CUT = _color_spec(binned={"color": Binning(3, "values")})
+
+
+def test_parse_color_scale_takes_a_range_for_a_gradient() -> None:
+    """A gradient keeps two finite numbers in order, as floats; null is the scale of the filter."""
+    assert parse_color_scale({"range": [1, 2.5]}, "gradient", 100) == {
+        "range": [1.0, 2.5]
+    }
+    assert parse_color_scale({"range": [3, 3]}, "gradient", 100) == {"range": [3.0, 3.0]}
+    assert parse_color_scale(None, "gradient", 100) is None
+
+
+def test_parse_color_scale_takes_the_breaks_of_intervals() -> None:
+    """Intervals keep their breaks in ascending order, none or 2 to ``max_levels + 1``, and whether they are values."""
+    cuts = {"breaks": [0, 1.5, 3], "values": False}
+    assert parse_color_scale(cuts, "bins", 100) == {
+        "breaks": [0.0, 1.5, 3.0],
+        "values": False,
+    }
+    values = {"breaks": [1, 2, 2], "values": True}
+    assert parse_color_scale(values, "bins", 100) == {
+        "breaks": [1.0, 2.0, 2.0],
+        "values": True,
+    }
+    empty = {"breaks": [], "values": False}
+    assert parse_color_scale(empty, "bins", 100) == empty
+    most = {"breaks": list(range(13)), "values": False}
+    assert parse_color_scale(most, "bins", 12)["breaks"] == [float(b) for b in range(13)]
+
+
+def test_parse_color_scale_leaves_out_that_of_another_color() -> None:
+    """A categorical color, or none, has no scale to keep: a dict is left out."""
+    assert parse_color_scale({"range": [0, 1]}, None, 100) is None
+    assert parse_color_scale({"breaks": []}, None, 100) is None
+
+
+def test_the_kind_of_a_spec_s_color() -> None:
+    """A gradient, intervals, and any other color, as the check takes them."""
+    assert [spec_color_kind(s) for s in (GRADIENT, CUT, _color_spec())] == [
+        "gradient",
+        "bins",
+        None,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("raw", "spec"),
+    [
+        ([0, 1], GRADIENT),
+        ("range", CUT),
+        (True, _color_spec()),
+        ({"range": [2, 1]}, GRADIENT),
+        ({"range": [0]}, GRADIENT),
+        ({"range": [0, 1, 2]}, GRADIENT),
+        ({"range": [0, float("inf")]}, GRADIENT),
+        ({"range": [0, float("nan")]}, GRADIENT),
+        ({"range": [0, "1"]}, GRADIENT),
+        ({"range": [False, True]}, GRADIENT),
+        ({"range": (0, 1)}, GRADIENT),
+        ({"range": [0, 1], "values": False}, GRADIENT),
+        ({"breaks": [0, 1], "values": False}, GRADIENT),
+        ({"range": [0, 1]}, CUT),
+        ({"breaks": [0, 2, 1], "values": False}, CUT),
+        ({"breaks": [1], "values": False}, CUT),
+        ({"breaks": list(range(14)), "values": False}, CUT),
+        ({"breaks": [0, float("inf")], "values": False}, CUT),
+        ({"breaks": [0, "1"], "values": False}, CUT),
+        ({"breaks": [0, 1], "values": 0}, CUT),
+        ({"breaks": [0, 1]}, CUT),
+        ({"breaks": [0, 1], "values": False, "range": [0, 1]}, CUT),
+    ],
+)
+def test_parse_color_scale_refuses_another_form(raw: object, spec: ScatterSpec) -> None:
+    """Another type, order, length or kind than the spec's is refused, naming ``color_scale``."""
+    with pytest.raises(ValueError, match="color_scale"):
+        parse_color_scale(raw, spec_color_kind(spec), 12)

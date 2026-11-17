@@ -1620,3 +1620,101 @@ def test_the_line_aggregation_reaches_the_worker_and_a_wrong_one_is_refused(
         assert "line_aggregation is one of" in response.json()["detail"]
     points = {"encoding": {"x": ["x"], "y": ["y"]}, **SIZE, **HIDE_NULLS}
     assert client.post("/api/plot", json=points).json()["meta"]["line_aggregation"] is None
+
+
+GRADIENT = {"x": ["x"], "y": ["y"], "color": "y"}
+
+
+def test_the_color_scale_follows_the_filter_unless_kept(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A numeric color spans the rows of the filter; a view or an overview given the scale drawn (``color_scale``) draws it, finding none, and tells it is kept."""
+    every = _plot(client, encoding=GRADIENT)["meta"]["color"]
+    assert every["scale"] == {"range": every["range"]}
+    assert not every["kept"]
+    filters = [{"column": "y", "range": [-1, 0.5]}]
+    first = _plot(client, encoding=GRADIENT, filters=filters)["meta"]["color"]
+    lo, hi = first["range"]
+    assert -1 <= lo < -0.9
+    assert 0.4 < hi <= 0.5
+    specs = []
+    run = TaskBroker.run
+
+    async def kept_run(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        if isinstance(task, PlotTask):
+            specs.append(task.spec)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", kept_run)
+    other = [{"column": "y", "range": [0, 2]}]
+    body = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [None], "filters": other}
+    kept = {**body, "color_scale": first["scale"]}
+    view = client.post("/api/view", json=kept).json()["meta"]["color"]
+    assert view["range"] == first["range"]
+    assert view["kept"]
+    assert not specs[-1].view.find_color_scale
+    # The overview of that filter, its own scale: found once, then reused.
+    whole = client.post("/api/overview", json={**SIZE, "filters": other}).json()
+    color = whole["meta"]["color"]
+    assert not color["kept"]
+    lo, hi = color["range"]
+    assert 0 <= lo < 0.1
+    assert 1.5 < hi <= 2
+    assert specs[-1].view.find_color_scale
+    zoom = client.post("/api/view", json=body).json()["meta"]["color"]
+    assert zoom["range"] == color["range"]
+    assert not specs[-1].view.find_color_scale
+    # A view of a new filter while zoomed finds its scale, which the
+    # overview of that filter takes.
+    third = [{"column": "y", "range": [-2, 0]}]
+    zoomed = {**body, "filters": third}
+    found = client.post("/api/view", json=zoomed).json()["meta"]["color"]
+    assert specs[-1].view.find_color_scale
+    back = client.post("/api/overview", json={**SIZE, "filters": third}).json()
+    assert not specs[-1].view.find_color_scale
+    assert back["meta"]["color"]["range"] == found["range"]
+
+
+def test_the_scale_of_intervals_is_their_cuts(client: TestClient) -> None:
+    """Intervals tell their cuts, which a categorical color has none of."""
+    binned = _plot(client, encoding=BINNED, color_bins={"n": 3, "by": "values"})
+    color = binned["meta"]["color"]
+    assert set(color["scale"]) == {"breaks", "values"}
+    assert len(color["scale"]["breaks"]) == 4
+    assert _plot(client)["meta"]["color"]["scale"] is None
+
+
+def test_a_wrong_color_scale_is_refused_before_any_task(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``color_scale`` of another form or kind than the plot's color is a 400 naming it, for a plot, a view and an overview; no task runs, a plot's columns not yet converted included."""
+    tasks: list[object] = []
+    run = TaskBroker.run
+
+    async def counted(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        tasks.append(task)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", counted)
+    # The schema only: no column of the plot is converted yet.
+    assert client.get("/api/schema").status_code == 200
+    tasks.clear()
+    wrong = {"breaks": [0, 1], "values": False}
+    first = {"encoding": GRADIENT, **SIZE, **HIDE_NULLS, "color_scale": wrong}
+    response = client.post("/api/plot", json=first)
+    assert response.status_code == 400
+    assert "color_scale" in response.json()["detail"]
+    assert tasks == []
+    _plot(client, encoding=GRADIENT)
+    tasks.clear()
+    view = {**SIZE, "x_ranges": [None], "y_ranges": [None]}
+    for path, body in (
+        ("/api/view", {**view, "color_scale": wrong}),
+        ("/api/overview", {**SIZE, "color_scale": {"range": [1, 0]}}),
+        ("/api/overview", {**SIZE, "color_scale": [0, 1]}),
+        ("/api/plot", first),
+    ):
+        response = client.post(path, json=body)
+        assert response.status_code == 400, path
+        assert "color_scale" in response.json()["detail"]
+    assert tasks == []

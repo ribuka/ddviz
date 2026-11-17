@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import TypedDict
 
+from ddviz.server.derive import drawn_scale
 from ddviz.server.labeltext import facet_text, fit_text, level_text, plotly_text
 from ddviz.shared.layout import (
     MARGIN_LEFT,
@@ -262,6 +263,11 @@ def _color_scale(manifest: PlotManifest) -> dict:
         "kind": kind,
         "bins": None if bins is None else asdict(bins),
         "range": manifest.color_range,
+        # The scale the page keeps under the lock of the axes, as it sends
+        # it back (`ddviz.server.plotoptions.parse_color_scale`), and whether
+        # it was so kept, not that of the rows of the filter.
+        "scale": drawn_scale(manifest),
+        "kept": spec.color_scale is not None,
         # The kind of a temporal column, whose gradient's ticks are dates.
         "temporal": spec.temporal.get(spec.color),
         # Series per color level: one per symbol level.

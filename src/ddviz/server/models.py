@@ -30,6 +30,9 @@ class PlotRequest(BaseModel):
     ``wrap_cols``, ``shape_size`` and ``line_width`` are kept as sent, for
     `ddviz.server.plotoptions` to take JSON integers only, and
     ``line_aggregation`` for it to give the reason of a wrong one.
+    ``color_scale`` is the color scale of a numeric color column the page
+    keeps under the lock of the axes (`ddviz.server.plotoptions.parse_color_scale`),
+    kept as sent for it to check; null for that of the filter.
     """
 
     encoding: dict
@@ -49,6 +52,7 @@ class PlotRequest(BaseModel):
     show_null_rows: ShowNullRows = ShowNullRows()
     axis_scales: object = None
     keep_unfiltered_color_levels: StrictBool = False
+    color_scale: object = None
 
 
 class PlotDataRequest(BaseModel):
@@ -71,13 +75,14 @@ class ExportCancel(BaseModel):
 
 
 class SizeRequest(BaseModel):
-    """Body of ``POST /api/overview``: the size of the plot area in pixels, the left and bottom margins asked for (`PlotRequest`) and the local filter."""
+    """Body of ``POST /api/overview``: the size of the plot area in pixels, the left and bottom margins asked for, the local filter and the color scale kept (`PlotRequest`)."""
 
     width: int
     height: int
     margin_left: int = MARGIN_LEFT
     margin_bottom: int = MARGIN_BOTTOM
     filters: list[dict] = []
+    color_scale: object = None
 
 
 class SelectionRequest(BaseModel):
