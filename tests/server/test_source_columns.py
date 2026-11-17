@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from ddviz.server.app import create_app
-from ddviz.server.settings import Settings
+from ddviz.server.broker import TaskEnd
+from ddviz.server.settings import CacheSettings, Settings
 from ddviz.server.settings_store import SettingsStore
+from ddviz.server.source import Source
 
 TOKEN = "secret-of-the-run"
 SIZE = {"width": 400, "height": 300}
@@ -333,3 +338,87 @@ def test_another_spelling_of_the_input_has_its_own_paths(
         filters = [{"column": "source", "levels": [expected[2]]}]
         meta = _plot(client, XY, filters=filters)["meta"]
         assert _values(_table(client, meta["task"]))["source"] == expected[2:]
+
+
+class _RecordingBroker:
+    """A broker whose conversion task records `Source.converting` and ends as told."""
+
+    def __init__(self, end: str) -> None:
+        self.end = end
+        self.seen: list[bool] = []
+        self.source: Source | None = None
+
+    async def run(self, task: object, pool: str = "plot") -> TaskEnd:
+        self.seen.append(self.source.converting)
+        await asyncio.sleep(0)
+        message = {"type": self.end, "message": "the conversion failed"}
+        return TaskEnd(0, self.out, message)
+
+
+def _converting_source(
+    tmp_path: Path, missing: dict[str, list[int]], end: str = "done"
+) -> tuple[Source, _RecordingBroker, list[bool]]:
+    """Return a source whose columns miss `missing`, its broker, and what checking saw.
+
+    Checking for missing parts records `Source.converting` meanwhile.
+    """
+    broker = _RecordingBroker(end)
+    broker.out = tmp_path / "task"
+    source = Source(
+        [str(tmp_path / "a.parquet")],
+        False,
+        tmp_path / "cache",
+        tmp_path / "index",
+        lambda: CacheSettings(),
+        broker,
+    )
+    broker.source = source
+    source.cache = SimpleNamespace(dir=tmp_path / "cache")
+    source.files = [tmp_path / "a.parquet"]
+    source._dtypes = {"x": "Float64"}
+    source.parts = lambda column: [str(tmp_path / f"{column}.arrow")]
+    source.evict = lambda keep: None
+    checking: list[bool] = []
+
+    def _missing(columns: list[str]) -> dict[str, list[int]]:
+        checking.append(source.converting)
+        return missing
+
+    source.missing = _missing
+    return source, broker, checking
+
+
+def test_converting_stays_off_without_missing_parts(tmp_path: Path) -> None:
+    """With every part converted, the plot pool's call never marks a conversion."""
+    source, broker, checking = _converting_source(tmp_path, {})
+    asyncio.run(source.convert(["x"]))
+    assert checking == [False]
+    assert broker.seen == []
+    assert source.converting is False
+
+
+def test_converting_is_on_while_missing_parts_convert(tmp_path: Path) -> None:
+    """The plot pool's conversion of missing parts is marked while its task runs."""
+    source, broker, checking = _converting_source(tmp_path, {"x": [0]})
+    asyncio.run(source.convert(["x"]))
+    assert checking == [False]
+    assert broker.seen == [True]
+    assert source.converting is False
+
+
+def test_converting_is_off_after_a_failed_conversion(tmp_path: Path) -> None:
+    """A conversion task that fails leaves the source not converting."""
+    source, broker, _ = _converting_source(tmp_path, {"x": [0]}, end="error")
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(source.convert(["x"]))
+    assert raised.value.status_code == 500
+    assert broker.seen == [True]
+    assert source.converting is False
+
+
+def test_the_summary_pool_conversion_is_not_marked(tmp_path: Path) -> None:
+    """A conversion in the summary pool leaves plots allowed."""
+    source, broker, _ = _converting_source(tmp_path, {"x": [0]})
+    asyncio.run(source.convert(["x"], pool="summary"))
+    assert broker.seen == [False]
+    assert source.converting is False
