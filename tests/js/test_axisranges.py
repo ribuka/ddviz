@@ -224,3 +224,54 @@ def test_turning_the_lock_off_keeps_a_categorical_axis_set_by_hand(
         return [r.byHand(a, "x", 0), r.byHand(a, "y", 0), r.filterRanges(a, { x: [[-0.2, 0.2]], y: [[1, 2]] })];""",
     )
     assert result == [True, False, {"x": [[-0.2, 0.2]], "y": [None]}]
+
+
+def test_the_lock_is_of_use_with_a_numeric_color(js_page: Page) -> None:
+    """A figure without a continuous axis is lockable with a gradient or intervals, not with a categorical color only."""
+    result = _call(
+        js_page,
+        """const bands = { one_band: true, axis_levels: { one: [""], g: ["a"] } };
+        const of = (kind) => m.lockable(meta(["one"], ["g"], { ...bands, color: { kind } }));
+        return [of("gradient"), of("bins"), of("levels"), m.lockable(meta(["x"], ["y"], { color: { kind: "levels" } }))];""",
+    )
+    assert result == [True, True, False, True]
+
+
+def test_the_color_scale_is_kept_under_the_lock_only(js_page: Page) -> None:
+    """A view or an overview asks for the color scale drawn with the lock on, and for none off or without a numeric color."""
+    result = _call(
+        js_page,
+        """const ranges = new m.AxisRanges();
+        const drawn = meta(["x"], ["y"], { color: { kind: "gradient", scale: { range: [1, 2] } } });
+        const levels = meta(["x"], ["y"], { color: { kind: "levels", scale: null } });
+        const off = ranges.colorScale(drawn);
+        ranges.setFrozen(true);
+        return [off, ranges.colorScale(drawn), ranges.colorScale(levels), ranges.colorScale(null)];""",
+    )
+    assert result == [None, {"range": [1, 2]}, None, None]
+
+
+def test_an_edit_carries_the_color_scale_of_the_same_color_only(js_page: Page) -> None:
+    """Under the lock, a new graph keeps the color scale while the color is the same column of the same kind, cut the same way."""
+    result = _call(
+        js_page,
+        """const ranges = new m.AxisRanges();
+        const cuts = { breaks: [0, 1, 2], values: false };
+        const bins = meta(["x"], ["y"], { color: { column: "c", kind: "bins", bins: { n: 2, by: "rows" }, scale: cuts } });
+        const gradient = meta(["x"], ["y"], { color: { column: "c", kind: "gradient", bins: null, scale: { range: [0, 2] } } });
+        const off = ranges.carriedColorScale(bins, "c", { n: 2, by: "rows" });
+        ranges.setFrozen(true);
+        return [
+          off,
+          ranges.carriedColorScale(bins, "c", { n: 2, by: "rows" }),
+          ranges.carriedColorScale(bins, "c", { n: 3, by: "rows" }),
+          ranges.carriedColorScale(bins, "c", { n: 2, by: "values" }),
+          ranges.carriedColorScale(bins, "c", null),
+          ranges.carriedColorScale(bins, "d", { n: 2, by: "rows" }),
+          ranges.carriedColorScale(gradient, "c", null),
+          ranges.carriedColorScale(gradient, "c", { n: 2, by: "rows" }),
+          ranges.carriedColorScale(null, "c", null),
+        ];""",
+    )
+    cuts = {"breaks": [0, 1, 2], "values": False}
+    assert result == [None, cuts, None, None, None, None, {"range": [0, 2]}, None, None]

@@ -141,11 +141,14 @@ class Aggregation:
         `ddviz.shared.scatter.ScatterSpec.filters_color` are of the rows of
         the filter.
     cuts : dict
-        Cuts of each role in the spec's ``binned`` (`ddviz.compute.cuts`).
+        Cuts of each role in the spec's ``binned`` (`ddviz.compute.cuts`);
+        those of the color are of the rows of the local filter
+        (`_color_scale`).
     color_range : tuple of float or None
         For a gradient, the finite minimum and maximum of the color column
-        over every row; the bins then also hold the color of their
-        representative row, and so do the selected bins.
+        among the rows of the local filter (`_color_scale`); the bins then
+        also hold the color of their representative row, and so do the
+        selected bins.
     axis_levels : dict
         Levels of each categorical axis column over every row, as text: the
         bands of its axis (`ddviz.compute.bands`).
@@ -562,6 +565,89 @@ def _filtered_color_levels(spec: ScatterSpec) -> list:
     return [*levels, MISSING] if draws_missing and has_null else levels
 
 
+def _numeric_color(spec: ScatterSpec) -> bool:
+    """Return whether the color column is numeric: a gradient, or cut into intervals."""
+    return spec.gradient or "color" in spec.binned
+
+
+def _found_color_scale(spec: ScatterSpec, filtered: bool) -> dict | None:
+    """Return the color scale of the finite values of a numeric color column, among the rows of the local filter (`filtered`) or every row.
+
+    ``{"range": (lo, hi)}`` for a gradient, the cuts (`find_cuts`) of a
+    column cut into intervals; None without a finite value. The rows of
+    the filter are read in passes of their own, of the color column and the
+    filter's columns alone, as the automatic ranges are (`_range_query`).
+    """
+    if spec.gradient:
+        found = _found_ranges(spec, [spec.color], filtered=filtered)[spec.color]
+        return None if found is None else {"range": found}
+    if filtered and spec.filters:
+        scan = _scan(spec, [spec.color, *filter_columns(spec.filters)]).filter(
+            *filter_conditions(spec.filters)
+        )
+    else:
+        scan = _scan(spec, [spec.color])
+    cuts = find_cuts(scan, spec.color, spec.binned["color"])
+    return cuts if cuts["breaks"] else None
+
+
+def _color_scale(spec: ScatterSpec, progress: Callable[[str], None]) -> dict | None:
+    """Return the color scale a numeric color column draws with, or None to keep the one known.
+
+    The scale kept by the page (`ScatterSpec.color_scale`) comes first.
+    Else the overview of a filter, and a view that finds it again
+    (`ddviz.shared.scatter.View.find_color_scale`), take that of the rows of
+    the filter; one that the filter leaves without a finite value takes
+    that of every row: the overview's own, or found again by a view. The
+    overview without a filter keeps that of every row, with no pass more.
+    """
+    if not _numeric_color(spec):
+        return None
+    if spec.color_scale is not None:
+        return spec.color_scale
+    view = spec.view
+    if (view is None and not spec.filters) or (
+        view is not None and not view.find_color_scale
+    ):
+        return None
+    progress("scale")
+    found = _found_color_scale(spec, filtered=True)
+    if found is None and spec.filters:
+        if view is None:
+            return None
+        found = _found_color_scale(spec, filtered=False)
+    if found is None:
+        # As the overview has it for a column without a finite value.
+        return (
+            {"range": (0.0, 1.0)} if spec.gradient else {"breaks": [], "values": False}
+        )
+    return found
+
+
+def _scaled(
+    spec: ScatterSpec,
+    scale: dict,
+    levels: dict[str, list],
+    cuts: dict,
+) -> tuple[dict[str, list], dict, tuple[float, float] | None]:
+    """Return the levels, the cuts and the color range with the color scale `scale` (`_color_scale`).
+
+    The levels of a color cut into intervals are the names of its new
+    cuts, the missing level kept last.
+    """
+    if spec.gradient:
+        lo, hi = scale["range"]
+        return levels, cuts, (float(lo), float(hi))
+    color_cuts = {
+        "breaks": [float(b) for b in scale["breaks"]],
+        "values": bool(scale["values"]),
+    }
+    names = cut_labels(color_cuts, spec.temporal.get(spec.color))
+    if levels["color"][-1:] == [MISSING]:
+        names = [*names, MISSING]
+    return {**levels, "color": names}, {**cuts, "color": color_cuts}, None
+
+
 def _missing_name_message(columns: list[str]) -> str:
     """Return the error of columns with a value that is the missing level's name."""
     return (
@@ -836,6 +922,12 @@ def _find(
             progress("ranges")
         x_auto, y_auto = _auto_ranges(spec, log, axis_levels, overview.ranges)
         x_ranges, y_ranges = x_auto, y_auto
+    scale = _color_scale(spec, progress)
+    if scale is None and view is not None and "color" in spec.binned:
+        # The names of the cuts a view is given, from a result of its filter.
+        scale = cuts["color"]
+    if scale is not None:
+        all_levels, cuts, color_range = _scaled(spec, scale, all_levels, cuts)
     if spec.filters_color() and (view is None or view.find_color):
         progress("colors")
         all_levels = {**all_levels, "color": _filtered_color_levels(spec)}

@@ -2,7 +2,10 @@
 
 A drawn result's manifest holds its spec and what its overview found (the
 levels, the cuts, the color range); a derived spec reuses them, so that the
-worker does not find them again.
+worker does not find them again. The color scale of a numeric color column
+(the gradient's range, or the color's cuts) is that of the rows of the
+filter, unless the page keeps one under the lock of the axes
+(`ddviz.shared.scatter.ScatterSpec.color_scale`).
 """
 
 from __future__ import annotations
@@ -40,6 +43,41 @@ def facets_of(manifest: PlotManifest) -> dict:
     return {role: manifest.levels[role] for role in ("row", "col")}
 
 
+def drawn_scale(manifest: PlotManifest) -> dict | None:
+    """Return the color scale a result draws its numeric color column with.
+
+    Parameters
+    ----------
+    manifest : PlotManifest
+        Manifest of a plot task.
+
+    Returns
+    -------
+    dict or None
+        ``{"range": [lo, hi]}`` for a gradient, the cuts of the color
+        (``{"breaks", "values"}``) for one cut into intervals, None for
+        another color (`ddviz.shared.scatter.ScatterSpec.color_scale`).
+    """
+    spec = manifest.spec
+    if spec.gradient:
+        return {"range": list(manifest.color_range)}
+    if "color" in spec.binned:
+        cuts = manifest.cuts["color"]
+        return {"breaks": list(cuts["breaks"]), "values": cuts["values"]}
+    return None
+
+
+def _own_scale(manifest: PlotManifest | None, filters: list[Filter]) -> dict | None:
+    """Return the color scale a result draws when it is that of the rows of `filters`; None for one of another filter, or kept by the page."""
+    if (
+        manifest is None
+        or manifest.spec.filters != filters
+        or manifest.spec.color_scale is not None
+    ):
+        return None
+    return drawn_scale(manifest)
+
+
 def _view(
     manifest: PlotManifest,
     x_ranges: list,
@@ -47,6 +85,7 @@ def _view(
     same_filter: bool,
     colors: list | None = None,
     auto: PlotManifest | None = None,
+    scale: dict | None = None,
 ) -> View:
     """Return the view of the given ranges with the result's levels, cuts, color range, boxes and smoothing lines.
 
@@ -62,14 +101,25 @@ def _view(
     gives them, from a result of that filter. The stacks of the points on
     a categorical axis (`ddviz.compute.stacks`) depend on the ranges and
     the size: the worker places them again.
+
+    A numeric color column draws with the color scale `scale`
+    (`drawn_scale`); without one, the worker finds that of the rows of the
+    view's filter (`ddviz.shared.scatter.View.find_color_scale`).
     """
     levels = manifest.all_levels
+    cuts, color_range = manifest.cuts, manifest.color_range
+    numeric = drawn_scale(manifest) is not None
+    if scale is not None and manifest.spec.gradient:
+        color_range = list(scale["range"])
+    elif scale is not None and numeric:
+        cuts = {**cuts, "color": scale}
     find_color = False
     if manifest.spec.filters_color() and not same_filter:
         if colors is None:
             find_color = True
         else:
             levels = {**levels, "color": colors}
+
     def ranges(given: list, known: list | None) -> list:
         return [
             (None if known is None else list(known[i])) if r is None else list(r)
@@ -85,12 +135,13 @@ def _view(
         y_auto=y_auto,
         levels=levels,
         facets=facets_of(manifest) if same_filter else None,
-        cuts=manifest.cuts,
-        color_range=manifest.color_range,
+        cuts=cuts,
+        color_range=color_range,
         axis_levels=manifest.axis_levels,
         boxes=manifest.boxes if same_filter else [],
         smooths=manifest.smooths if same_filter else [],
         find_color=find_color,
+        find_color_scale=numeric and scale is None,
     )
 
 
@@ -105,6 +156,7 @@ def resized_spec(
     margin_left: int = MARGIN_LEFT,
     margin_bottom: int = MARGIN_BOTTOM,
     known: PlotManifest | None = None,
+    color_scale: dict | None = None,
 ) -> ScatterSpec:
     """Return the spec of the overview for other ranges, size or filter, reusing its levels.
 
@@ -117,7 +169,11 @@ def resized_spec(
     so that the series of one filter stay the same. The automatic ranges
     (`ddviz.compute.aggregate.Aggregation.x_auto`) come from the overview
     or `known`, whichever is of the filter; else the worker finds them,
-    once per filter.
+    once per filter. So does the color scale of a numeric color column
+    (`drawn_scale`): that of the rows of the filter which the overview or
+    `known` draws, else found by the worker; or `color_scale`, kept by the
+    page, which the spec holds (`ddviz.shared.scatter.ScatterSpec.color_scale`)
+    unless it is that of the filter.
 
     Parameters
     ----------
@@ -138,8 +194,11 @@ def resized_spec(
         Bottom margin the page asks for, in pixels; kept within the height
         (`ddviz.shared.layout.bottom_margin`).
     known : PlotManifest, optional
-        Another result of the plot, whose color levels and automatic ranges
-        are taken when its filter is `filters`.
+        Another result of the plot, whose color levels, automatic ranges
+        and color scale are taken when its filter is `filters`.
+    color_scale : dict, optional
+        The color scale the page keeps (`ddviz.server.plotoptions.parse_color_scale`),
+        for a numeric color column; None for that of the filter.
 
     Returns
     -------
@@ -160,15 +219,20 @@ def resized_spec(
     if known is not None and known.spec.filters == filters:
         colors = known.all_levels["color"]
         auto = known
+    own = _own_scale(manifest, filters) or _own_scale(known, filters)
+    scale = own if color_scale is None else color_scale
+    numeric = drawn_scale(manifest) is not None
     return replace(
         spec,
         files={**spec.files, **filter_files},
         filters=list(filters),
+        # A scale kept that is the filter's own is none kept.
+        color_scale=color_scale if numeric and color_scale != own else None,
         width=width,
         height=height,
         margin_left=left_margin(margin_left, width),
         margin_bottom=bottom_margin(margin_bottom, height),
-        view=_view(manifest, x_ranges, y_ranges, same, colors, auto),
+        view=_view(manifest, x_ranges, y_ranges, same, colors, auto, scale),
     )
 
 
@@ -221,6 +285,11 @@ def unchanged(manifest: PlotManifest | None, spec: ScatterSpec) -> bool:
         and manifest.x_ranges == spec.view.x_ranges
         and manifest.y_ranges == spec.view.y_ranges
         and manifest.spec.filters == spec.filters
+        and (
+            manifest.spec.color_scale is None
+            if spec.color_scale is None
+            else drawn_scale(manifest) == spec.color_scale
+        )
     )
 
 
@@ -288,6 +357,13 @@ def selection_spec(manifest: PlotManifest, selection: Selection) -> ScatterSpec:
     """
     return replace(
         manifest.spec,
-        view=_view(manifest, manifest.x_ranges, manifest.y_ranges, True, auto=manifest),
+        view=_view(
+            manifest,
+            manifest.x_ranges,
+            manifest.y_ranges,
+            True,
+            auto=manifest,
+            scale=drawn_scale(manifest),
+        ),
         selection=selection,
     )

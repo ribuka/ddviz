@@ -131,7 +131,7 @@ def test_the_lock_sits_in_the_corner_and_toggles(app_page: Page) -> None:
     button = page.locator(LOCK)
     expect(button).to_be_disabled()
     expect(button).to_have_attribute("aria-pressed", "false")
-    expect(button).to_have_attribute("aria-label", "軸範囲を固定")
+    expect(button).to_have_attribute("aria-label", "軸と色の範囲を固定")
     # Two categorical axes: nothing to lock.
     place(page, "g", "x")
     place(page, "g", "y")
@@ -149,11 +149,11 @@ def test_the_lock_sits_in_the_corner_and_toggles(app_page: Page) -> None:
     assert box["y"] <= x_zone["y"] + 0.5
     button.click()
     expect(button).to_have_attribute("aria-pressed", "true")
-    expect(button).to_have_attribute("title", "軸範囲の固定を解除して自動調整する")
+    expect(button).to_have_attribute("title", "軸と色の範囲の固定を解除して自動調整する")
     button.focus()
     page.keyboard.press("Enter")
     expect(button).to_have_attribute("aria-pressed", "false")
-    expect(button).to_have_attribute("title", "軸範囲を固定する")
+    expect(button).to_have_attribute("title", "軸と色の範囲を固定する")
     page.keyboard.press("Space")
     expect(button).to_have_attribute("aria-pressed", "true")
     wait_idle(page)

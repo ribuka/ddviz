@@ -2,7 +2,7 @@
 // resize, hover, select rows with a box, and filter rows.
 import { decorate } from "./axisdialog.js";
 import { AxisControls } from "./axiscontrols.js";
-import { AxisRanges, autoRanges, axisColumns, hasContinuous, movedAxes } from "./axisranges.js";
+import { AxisRanges, autoRanges, axisColumns, lockable, movedAxes } from "./axisranges.js";
 import { axisKey } from "./axiskey.js";
 import { toValues } from "./axisscale.js";
 import { bandTickUpdate, withBandTicks } from "./bandticks.js";
@@ -120,6 +120,7 @@ const STAGES = {
   schema: "列を読み込み中…",
   levels: "範囲と水準を調べ中…",
   ranges: "フィルタ後の軸の範囲を調べ中…",
+  scale: "フィルタ後の色の範囲を調べ中…",
   colors: "フィルタ後の Color の水準を調べ中…",
   facets: "パネルの水準を調べ中…",
   boxes: "箱ひげを計算中…",
@@ -624,7 +625,15 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   const size = stageSize();
   plottedEncoding = encoding;
   const candidate = builder.snapshot();
-  const body = { encoding, ...size, filters, ...options.request(encoding), axis_scales: axes.scales.request(encoding) };
+  const body = {
+    encoding,
+    ...size,
+    filters,
+    ...options.request(encoding),
+    axis_scales: axes.scales.request(encoding),
+    // Under the lock, the color scale drawn stays while the color does.
+    color_scale: axisRanges.carriedColorScale(overview?.meta, encoding.color, options.colorBins),
+  };
   // The filter pane's state of these conditions, which the pane goes back to
   // once the result is drawn (`RestorePoint`).
   const filterCandidate = restorePoint.propose(filterPane.sent);
@@ -702,8 +711,10 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     if (mine !== generation) return null;
     return plotFailed(`図を描けなかった（${error.message}）`, askedSize, restoring, kept);
   }
-  // The area may have changed size, or the filter, while the plot was aggregated.
+  // The area may have changed size, or the filter, while the plot was
+  // aggregated, or the lock gone off, which drops the color scale kept.
   if (filtersKey(meta.filters) !== filtersKey(filters)) applyFilters();
+  else if (meta.color.kept && !axisRanges.frozen) requestOverview();
   else if (!sameSize(stageSize(), size)) onResize();
   else boxSelection.follow();
   return meta;
@@ -974,7 +985,8 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
       response = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, ...size, filters }),
+        // Under the lock, the color scale drawn stays (`AxisRanges.colorScale`).
+        body: JSON.stringify({ ...body, ...size, filters, color_scale: axisRanges.colorScale(current) }),
       });
     } catch (error) {
       console.error(error);
@@ -1170,12 +1182,12 @@ function knownAuto() {
 }
 
 // Shows the lock as it is: pressed while on, and of use with a continuous
-// axis drawn.
+// axis or a numeric color drawn (`lockable`).
 function showFreeze() {
   const on = axisRanges.frozen;
   freezeButton.setAttribute("aria-pressed", String(on));
-  freezeButton.title = on ? "軸範囲の固定を解除して自動調整する" : "軸範囲を固定する";
-  freezeButton.disabled = !overview || !hasContinuous(overview.meta);
+  freezeButton.title = on ? "軸と色の範囲の固定を解除して自動調整する" : "軸と色の範囲を固定する";
+  freezeButton.disabled = !overview || !lockable(overview.meta);
 }
 
 // Turns the lock on, which keeps the ranges shown now, or off, which takes
@@ -1185,8 +1197,10 @@ function showFreeze() {
 // would take its automatic ranges), the shown ranges are asked for again,
 // so that the answer of the older request does not move them. Off
 // aggregates the overview of the filter unless it is drawn, or the view of
-// the categorical ranges kept; a failure puts the lock and the axes set by
-// hand back, with the figure as it was.
+// the categorical ranges kept; a figure drawn with a color scale kept
+// (`meta.color.kept`), not that of its filter, is aggregated again too. A
+// failure puts the lock and the axes set by hand back, with the figure as
+// it was.
 function setFrozen(on) {
   if (axisRanges.frozen === on) return;
   const before = axisRanges.snapshot();
@@ -1219,7 +1233,7 @@ function setFrozen(on) {
     requestView(ranges, { onFailed });
     return;
   }
-  if (filtersKey(overview.meta.filters) === filtersKey(filters)) {
+  if (filtersKey(overview.meta.filters) === filtersKey(filters) && !overview.meta.color.kept && !current.color.kept) {
     showOverview();
     return;
   }

@@ -32,6 +32,7 @@ from ddviz.server.models import PlotRequest, SizeRequest, ViewRequest
 from ddviz.server.plan import drawable, drawn_columns, scatter_spec, undrawn
 from ddviz.server.plotoptions import (
     parse_color_bins,
+    parse_color_scale,
     parse_level_shapes,
     parse_line_aggregation,
     parse_line_width,
@@ -170,6 +171,14 @@ def plot_router(
             raise HTTPException(409, "no plot")
         if source.converting:
             raise HTTPException(409, "converting")
+        manifest = results.overview.manifest
+        # Checked before any task, the conversion's included.
+        try:
+            color_scale = parse_color_scale(
+                request.color_scale, manifest.spec, settings().plot.max_levels
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
         filters = await source.filters(request.filters)
         await source.convert([f.column for f in filters])
         manifest = results.overview.manifest
@@ -188,6 +197,7 @@ def plot_router(
                 margin_left=request.margin_left,
                 margin_bottom=request.margin_bottom,
                 known=known,
+                color_scale=color_scale,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -277,6 +287,11 @@ def plot_router(
                 line_width=line_width,
                 line_aggregation=line_aggregation,
                 keep_unfiltered_color_levels=request.keep_unfiltered_color_levels,
+            )
+            # The scale kept of a color neither a gradient nor cut is none.
+            spec = replace(
+                spec,
+                color_scale=parse_color_scale(request.color_scale, spec, max_levels),
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
