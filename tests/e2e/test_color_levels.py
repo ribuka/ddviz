@@ -667,3 +667,40 @@ def test_a_refused_filter_keeps_a_categorical_axis_set_by_hand(
     )
     assert x == pytest.approx([0, 3])
     assert errors == []
+
+
+def test_refused_filters_one_after_another_keep_a_categorical_axis_set_by_hand(
+    app_page: Page,
+) -> None:
+    """A categorical x zoomed by hand stays so when a second filter is refused while the first refusal is read (PR #276 review)."""
+    page = app_page
+    errors = watch_errors(page)
+    expect(page.locator("#columns .column").filter(has_text="half")).to_be_visible()
+    place(page, "g", "x")
+    place(page, "y", "y")
+    add_filter(page, "half")
+    tick(page, "half", ["lo"])
+    place(page, "g", "color")
+    expect(page.locator(LEGEND_NAMES)).to_have_count(80)
+    zoom(page, 0, 3)
+    page.evaluate(HOLD_TEXT, "/api/overview")
+    with page.expect_response("**/api/overview") as first:
+        box(page, "half", "hi").check()
+    assert first.value.status == 400
+    page.wait_for_function("() => Boolean(window.releaseText)")
+    with page.expect_response("**/api/overview") as second:
+        card(page, "half").locator(".filter-card-remove").click()
+    assert second.value.status == 400
+    page.evaluate("() => window.releaseText()")
+    settle(page)
+    expect(box(page, "half", "hi")).not_to_be_checked()
+    with page.expect_response("**/api/plot"):
+        place(page, "v", "color")
+    page.wait_for_function(SETTLED)
+    wait_idle(page)
+    x = page.evaluate(
+        "() => { const a = document.getElementById('plot')._fullLayout.xaxis;"
+        " return a.range.map((v) => a.r2l(v)); }"
+    )
+    assert x == pytest.approx([0, 3])
+    assert errors == []

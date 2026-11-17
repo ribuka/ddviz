@@ -1026,10 +1026,8 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
     const text = await response.text();
     // A newer request may have come while the answer was read.
     if (mine === generation) {
-      // What the caller puts back comes first: the refusal of a filter may
-      // aggregate the shown ranges again (`viewFailed`).
-      onFailed?.();
       viewFailed(text);
+      onFailed?.();
     }
     return;
   }
@@ -1094,6 +1092,12 @@ async function showAgain({ figure, meta, size, bitmaps, ranges, whole, drawn, mi
   const kept = (role) => shown[role].map((range, i) => (ranges[role][i] === null ? meta[`${role}_ranges`][i] : range));
   const view = { x: kept("x"), y: kept("y") };
   if (!whole) requested = view;
+  // A result of a new filter draws the bands of its levels: a categorical
+  // axis set by hand under the old one is so no longer, but under the lock,
+  // which kept its levels (`AxisRanges.holdsThroughFilter`).
+  if (!axisRanges.frozen && current && filtersKey(current.filters) !== filtersKey(meta.filters)) {
+    axisRanges.forgetCategorical(current);
+  }
   setCurrent(meta);
   shownSize = size;
   hideHover();
@@ -1461,14 +1465,11 @@ function applyFilters() {
   if (!overview || plotting === generation) return;
   hideHover();
   const ranges = axisRanges.heldRanges(current, shownRanges(gd, current), { filter: true });
-  // A categorical axis set by hand takes the bands of the new filter; a
-  // request that fails (a filter refused for its levels) leaves the figure
-  // drawn, whose axes set by hand stay so.
-  const before = axisRanges.snapshot();
-  if (!axisRanges.frozen) axisRanges.forgetCategorical(current);
-  const onFailed = () => axisRanges.restore(before);
-  if ([...ranges.x, ...ranges.y].every((range) => range === null)) requestOverview({ onFailed });
-  else requestView(ranges, { onFailed });
+  // A categorical axis set by hand takes the bands of the new filter
+  // (`holdsThroughFilter`); it is no longer set by hand once a result of the
+  // filter is drawn (`showAgain`), so that a refused filter leaves it so.
+  if ([...ranges.x, ...ranges.y].every((range) => range === null)) requestOverview();
+  else requestView(ranges);
 }
 
 const leftPane = new LeftPane(document.getElementById("left"));
