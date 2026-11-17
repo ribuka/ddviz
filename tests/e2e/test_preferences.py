@@ -250,7 +250,7 @@ def test_the_limit_of_the_color_bins_follows_at_once(menu_page: Page) -> None:
     expect(page.locator("#legend .legend-item")).to_have_count(6 + 1)
     open_preferences(page)
     expect(page.locator('.prefs-item[data-key="plot.max_levels"] .prefs-timing')).to_have_text(
-        "次のグラフ作成から反映。Colorの区間数の入力上限は適用後すぐ"
+        "次のグラフ作成・フィルタの変更から反映。Colorの区間数の入力上限は適用後すぐ"
     )
     page.locator('.prefs-item[data-key="plot.max_levels"] .prefs-text').fill("4")
     plots = []

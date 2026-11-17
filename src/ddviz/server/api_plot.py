@@ -95,7 +95,8 @@ def plot_router(
         ``plot.max_axis_levels`` (the most levels of a categorical x or y)
         and ``hover.max_temp_bytes`` (the most bytes the hover files of the
         overview and the view take together); a view or an overview
-        aggregated again reads the last.
+        aggregated again reads them too, when it is asked for, so that a new
+        filter counts its color levels against the limit in effect then.
 
     Returns
     -------
@@ -182,12 +183,15 @@ def plot_router(
         if source.converting:
             raise HTTPException(409, "converting")
         manifest = results.overview.manifest
+        # One snapshot of the settings for the whole request: the limits of
+        # levels in effect now, not those of the plot's creation.
+        current = settings()
         # Checked before any task, the conversion's included.
         try:
             color_scale = parse_color_scale(
                 request.color_scale,
                 spec_color_kind(manifest.spec),
-                settings().plot.max_levels,
+                current.plot.max_levels,
             )
             cuts = parse_cuts(
                 request.cuts,
@@ -203,7 +207,7 @@ def plot_router(
         # view drawn with it while zoomed (`resized_spec`).
         known = results.view.manifest if results.view is not None else None
         try:
-            return resized_spec(
+            spec = resized_spec(
                 manifest,
                 request.width,
                 request.height,
@@ -219,6 +223,11 @@ def plot_router(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+        return replace(
+            spec,
+            max_levels=current.plot.max_levels,
+            max_axis_levels=current.plot.max_axis_levels,
+        )
 
     async def aggregate_again(
         spec: ScatterSpec,
