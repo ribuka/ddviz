@@ -8,7 +8,7 @@ import polars as pl
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.e2e.test_axis_freeze import LOCK, add_filter, lock, set_range
+from tests.e2e.test_axis_freeze import LOCK, add_filter, hold, lock, set_range
 from tests.e2e.test_kept_ranges import settle
 from tests.e2e.test_scatter import place, watch_errors
 
@@ -99,4 +99,31 @@ def test_symbol_names_follow_the_filter_unless_locked(app_page: Page) -> None:
     lock(page)
     settle(page)
     assert names(page) == ["0", "1", "2"]
+    assert errors == []
+
+
+def test_unlocked_while_an_edit_is_waited_for_the_cuts_go_to_the_filter(
+    app_page: Page,
+) -> None:
+    """Unlocked while an edit of the graph that keeps the cuts is aggregated, the result drawn is followed by the intervals of the latest filter."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "x", "x")
+    place(page, "y", "y")
+    place(page, "g", "symbol")
+    add_filter(page, "g")
+    set_range(page, "g", "0", "3")
+    lock(page)
+    set_range(page, "g", "0", "2")
+    assert names(page) == ["0", "1", "2", "3"]
+    release = hold(page, "**/api/plot")
+    page.locator('#elements .element[data-element="smooth"]').click()
+    page.wait_for_function(
+        "() => document.getElementById('plot').classList.contains('busy')"
+    )
+    page.locator(LOCK).click()
+    expect(page.locator(LOCK)).to_have_attribute("aria-pressed", "false")
+    release()
+    settle(page)
+    expect(page.locator("#legend .legend-name")).to_have_text(["0", "1", "2"])
     assert errors == []

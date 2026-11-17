@@ -715,9 +715,10 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     return plotFailed(`図を描けなかった（${error.message}）`, askedSize, restoring, kept);
   }
   // The area may have changed size, or the filter, while the plot was
-  // aggregated, or the lock gone off, which drops the color scale kept.
+  // aggregated, or the lock gone off, which drops the color scale and the
+  // cuts kept.
   if (filtersKey(meta.filters) !== filtersKey(filters)) applyFilters();
-  else if (meta.color.kept && !axisRanges.frozen) requestOverview();
+  else if ((meta.color.kept || meta.cuts_kept) && !axisRanges.frozen) requestOverview();
   else if (!sameSize(stageSize(), size)) onResize();
   else boxSelection.follow();
   return meta;
