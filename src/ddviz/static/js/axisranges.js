@@ -179,11 +179,14 @@ export class AxisRanges {
   // Returns the view of a new result `meta` of an edit of the graph that
   // keeps the shown ranges (`shown`) of the drawn result `old`: an axis
   // column keeps its range while it stays in its role on the same
-  // coordinates and is kept (`holds`; a categorical one set by hand under
-  // the filter of `meta`, which may be newer than that of `old`); any other
-  // has its new automatic range. Null when no range differs from the new
-  // automatic ones.
-  carried(old, shown, meta) {
+  // coordinates and is kept (`holds`); any other has its new automatic
+  // range. A categorical one, without the lock, keeps it only when the
+  // figure shown (of the filter `shownFilters`, which may be newer than
+  // that of `old`) is of the filter of `meta`, and set by hand under it: its
+  // range is of the bands of that filter. Null when no range differs from
+  // the new automatic ones.
+  carried(old, shown, meta, shownFilters = old.filters) {
+    const sameFilter = JSON.stringify(shownFilters ?? []) === JSON.stringify(meta.filters ?? []);
     const ranges = { x: [], y: [] };
     let zoomed = false;
     for (const role of ["x", "y"]) {
@@ -194,7 +197,9 @@ export class AxisRanges {
         const keeps =
           range &&
           axisCoordinates(old, role, j) === axisCoordinates(meta, role, i) &&
-          (isCategorical(meta, role, i) ? this.holds(meta, role, i) : this.holds(old, role, j)) &&
+          (isCategorical(meta, role, i)
+            ? this.frozen || (sameFilter && this.byHand(meta, role, i))
+            : this.holds(old, role, j)) &&
           !sameRange(range, whole);
         ranges[role].push(keeps ? range : whole);
         zoomed ||= Boolean(keeps);

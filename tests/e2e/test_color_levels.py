@@ -771,3 +771,43 @@ def test_a_categorical_axis_set_by_hand_under_a_new_filter_stays_so(
     )
     assert x == pytest.approx([0, 3])
     assert errors == []
+
+
+def test_an_edit_back_to_an_old_filter_keeps_no_range_of_another(
+    app_page: Page,
+) -> None:
+    """Back to a filter whose categorical x was zoomed by hand, an edit drawn before the result of that filter keeps no range zoomed under the other filter (PR #276 review)."""
+    page = app_page
+    errors = watch_errors(page)
+    expect(page.locator("#columns .column").filter(has_text="half")).to_be_visible()
+    place(page, "g", "x")
+    place(page, "y", "y")
+    pick(page, "x", "Add to Local filter")
+    inputs = card(page, "x").locator(".filter-range input")
+    expect(inputs.first).to_be_visible()
+    zoom(page, 0, 3)
+    low = inputs.first.input_value()
+    with page.expect_response("**/api/overview"):
+        inputs.first.fill("150")
+        inputs.first.press("Enter")
+    page.wait_for_function(SETTLED)
+    zoom(page, 10, 20)
+    page.evaluate(HOLD_TEXT, "/api/overview")
+    with page.expect_response("**/api/overview") as answered:
+        inputs.first.fill(low)
+        inputs.first.press("Enter")
+    assert answered.value.ok
+    page.wait_for_function("() => Boolean(window.releaseText)")
+    with page.expect_response("**/api/plot"):
+        place(page, "v", "color")
+    wait_idle(page)
+    page.evaluate("() => window.releaseText()")
+    settle(page)
+    page.wait_for_function(SETTLED)
+    x = page.evaluate(
+        "() => { const a = document.getElementById('plot')._fullLayout.xaxis;"
+        " return a.range.map((v) => a.r2l(v)); }"
+    )
+    assert x == pytest.approx([-0.5, 149.5])
+    # The overview the edit superseded lost its images to the edit's result.
+    assert [e for e in errors if ": 404" not in e] == []

@@ -741,12 +741,12 @@ function keptView() {
 }
 
 // Returns the view of a new result `meta` that keeps the drawn figure's
-// ranges (`shownRanges`) of the axes kept: set by hand, or continuous under
-// the lock (`AxisRanges.carried`). Null when no range is kept, or without a
-// figure.
+// ranges (`shownRanges`) of the axes kept: set by hand, or under the lock
+// (`AxisRanges.carried`, told the filter of the figure shown). Null when no
+// range is kept, or without a figure.
 function carriedView(meta) {
   if (!overview || !gd._fullLayout) return null;
-  return axisRanges.carried(overview.meta, shownRanges(gd, overview.meta), meta);
+  return axisRanges.carried(overview.meta, shownRanges(gd, overview.meta), meta, current?.filters);
 }
 
 // A superseded plot that the server finished before the newer request came

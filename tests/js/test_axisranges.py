@@ -121,7 +121,7 @@ def test_a_new_filter_puts_a_categorical_axis_set_by_hand_back(js_page: Page) ->
 def test_an_edit_carries_a_categorical_axis_set_by_hand_under_its_filter(
     js_page: Page,
 ) -> None:
-    """An edit keeps the range of a categorical axis set by hand under the filter of the new result, whichever filter the old result has; not one set under another filter."""
+    """An edit keeps the range of a categorical axis set by hand under the filter of the new result when the figure shown is of that filter, whichever filter the old result has; not one set under another filter, nor the range shown of another filter."""
     result = _call(
         js_page,
         """const r = new m.AxisRanges();
@@ -135,12 +135,18 @@ def test_an_edit_carries_a_categorical_axis_set_by_hand_under_its_filter(
         r.setByHand(old1, "x", 0);
         const same = r.carried(old1, shown, new1);
         const other = r.carried(old1, shown, new2);
-        // Set under f2 while the overview is still of f1.
+        // Set under f2, shown as a view of f2 while the overview is still of f1.
         r.manual.clear();
         r.setByHand(new2, "x", 0);
-        return [same?.ranges.x, other, r.carried(old1, shown, new2)?.ranges.x];""",
+        const view = r.carried(old1, shown, new2, f2);
+        // Back to f1 set by hand once, the range shown is of f2.
+        r.setByHand(new1, "x", 0);
+        const back = r.carried(old1, shown, new1, f2);
+        r.setFrozen(true);
+        const locked = r.carried(old1, shown, new1, f2);
+        return [same?.ranges.x, other, view?.ranges.x, back, locked?.ranges.x];""",
     )
-    assert result == [[[0, 1]], None, [[0, 1]]]
+    assert result == [[[0, 1]], None, [[0, 1]], None, [[0, 1]]]
 
 
 def test_turning_the_lock_off_drops_the_axes_set_by_hand(js_page: Page) -> None:
