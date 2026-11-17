@@ -767,3 +767,70 @@ def test_a_filter_that_adds_panels_draws_them(app_page: Page) -> None:
     page.wait_for_function(NOT_WAITING)
     page.wait_for_function(SETTLED)
     assert errors == []
+
+
+# Makes the next `Plotly.react` fail once.
+BREAK_REACT = """() => {
+  const original = Plotly.react;
+  Plotly.react = () => {
+    Plotly.react = original;
+    return Promise.reject(new Error("broken"));
+  };
+}"""
+
+
+def resized_after_failure(page: Page, message: str, width: int) -> None:
+    """Expect the footer to tell `message` with no wait left, then resize again and expect the result drawn."""
+    status = page.locator("#status")
+    expect(status).to_have_class(re.compile(r"\berror\b"))
+    expect(status).to_contain_text(message)
+    page.wait_for_function(NOT_WAITING)
+    with page.expect_response(
+        lambda response: response.url.endswith("/api/overview") and response.ok
+    ):
+        page.set_viewport_size({"width": width, "height": 600})
+    page.wait_for_function(NOT_WAITING)
+    page.wait_for_function(SETTLED)
+
+
+def test_an_unreadable_aggregation_answer_ends_the_wait(app_page: Page) -> None:
+    """An answer (200) to the latest aggregation that is not JSON is told as a failure; the page stops waiting and a next resize draws."""
+    page = app_page
+    start(page)
+    page.wait_for_function(SETTLED)
+    page.route(
+        "**/api/overview",
+        lambda route: route.fulfill(status=200, content_type="application/json", body="not json"),
+    )
+    page.set_viewport_size({"width": 1000, "height": 640})
+    expect(page.locator("#status")).to_contain_text("集約の応答を読めなかった")
+    page.unroute("**/api/overview")
+    resized_after_failure(page, "集約の応答を読めなかった", 900)
+
+
+def test_aggregated_images_that_fail_end_the_wait(app_page: Page) -> None:
+    """Images of the latest aggregation that cannot be got are told as a failure; the page stops waiting and a next resize draws."""
+    page = app_page
+    start(page)
+    page.wait_for_function(SETTLED)
+    page.route("**/api/images/*", lambda route: route.fulfill(status=500, body="broken"))
+    with page.expect_response(
+        lambda response: response.url.endswith("/api/overview") and response.ok
+    ):
+        page.set_viewport_size({"width": 1000, "height": 640})
+    expect(page.locator("#status")).to_contain_text("図の画像を読み込めなかった")
+    page.unroute("**/api/images/*")
+    resized_after_failure(page, "図の画像を読み込めなかった", 900)
+
+
+def test_an_aggregation_that_cannot_be_drawn_ends_the_wait(app_page: Page) -> None:
+    """A result of the latest aggregation whose drawing throws is told as a failure; the page stops waiting and a next resize draws."""
+    page = app_page
+    start(page)
+    page.wait_for_function(SETTLED)
+    page.evaluate(BREAK_REACT)
+    with page.expect_response(
+        lambda response: response.url.endswith("/api/overview") and response.ok
+    ):
+        page.set_viewport_size({"width": 1000, "height": 640})
+    resized_after_failure(page, "図を描けなかった（broken）", 900)
