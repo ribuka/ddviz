@@ -1028,8 +1028,18 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
     }
     return;
   }
-  const { figure, meta } = await response.json();
-  const drawn = isDrawn(meta, figure.layout);
+  let figure, meta, drawn;
+  try {
+    ({ figure, meta } = await response.json());
+  } catch (error) {
+    return againFailed(mine, `集約の応答を読めなかった（${error.message}）`, onFailed, error);
+  }
+  const drawFailed = (error) => againFailed(mine, `図を描けなかった（${error.message}）`, onFailed, error);
+  try {
+    drawn = isDrawn(meta, figure.layout);
+  } catch (error) {
+    return drawFailed(error);
+  }
   const images = drawn ? Promise.resolve(shownImages) : fetchImages(meta);
   await noDrag();
   // A pan or zoom during the request or the drag supersedes it. Its relayout
@@ -1038,9 +1048,36 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
   const bitmaps = await images;
   if (mine !== generation || !bitmaps) {
     if (!drawn) closeImages(bitmaps);
+    // `fetchImages` told the console of the images it could not get.
+    if (!bitmaps) againFailed(mine, "図の画像を読み込めなかった", onFailed);
     return;
   }
   timings.viewFetch = Math.round(performance.now() - started);
+  try {
+    await showAgain({ figure, meta, size, bitmaps, ranges, whole, drawn, mine, filterCandidate });
+  } catch (error) {
+    // The images not drawn yet are freed; the state switched before the
+    // failure stays (docs/spec.md).
+    if (!drawn && bitmaps !== shownImages && bitmaps !== overview?.bitmaps) closeImages(bitmaps);
+    drawFailed(error);
+  }
+}
+
+// Tells of a view or overview whose answer came (200) but could not be
+// drawn, when it is the latest request: the wait ends and the footer tells
+// `message`, as a failed request (`viewFailed`) does. Nothing is asked again:
+// the next zoom, resize or filter edit asks. An older one tells nothing; the
+// wait is the newer one's.
+function againFailed(mine, message, onFailed, error = null) {
+  if (mine !== generation) return;
+  if (error) console.error(error);
+  setPending(false);
+  statusLine.error(message);
+  onFailed?.();
+}
+
+// Draws the result of `requestAgain` (the latest request, its images got).
+async function showAgain({ figure, meta, size, bitmaps, ranges, whole, drawn, mine, filterCandidate }) {
   timings.viewTask = Number(meta.task_seconds.toFixed(2));
   if (whole) setOverview({ figure: structuredClone(figure), meta, size, bitmaps });
   autoMeta = meta;
