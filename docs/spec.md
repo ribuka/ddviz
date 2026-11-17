@@ -463,6 +463,21 @@ untime\Python.Runtime.dll` で落ちた。ダウンロードした zip を Explo
   - 失敗したとき：フォルダの列挙、印の読み取り、削除のどれかが失敗した最初の DLL で止め、「インターネットから取得した DLL のブロックを解除できませんでした」と、そのパス、OS のエラー、対処の 2 つ（元の zip のプロパティで「許可する」を適用して書き込める別のフォルダへ展開し直す。共有フォルダでは管理者が `Get-ChildItem -LiteralPath '<sys._MEIPASS>' -Recurse -File -Filter '*.dll' | Unblock-File` を実行する。パスの `'` は `''` にする）をメッセージボックスで 1 回示し、終了コード 1 で終わる。消した印は戻さない。UI サーバー、worker、WebView2、実行中の目印（`RunLog.start()`）の前なので、次の起動で「前回は正常に終了しなかった」とは出ない。
   - メッセージボックスは `src/ddviz/desktop/messages.py` の `show_warning`（`window.py` から移した。pywebview を import しない）。
   - 確かめたこと（2026-11-15、Windows 11 Pro 26200）：ビルドした exe のコピーで、32 個の DLL に印を付けて `--check-desktop-runtime` が成功し、印が消え SHA-256 が同じだった（`packaging/smoke.py` 全体で約 7 秒）。印を付けた `Python.Runtime.dll` を読み取り専用にすると、ストリームの削除が `[WinError 5]` で失敗し、終了コード 1 で標準エラーにそのパスを出した。画面の表示までは確かめていない（上の「確かめ方」の範囲）。
+- 起動のスプラッシュ（2026-11-17 決定・実装。Issue #267。`packaging/ddviz.spec` の `Splash`、`src/ddviz/desktop/splash.py`）：
+  - 経緯：配布の zip を展開して初めて exe を起動すると、窓（起動中の画面か選択の画面）が出るまで数秒、何も表示されなかった（ユーザー指摘）。Explorer の「矢印＋砂時計」のカーソルは OS が出し、窓が出ないまま数秒たつと消える。窓の無いプロセスは自分でカーソルを変えられない。初回に長いのは、展開したばかりの DLL や `.pyd` を最初に読むときの Windows Defender のスキャンと見ている（未計測）。
+  - 方式：PyInstaller（6.22.3）の `Splash`。exe のローダー（bootloader）が Python を読む前に Tk の窓で出す。理由：無表示の時間を最も短くできる。Python から Win32 の窓を出す案は Python 本体の読み込みを覆えず、カーソルだけ変える案は窓が無いと実現できない。
+  - 見た目：#f3f3f3（タイトルバーの段と同じ色）の無地の PNG、360 × 100 px に、英語の固定の 1 文 `Starting ddviz…`（末尾は U+2026）。文字は Tk の既定のフォント（Windows では Segoe UI）、大きさ -20（負の値は px）、色 `#1f1f1f`、左下の位置 (24, 62)。起動中に書き換えない。画像は `packaging/build.py` の `write_splash_png` が、ビルドのたびに標準ライブラリ（`zlib`・`struct`）だけで `build\splash.png`（固定のパス。PyInstaller の `--clean` が消す `build\ddviz` の外）に書き、`ddviz.spec` がそのパスを読む。理由：ロゴが無く、リポジトリにバイナリを置かずに済む。段階ごとに文言を変えると、書き換えの箇所とテストが増える。
+    - フォントの名前に空白があると（`Segoe UI`）、PyInstaller が Tcl の台本に引用符なしで書くため台本が途中で失敗し、画像も文字も無い Tk の既定の窓（タイトル `tk`、200 × 200）が出た（2026-11-17、開発機で確認）。名前を指定せず既定のフォントを使う。
+  - 最前面にしない（`always_on_top=False`）：起動中にほかのアプリへ切り替えれば、その後ろに隠れる。理由：待つ間にほかの作業の邪魔をしない。
+  - 出るのは、ブートローダーが動く起動すべて（exe のみ）。初回かどうかは区別しない（区別できない）。開発環境（`uv run -m ddviz`）では出ない。
+  - 閉じる処理は `ddviz.desktop.splash.close_splash()` にまとめる。環境変数 `_PYI_SPLASH_IPC`（ブートローダーが付ける）があるときだけ `pyi_splash` を import して `close()` を呼ぶ。2 回目以降、スプラッシュが無いときは何もせず、失敗してもログに書くだけで例外を出さない。閉じる時期：
+    1. 窓が出たとき：`window._run` で `window.events.shown` に登録する。理由：窓が出れば窓自体が待ちの目印になる。スプラッシュと窓が重なって見える時間をなくす。
+    2. メッセージボックスの前：`messages.show_warning` の先頭。理由：スプラッシュがエラー（DLL の解除の失敗、設定ファイルの誤り、二重起動、WebView2 が無い・権限が無い、前回の異常終了）を隠さないため。
+    3. 窓を開かずに終わるとき：`run_window` で `claim()` が `Outcome.FRONT`（起動済みの窓を前に出す）のとき。
+    4. 窓を開かない起動：`__main__.main()` の `--worker`・`--check-desktop-runtime`・`--port` に分かれた直後。argparse のエラー、`--help`、例外で落ちたときは、プロセスの終了でブートローダーが片付けるのに任せる。
+  - worker では出さない：worker は同じ `ddviz.exe --worker` なので、`ddviz.workers.runner` は環境変数 `PYINSTALLER_SUPPRESS_SPLASH_SCREEN=1` を足した `env` で起動する（ブートローダーはこのときスプラッシュを出さない。6.22.3 のブートローダーにこの名前があることを確かめた）。`packaging/smoke.py`・`packaging/desktop_check.py`（`desktop_check.no_splash_env`）も同じ変数で起動し、CI の runner でも窓を出さない。理由：worker の起動のたびに出さないため。
+  - 確かめたこと（2026-11-17、Windows 11 Pro 26200、表示スケール 150%、`uv run --group build packaging/build.py` でビルドした `dist\ddviz\ddviz.exe`。50ms ごとに `EnumWindows` でそのプロセスの見えているトップレベルの窓を調べた）：引数なしの起動で、スプラッシュ（クラス `TkTopLevel`、540 × 150 物理 px）が起動から 0.05 秒で見え、ddviz の窓（WinForms のフォーム）が 0.82 秒で見えた同じ測定で消えた（1 秒以内）。窓が開いている間の 2 つ目の起動は、スプラッシュが 0.05〜0.26 秒に見え、プロセスが 0.36 秒で終わる前に消え、終了コード 0。`--worker`（変数付き）は 3 秒間一度もスプラッシュを出さなかった。フォームに `WM_CLOSE` を送ると終了コード 0。スクリーンショットで、#f3f3f3 の長方形に `Starting ddviz…` が収まって読めた（PR #<PR> に貼った）。開発機では DLL がスキャン済みなので、本物の初回の起動（Defender のスキャンを含む）は再現できない（マージ後にユーザーが確かめる）。
+  - zip の大きさ：Tcl/Tk の 2 つの DLL（`tcl86t.dll`・`tk86t.dll`）と `_tcl_data`・`_tk_data`（8 ファイル）が増える。展開後で約 3.5 MB（331,470,440 − 327,965,561 = 3,504,879 バイト）、`tar -a` の zip で約 1.6 MB（115,344,570 − 113,702,124 = 1,642,446 バイト。同じビルドからそれらを除いたフォルダとの比較。exe に入るスプラッシュの資源の分は含まない）。
 
 WebView2 の固定版の再配布の条件（2026-11-02 確認。同梱をやめた理由）：
 

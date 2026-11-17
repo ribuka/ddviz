@@ -10,6 +10,8 @@ import ctypes
 import logging
 import sys
 
+from ddviz.desktop.splash import close_splash
+
 _log = logging.getLogger(__name__)
 
 _MB_ICONWARNING = 0x30
@@ -22,7 +24,10 @@ def show_warning(text: str) -> None:
     ----------
     text : str
         The message.
+
+    The splash screen is closed first, so that it does not cover the box.
     """
+    close_splash()
     _log.warning(text)
     if sys.platform == "win32":
         ctypes.windll.user32.MessageBoxW(None, text, "ddviz", _MB_ICONWARNING)

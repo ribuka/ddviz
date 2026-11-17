@@ -169,3 +169,27 @@ def test_exit_messages_name_the_cause_they_can() -> None:
     assert exit_message(0xC0000005, None) == (
         "処理のプロセスが異常終了した（終了コード 0xC0000005）"
     )
+
+
+def test_a_worker_is_started_without_the_splash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The worker, the same exe, starts with the bootloader's splash turned off."""
+    import subprocess
+    import types
+
+    from ddviz.workers import runner
+
+    started: list[dict] = []
+
+    def popen(command: list[str], **kwargs: object) -> object:
+        started.append(kwargs)
+        return types.SimpleNamespace(pid=1)
+
+    monkeypatch.setattr(runner.subprocess, "Popen", popen)
+    monkeypatch.setenv("DDVIZ_TEST_KEPT", "yes")
+    job = types.SimpleNamespace(creationflags=0, adopt=lambda pid: None)
+    WorkerPool(tmp_path, lambda i, m: None, job, subprocess.DEVNULL, ["worker"])
+    (kwargs,) = started
+    assert kwargs["env"]["PYINSTALLER_SUPPRESS_SPLASH_SCREEN"] == "1"
+    assert kwargs["env"]["DDVIZ_TEST_KEPT"] == "yes"

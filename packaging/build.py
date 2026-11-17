@@ -11,8 +11,10 @@ that an administrator places in ``webview2`` next to the exe.
 from __future__ import annotations
 
 import shutil
+import struct
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +27,41 @@ NOTICES = ("LICENSE-WebView2-SDK.txt", "NOTICE.txt")
 # The local settings of this checkout, which the distribution leaves out:
 # it ships the shared ``settings.toml`` alone.
 LOCAL_SETTINGS = "settings.local.toml"
+# The image of the splash screen, which ddviz.spec reads at this fixed path:
+# written by each build, so the repository holds no binary. Outside
+# build/ddviz, which PyInstaller's --clean removes.
+SPLASH_PNG = ROOT / "build" / "splash.png"
+# The image's size and colour: the colour of the window's title bar.
+SPLASH_SIZE = (360, 100)
+SPLASH_RGB = (0xF3, 0xF3, 0xF3)
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _chunk(kind: bytes, data: bytes) -> bytes:
+    """Return one PNG chunk: its length, type, data and CRC."""
+    crc = zlib.crc32(kind + data)
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+
+def write_splash_png(path: Path) -> None:
+    """Write the splash screen's image: a plain #f3f3f3 rectangle, 360 x 100 px.
+
+    Parameters
+    ----------
+    path : Path
+        The PNG to write; its folder is made if missing.
+    """
+    width, height = SPLASH_SIZE
+    # Each row: filter type 0 (none), then its RGB pixels.
+    row = bytes(1) + bytes(SPLASH_RGB) * width
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)  # 8-bit RGB
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        PNG_SIGNATURE
+        + _chunk(b"IHDR", header)
+        + _chunk(b"IDAT", zlib.compress(row * height, 9))
+        + _chunk(b"IEND", b"")
+    )
 
 
 def copy_config(source: Path, target: Path) -> None:
@@ -86,6 +123,7 @@ def main() -> int:
             flush=True,
         )
         return 1
+    write_splash_png(SPLASH_PNG)
     subprocess.run(
         [
             sys.executable,

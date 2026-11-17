@@ -51,6 +51,7 @@ def run_worker(exe: Path, task: dict) -> list[dict]:
     """
     proc = subprocess.run(
         [str(exe), "--worker"],
+        env=desktop_check.no_splash_env(),
         input=json.dumps(task) + "\n",
         capture_output=True,
         text=True,

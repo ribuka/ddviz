@@ -95,7 +95,10 @@ def main() -> int:
         Exit code.
     """
     # With the check, ``--worker`` is left to argparse, which refuses it.
+    from ddviz.desktop.splash import close_splash
+
     if "--worker" in sys.argv[1:] and "--check-desktop-runtime" not in sys.argv[1:]:
+        close_splash()  # a start that opens no window
         from ddviz.workers.worker import main as worker_main
 
         return worker_main()
@@ -122,6 +125,7 @@ def main() -> int:
     if args.check_desktop_runtime:
         if args.paths or args.recursive or args.port is not None:
             parser.error("--check-desktop-runtime takes no other arguments")
+        close_splash()
         from ddviz.desktop.runtime_check import check_desktop_runtime
 
         return check_desktop_runtime()
@@ -154,6 +158,7 @@ def main() -> int:
             Preferences(settings),
         )
 
+    close_splash()
     if not paths:
         parser.error("--port needs a Parquet file or folder")
     settings = SettingsStore.load()

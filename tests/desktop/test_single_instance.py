@@ -256,3 +256,14 @@ def test_a_second_run_with_a_path_only_brings_the_window_to_the_front(
     assert _run_window(["other.parquet"]) == 0
     assert no_window["runs"] == []
     assert no_window["warnings"] == []
+
+
+def test_a_second_run_closes_its_splash_before_it_ends(
+    monkeypatch: pytest.MonkeyPatch, no_window: dict[str, list]
+) -> None:
+    """A run that only brings the window to the front closes its splash screen."""
+    closed = []
+    monkeypatch.setattr(window, "claim", lambda: Claim(Outcome.FRONT))
+    monkeypatch.setattr(window, "close_splash", lambda: closed.append(True))
+    assert _run_window(None) == 0
+    assert closed == [True]

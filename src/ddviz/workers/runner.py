@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,9 @@ from ddviz.workers.jobs import WorkerJob
 OnEvent = Callable[[int, dict], None]
 
 _CREATE_NO_WINDOW = 0x08000000
+# With this variable, the exe's bootloader shows no splash screen
+# (ddviz.desktop.splash).
+_NO_SPLASH = {"PYINSTALLER_SUPPRESS_SPLASH_SCREEN": "1"}
 # Exit code of a fail-fast abort on Windows (STATUS_STACK_BUFFER_OVERRUN):
 # polars (Rust) ends so when an allocation fails, as past the job's memory cap.
 _FAIL_FAST = 0xC0000409
@@ -128,6 +132,8 @@ class WorkerPool:
             stdout=subprocess.PIPE,
             stderr=self._log,
             creationflags=flags | self._job.creationflags,
+            # The worker is the same exe: without this, it shows the splash.
+            env={**os.environ, **_NO_SPLASH},
         )
         try:
             self._job.adopt(process.pid)
