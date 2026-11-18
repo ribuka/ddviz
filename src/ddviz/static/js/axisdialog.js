@@ -362,35 +362,29 @@ function lineShapes(meta, settingsOf) {
   return shapes;
 }
 
+// Returns the axes of the panels of `meta`, as `[key, role, index]`
+// (`xaxis2`, "x" or "y", the index of the axis column).
+function panelAxes(meta) {
+  return meta.panels.flatMap((panel) => [
+    [axisKey(panel.xaxis), "x", panel.x],
+    [axisKey(panel.yaxis), "y", panel.y],
+  ]);
+}
+
 // Returns the axes of the panels of `meta` with a dialog, as `[key, kind,
 // column]` (`xaxis2`, `axisKind`, the axis column).
 function dialogAxes(meta) {
-  const axes = [];
-  for (const panel of meta.panels) {
-    for (const [role, axis, index] of [
-      ["x", panel.xaxis, panel.x],
-      ["y", panel.yaxis, panel.y],
-    ]) {
-      const kind = axisKind(meta, role, index);
-      if (kind) axes.push([axisKey(axis), kind, meta[`${role}_columns`][index]]);
-    }
-  }
-  return axes;
+  return panelAxes(meta)
+    .map(([key, role, index]) => [key, axisKind(meta, role, index), meta[`${role}_columns`][index]])
+    .filter(([, kind]) => kind);
 }
 
 // Returns the axes of the panels of `meta` whose labels take an angle
 // (`hasAngle`), as `[key, role, column]`.
 function angleAxes(meta) {
-  const axes = [];
-  for (const panel of meta.panels) {
-    for (const [role, axis, index] of [
-      ["x", panel.xaxis, panel.x],
-      ["y", panel.yaxis, panel.y],
-    ]) {
-      if (hasAngle(meta, role, index)) axes.push([axisKey(axis), role, meta[`${role}_columns`][index]]);
-    }
-  }
-  return axes;
+  return panelAxes(meta)
+    .filter(([, role, index]) => hasAngle(meta, role, index))
+    .map(([key, role, index]) => [key, role, meta[`${role}_columns`][index]]);
 }
 
 // Returns `layout` (a figure's layout for `meta`) with the ticks and
