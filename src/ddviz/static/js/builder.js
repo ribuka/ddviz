@@ -31,12 +31,22 @@
 // needs no figure): a failed plot rolls the zones back to the last committed
 // state, with the state the page derives from them (`related`), and without
 // calling `onChange` again.
+// A zone of `STASHABLE` holding a column can be stashed (`toggleStash`): its
+// chip stays, faded and struck through, and the graph given to `onChange`
+// has the role empty until the stash is toggled off. The stash is an edit of
+// its own, rolled back with the others. A change of the zone's column
+// (another column placed, the chip removed, swapped or moved away, Wrap and
+// the facets replacing each other) takes the stash off; a stashed chip moved
+// to another zone is drawn there. The zones are as the chips show them:
+// a stashed Wrap still refuses an n-th axis.
 
 // Roles that hold a list of columns (the n-th axes after the first).
 const AXES = ["x", "y"];
 const LABELS = { x: "X", y: "Y", col: "Group X", row: "Group Y", wrap: "Wrap", color: "Color", symbol: "Symbol" };
 // Roles that wrap replaces.
 const FACETS = ["row", "col"];
+// Roles that can be stashed.
+export const STASHABLE = ["color", "symbol", "row", "col", "wrap"];
 // The part of an axis column's region, at either end along the axis, where
 // a drop goes in beside the column instead of replacing it. A part of the
 // region, not of the chip: the regions split the whole zone, so the bands
@@ -116,6 +126,8 @@ export class Builder {
     this.numeric = new Map();
     // The temporal kind of each placed column (`ddviz.shared.temporal.KINDS`), or null.
     this.temporal = new Map();
+    // The stashed roles: their chips stay, the graph drawn has them empty.
+    this.stashed = new Set();
     this.tip = document.getElementById("drop-tip");
     this.line = document.getElementById("drop-line");
     // The drawn axes of a role's columns (`setAxes`): none yet.
@@ -152,6 +164,7 @@ export class Builder {
       encoding: structuredClone(this.encoding),
       numeric: new Map(this.numeric),
       temporal: new Map(this.temporal),
+      stashed: new Set(this.stashed),
       related: this.related?.save() ?? null,
       edits: this.edits,
     };
@@ -171,10 +184,11 @@ export class Builder {
   // Goes back to the committed state, the related state too, without
   // telling `onChange`: nothing is plotted again.
   rollback() {
-    const { encoding, numeric, temporal, related } = this.committed;
+    const { encoding, numeric, temporal, stashed, related } = this.committed;
     this.encoding = structuredClone(encoding);
     this.numeric = new Map(numeric);
     this.temporal = new Map(temporal);
+    this.stashed = new Set(stashed);
     if (related !== null) this.related?.load(related);
     // The committed state again, under a new count: an older snapshot of
     // the same count is not taken for it.
@@ -457,8 +471,8 @@ export class Builder {
       else source.splice(column.index, 1);
       this.setRole(column.from, source);
     }
-    if (role === "wrap") for (const facet of FACETS) this.encoding[facet] = null;
-    if (FACETS.includes(role)) this.encoding.wrap = null;
+    if (role === "wrap") for (const facet of FACETS) this.setRole(facet, []);
+    if (FACETS.includes(role)) this.setRole("wrap", []);
     this.changed();
   }
 
@@ -475,14 +489,37 @@ export class Builder {
     this.changed();
   }
 
+  // Sets the columns of `role`; a change of its column takes its stash off.
   setRole(role, list) {
-    this.encoding[role] = AXES.includes(role) ? list : (list[0] ?? null);
+    const value = AXES.includes(role) ? list : (list[0] ?? null);
+    if (value !== this.encoding[role]) this.stashed.delete(role);
+    this.encoding[role] = value;
+  }
+
+  isStashed(role) {
+    return this.stashed.has(role);
+  }
+
+  // Stashes the column of `role`, or takes its stash off, as an edit told
+  // to `onChange`; nothing for a role that cannot be stashed or holds no
+  // column.
+  toggleStash(role) {
+    if (!STASHABLE.includes(role) || this.encoding[role] === null) return;
+    if (!this.stashed.delete(role)) this.stashed.add(role);
+    this.changed();
+  }
+
+  // Returns the graph drawn: the zones' with the stashed roles empty.
+  drawn() {
+    const encoding = structuredClone(this.encoding);
+    for (const role of this.stashed) encoding[role] = null;
+    return encoding;
   }
 
   changed() {
     this.edits += 1;
     this.render();
-    this.onChange(structuredClone(this.encoding));
+    this.onChange(this.drawn());
   }
 
   render() {
@@ -504,6 +541,10 @@ export class Builder {
     chip.className = "chip";
     chip.draggable = true;
     chip.title = name;
+    if (this.stashed.has(role)) {
+      chip.classList.add("stashed");
+      chip.title = `${name}（Stash 中：描画では無いものとして扱う。右クリックの Stash で戻す）`;
+    }
     const text = document.createElement("span");
     text.className = "chip-name";
     // A duration is drawn as seconds.
