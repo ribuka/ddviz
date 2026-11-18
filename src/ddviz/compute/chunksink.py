@@ -6,9 +6,12 @@ the next is made, and writes the columns in parallel. The plugin API is
 unstable; `pyproject.toml` pins the polars version it was checked with.
 
 polars holds the rows of a row group until it has them all, so a row group
-is kept within the rows of the first frame: frames cut to a budget of
-bytes keep a row group within that budget too, however many columns there
-are.
+is kept within the rows of the first frame: when frames are cut to a budget
+of bytes, a row group holds about that budget as long as the later rows
+are no larger than those of the first frame, however many columns there
+are. Later rows larger than those (long texts after short ones) gather
+more than the budget in a row group: `sink_parquet` cuts row groups by
+rows only.
 """
 
 from __future__ import annotations
