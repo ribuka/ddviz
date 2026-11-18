@@ -126,6 +126,12 @@ export class ElementBar {
     return { chosen: [...this.chosen], blocked: [...this.blocked] };
   }
 
+  // Returns `state()` with its elements sorted, as JSON values for the
+  // drawing settings of undo and redo (`history.js`).
+  settings() {
+    return { chosen: [...this.chosen].sort(), blocked: [...this.blocked].sort() };
+  }
+
   // Goes back to a `state`, without telling `onChange`.
   restore({ chosen, blocked }) {
     this.chosen = new Set(chosen);

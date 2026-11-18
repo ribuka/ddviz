@@ -13,8 +13,9 @@ import { openColumnMenu } from "./columnmenu.js";
 import { attachColumnList } from "./columns.js";
 import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
-import { FilterPane, filtersKey, RestorePoint } from "./filters.js";
+import { FilterPane, filterSettings, filtersKey, RestorePoint } from "./filters.js";
 import { drawable, drawnRoles, hasBoxPair, hasLinePair, hasSmoothPair } from "./graph.js";
+import { SettingsHistory } from "./history.js";
 import { attachHover } from "./hover.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { fitBottom, fitMargin, MARGIN_BOTTOM, MARGIN_LEFT, neededBottom, neededMargin } from "./leftmargin.js";
@@ -52,6 +53,7 @@ import { openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
 import { forPlotly } from "./temporal.js";
+import { attachUndoKeys, undoButtons } from "./undo.js";
 import { closeWrapMenu, openWrapMenu, setWrapAuto, setWrapNullRows } from "./wrapmenu.js";
 import { attachZoneMenu } from "./zonemenu.js";
 
@@ -227,6 +229,8 @@ const axes = new AxisControls({
   replot: () => plot(plottedEncoding),
   followMargin,
   openPlotMenu: (event) => openPlotMenu(event, gd, imageCopy),
+  // Drawn at once, without a plot: committed at once (`recordImmediate`).
+  changed: () => recordImmediate(),
 });
 axes.attach();
 const empty = document.getElementById("empty");
@@ -254,6 +258,18 @@ let plottedEncoding = null;
 // Generation of the plot request in flight, or 0. A new size waits for it:
 // a request for the old plot would kill its aggregation (or its conversion).
 let plotting = 0;
+// Whether the plot in flight plots the committed graph again (`plot`'s
+// `restoring`), and whether its result is being drawn (`drawPlot`): undo
+// does not cancel either (`undo`).
+let plottingRestore = false;
+let drawing = false;
+// The drawing settings committed, for undo and redo (`history.js`), and the
+// step being applied (`applyStep`): `{index, generation, move}` of its plot,
+// where `move` says whether its result moves to the step (`record`).
+const settingsHistory = new SettingsHistory();
+let applying = null;
+// The buttons of undo and redo (`undo.js`), once made.
+let undoControls = null;
 
 // Marks the plot area busy while a plot is in flight or the page waits for
 // a result of a view or a new size (`setPending`), at once and also while a
@@ -261,6 +277,7 @@ let plotting = 0;
 // E2E tests wait for its end: the status shows no such state as a whole.
 function markBusy() {
   gd.classList.toggle("busy", waiting || plotting !== 0);
+  showUndo();
 }
 // Bumped by every plot, view request and return to the overview, so that a
 // late answer to an older request is dropped.
@@ -555,7 +572,7 @@ function listenToFigure() {
 // commits the graph (`Builder.commit`) and the filter (`RestorePoint`).
 // Returns the view drawn again (`keep` or `carriedView`), or null.
 // Throws what drawing throws; the caller rolls back.
-async function drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, candidate, filterCandidate, settled }) {
+async function drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, candidate, filterCandidate, settled, settings, mine }) {
   const drawStarted = performance.now();
   // The selection and the shapes of another symbol column go with the drawn plot.
   boxSelection.clear(false);
@@ -602,7 +619,9 @@ async function drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, 
   builder.commit(candidate);
   restorePoint.confirm(filterCandidate);
   serverAhead = false;
+  drawing = false;
   settled();
+  record(settings, mine);
   showRows(meta);
   timings.plotAndImages = Math.round(performance.now() - drawStarted);
   setInfo();
@@ -641,6 +660,9 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   // The filter pane's state of these conditions, which the pane goes back to
   // once the result is drawn (`RestorePoint`).
   const filterCandidate = restorePoint.propose(filterPane.sent);
+  // The drawing settings of this request, the step of undo and redo its
+  // result makes (`record`).
+  const settings = captureSettings(candidate, filterCandidate.state);
   const askedSize = requestedSize;
   requestedSize = size;
   statusLine.show("集約中…");
@@ -649,6 +671,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   // included: meanwhile no view, size or selection is asked for, which would
   // supersede it or kill its task.
   plotting = mine;
+  plottingRestore = restoring;
   markBusy();
   const settled = () => {
     if (plotting === mine) plotting = 0;
@@ -703,7 +726,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   // The ranges zoomed of the axes this edit kept, read just before the switch.
   const carried = keep ? null : carriedView(meta);
   try {
-    const view = await drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, candidate, filterCandidate, settled });
+    drawing = true;
+    const view = await drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, candidate, filterCandidate, settled, settings, mine });
     if (view?.zoomed) {
       requestView(view.ranges);
       return meta;
@@ -714,6 +738,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     if (overview?.bitmaps !== bitmaps) closeImages(bitmaps);
     if (mine !== generation) return null;
     return plotFailed(`図を描けなかった（${error.message}）`, askedSize, restoring, kept);
+  } finally {
+    drawing = false;
   }
   // The area may have changed size, or the filter, while the plot was
   // aggregated, or the lock gone off, which drops the color scale and the
@@ -777,6 +803,10 @@ function plotFailed(message, askedSize, restoring, kept = keptView()) {
   statusLine.hold();
   requestedSize = askedSize;
   if (builder.uncommitted() || serverAhead) builder.rollback();
+  // A step of undo or redo that fails leaves the step shown: its settings
+  // come back with the zones.
+  if (applying?.generation === generation) revertSettings();
+  applying = null;
   if (serverAhead && !restoring) {
     if (plottedEncoding) {
       plot(plottedEncoding, { restoring: true, keep: kept });
@@ -1096,6 +1126,9 @@ async function showAgain({ figure, meta, size, bitmaps, ranges, whole, drawn, mi
   const layout = whole ? figure.layout : withRanges(figure.layout, meta, view);
   if (!drawn) await draw(figure.data, layout, meta, bitmaps);
   restorePoint.confirm(filterCandidate);
+  // A filter drawn is committed: a step of undo and redo, unless the
+  // settings are those of the step shown (a zoom, a pan, a new size).
+  if (mine === generation) record({ ...shownSettings(), filters: filterSettings(filterCandidate.state) });
   if (mine === generation) setPending(false);
   showRows(meta, whole ? "" : "表示範囲に ");
   setInfo();
@@ -1465,6 +1498,8 @@ const filterPane = new FilterPane(
     applyFilters();
   },
   (count, text) => leftPane.setFilter(count, text),
+  // A card added, removed or moved is committed at once (`recordImmediate`).
+  () => recordImmediate(),
 );
 
 // Removes the figure of a graph that cannot be drawn (`drawable`).
@@ -1637,6 +1672,7 @@ const builder = new Builder(
       clearPlot();
       serverAhead = false;
       builder.commit();
+      record(captureSettings());
     }
   },
   {
@@ -1667,6 +1703,171 @@ const builder = new Builder(
     },
   },
 );
+// ---- undo and redo of the drawing settings (docs/spec.md, "undo/redo") ----
+
+// Returns the drawing settings of the zones' snapshot `snapshot`
+// (`Builder.snapshot`) and the filter pane's state `filterState`
+// (`FilterPane.snapshot`), with the element icons and the settings of the
+// plot and of the axes as they are now: JSON values only.
+function captureSettings(snapshot = builder.snapshot(), filterState = filterPane.sent) {
+  return {
+    zones: Builder.settings(snapshot),
+    elements: elementBar.settings(),
+    options: options.settings(snapshot.encoding.symbol),
+    axes: axes.settings(),
+    filters: filterSettings(filterState),
+  };
+}
+
+// Returns the settings of the step shown (a copy).
+function shownSettings() {
+  return structuredClone(settingsHistory.steps[settingsHistory.index].settings);
+}
+
+// Returns `settings` with the settings committed at once (`recordImmediate`)
+// as they are now: the axes' but their scales, which a plot commits, and the
+// cards of the filter pane with the conditions of `settings`
+// (`FilterPane.withCards`).
+function withImmediate(settings) {
+  return {
+    ...settings,
+    axes: { ...axes.settings(), logs: settings.axes.logs },
+    filters: filterPane.withCards(settings.filters),
+  };
+}
+
+// Takes the settings just committed (with those committed at once since,
+// `withImmediate`) as a step after the one shown, unless they are its
+// settings. A result of the step applied (its plot's, `mine`) moves to it
+// first, so that it is the step shown.
+function record(settings, mine = null) {
+  if (applying !== null && mine !== null && applying.generation === mine && applying.move) {
+    settingsHistory.moveTo(applying.index);
+  }
+  settingsHistory.push(withImmediate(settings));
+  applying = null;
+  showUndo();
+}
+
+// Takes a change drawn at once, without a plot, as committed: the dialog's
+// settings, the angle or the direction of an axis column, a card of the
+// filter pane added, removed or moved. Its step is the step shown with that
+// change alone: an edit being plotted, or a condition whose result is not
+// drawn yet, is not in it, but in the step its result makes. The step
+// being applied no longer moves there: its result is a step of its own.
+function recordImmediate() {
+  if (settingsHistory.index < 0) return;
+  if (applying !== null) applying.move = false;
+  settingsHistory.push(withImmediate(shownSettings()));
+  showUndo();
+}
+
+// Sets the settings that are not the zones' from `settings`: the plot's,
+// the axes', the element icons and the filter pane.
+function applyOthers(settings) {
+  options.applySettings(settings.options);
+  elementBar.setSmoothText(smoothingText(options.smoothing));
+  axes.applySettings(settings.axes);
+  elementBar.restore(settings.elements);
+  filterPane.applySettings(settings.filters);
+  filters = filterPane.conditions();
+}
+
+// Puts back the settings of the step shown, after the zones went back to the
+// committed graph (`Builder.rollback`).
+function revertSettings() {
+  const shown = settingsHistory.steps[settingsHistory.index];
+  if (shown) applyOthers(structuredClone(shown.settings));
+}
+
+// Applies the drawing settings of the step `index`, as an edit of them by
+// hand: the graph is plotted, and the history moves to the step once its
+// result is committed (`record`); a failure leaves it (`plotFailed`). A
+// graph without a figure is committed at once.
+function applyStep({ index, settings }) {
+  statusLine.release();
+  const wrap = builder.encoding.wrap;
+  applyOthers(settings);
+  builder.load(settings.zones);
+  const encoding = builder.drawn();
+  drawnRolesKey = drawnRoles(encoding);
+  placedRolesKey = placedRoles(builder.encoding);
+  if (builder.encoding.wrap !== wrap) {
+    options.wrapAuto = null;
+    closeWrapMenu();
+  }
+  if (drawable(encoding, builder.numeric)) {
+    plot(encoding);
+    // `plot` took its generation before its first wait.
+    applying = { index, generation, move: true };
+  } else {
+    clearPlot();
+    serverAhead = false;
+    builder.commit();
+    applying = null;
+    settingsHistory.moveTo(index);
+  }
+  showUndo();
+}
+
+// Cancels the edit being plotted: the plot is dropped (a newer generation)
+// and the zones, the filter pane and the other settings go back to the
+// committed ones, those of the step shown, which stays. The figure drawn
+// stays; only when the server already holds the dropped plot's result
+// (`serverAhead`) is the committed graph plotted again, as after a failure.
+function cancelPlot() {
+  generation++;
+  plotting = 0;
+  markBusy();
+  applying = null;
+  statusLine.release();
+  builder.rollback();
+  revertSettings();
+  requestedSize = shownSize;
+  if (serverAhead) {
+    if (plottedEncoding) {
+      plot(plottedEncoding, { restoring: true, keep: keptView() });
+    } else {
+      clearPlot();
+      builder.commit();
+      serverAhead = false;
+    }
+    return;
+  }
+  if (current) showRows(current);
+  else statusLine.show("");
+  resumeShown();
+}
+
+// Undoes the drawing settings to the step before; while a plot is in
+// flight, cancels its edit instead (`cancelPlot`), unless it plots the
+// committed graph again or its result is being drawn.
+function undo() {
+  if (!converting.hidden) return;
+  if (plotting !== 0) {
+    if (!plottingRestore && !drawing) cancelPlot();
+    return;
+  }
+  const target = settingsHistory.undoTarget();
+  if (target) applyStep(target);
+}
+
+// Redoes the drawing settings to the step after; nothing while a plot is in flight.
+function redo() {
+  if (!converting.hidden || plotting !== 0) return;
+  const target = settingsHistory.redoTarget();
+  if (target) applyStep(target);
+}
+
+// Enables the buttons as undo and redo can go: undo while a plot is in
+// flight too; neither while a conversion's overlay is shown.
+function showUndo() {
+  if (undoControls === null) return;
+  const blocked = !converting.hidden;
+  undoControls.undo.disabled = blocked || !(plotting !== 0 || settingsHistory.canUndo);
+  undoControls.redo.disabled = blocked || plotting !== 0 || !settingsHistory.canRedo;
+}
+
 // Plots the graph again for the "Show null rows" of `role` just toggled: its
 // levels change. As keeping the levels the filter leaves out, a plot that
 // fails turns the setting back, unless it was toggled again meanwhile: the
@@ -1677,6 +1878,7 @@ const builder = new Builder(
 async function plotNullRows(role) {
   if (!plottedEncoding) {
     builder.commit();
+    record(captureSettings());
     return;
   }
   const toggled = options.showNullRows[role];
@@ -1707,6 +1909,7 @@ document.querySelector('#builder .zone[data-role="wrap"]').addEventListener("con
         // keeps it (`Builder.rollback`).
         const { committed } = builder;
         if (committed.related) builder.commit({ ...committed, related: { ...committed.related, wrapCols: cols } });
+        record(captureSettings());
       }
     },
     {
@@ -1740,6 +1943,7 @@ attachZoneMenu(builderRoot, {
     options.keepColorLevels = !before;
     if (!plottedEncoding) {
       builder.commit();
+      record(captureSettings());
       return;
     }
     const toggled = options.keepColorLevels;
@@ -1769,8 +1973,15 @@ elementBar = new ElementBar(
   },
 );
 elementBar.setSmoothText(smoothingText(options.smoothing));
-// The empty graph with its element icons is the first committed state.
+// The empty graph with its element icons is the first committed state,
+// and the first step of undo and redo.
 builder.commit();
+record(captureSettings());
+undoControls = undoButtons(undo, redo);
+attachUndoKeys(undo, redo);
+showUndo();
+// The overlay of a conversion turns the buttons and keys off while shown.
+new MutationObserver(showUndo).observe(converting, { attributes: true, attributeFilter: ["hidden"] });
 // The chips of X and Y follow the drawn axes, and their zones' sizes.
 builder.setAxes(drawnAxes);
 const axisZones = builderRoot.querySelectorAll(':scope > .zone[data-role="x"], :scope > .zone[data-role="y"]');

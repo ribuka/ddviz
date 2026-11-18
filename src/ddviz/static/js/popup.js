@@ -32,6 +32,9 @@ export function placeUnder(element, anchor, { align = "left", gap = 2 } = {}) {
   element.style.top = `${Math.max(EDGE, Math.min(top, innerHeight - height - EDGE))}px`;
 }
 
+// Every popup made (`Popup.anyOpen`).
+const popups = new Set();
+
 // A popup of one module, open or closed. It closes on a press outside the
 // element, outside the anchor it was opened under and outside every element
 // `inside()` returns, and on Escape.
@@ -42,6 +45,7 @@ export class Popup {
 
   constructor({ onClose = () => {}, inside = () => [] } = {}) {
     this.#onClose = onClose;
+    popups.add(this);
     window.addEventListener("pointerdown", (event) => {
       if (!this.#element || this.#element.contains(event.target)) return;
       if (this.#anchor?.contains(event.target)) return;
@@ -81,6 +85,11 @@ export class Popup {
     placeUnder(element, anchor, options);
     this.#element = element;
     this.#anchor = anchor;
+  }
+
+  // Whether a popup of any module is open (its element still in the page).
+  static anyOpen() {
+    return [...popups].some((popup) => popup.#element?.isConnected);
   }
 
   // Removes the element if open, then calls `onClose` (also when closed).

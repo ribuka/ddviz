@@ -48,6 +48,34 @@ html.desktop:not(.caption-known) body {
   outline-offset: -2px;
 }
 
+/* Undo and redo of the drawing settings (js/undo.js), right of the `…`
+   menu, as it is; only the graph's page adds them. */
+#titlebar .titlebar-undo {
+  app-region: no-drag;
+  flex: none;
+  height: 100%;
+  min-width: 40px;
+  padding: 0 10px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+#titlebar .titlebar-undo:hover:not(:disabled) {
+  background: rgb(0 0 0 / 8%);
+}
+
+#titlebar .titlebar-undo:disabled {
+  color: #a0a0a0;
+}
+
+#titlebar .titlebar-undo:focus-visible {
+  outline: 2px solid #2a6fdb;
+  outline-offset: -2px;
+}
+
 /* The history of the saves of the plot's data (js/saves.js), at the right
    end, 8px left of the OS caption buttons; a ring around it shows the saves
    running (Issue #194). Only the graph's page adds it. */

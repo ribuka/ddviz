@@ -253,10 +253,63 @@ function clearBar(title) {
   return { bar, counter, clear };
 }
 
+// Returns a new card of the column `name`, before its summary comes.
+function newCard(name, numeric) {
+  return {
+    name,
+    numeric,
+    summary: null,
+    range: null,
+    levels: new Set(),
+    contains: "",
+    // The tick of the `(null)` row in each way the card sets its
+    // condition (`cardKind`): a card of candidates keeps one per mode.
+    nulls: { range: true, pick: false, contains: false, listed: false },
+    order: "name",
+    element: null,
+    listHeight: null,
+    candidates: null,
+    mode: "pick",
+    query: "",
+    draft: "",
+    shown: null,
+    seq: 0,
+    loading: false,
+    failure: null,
+  };
+}
+
+// Returns the state of the pane `snapshot` (`FilterPane.snapshot`) as JSON
+// values, for the drawing settings of undo and redo (`history.js`): each
+// card by its column, its ticked levels sorted, and its range null when it
+// is the column's whole range (or not known yet), as it sets no condition.
+export function filterSettings(snapshot) {
+  return snapshot.map(({ card, range, levels, contains, nulls, mode, query, order }) => {
+    const whole = card.summary?.numeric && range && range[0] <= card.summary.min && range[1] >= card.summary.max;
+    return {
+      name: card.name,
+      numeric: card.numeric,
+      range: range && !whole ? [...range] : null,
+      levels: [...levels].sort((a, b) => {
+        const x = JSON.stringify(a);
+        const y = JSON.stringify(b);
+        return x < y ? -1 : x > y ? 1 : 0;
+      }),
+      contains,
+      nulls: { ...nulls },
+      mode,
+      query,
+      order,
+    };
+  });
+}
+
 export class FilterPane {
   // `root` is the pane (`#filters`); `onChange` gets the conditions after each
   // committed change; `onSummary` gets the summary text whenever it changes.
-  constructor(root, onChange, onSummary) {
+  // `onCards` is called after a card is added, removed or moved: a change
+  // of the cards themselves, which the drawing settings keep (`withCards`).
+  constructor(root, onChange, onSummary, onCards = () => {}) {
     this.root = root;
     this.list = root.querySelector(".filter-list");
     // What scrolls the cards (the list itself in a page without it).
@@ -268,6 +321,7 @@ export class FilterPane {
     this.tip = document.getElementById("drop-tip");
     this.onChange = onChange;
     this.onSummary = onSummary;
+    this.onCards = onCards;
     // One card per column, in the order shown (added last at the end, moved
     // by its head): `{name, numeric, summary,
     // range, levels, contains, element}`; `range` is [lo, hi], `levels` the
@@ -286,6 +340,9 @@ export class FilterPane {
     this.committed = "[]";
     // The state of the conditions sent last (`commit`).
     this.sent = [];
+    // The card of each column added while the page is open, removed or not:
+    // the drawing settings (`applySettings`) bring it back with its summary.
+    this.known = new Map();
     this.timer = null;
     this.up.addEventListener("click", () => this.step(1));
     this.down.addEventListener("click", () => this.step(-1));
@@ -393,28 +450,8 @@ export class FilterPane {
   add({ name, numeric }) {
     if (this.cards.some((c) => c.name === name)) return;
     this.cancelReorder();
-    const card = {
-      name,
-      numeric,
-      summary: null,
-      range: null,
-      levels: new Set(),
-      contains: "",
-      // The tick of the `(null)` row in each way the card sets its
-      // condition (`cardKind`): a card of candidates keeps one per mode.
-      nulls: { range: true, pick: false, contains: false, listed: false },
-      order: "name",
-      element: null,
-      listHeight: null,
-      candidates: null,
-      mode: "pick",
-      query: "",
-      draft: "",
-      shown: null,
-      seq: 0,
-      loading: false,
-      failure: null,
-    };
+    const card = newCard(name, numeric);
+    this.known.set(name, card);
     this.cards.push(card);
     // A new card sets no condition: the state sent has it, so that a request
     // sent now goes back to it (`RestorePoint`).
@@ -423,6 +460,7 @@ export class FilterPane {
     if (this.state === "collapsed") this.setState("open");
     this.render();
     this.loadSummary(card);
+    this.onCards();
   }
 
   remove(card) {
@@ -435,6 +473,7 @@ export class FilterPane {
     this.sent = this.sent.filter((s) => s.card !== card);
     this.render();
     this.commit();
+    this.onCards();
   }
 
   async loadSummary(card) {
@@ -642,6 +681,56 @@ export class FilterPane {
       if (!card.summary && !card.error) this.loadSummary(card);
     }
     for (const card of refetch) this.loadCandidates(card);
+  }
+
+  // Puts the cards back as the drawing settings `settings` (`filterSettings`)
+  // had them, as `restore` does: nothing is sent. A card of a column added
+  // before is that card again, with its summary; another one is new, and
+  // loads its summary.
+  applySettings(settings) {
+    const snapshot = settings.map(({ name, numeric, range, levels, contains, nulls, mode, query, order }) => {
+      let card = this.known.get(name);
+      if (!card) {
+        card = newCard(name, numeric);
+        Object.assign(card, { mode, query, draft: query, order });
+        this.known.set(name, card);
+      }
+      return { card, range, levels: new Set(levels), contains, nulls, mode, query, order };
+    });
+    this.restore(snapshot);
+  }
+
+  // Returns whether the card of the drawing settings `entry` (`filterSettings`)
+  // sets a condition, with the summary of its column's card.
+  hasCondition(entry) {
+    const card = this.known.get(entry.name);
+    if (!card?.summary) return false;
+    const whole = card.summary.numeric && card.summary.min !== null ? [card.summary.min, card.summary.max] : null;
+    return this.isActive({
+      ...card,
+      range: entry.range ?? whole,
+      levels: new Set(entry.levels),
+      contains: entry.contains,
+      nulls: { ...entry.nulls },
+      mode: entry.mode,
+    });
+  }
+
+  // Returns the cards of the drawing settings `entries` (`filterSettings`)
+  // as the pane has them now, in its order: a card of `entries` as it is
+  // there, a card added since without a condition, and a card of `entries`
+  // removed since only when it sets a condition there (its removal is a new
+  // condition, committed when its result is drawn). The conditions are
+  // those of `entries`: none of the pane's not drawn yet.
+  withCards(entries) {
+    const byName = new Map(entries.map((entry) => [entry.name, entry]));
+    const out = this.cards.map((card) => byName.get(card.name) ?? filterSettings([cardState(newCard(card.name, card.numeric))])[0]);
+    entries.forEach((entry, i) => {
+      if (!this.cards.some((card) => card.name === entry.name) && this.hasCondition(entry)) {
+        out.splice(Math.min(i, out.length), 0, entry);
+      }
+    });
+    return structuredClone(out);
   }
 
   // Sends the conditions once the ticks have stopped for a moment.
@@ -910,6 +999,7 @@ export class FilterPane {
     else this.list.insertBefore(card.element, next);
     for (const [e, top] of lists) e.scrollTop = top;
     this.updateSummary();
+    this.onCards();
   }
 
   numericBody(card, body) {

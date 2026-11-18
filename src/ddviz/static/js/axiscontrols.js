@@ -45,7 +45,9 @@ export class AxisControls {
   // `current()` is the meta drawn (or null); `relayoutOwn(update)` relayouts
   // the figure as the page's own; `plotted()` tells whether a graph is
   // plotted, `replot()` plots it again (`plot()`'s result); `followMargin(grow)`
-  // measures the margin again; `openPlotMenu(event)` opens the plot's menu.
+  // measures the margin again; `openPlotMenu(event)` opens the plot's menu;
+  // `changed()` is called after the dialog's settings, an angle or a
+  // direction changed, which are drawn without a plot.
   // `marginTargets` are the elements of the axes' left margin outside the
   // plot (`hit`): the gap between the y zone and the plot area is the
   // builder's, the stage's or the scroller's.
@@ -62,6 +64,7 @@ export class AxisControls {
     replot,
     followMargin,
     openPlotMenu,
+    changed = () => {},
   }) {
     this.gd = gd;
     this.builderRoot = builderRoot;
@@ -75,6 +78,34 @@ export class AxisControls {
     this.replot = replot;
     this.followMargin = followMargin;
     this.openPlotMenu = openPlotMenu;
+    this.changed = changed;
+  }
+
+  // Returns the settings of the axis columns as JSON values, for the drawing
+  // settings of undo and redo (`history.js`): the dialog's and the angles by
+  // column, and the log and reversed columns of each role.
+  settings() {
+    const sorted = (map) => [...map].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const columns = (sets) => ({ x: [...sets.x].sort(), y: [...sets.y].sort() });
+    return {
+      dialog: structuredClone(sorted(this.#settings)),
+      angles: sorted(this.#angles),
+      logs: columns(this.scales.logs),
+      reversed: columns(this.directions.reversed),
+    };
+  }
+
+  // Sets the settings of the axis columns from `state` (`settings`), without
+  // drawing them: the plot of the graph does.
+  applySettings(state) {
+    this.#settings = new Map(structuredClone(state.dialog));
+    this.#angles = new Map(state.angles);
+    this.scales.clear();
+    this.directions.clear();
+    for (const axis of ["x", "y"]) {
+      for (const column of state.logs[axis]) this.scales.set(axis, column, true);
+      for (const column of state.reversed[axis]) this.directions.set(axis, column, true);
+    }
   }
 
   // The angle drawn on the axis column `index` of `role` of `meta`, or null.
@@ -176,6 +207,7 @@ export class AxisControls {
     }
     if (angle === null) this.#angles.delete(`${axis}:${column}`);
     else if (angle !== undefined) this.#angles.set(`${axis}:${column}`, angle);
+    this.changed();
     const gd = this.gd;
     if (!this.current() || !gd._fullLayout) return;
     const meta = this.current();
@@ -200,6 +232,7 @@ export class AxisControls {
   // another left margin (`followMargin`).
   async setReversed(axis, column, reversed) {
     this.directions.set(axis, column, reversed);
+    this.changed();
     const gd = this.gd;
     if (!this.current() || !gd._fullLayout) return;
     const meta = this.current();
