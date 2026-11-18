@@ -140,12 +140,17 @@ def test_a_missing_other_role_does_not_narrow_the_scale(tmp_path: Path) -> None:
     assert agg.bins[COUNT].sum() == 1
 
 
-def test_the_missing_level_stays_last_of_new_intervals(tmp_path: Path) -> None:
-    """A color drawing its null rows keeps the missing level after the intervals of the filter."""
+def test_the_missing_level_follows_the_rows_of_the_filter(tmp_path: Path) -> None:
+    """A color drawing its null rows has the missing level after the intervals of the filter while its rows have a null value, and none when they have none."""
+    with_nulls = [Filter("c", range=[10.0, 20.0], nulls=True)]
+    agg = aggregate(
+        _binned(tmp_path, 2, "values", filters=with_nulls, null_roles=["color"])
+    )
+    assert agg.all_levels["color"] == [*cut_labels(agg.cuts["color"]), MISSING]
     agg = aggregate(
         _binned(tmp_path, 2, "values", filters=C_10_20, null_roles=["color"])
     )
-    assert agg.all_levels["color"] == [*cut_labels(agg.cuts["color"]), MISSING]
+    assert agg.all_levels["color"] == cut_labels(agg.cuts["color"])
 
 
 def test_a_temporal_color_spans_the_rows_of_the_filter(tmp_path: Path) -> None:

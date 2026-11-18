@@ -401,10 +401,10 @@ def test_a_facet_column_at_the_limit_fails_with_its_missing_level(path: Path) ->
 def test_the_filter_keeps_the_missing_panel_only_with_a_missing_row(
     path: Path, filters: list, levels: list
 ) -> None:
-    """The missing panel stays while a row of the filter is missing, and goes with the filter's (null) unchecked."""
+    """The missing panel stays while a row of the filter is missing, and goes with the filter's (null) unchecked; the levels are those of the rows of the filter (Issue #279)."""
     agg = aggregate(_spec(path, col="g", null_roles=["col"], filters=filters))
     assert agg.levels["col"] == levels
-    assert agg.all_levels["col"] == ["p", "q", MISSING]
+    assert agg.all_levels["col"] == levels
 
 
 @pytest.mark.parametrize(("nulls", "missing"), [(True, 4), (False, 0)])
