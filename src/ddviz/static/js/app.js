@@ -1473,12 +1473,21 @@ async function followBandTicks() {
 // when the size settles, and a scrolled grid keeps its size.
 const RESIZE_SETTLE_MS = 300;
 let resizeTimer = null;
+// The least width and height plotly draws a figure at (the minimum of
+// `layout.width` and `layout.height`). A narrower or lower area (a narrow
+// window leaves the plot area 0 wide) is neither relaid out nor aggregated:
+// the figure drawn stays, and once the area can be drawn again, its size is
+// relaid out and aggregated even if it is the size asked for last. A width
+// of 0 would make `Plotly.relayout` go back to the size of autosize, which a
+// figure drawn at a set size lacks: a TypeError (Issue #302).
+const MIN_PLOT_PX = 10;
+let tooSmall = false;
 
 function onResize() {
   clearTimeout(resizeTimer);
   // A plot in flight checks the size when its result comes.
   if (!overview || plotting === generation) return;
-  if (sameSize(stageSize(), requestedSize)) {
+  if (!tooSmall && sameSize(stageSize(), requestedSize)) {
     // Back to the size asked for last: nothing new to aggregate.
     if (sameSize(requestedSize, shownSize)) setPending(false);
     return;
@@ -1490,10 +1499,12 @@ function onResize() {
 
 async function onResizeSettled() {
   if (plotting === generation) return;
+  const { width, height } = stageSize();
+  tooSmall = width < MIN_PLOT_PX || height < MIN_PLOT_PX;
+  if (tooSmall) return;
   if (!current.scroll) {
     // The figure no longer matches a result of its size.
     drawnKey = null;
-    const { width, height } = stageSize();
     await Plotly.relayout(gd, { width, height });
     // Its panels, and so its labels, changed with the size.
     measureMargin(false);
