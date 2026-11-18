@@ -347,7 +347,9 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
                 emit({**progress, "done": done, "total": total})
     else:
         # The sink makes the next chunk while it writes one: half the bytes
-        # and rows keep the two within those of a CSV chunk.
+        # and rows keep the two within those of a CSV chunk. A row group
+        # it holds until written is kept within the rows of the first chunk,
+        # so within these bytes too, however many columns there are.
         sink_chunks(
             chunks(CHUNK_BYTES // 2, MAX_CHUNK_ROWS // 2),
             path,
