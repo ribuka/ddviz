@@ -1,10 +1,11 @@
-// The menu of the Color and Symbol zones: a right click on the zone (its
-// label, its chip or the room around them) while it holds a column opens it.
+// The menu of the Color, Symbol, Group X and Group Y zones: a right click on
+// the zone (its label, its chip or the room around them) while it holds a
+// column opens it. The Wrap zone has the setting in its form (wrapmenu.js).
 //
 // - "Show null rows", checked when the zone draws the rows whose value is
 //   null or NaN as a level of their own (`ddviz.shared.missing`). Each zone
 //   keeps its setting, true until changed, whatever column it holds; a reload
-//   sets both true again (`POST /api/plot`'s `show_null_rows`).
+//   sets them true again (`POST /api/plot`'s `show_null_rows`).
 // - "フィルタで除外された水準も凡例に残す", on the Color zone alone while it holds
 //   a categorical column: checked, the color levels are those of every row,
 //   the ones the local filter leaves without rows staying in the legend;
@@ -16,7 +17,7 @@
 // (smoothmenu.js).
 import { menuItem, Popup } from "./popup.js";
 
-export const NULL_ROLES = ["color", "symbol"];
+export const NULL_ROLES = ["color", "symbol", "row", "col"];
 export const KEEP_LEVELS_TEXT = "フィルタで除外された水準も凡例に残す";
 
 const popup = new Popup();

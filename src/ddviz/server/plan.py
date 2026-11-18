@@ -415,9 +415,11 @@ def scatter_spec(
         shape of the level's place; dropped without shapes, as
         `shape_sizes`.
     show_null_rows : dict of str to bool, optional
-        Whether the ``"color"`` and the ``"symbol"`` of the graph draw
-        their rows with a null or NaN value (`ScatterSpec.null_roles`); a
-        role left out does. None for both.
+        Whether the ``"color"``, ``"symbol"``, ``"row"``, ``"col"`` and
+        ``"wrap"`` of the graph draw their rows with a null or NaN value
+        (`ScatterSpec.null_roles`); a role left out does. None for all.
+        The wrap's column, the spec's col, takes the ``"wrap"`` setting,
+        not the ``"col"`` one.
     axis_scales : object, optional
         The scale of each placed x and y column, as the request has it
         (`ddviz.shared.axisscale.parse_axis_scales`); None for all linear.
@@ -463,11 +465,18 @@ def scatter_spec(
         raise ValueError("wrap cannot be placed with the n-th axes")
     col = encoding.wrap if wrap else encoding.col
     color, symbol = encoding.color, encoding.symbol
-    show = {"color": True, "symbol": True, **(show_null_rows or {})}
+    show = dict.fromkeys(("color", "symbol", "row", "col", "wrap"), True)
+    show.update(show_null_rows or {})
     null_roles = [
-        role for role, column in (("color", color), ("symbol", symbol)) if column
+        role
+        for role, column, setting in (
+            ("color", color, "color"),
+            ("symbol", symbol, "symbol"),
+            ("row", encoding.row, "row"),
+            ("col", col, "wrap" if wrap else "col"),
+        )
+        if column and show[setting]
     ]
-    null_roles = [role for role in null_roles if show[role]]
     hover = drawn_columns(encoding)
     filters = list(filters or [])
     binned = {

@@ -2,7 +2,7 @@
 
 A role's column draws a row whose value is a level: not null for a
 categorical column, finite for a numeric one. With ``Show null rows`` on the
-color or symbol role (`ddviz.shared.scatter.ScatterSpec.null_roles`), the
+color, symbol, row or col role (`ddviz.shared.scatter.ScatterSpec.null_roles`), the
 rows whose value is null or NaN are drawn too, in the role's missing level
 (`ddviz.shared.missing.MISSING`), the last of its levels; an infinite value
 stays out.

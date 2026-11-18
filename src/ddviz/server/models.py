@@ -10,12 +10,15 @@ from ddviz.shared.layout import MARGIN_BOTTOM, MARGIN_LEFT
 
 
 class ShowNullRows(BaseModel):
-    """Whether the Color and the Symbol draw their rows with a null or NaN value (`ddviz.shared.missing`); each is true when left out."""
+    """Whether the Color, the Symbol, the Group Y (``row``), the Group X (``col``) and the Wrap draw their rows with a null or NaN value (`ddviz.shared.missing`); each is true when left out."""
 
     model_config = ConfigDict(extra="forbid")
 
     color: StrictBool = True
     symbol: StrictBool = True
+    row: StrictBool = True
+    col: StrictBool = True
+    wrap: StrictBool = True
 
 
 class PlotRequest(BaseModel):

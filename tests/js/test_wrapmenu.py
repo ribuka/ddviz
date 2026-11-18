@@ -33,7 +33,10 @@ def test_enter_in_the_number_applies_unless_it_commits_a_conversion(js_page: Pag
         """async () => {
           const { openWrapMenu } = await import("/static/js/wrapmenu.js");
           window.applied = [];
-          openWrapMenu({ clientX: 10, clientY: 10 }, null, 2, (cols) => window.applied.push(cols));
+          openWrapMenu({ clientX: 10, clientY: 10 }, null, 2, (cols) => window.applied.push(cols), {
+            showNullRows: true,
+            onNullRows: () => {},
+          });
         }"""
     )
     js_page.get_by_label("指定").check()

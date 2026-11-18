@@ -30,7 +30,13 @@ def test_a_new_one_requests_the_defaults(js_page: Page) -> None:
         "line_aggregation": "raw",
         "shape_sizes": None,
         "level_shapes": None,
-        "show_null_rows": {"color": True, "symbol": True},
+        "show_null_rows": {
+            "color": True,
+            "symbol": True,
+            "row": True,
+            "col": True,
+            "wrap": True,
+        },
         "keep_unfiltered_color_levels": False,
     }
 
@@ -88,25 +94,55 @@ def test_the_request_copies_show_null_rows(js_page: Page) -> None:
         """o.request({ symbol: null }).show_null_rows.color = false;
         return o.showNullRows;""",
     )
-    assert result == {"color": True, "symbol": True}
+    assert result == {
+        "color": True,
+        "symbol": True,
+        "row": True,
+        "col": True,
+        "wrap": True,
+    }
 
 
 def test_load_sets_back_what_saved_returned(js_page: Page) -> None:
-    """`load(saved())` sets back the color's cutting, the number to a row and keeping the levels."""
+    """`load(saved())` sets back the color's cutting, the number to a row, keeping the levels and Show null rows, the last in the same object."""
     result = _call(
         js_page,
         """o.colorBins = { n: 5, by: "range" };
         o.wrapCols = 3;
         o.keepColorLevels = true;
+        o.showNullRows.col = false;
+        const shown = o.showNullRows;
         const state = o.saved();
         o.colorBins = null;
         o.wrapCols = null;
         o.keepColorLevels = false;
+        o.showNullRows.col = true;
+        o.showNullRows.wrap = false;
         o.load(state);
-        return [state, o.colorBins, o.wrapCols, o.keepColorLevels];""",
+        return [
+          state,
+          o.colorBins,
+          o.wrapCols,
+          o.keepColorLevels,
+          o.showNullRows,
+          o.showNullRows === shown,
+        ];""",
     )
     bins = {"n": 5, "by": "range"}
-    assert result == [{"colorBins": bins, "wrapCols": 3, "keepColorLevels": True}, bins, 3, True]
+    show = {"color": True, "symbol": True, "row": True, "col": False, "wrap": True}
+    assert result == [
+        {
+            "colorBins": bins,
+            "wrapCols": 3,
+            "keepColorLevels": True,
+            "showNullRows": show,
+        },
+        bins,
+        3,
+        True,
+        show,
+        True,
+    ]
 
 
 def test_shared_size_is_null_with_level_sizes(js_page: Page) -> None:

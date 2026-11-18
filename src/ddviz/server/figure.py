@@ -94,7 +94,7 @@ def _facet_labels(
                 "yref": "paper",
                 "showarrow": False,
             }
-            text = level_text(level)
+            text = level_text(shown_level(level, levels["col"]))
             labels.append(_fitted(label, text, fit_text(text, (hi - lo) * width)))
         return labels
     if spec.col is not None:
@@ -112,8 +112,9 @@ def _facet_labels(
                 "yref": "paper",
                 "showarrow": False,
             }
-            shown = facet_text(spec.col, level, (hi - lo) * width)
-            labels.append(_fitted(label, f"{spec.col} = {level_text(level)}", shown))
+            name = shown_level(level, levels["col"])
+            shown = facet_text(spec.col, name, (hi - lo) * width)
+            labels.append(_fitted(label, f"{spec.col} = {level_text(name)}", shown))
     if spec.row is not None:
         for row, level in enumerate(levels["row"]):
             lo = layout.y_domain(row * axes.ny + axes.ny - 1)[0]
@@ -129,8 +130,9 @@ def _facet_labels(
                 "yref": "paper",
                 "showarrow": False,
             }
-            shown = facet_text(spec.row, level, (hi - lo) * height)
-            labels.append(_fitted(label, f"{spec.row} = {level_text(level)}", shown))
+            name = shown_level(level, levels["row"])
+            shown = facet_text(spec.row, name, (hi - lo) * height)
+            labels.append(_fitted(label, f"{spec.row} = {level_text(name)}", shown))
     return labels
 
 

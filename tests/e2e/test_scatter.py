@@ -214,13 +214,20 @@ def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
     place(page, "color", "wrap")
     expect(page.locator('.zone[data-role="col"] .chip')).to_have_count(0)
     page.wait_for_function(PAINTED_PIXEL)
-    expect(page.locator("#plot .annotation-text")).to_have_text(["a", "b", "c"])
+    # The row of a null color is a panel of its own (`test_nulls.py`).
+    expect(page.locator("#plot .annotation-text")).to_have_text(
+        ["a", "b", "c", "(null)"]
+    )
     # The zone shows no number to a row.
     expect(wrap.locator("input")).to_have_count(0)
     expect(wrap).not_to_contain_text("自動")
     wrap.locator(".chip-name").click(button="right")
     expect(form).to_be_visible()
     expect(form.locator(".scale-menu-heading")).to_have_text("1 行のパネル数")
+    # Three levels from here on.
+    form.get_by_role("checkbox", name="Show null rows").uncheck()
+    expect(page.locator("#plot .annotation-text")).to_have_text(["a", "b", "c"])
+    page.wait_for_function(SETTLED)
     label = form.locator(".wrap-menu-choice").first
     expect(label).to_have_text(re.compile(r"^自動（\d+）$"))
     auto = int(re.search(r"\d+", label.inner_text()).group())

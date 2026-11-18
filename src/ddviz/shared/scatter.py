@@ -411,7 +411,7 @@ class ScatterSpec:
         (`ddviz.compute.temporal`), and its intervals are named and its axis
         drawn as dates, times or seconds.
     null_roles : list of str
-        Roles (``"color"``, ``"symbol"``) whose rows with a null or NaN
+        Roles (``"color"``, ``"symbol"``, ``"row"``, ``"col"``) whose rows with a null or NaN
         value are drawn as the role's missing level
         (`ddviz.shared.missing.MISSING`), the last of its levels, when the
         column has such rows; the other roles' rows, and those of a role not

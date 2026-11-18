@@ -5,6 +5,12 @@
 // or the apply button; Escape, a click outside the form or another right
 // click drop the draft. The form closes and stays in the window as the
 // right-click menus do (scalemenu.js).
+//
+// Above them, the checkbox "Show null rows" draws the rows whose wrap value
+// is null or NaN as a panel of their own (`ddviz.shared.missing`), as the
+// item of the other zones' menu (zonemenu.js); toggling it takes effect at
+// once, the form staying open and the draft of the number kept; a plot
+// that fails turns it back (`setWrapNullRows`).
 import { plainEnter } from "./keys.js";
 import { menuHeading, Popup } from "./popup.js";
 
@@ -12,11 +18,14 @@ import { menuHeading, Popup } from "./popup.js";
 export const WRAP_COLS_MAX = Number.MAX_SAFE_INTEGER;
 export const WRAP_COLS_ERROR = `1 以上 ${WRAP_COLS_MAX} 以下の整数を入力してください`;
 
-// The label of "自動（n）" in the open form, or null when closed.
+// The label of "自動（n）" and the checkbox "Show null rows" in the open
+// form, or null when closed.
 let autoLabel = null;
+let nullRowsBox = null;
 const popup = new Popup({
   onClose: () => {
     autoLabel = null;
+    nullRowsBox = null;
   },
 });
 
@@ -44,10 +53,17 @@ export function setWrapAuto(auto) {
   if (autoLabel) autoLabel.textContent = autoText(auto);
 }
 
+// Shows the setting "Show null rows" in an open form: a failed plot turns it
+// back.
+export function setWrapNullRows(checked) {
+  if (nullRowsBox) nullRowsBox.checked = checked;
+}
+
 // Opens the form at a right click. `cols` is the number set (null for
 // automatic), `auto` as `setWrapAuto`; `onApply` gets the number applied
-// (null for automatic), whether or not it changed.
-export function openWrapMenu(event, cols, auto, onApply) {
+// (null for automatic), whether or not it changed. `showNullRows` is the
+// checkbox's state, and `onNullRows(checked)` runs when it is toggled.
+export function openWrapMenu(event, cols, auto, onApply, { showNullRows, onNullRows }) {
   const form = document.createElement("form");
   form.className = "scale-menu wrap-menu";
   form.noValidate = true;
@@ -85,7 +101,16 @@ export function openWrapMenu(event, cols, auto, onApply) {
   apply.type = "submit";
   apply.className = "wrap-menu-apply";
   apply.textContent = "適用";
-  form.append(menuHeading("1 行のパネル数"), automatic.label, manual.label, field, error, apply);
+  const nullRows = document.createElement("label");
+  nullRows.className = "wrap-menu-null-rows";
+  const nullBox = document.createElement("input");
+  nullBox.type = "checkbox";
+  nullBox.checked = showNullRows;
+  nullBox.addEventListener("change", () => onNullRows(nullBox.checked));
+  const nullText = document.createElement("span");
+  nullText.textContent = "Show null rows";
+  nullRows.append(nullBox, nullText);
+  form.append(nullRows, menuHeading("1 行のパネル数"), automatic.label, manual.label, field, error, apply);
 
   const showMode = (isManual) => {
     input.disabled = !isManual;
@@ -132,5 +157,6 @@ export function openWrapMenu(event, cols, auto, onApply) {
 
   popup.open(form, event);
   autoLabel = automatic.span;
+  nullRowsBox = nullBox;
   (cols === null ? automatic.radio : input).focus();
 }
