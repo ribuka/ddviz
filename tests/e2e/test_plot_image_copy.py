@@ -502,6 +502,47 @@ def test_a_pan_over_a_selection_shows_its_layer_asked_for(page: Page) -> None:
     expect(page.locator(".plot-menu .scale-menu-item", has_text="Copy graph image")).to_be_enabled()
 
 
+def expect_copy_enabled(page: Page) -> None:
+    """Open the plot's menu, see Copy graph image enabled and close the menu."""
+    open_menu(page)
+    expect(page.locator(".plot-menu .scale-menu-item", has_text="Copy graph image")).to_be_enabled()
+    page.keyboard.press("Escape")
+
+
+def test_a_failed_request_for_the_selection_shows_an_error_and_asks_again_on_a_pan(page: Page) -> None:
+    """The request for the selected rows' layer fails (no connection): the status shows the error, not 「選んだ行を集約中…」, the copy is enabled, and the next drawn result asks again (Issue #301)."""
+    place(page, "x", "x")
+    place(page, "y", "y")
+    page.route("**/api/selection", lambda route: route.abort())
+    select_box(page)
+    status = page.locator("#status")
+    expect(status).to_contain_text("選んだ行の集約の要求に失敗した")
+    expect(status).not_to_contain_text("選んだ行を集約中…")
+    expect_copy_enabled(page)
+    # The box stays, and the view a pan draws asks for its layer again.
+    expect(page.locator("#plot .selectionlayer path").first).to_be_attached()
+    page.unroute("**/api/selection")
+    task = drawn_task(page)
+    with page.expect_request("**/api/selection"):
+        pan_down(page)
+        new_result(page, task)
+    expect(status).to_contain_text("選んだ行：")
+    wait_idle(page)
+    expect_copy_enabled(page)
+
+
+def test_a_selection_answer_that_is_not_json_shows_an_error(page: Page) -> None:
+    """An answer of 200 whose body is not JSON shows the error, not 「選んだ行を集約中…」, and the copy is enabled (Issue #301)."""
+    place(page, "x", "x")
+    place(page, "y", "y")
+    page.route("**/api/selection", lambda route: route.fulfill(status=200, body="not json"))
+    select_box(page)
+    status = page.locator("#status")
+    expect(status).to_contain_text("選んだ行の集約の要求に失敗した")
+    expect(status).not_to_contain_text("選んだ行を集約中…")
+    expect_copy_enabled(page)
+
+
 def test_a_wrapped_grid_names_its_wrap_column(page: Page) -> None:
     """A wrapped grid has its levels over the panels and the Wrap column's name over the grid."""
     place(page, "x", "x")

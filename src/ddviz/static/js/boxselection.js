@@ -109,23 +109,35 @@ export class BoxSelection {
           x_range: toValues(meta.x_log[xi], x_range),
           y_range: toValues(meta.y_log[yj], y_range),
         };
-    const response = await fetch("/api/selection", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (mine !== this.#generation || !this.#state) return;
-    if (!response.ok) {
-      // Killed by a newer aggregation: asked again once its result is drawn.
+    let layer;
+    try {
+      const response = await fetch("/api/selection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (mine !== this.#generation || !this.#state) return;
+      if (!response.ok) {
+        // Killed by a newer aggregation: asked again once its result is drawn.
+        this.#state.base = null;
+        const text = await response.text();
+        const { plotting, waiting } = this.busy();
+        if (response.status !== 409) statusLine.error(errorText(text));
+        // Killed by a plot that failed: asked again, unless another aggregation goes on.
+        else if (errorText(text) === "cancelled" && !plotting && !waiting && mine === this.#generation) this.follow();
+        return;
+      }
+      layer = await response.json();
+    } catch (error) {
+      // The request itself failed (no connection, a body that is not JSON):
+      // as an error response, the box and the layer before stay, and the
+      // next drawn result asks again.
+      if (mine !== this.#generation || !this.#state) return;
       this.#state.base = null;
-      const text = await response.text();
-      const { plotting, waiting } = this.busy();
-      if (response.status !== 409) statusLine.error(errorText(text));
-      // Killed by a plot that failed: asked again, unless another aggregation goes on.
-      else if (errorText(text) === "cancelled" && !plotting && !waiting && mine === this.#generation) this.follow();
+      statusLine.error(`選んだ行の集約の要求に失敗した（${error.message}）`);
+      console.error(error);
       return;
     }
-    const layer = await response.json();
     let bitmaps = null;
     try {
       bitmaps = await loadImages({ task: layer.task, images: layer.images }, meta);
