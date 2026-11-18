@@ -33,7 +33,7 @@ from ddviz.compute.scan import scan_columns
 from ddviz.compute.selection import selection_columns, selection_filter
 from ddviz.compute.smooth import bin_query, fit_lines
 from ddviz.compute.stacked import ROWS, TOP, marker_boxes, stack_frame, stacked_bins
-from ddviz.compute.stacks import Axis
+from ddviz.compute.stacks import pair_axes
 from ddviz.shared.axisscale import (
     RANGE_PADDING,
     NoPositiveValuesError,
@@ -42,14 +42,7 @@ from ddviz.shared.axisscale import (
     values,
 )
 from ddviz.shared.keys import BinGrid
-from ddviz.shared.layout import (
-    GAP,
-    WRAP_GAP,
-    AxisGrid,
-    GridLayout,
-    facet_grid,
-    grid_layout,
-)
+from ddviz.shared.layout import AxisGrid, GridLayout
 from ddviz.shared.missing import MISSING
 from ddviz.shared.natural import natural_key
 from ddviz.shared.scatter import (
@@ -1255,27 +1248,7 @@ def _find(
 def _drawn(spec: ScatterSpec, found: _Found, logs: _LogAxes, used: list[str]) -> _Drawn:
     """Return the panels of the drawn levels and the expressions of each row's panel and series."""
     levels = found.levels
-    axes = facet_grid(
-        len(levels["row"]),
-        len(levels["col"]),
-        len(spec.x),
-        len(spec.y),
-        spec.wrap,
-        spec.wrap_cols,
-        spec.width,
-        spec.height,
-        spec.margin_left,
-        spec.margin_bottom,
-    )
-    layout = grid_layout(
-        spec.width,
-        spec.height,
-        axes.rows,
-        axes.cols,
-        WRAP_GAP if spec.wrap else GAP,
-        spec.margin_left,
-        spec.margin_bottom,
-    )
+    axes, layout = spec.facet_layout(levels)
     grid = BinGrid(
         n_panels=layout.nrow * layout.ncol,
         n_series=len(levels["color"]) * len(levels["symbol"]),
@@ -1614,10 +1587,10 @@ def _stacked(
     """Return the bins, the bins of the piles and the piles of a pair with a categorical axis drawing points (`ddviz.compute.stacked`)."""
     spec, grid, axes, levels = drawn.spec, drawn.grid, drawn.axes, drawn.found.levels
     x_ranges, y_ranges = drawn.found.x_ranges, drawn.found.y_ranges
-    categorical = set(spec.categorical)
     x_col, y_col = spec.x[xi], spec.y[yj]
-    x = Axis(x_col in categorical, *x_ranges[xi], grid.width, x_col in spec.log_x)
-    y = Axis(y_col in categorical, *y_ranges[yj], grid.height, y_col in spec.log_y)
+    x, y = pair_axes(
+        spec, x_col, y_col, x_ranges[xi], y_ranges[yj], grid.width, grid.height
+    )
     columns = _kept_columns(spec, [x_col, y_col, *drawn.used, *extra_columns])
     n_col = len(levels["col"])
     panels = []

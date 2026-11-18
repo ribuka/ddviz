@@ -18,13 +18,9 @@ from dataclasses import replace
 
 from ddviz.shared.axisscale import positions
 from ddviz.shared.layout import (
-    GAP,
     MARGIN_BOTTOM,
     MARGIN_LEFT,
-    WRAP_GAP,
     bottom_margin,
-    facet_grid,
-    grid_layout,
     left_margin,
 )
 from ddviz.shared.manifest import PlotManifest
@@ -382,29 +378,7 @@ def unchanged(manifest: PlotManifest | None, spec: ScatterSpec) -> bool:
     """
     if manifest is None:
         return False
-    levels = manifest.levels
-    axes = facet_grid(
-        len(levels["row"]),
-        len(levels["col"]),
-        len(spec.x),
-        len(spec.y),
-        spec.wrap,
-        spec.wrap_cols,
-        spec.width,
-        spec.height,
-        spec.margin_left,
-        spec.margin_bottom,
-    )
-    row_gap = WRAP_GAP if spec.wrap else GAP
-    layout = grid_layout(
-        spec.width,
-        spec.height,
-        axes.rows,
-        axes.cols,
-        row_gap,
-        spec.margin_left,
-        spec.margin_bottom,
-    )
+    _, layout = spec.facet_layout(manifest.levels)
     return (
         layout == manifest.layout
         and manifest.x_ranges == spec.view.x_ranges

@@ -34,7 +34,7 @@ import polars as pl
 
 from ddviz.compute.axisposition import position
 from ddviz.compute.temporal import as_number, temporal_kind
-from ddviz.shared.scatter import BAND
+from ddviz.shared.scatter import BAND, ScatterSpec
 
 # Columns of a frame of drawn rows: the coordinates as compared (`KEYS`: the
 # facet cell and the levels of the categorical axes packed into one Int64,
@@ -125,6 +125,43 @@ class Axis:
             The positions.
         """
         return self.lo + pixel / self.scale
+
+
+def pair_axes(
+    spec: ScatterSpec,
+    x_col: str,
+    y_col: str,
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    width: int,
+    height: int,
+) -> tuple[Axis, Axis]:
+    """Return the x and y axes of a pair's panels, as the stacks see them.
+
+    The drawn result and the box selection both build the axes here, so
+    they place the points of a categorical axis alike.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The spec, whose categorical and log columns the axes follow.
+    x_col, y_col : str
+        The pair's x and y columns.
+    x_range, y_range : tuple of float
+        The axes' ranges in the panel (`Axis.lo`, `Axis.hi`).
+    width, height : int
+        Pixels of a panel along x and y.
+
+    Returns
+    -------
+    Axis
+        The x axis.
+    Axis
+        The y axis.
+    """
+    x = Axis(x_col in spec.categorical, *x_range, width, x_col in spec.log_x)
+    y = Axis(y_col in spec.categorical, *y_range, height, y_col in spec.log_y)
+    return x, y
 
 
 def key_value(column: pl.Expr, dtype: pl.DataType) -> pl.Expr:
