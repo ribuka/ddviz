@@ -93,6 +93,41 @@ def _shown(
     return ~np.isin(panel, hidden)
 
 
+def _write_points(
+    spec: ScatterSpec,
+    agg: Aggregation,
+    out: Path,
+    keys: np.ndarray,
+    color_values: pl.Series | None,
+    rows: np.ndarray | None,
+    colors: list[str],
+) -> list[list[int] | None]:
+    """Write the images of the points (`write_gradient` or `write_images`); return where each lies.
+
+    The plot and the layer of a selection both call this, so that their
+    points get the same colors, shapes and sizes. `color_values` and `rows`
+    are required for a gradient and unused otherwise.
+    """
+    shapes = spec.marker_shapes(agg.levels["symbol"])
+    sizes = spec.marker_sizes(agg.levels["symbol"])
+    if spec.gradient:
+        if color_values is None or rows is None:
+            raise ValueError("a gradient needs the color values and rows of its points")
+        return write_gradient(
+            out,
+            keys,
+            color_values,
+            rows,
+            agg.grid,
+            agg.layout.ncol,
+            agg.color_range,
+            shapes,
+            sizes,
+            _solid(spec, colors, agg.levels),
+        )
+    return write_images(out, keys, agg.grid, agg.layout.ncol, colors, shapes, sizes)
+
+
 def _line_images(
     spec: ScatterSpec, agg: Aggregation, out: Path, colors: list[str]
 ) -> list:
@@ -155,26 +190,16 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
     emit({"type": "progress", "stage": "raster"})
     bitmask = occupancy(keys, agg.grid)
     colors = _colors(spec, agg.grid.n_series, agg.levels)
-    shapes = spec.marker_shapes(agg.levels["symbol"])
-    sizes = spec.marker_sizes(agg.levels["symbol"])
     shown = _shown(spec, agg.axes, agg.grid, keys)
-    if spec.gradient:
-        images = write_gradient(
-            out,
-            keys[shown],
-            bins[spec.color].filter(shown),
-            bins[INDEX].to_numpy()[shown],
-            agg.grid,
-            agg.layout.ncol,
-            agg.color_range,
-            shapes,
-            sizes,
-            _solid(spec, colors, agg.levels),
-        )
-    else:
-        images = write_images(
-            out, keys[shown], agg.grid, agg.layout.ncol, colors, shapes, sizes
-        )
+    images = _write_points(
+        spec,
+        agg,
+        out,
+        keys[shown],
+        bins[spec.color].filter(shown) if spec.gradient else None,
+        bins[INDEX].to_numpy()[shown] if spec.gradient else None,
+        colors,
+    )
     line_images = _line_images(spec, agg, out, colors)
 
     emit({"type": "progress", "stage": "write"})
@@ -257,26 +282,16 @@ def run_selection(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         _shown(spec, agg.axes, agg.grid, agg.selected[KEY].to_numpy())
     )
     keys = selected[KEY].to_numpy()
-    shapes = spec.marker_shapes(agg.levels["symbol"])
-    sizes = spec.marker_sizes(agg.levels["symbol"])
     colors = _colors(spec, agg.grid.n_series, agg.levels)
-    if spec.gradient:
-        images = write_gradient(
-            out,
-            keys,
-            selected[spec.color],
-            selected[INDEX].to_numpy(),
-            agg.grid,
-            agg.layout.ncol,
-            agg.color_range,
-            shapes,
-            sizes,
-            _solid(spec, colors, agg.levels),
-        )
-    else:
-        images = write_images(
-            out, keys, agg.grid, agg.layout.ncol, colors, shapes, sizes
-        )
+    images = _write_points(
+        spec,
+        agg,
+        out,
+        keys,
+        selected[spec.color] if spec.gradient else None,
+        selected[INDEX].to_numpy() if spec.gradient else None,
+        colors,
+    )
     SelectionManifest(
         selection=spec.selection,
         grid=agg.grid,
