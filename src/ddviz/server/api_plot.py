@@ -346,6 +346,7 @@ def plot_router(
                 line_width=line_width,
                 line_aggregation=line_aggregation,
                 keep_unfiltered_color_levels=request.keep_unfiltered_color_levels,
+                keep_unfiltered_symbol_levels=request.keep_unfiltered_symbol_levels,
                 keep_unfiltered_axis_levels=keep_axis_levels,
             )
             spec = replace(spec, color_scale=color_scale, kept_cuts=cuts)
