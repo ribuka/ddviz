@@ -125,6 +125,19 @@ def test_the_facet_levels_are_those_of_the_filter(tmp_path: Path, role: str) -> 
     assert agg.all_levels[role] == agg.levels[role] == ["f0", "f3"]
 
 
+@pytest.mark.parametrize("role", ["row", "col"])
+def test_a_facet_left_with_missing_rows_alone_has_the_missing_level(
+    tmp_path: Path, role: str
+) -> None:
+    """Filtered to row 0, whose s is null, a facet drawing its missing rows has the missing panel alone, within ``max_levels`` 2 that the 3 levels of every row pass."""
+    only_null = [Filter("v", range=[0.0, 0.0])]
+    spec = _spec(tmp_path, null_roles=[role], max_levels=2, **{role: "s"})
+    with pytest.raises(ValueError, match="s は 4 個"):
+        aggregate(spec)
+    agg = aggregate(replace(spec, filters=only_null))
+    assert agg.all_levels[role] == agg.levels[role] == [MISSING]
+
+
 def test_a_filter_without_rows_keeps_the_panels_of_every_row(tmp_path: Path) -> None:
     """A filter that keeps no row keeps the facet levels of every row, empty panels, and leaves no symbol level."""
     agg = aggregate(_spec(tmp_path, filters=NONE, col="f", symbol="s"))
