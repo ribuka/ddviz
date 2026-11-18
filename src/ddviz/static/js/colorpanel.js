@@ -7,7 +7,7 @@ import { rgb } from "./colorscale.js";
 import { plainEnter } from "./keys.js";
 
 // The hues of the first row: the palette's colors (`ddviz.shared.palette.DEFAULT_COLORS`).
-const HUES = [
+export const HUES = [
   "#1f77b4",
   "#ff7f0e",
   "#2ca02c",

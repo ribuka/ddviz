@@ -33,7 +33,7 @@ const TICK_SETTLE_MS = 400;
 const STEPS = 1000;
 const SUMMARY_RETRY_MS = 300;
 // Most candidates a search lists (`ddviz.compute.levelindex.LISTED`).
-const LISTED = 100;
+export const LISTED = 100;
 const MS_PER_DAY = 86_400_000;
 // Heights of the pane, lowest first: its head only (with the conditions in
 // words), below the column list (55% of the left pane at most, or the height

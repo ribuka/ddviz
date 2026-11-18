@@ -39,7 +39,7 @@ export const LEGEND_GAP = 16;
 const NAME_SIZE = 13;
 const WHITE = "#fff";
 // The tick label color of a grid that scrolls (`ddviz.server.figure.HIDDEN_LABELS`).
-const HIDDEN = "rgba(0,0,0,0)";
+export const HIDDEN = "rgba(0,0,0,0)";
 
 // A failure whose message the toast shows as the reason.
 export class CopyError extends Error {}

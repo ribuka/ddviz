@@ -8,8 +8,8 @@ import { isLogAxis, toPosition } from "./axisscale.js";
 
 // Half the width of a band (`ddviz.shared.scatter.BAND`), and the width of a
 // box as a part of its series' slot (`ddviz.compute.boxes.BOX`).
-const BAND = 0.4;
-const BOX = 0.8;
+export const BAND = 0.4;
+export const BOX = 0.8;
 // Opacity of the points under box plots.
 export const POINTS_UNDER_BOXES = 0.3;
 // Opacity of a box's fill.

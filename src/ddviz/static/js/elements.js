@@ -16,7 +16,7 @@
 // how they treat the rows of one X (shapemenu.js) while lines are drawn;
 // otherwise, nothing opens.
 
-const ELEMENTS = [
+export const ELEMENTS = [
   {
     name: "points",
     label: "点",
