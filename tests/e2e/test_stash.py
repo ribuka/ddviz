@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page, Route, expect
 
 from tests.e2e.test_nulls import expect_panels
 from tests.e2e.test_scatter import (
@@ -218,3 +218,50 @@ def test_stash_in_the_wrap_form_keeps_the_number_to_a_row(app_page: Page) -> Non
     expect_panels(page, 3)
     expect(labels).to_have_text(["a", "b", "c"])
     assert errors == []
+
+
+def test_a_number_applied_while_stashed_survives_a_failed_plot(app_page: Page) -> None:
+    """A number to a row applied while Wrap is stashed stays after the plot taking the stash off fails."""
+    page = app_page
+    place(page, "x", "x")
+    place(page, "y", "y")
+    place(page, "k", "wrap")
+    page.wait_for_function(PAINTED_PIXEL)
+    pick_stash(page, "wrap")
+    expect_panels(page, 1)
+
+    # Applied while stashed: saved, not plotted.
+    form = page.locator(".wrap-menu")
+    chip(page, "wrap").click(button="right")
+    form.get_by_label("指定").check()
+    page.locator("#wrap-cols-input").fill("1")
+    form.get_by_role("button", name="適用").click()
+    expect(form).to_have_count(0)
+
+    failed: list[str] = []
+
+    def fail_once(route: Route) -> None:
+        if not failed:
+            failed.append(route.request.url)
+            route.fulfill(status=500, body="gone")
+        else:
+            route.continue_()
+
+    page.route("**/api/plot", fail_once)
+    chip(page, "wrap").click(button="right")
+    form.locator('[data-item="stash"]').click()
+    expect(page.locator("#status")).to_contain_text("gone")
+    assert failed
+    expect(chip(page, "wrap")).to_have_class("chip stashed")
+    page.unroute("**/api/plot")
+
+    chip(page, "wrap").click(button="right")
+    expect(form.get_by_label("指定")).to_be_checked()
+    expect(page.locator("#wrap-cols-input")).to_have_value("1")
+    with page.expect_request("**/api/plot") as request:
+        form.locator('[data-item="stash"]').click()
+    body = request.value.post_data_json
+    assert body["encoding"]["wrap"] == "k"
+    assert body["wrap_cols"] == 1
+    page.wait_for_function(SETTLED)
+    expect_panels(page, 3)

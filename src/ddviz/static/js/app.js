@@ -1699,7 +1699,15 @@ document.querySelector('#builder .zone[data-role="wrap"]').addEventListener("con
     (cols) => {
       if (cols === options.wrapCols) return;
       options.wrapCols = cols;
-      if (plottedEncoding?.wrap) plot(plottedEncoding);
+      if (plottedEncoding?.wrap) {
+        plot(plottedEncoding);
+      } else {
+        // Not drawn (the column stashed, or no figure): the number goes to
+        // the committed state too, so that a later failed plot's rollback
+        // keeps it (`Builder.rollback`).
+        const { committed } = builder;
+        if (committed.related) builder.commit({ ...committed, related: { ...committed.related, wrapCols: cols } });
+      }
     },
     {
       stashed: builder.isStashed("wrap"),
