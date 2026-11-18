@@ -59,16 +59,17 @@ def pick_stash(page: Page, role: str) -> dict[str, Any]:
 
 
 def expect_stash_item(page: Page, role: str, checked: bool) -> None:
-    """Right-click the zone's chip: Stash is the menu's first item, checked or not; Escape closes it."""
+    """Right-click the zone's chip: Stash is the menu's last item, under a separator, checked or not; Escape closes it."""
     chip(page, role).click(button="right")
     menu = page.locator(".zone-menu, .wrap-menu")
-    first = menu.locator(".scale-menu-item").first
-    expect(first).to_have_attribute("data-item", "stash")
-    expect(first).to_have_text("Stash")
+    last = menu.locator(".scale-menu-item").last
+    expect(last).to_have_attribute("data-item", "stash")
+    expect(last).to_have_text("Stash")
+    expect(menu.locator(".scale-menu-separator + .scale-menu-item")).to_have_attribute("data-item", "stash")
     if checked:
-        expect(first).to_have_class(CHECKED)
+        expect(last).to_have_class(CHECKED)
     else:
-        expect(first).not_to_have_class(CHECKED)
+        expect(last).not_to_have_class(CHECKED)
     page.keyboard.press("Escape")
     expect(menu).to_have_count(0)
 
@@ -95,9 +96,8 @@ def test_a_stashed_color_is_drawn_without_and_comes_back_with_its_intervals(
     expect(page.locator(".zone-menu")).to_have_count(0)
     chip(page, "color").click(button="right")
     menu = page.locator(".zone-menu")
-    expect(menu.locator(".scale-menu-item").first).to_have_text("Stash")
-    expect(menu.locator(".scale-menu-item").first).to_have_class("scale-menu-item")
-    expect(menu.locator('[data-item="null-rows"]')).to_have_text("Show null rows")
+    expect(menu.locator(".scale-menu-item")).to_have_text(["Show null rows", "Stash"])
+    expect(menu.locator(".scale-menu-item").last).to_have_class("scale-menu-item")
     page.keyboard.press("Escape")
 
     body = pick_stash(page, "color")
@@ -131,9 +131,10 @@ def test_stash_on_the_facets_and_symbol(app_page: Page) -> None:
 
     chip(page, "col").click(button="right")
     menu = page.locator(".zone-menu")
-    expect(menu.locator(".scale-menu-item")).to_have_count(2)
-    expect(menu.locator(".scale-menu-item").first).to_have_attribute("data-item", "stash")
-    expect(menu.locator(".scale-menu-item").last).to_have_attribute("data-item", "null-rows")
+    # Show null rows first, then a separator and Stash last (user decision on Issue #275).
+    expect(menu.locator(".scale-menu-item")).to_have_text(["Show null rows", "Stash"])
+    expect(menu.locator(".scale-menu-item").first).to_have_attribute("data-item", "null-rows")
+    expect(menu.locator(".scale-menu-separator + .scale-menu-item")).to_have_attribute("data-item", "stash")
     page.keyboard.press("Escape")
     body = pick_stash(page, "col")
     assert body["encoding"]["col"] is None
@@ -186,7 +187,9 @@ def test_stash_in_the_wrap_form_keeps_the_number_to_a_row(app_page: Page) -> Non
     labels = page.locator("#plot .annotation-text")
     form = page.locator(".wrap-menu")
     chip(page, "wrap").click(button="right")
-    expect(form.locator(".scale-menu-item").first).to_have_text("Stash")
+    # Stash is the form's last item, under a separator, below the apply button.
+    expect(form.locator(".scale-menu-item").last).to_have_text("Stash")
+    expect(form.locator(".wrap-menu-separator + .wrap-menu-stash")).to_have_count(1)
     form.get_by_label("指定").check()
     page.locator("#wrap-cols-input").fill("1")
     with page.expect_request("**/api/plot") as request:

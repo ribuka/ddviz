@@ -12,10 +12,11 @@
 // once, the form staying open and the draft of the number kept; a plot
 // that fails turns it back (`setWrapNullRows`).
 //
-// At the top, the item "Stash" of the other zones' menu (zonemenu.js)
-// stashes the wrap column or takes the stash off and closes the form; Enter
-// on it does that, not apply the number. A number applied while the column is
-// stashed is kept for when the stash is taken off.
+// At the bottom, under a separator, the item "Stash" of the other zones'
+// menu (zonemenu.js) stashes the wrap column or takes the stash off and
+// closes the form; Enter on it does that, not apply the number. A number
+// applied while the column is stashed is kept for when the stash is taken
+// off.
 import { plainEnter } from "./keys.js";
 import { menuHeading, menuSeparator, Popup } from "./popup.js";
 import { checkedItem, STASH_TEXT } from "./zonemenu.js";
@@ -122,7 +123,7 @@ export function openWrapMenu(event, cols, auto, onApply, { stashed, onStash, sho
   stash.classList.add("wrap-menu-stash");
   const separator = menuSeparator();
   separator.classList.add("wrap-menu-separator");
-  form.append(stash, separator, nullRows, menuHeading("1 行のパネル数"), automatic.label, manual.label, field, error, apply);
+  form.append(nullRows, menuHeading("1 行のパネル数"), automatic.label, manual.label, field, error, apply, separator, stash);
 
   const showMode = (isManual) => {
     input.disabled = !isManual;

@@ -3,9 +3,6 @@
 // column opens it; on an empty zone nothing opens, the browser's menu
 // neither. The Wrap zone has these settings in its form (wrapmenu.js).
 //
-// - "Stash", checked while the zone's column is stashed
-//   (`Builder.toggleStash`): the chip stays and the graph is drawn without
-//   it. Picking it stashes the column or takes the stash off.
 // - "Show null rows", checked when the zone draws the rows whose value is
 //   null or NaN as a level of their own (`ddviz.shared.missing`). Each zone
 //   keeps its setting, true until changed, whatever column it holds; a reload
@@ -16,6 +13,9 @@
 //   unchecked (the default), they are those of the rows of the filter
 //   (`POST /api/plot`'s `keep_unfiltered_color_levels`). The page keeps it
 //   whatever column the zone holds, off again after a reload.
+// - "Stash", last, under a separator; checked while the zone's column is
+//   stashed (`Builder.toggleStash`): the chip stays and the graph is drawn
+//   without it. Picking it stashes the column or takes the stash off.
 //
 // The menu closes and stays in the window as the other right-click menus
 // (smoothmenu.js).
@@ -67,8 +67,6 @@ export function attachZoneMenu(
       const menu = document.createElement("div");
       menu.className = "scale-menu zone-menu";
       menu.append(
-        item("stash", STASH_TEXT, isStashed(role), () => toggleStash(role)),
-        menuSeparator(),
         item("null-rows", "Show null rows", showNullRows[role], () => {
           showNullRows[role] = !showNullRows[role];
           onNullRows(role);
@@ -77,6 +75,7 @@ export function attachZoneMenu(
       if (role === "color" && categoricalColor()) {
         menu.append(item("keep-levels", KEEP_LEVELS_TEXT, keepLevels(), onKeepLevels));
       }
+      menu.append(menuSeparator(), item("stash", STASH_TEXT, isStashed(role), () => toggleStash(role)));
       popup.open(menu, event);
     });
   }
