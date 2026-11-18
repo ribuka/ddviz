@@ -307,8 +307,10 @@ export function filterSettings(snapshot) {
 export class FilterPane {
   // `root` is the pane (`#filters`); `onChange` gets the conditions after each
   // committed change; `onSummary` gets the summary text whenever it changes.
-  // `onCards` is called after a card is added, removed or moved: a change
-  // of the cards themselves, which the drawing settings keep (`withCards`).
+  // `onCards(edit)` is called after a card is added, removed or moved: a
+  // change of the cards themselves, which the drawing settings keep;
+  // `edit(entries)` returns the cards of the drawing settings `entries`
+  // (`filterSettings`) with that change alone.
   constructor(root, onChange, onSummary, onCards = () => {}) {
     this.root = root;
     this.list = root.querySelector(".filter-list");
@@ -460,7 +462,8 @@ export class FilterPane {
     if (this.state === "collapsed") this.setState("open");
     this.render();
     this.loadSummary(card);
-    this.onCards();
+    const entry = filterSettings([cardState(newCard(name, numeric))])[0];
+    this.onCards((entries) => (entries.some((e) => e.name === name) ? entries : [...entries, entry]));
   }
 
   remove(card) {
@@ -473,7 +476,9 @@ export class FilterPane {
     this.sent = this.sent.filter((s) => s.card !== card);
     this.render();
     this.commit();
-    this.onCards();
+    // A card that sets a condition there stays: its removal is a new
+    // condition, committed when its result is drawn.
+    this.onCards((entries) => entries.filter((e) => e.name !== card.name || this.hasCondition(e)));
   }
 
   async loadSummary(card) {
@@ -999,7 +1004,16 @@ export class FilterPane {
     else this.list.insertBefore(card.element, next);
     for (const [e, top] of lists) e.scrollTop = top;
     this.updateSummary();
-    this.onCards();
+    // In `entries`, the card goes before the card now after it, or last.
+    const after = rest[index + 1]?.name;
+    this.onCards((entries) => {
+      const entry = entries.find((e) => e.name === card.name);
+      if (!entry) return entries;
+      const out = entries.filter((e) => e !== entry);
+      const at = out.findIndex((e) => e.name === after);
+      out.splice(at < 0 ? out.length : at, 0, entry);
+      return out;
+    });
   }
 
   numericBody(card, body) {

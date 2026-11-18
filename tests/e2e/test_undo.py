@@ -391,3 +391,69 @@ def test_undo_while_plotting_keeps_a_direction_set_meanwhile(app_page: Page) -> 
     assert chip_names(page, "y") == ["y"]
     assert press(page, "Control+z")["encoding"]["y"] == ["y"]
     assert not x_reversed(page)
+
+
+# Holds the next figure plotly draws until `window.releaseDraw()`.
+HOLD_DRAW = """() => {
+  const draw = Plotly.newPlot;
+  window.releaseDraw = null;
+  Plotly.newPlot = (...args) => {
+    Plotly.newPlot = draw;
+    return new Promise((done) => {
+      window.releaseDraw = () => draw.apply(Plotly, args).then(done);
+    });
+  };
+}"""
+
+
+def test_a_plot_superseded_while_drawn_is_no_step(app_page: Page) -> None:
+    """A plot whose figure a newer edit supersedes while it is drawn is not committed: undo skips it."""
+    page = app_page
+    errors = watch_errors(page)
+    x_and_y(page)
+    page.evaluate(HOLD_DRAW)
+    column = page.locator("#columns .column")
+    y_zone = page.locator('.zone[data-role="y"]')
+    column.filter(has=page.get_by_text("z", exact=True)).drag_to(y_zone)
+    page.wait_for_function("() => window.releaseDraw !== null")
+    # y again, its plot held while z's figure is drawn.
+    held = hold_next_plot(page)
+    column.filter(has=page.get_by_text("y", exact=True)).drag_to(y_zone)
+    while not held:
+        page.wait_for_timeout(50)
+    page.evaluate("window.releaseDraw()")
+    page.wait_for_timeout(300)
+    held[0].continue_()
+    wait_idle(page)
+    page.unroute("**/api/plot")
+    assert chip_names(page, "y") == ["y"]
+    lo, hi = page.evaluate(f"{FULL}.yaxis.range")
+    assert -10 < lo < hi < 10
+    # The step before is x alone: z was never committed.
+    sent = plots(page)
+    page.evaluate("document.activeElement?.blur()")
+    page.keyboard.press("Control+z")
+    wait_idle(page)
+    assert sent == []
+    assert chip_names(page, "y") == []
+    assert chip_names(page, "x") == ["x"]
+    assert errors == []
+
+
+def test_a_card_added_while_undo_fails_keeps_the_direction_shown(app_page: Page) -> None:
+    """A card added while an undo is plotted takes only the card: when the undo fails, the direction shown stays for the next plot."""
+    page = app_page
+    page.add_style_tag(content="#toasts, #toasts * { pointer-events: none !important; }")
+    x_and_y(page)
+    reverse_x(page)
+    page.wait_for_function(f"() => {{ const r = {FULL}.xaxis.range; return r[0] > r[1]; }}")
+    held = hold_next_plot(page)
+    page.evaluate("document.activeElement?.blur()")
+    page.keyboard.press("Control+z")
+    page.wait_for_function("() => document.getElementById('plot').classList.contains('busy')")
+    drop_on_filters(page, page.locator("#columns .column").filter(has=page.get_by_text("x", exact=True)), 1)
+    let_go(page, held, True)
+    assert x_reversed(page)
+    expect(page.locator(".filter-card")).to_have_count(1)
+    place(page, "z", "y")
+    assert x_reversed(page)

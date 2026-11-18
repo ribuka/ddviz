@@ -230,7 +230,7 @@ const axes = new AxisControls({
   followMargin,
   openPlotMenu: (event) => openPlotMenu(event, gd, imageCopy),
   // Drawn at once, without a plot: committed at once (`recordImmediate`).
-  changed: () => recordImmediate(),
+  changed: (edit) => recordImmediate("axes", edit),
 });
 axes.attach();
 const empty = document.getElementById("empty");
@@ -259,10 +259,10 @@ let plottedEncoding = null;
 // a request for the old plot would kill its aggregation (or its conversion).
 let plotting = 0;
 // Whether the plot in flight plots the committed graph again (`plot`'s
-// `restoring`), and whether its result is being drawn (`drawPlot`): undo
-// does not cancel either (`undo`).
+// `restoring`), and the generation of the plot whose result is being drawn
+// (`drawPlot`), or 0: undo cancels neither (`undo`).
 let plottingRestore = false;
-let drawing = false;
+let drawing = 0;
 // The drawing settings committed, for undo and redo (`history.js`), and the
 // step being applied (`applyStep`): `{index, generation, move}` of its plot,
 // where `move` says whether its result moves to the step (`record`).
@@ -615,12 +615,17 @@ async function drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, 
   listenToFigure();
   showImages(meta, bitmaps);
   if (view?.box) layers.setSelection({ box: view.box });
+  settled();
+  // A newer request came while the figure was drawn: it decides, and this
+  // graph is not committed, nor a step of undo and redo. The server's
+  // results stay ahead of the committed graph (`serverAhead`), so a failure
+  // of the newer request plots the committed graph again.
+  if (mine !== generation) return null;
   // The figure drawn is this graph's: a later failure comes back to it.
   builder.commit(candidate);
   restorePoint.confirm(filterCandidate);
   serverAhead = false;
-  drawing = false;
-  settled();
+  drawing = 0;
   record(settings, mine);
   showRows(meta);
   timings.plotAndImages = Math.round(performance.now() - drawStarted);
@@ -726,8 +731,10 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
   // The ranges zoomed of the axes this edit kept, read just before the switch.
   const carried = keep ? null : carriedView(meta);
   try {
-    drawing = true;
+    drawing = mine;
     const view = await drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, candidate, filterCandidate, settled, settings, mine });
+    // Superseded while drawn (`drawPlot`): the newer request decides.
+    if (mine !== generation) return null;
     if (view?.zoomed) {
       requestView(view.ranges);
       return meta;
@@ -739,7 +746,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     if (mine !== generation) return null;
     return plotFailed(`図を描けなかった（${error.message}）`, askedSize, restoring, kept);
   } finally {
-    drawing = false;
+    if (drawing === mine) drawing = 0;
   }
   // The area may have changed size, or the filter, while the plot was
   // aggregated, or the lock gone off, which drops the color scale and the
@@ -1499,7 +1506,7 @@ const filterPane = new FilterPane(
   },
   (count, text) => leftPane.setFilter(count, text),
   // A card added, removed or moved is committed at once (`recordImmediate`).
-  () => recordImmediate(),
+  (edit) => recordImmediate("filters", edit),
 );
 
 // Removes the figure of a graph that cannot be drawn (`drawable`).
@@ -1750,15 +1757,18 @@ function record(settings, mine = null) {
 }
 
 // Takes a change drawn at once, without a plot, as committed: the dialog's
-// settings, the angle or the direction of an axis column, a card of the
-// filter pane added, removed or moved. Its step is the step shown with that
-// change alone: an edit being plotted, or a condition whose result is not
-// drawn yet, is not in it, but in the step its result makes. The step
+// settings, the angle or the direction of an axis column (`part` "axes"), a
+// card of the filter pane added, removed or moved ("filters"). Its step is
+// the step shown with that change alone (`edit` of that part): an edit
+// being plotted or applied (`applyStep`), or a condition whose result is
+// not drawn yet, is not in it, but in the step its result makes. The step
 // being applied no longer moves there: its result is a step of its own.
-function recordImmediate() {
+function recordImmediate(part, edit) {
   if (settingsHistory.index < 0) return;
   if (applying !== null) applying.move = false;
-  settingsHistory.push(withImmediate(shownSettings()));
+  const settings = shownSettings();
+  settings[part] = edit(settings[part]);
+  settingsHistory.push(settings);
   showUndo();
 }
 
@@ -1845,7 +1855,7 @@ function cancelPlot() {
 function undo() {
   if (!converting.hidden) return;
   if (plotting !== 0) {
-    if (!plottingRestore && !drawing) cancelPlot();
+    if (!plottingRestore && drawing !== plotting) cancelPlot();
     return;
   }
   const target = settingsHistory.undoTarget();
