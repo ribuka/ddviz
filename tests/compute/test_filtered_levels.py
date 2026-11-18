@@ -138,6 +138,21 @@ def test_a_facet_left_with_missing_rows_alone_has_the_missing_level(
     assert agg.all_levels[role] == agg.levels[role] == [MISSING]
 
 
+@pytest.mark.parametrize("drawn", ["row", "col"])
+def test_one_column_on_both_facets_falls_back_role_by_role(
+    tmp_path: Path, drawn: str
+) -> None:
+    """Column s on Group X and Y, filtered to its null row 0: the role drawing missing rows has the missing level, the other the levels of every row, so a panel is drawn."""
+    only_null = [Filter("v", range=[0.0, 0.0])]
+    agg = aggregate(
+        _spec(tmp_path, row="s", col="s", null_roles=[drawn], filters=only_null)
+    )
+    other = "col" if drawn == "row" else "row"
+    assert agg.all_levels[drawn] == [MISSING]
+    assert agg.all_levels[other] == ["p", "q", "r"]
+    assert agg.grid.n_panels >= 1
+
+
 def test_a_filter_without_rows_keeps_the_panels_of_every_row(tmp_path: Path) -> None:
     """A filter that keeps no row keeps the facet levels of every row, empty panels, and leaves no symbol level."""
     agg = aggregate(_spec(tmp_path, filters=NONE, col="f", symbol="s"))

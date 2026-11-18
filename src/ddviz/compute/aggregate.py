@@ -657,24 +657,29 @@ def _found_levels(
         c: _levels_among_filter(spec, c, max(n for n, _, _ in ls))
         for c, ls in limits.items()
     }
-    # A facet column the filter leaves without a level to draw keeps those
-    # of every row, its panels empty: a figure has a panel at least. A
-    # missing row left is a level when a facet role on the column draws it.
-    facet_roles = [r for r in ("row", "col") if r in find and r not in numeric]
-    draws_null = {roles[r] for r in facet_roles if r in spec.null_roles}
-    of_every_row = {
+    # A facet role the filter leaves without a level to draw keeps the
+    # levels of every row, its panels empty: a figure has a panel at least.
+    # A missing row left is a level of a role that draws it, role by role.
+    empty = [
+        r
+        for r in ("row", "col")
+        if r in find
+        and r not in numeric
+        and found[roles[r]] is not None
+        and not found[roles[r]][0]
+        and not (found[roles[r]][1] and r in spec.null_roles)
+    ]
+    every_row = {
         c: _levels_among_filter(replace(spec, filters=[]), c, spec.max_levels)
-        for c in {roles[r] for r in facet_roles}
-        if found[c] is not None
-        and not found[c][0]
-        and not (found[c][1] and c in draws_null)
+        for c in dict.fromkeys(roles[r] for r in empty)
     }
+    of_every_row = {r: every_row[roles[r]] for r in empty}
     over = []
     out_levels: dict[str, list] = {}
     out_axes: dict[str, list[str]] = {}
     for c, ls in limits.items():
         for limit, name, role in ls:
-            got = of_every_row.get(c, found[c]) if role in ("row", "col") else found[c]
+            got = of_every_row.get(role, found[c])
             if got is None:
                 over.append((name, c, limit))
                 continue
