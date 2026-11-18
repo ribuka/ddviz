@@ -20,6 +20,7 @@ import itertools
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 from ddviz.compute.aggregate import INDEX
@@ -221,32 +222,67 @@ def _cut(
     bytes_of: Callable[[pl.Series], pl.Series | None],
     fixed: int,
     budget: int,
-) -> int:
+) -> tuple[int, np.ndarray | None]:
     """Return how many rows of `index`, from the first, a chunk takes: as many as `budget` bytes hold, at least one.
 
     `fixed` is the bytes of every row; `bytes_of` returns the bytes of the
-    values of variable size of each row, or None when there are none.
+    values of variable size of each row, or None when there are none. The
+    bytes of each row taken come too, or None when every row has `fixed`.
     """
     sizes = bytes_of(index)
     if sizes is None:
-        return max(1, min(len(index), budget // fixed))
-    held = ((sizes + fixed).cum_sum() <= budget).sum()
-    return max(1, min(len(index), held))
+        return max(1, min(len(index), budget // fixed)), None
+    rows = (sizes + fixed).cast(pl.Int64)
+    taken = max(1, min(len(index), (rows.cum_sum() <= budget).sum()))
+    return taken, rows[:taken].to_numpy()
 
 
-def _row_group_rows(sizes: list[int]) -> int | None:
+def _across(before: np.ndarray, after: np.ndarray, rows: int, budget: int) -> int:
+    """Return the most rows, at most `rows`, that every run of as many rows from the end of a chunk into the next holds within `budget` bytes.
+
+    `before` and `after` are the bytes of each row of the two chunks, from
+    the end of the one (at least `rows` rows) and from the start of the
+    other. The rows found are at least 1, and within 1/1024 of the most.
+    """
+    tail = before[len(before) - (rows - 1) :] if rows > 1 else before[:0]
+    near = np.concatenate([tail, after[: rows - 1]])
+    sums = np.concatenate([[0], np.cumsum(near)])
+    t = len(tail)
+
+    def fits(m: int) -> bool:
+        """Return whether every run of `m` rows across the end of the chunk holds within the budget."""
+        # Runs ending after the first row of the next chunk and starting
+        # before it: sums[e] - sums[e - m] for t < e < t + m.
+        last = min(t + m - 1, len(near))
+        if last <= t:
+            return True
+        return int((sums[t + 1 : last + 1] - sums[t + 1 - m : last + 1 - m]).max()) <= budget
+
+    if fits(rows):
+        return rows
+    lo, hi = 1, rows
+    while hi - lo > max(1, hi >> 10):
+        mid = (lo + hi) // 2
+        lo, hi = (mid, hi) if fits(mid) else (lo, mid)
+    return lo
+
+
+def _row_group_rows(sizes: list[int], most: int) -> int | None:
     """Return the rows of a row group of a Parquet file of chunks of `sizes` rows, or None for a row group for each chunk.
 
     Every chunk but the last holds at least the fewest rows of them (those
     of the only chunk when there is one; 1 when it has none), so that many
-    rows of a chunk are within its budget, as are those of the last chunk;
-    the rows are at most `PARQUET_ROW_GROUP_ROWS`. When row groups of these
-    rows would be more than twice as many as the chunks (rows far larger
-    than the others make a chunk of few rows), None.
+    rows of a chunk are within its budget, as are those of the last chunk.
+    `most` keeps the rows of a row group across two chunks within the
+    budget too (`_across`), and within `PARQUET_ROW_GROUP_ROWS`. When row
+    groups of these rows would be more than twice as many as the chunks or
+    as row groups of `PARQUET_ROW_GROUP_ROWS` rows (rows far larger than
+    the others make a chunk of few rows), None.
     """
-    rows = min(PARQUET_ROW_GROUP_ROWS, max(1, min(sizes[:-1] or sizes)))
-    groups = -(-sum(sizes) // rows)
-    return rows if groups <= 2 * len(sizes) else None
+    total = sum(sizes)
+    rows = min(most, max(1, min(sizes[:-1] or sizes)))
+    least = max(len(sizes), -(-total // PARQUET_ROW_GROUP_ROWS))
+    return rows if -(-total // rows) <= 2 * least else None
 
 
 def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
@@ -327,16 +363,22 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
             return None
         return lengths.sum_horizontal()
 
-    def cuts(budget: int, max_rows: int) -> Iterator[pl.Series]:
-        """Yield the row indices of each chunk of the file, in order: at least one chunk, of no row when there are none."""
+    def cuts(budget: int, max_rows: int) -> Iterator[tuple[pl.Series, np.ndarray | None]]:
+        """Yield the row indices of each chunk of the file, in order: at least one chunk, of no row when there are none.
+
+        The bytes of each row of the chunk come too, or None when every
+        row has `fixed` (`_cut`).
+        """
         start = 0
         while True:
             chunk = indices.slice(start, max_rows).collect()[INDEX]
+            held = None
             if len(chunk):
-                chunk = chunk[: _cut(chunk, bytes_of, fixed, budget)]
+                rows, held = _cut(chunk, bytes_of, fixed, budget)
+                chunk = chunk[:rows]
             start += len(chunk)
-            yield chunk
-            del chunk
+            yield chunk, held
+            del chunk, held
             if start >= total:
                 return
 
@@ -364,7 +406,8 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
     if task.file_format == "csv":
         done = 0
         with path.open("wb") as csv:
-            for i, table in enumerate(read(cuts(CHUNK_BYTES, MAX_CHUNK_ROWS))):
+            chunks = (chunk for chunk, _ in cuts(CHUNK_BYTES, MAX_CHUNK_ROWS))
+            for i, table in enumerate(read(chunks)):
                 table.write_csv(csv, include_bom=i == 0, include_header=i == 0)
                 done += table.height
                 emit({**progress, "done": done, "total": total})
@@ -372,8 +415,22 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
         # The sink makes the next chunk while it writes one: half the bytes
         # and rows keep the two within those of a CSV chunk. Every chunk is
         # cut first, its rows alone kept, so that the rows of a row group
-        # are known before it is written (`_row_group_rows`).
-        sizes = [len(chunk) for chunk in cuts(CHUNK_BYTES // 2, MAX_CHUNK_ROWS // 2)]
+        # are known before it is written (`_row_group_rows`); the bytes of
+        # the rows of a chunk are kept only until the next is cut, to keep
+        # a row group across the two within the budget (`_across`).
+        sizes: list[int] = []
+        most = PARQUET_ROW_GROUP_ROWS
+        before = None
+        for chunk, held in cuts(CHUNK_BYTES // 2, MAX_CHUNK_ROWS // 2):
+            if sizes:
+                # The chunk before is not the last one.
+                most = min(most, sizes[-1])
+                if before is not None and held is not None:
+                    most = _across(before, held, most, CHUNK_BYTES // 2)
+            sizes.append(len(chunk))
+            before = None if held is None else held[-PARQUET_ROW_GROUP_ROWS:]
+            del chunk, held
+        del before
         starts = itertools.accumulate(sizes[:-1], initial=0)
         chunks = read(
             indices.slice(start, rows).collect()[INDEX]
@@ -384,7 +441,7 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
             """Report the rows the file received so far."""
             emit({**progress, "done": done, "total": total})
 
-        group = _row_group_rows(sizes)
+        group = _row_group_rows(sizes, most)
         if group is None:
             write_chunks(chunks, path, received)
         else:
