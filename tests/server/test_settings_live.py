@@ -136,8 +136,8 @@ def test_a_lower_limit_of_levels_refuses_a_new_filter_of_the_drawn_plot(
     filters = [{"column": "color", "levels": ["a", "b", "c"]}]
     refused = client.post("/api/overview", json={**SIZE, "filters": filters})
     assert refused.status_code == 400
-    assert refused.json()["error"] == "filtered_color_levels"
-    assert "上限の 2 個" in refused.json()["detail"]
+    assert refused.json()["error"] == "filtered_levels"
+    assert "上限 2 個" in refused.json()["detail"]
 
 
 def test_the_limit_of_axis_levels_follows_a_save(

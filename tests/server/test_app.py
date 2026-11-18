@@ -1427,12 +1427,12 @@ def test_a_view_of_the_same_filter_does_not_find_the_color_levels(
     zoom = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
     client.post("/api/view", json={**zoom, "filters": _labels("r1", "r2")})
     client.post("/api/overview", json={**SIZE, "filters": _labels("r3")})
-    assert [s.view.find_color for s in specs] == [False, True]
+    assert ["color" in s.view.find_levels for s in specs] == [False, True]
     assert specs[0].view.levels["color"] == ["r1", "r2"]
     assert not specs[0].keep_unfiltered_color_levels
 
 
-def test_too_many_color_levels_of_a_filter_keep_the_drawn_results(
+def test_too_many_levels_of_a_filter_keep_the_drawn_results(
     client: TestClient,
 ) -> None:
     """A filter whose color levels pass the limit answers 400 with its error; the overview, the view and the selection stay."""
@@ -1445,7 +1445,7 @@ def test_too_many_color_levels_of_a_filter_keep_the_drawn_results(
 
     every = [{"column": "label", "contains": "r"}]
     message = (
-        "Color の水準がフィルタの後も上限の 100 個を超えるため描けない（label）。"
+        "水準がフィルタの後も上限を超えるため描けない（Color の label は上限 100 個）。"
         "フィルタで水準を絞るか、別の列を使う"
     )
     for path, request in (
@@ -1454,7 +1454,7 @@ def test_too_many_color_levels_of_a_filter_keep_the_drawn_results(
     ):
         refused = client.post(path, json=request)
         assert refused.status_code == 400
-        assert refused.json() == {"detail": message, "error": "filtered_color_levels"}
+        assert refused.json() == {"detail": message, "error": "filtered_levels"}
 
     again = client.post("/api/view", json=zoom).json()["meta"]
     assert again["task"] == view["task"]
@@ -1853,3 +1853,54 @@ def test_show_null_rows_of_a_facet_adds_a_null_panel_unless_off(
     if role == "wrap":
         # The col setting does not reach the wrap.
         assert facets({"col": False})[0] == ["a", "b", "c", MISSING]
+
+
+CATEGORICAL_X = {"x": ["color"], "y": ["y"], "symbol": "facet"}
+
+
+def _colors(*names: str) -> list[dict]:
+    """Return the filter keeping the rows of the colors `names`."""
+    return [{"column": "color", "levels": list(names)}]
+
+
+def test_the_axis_levels_follow_the_filter(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A categorical x has the levels of the rows of the filter; a view of another filter finds them, and one of the same filter reuses them."""
+    every = _plot(client, encoding=CATEGORICAL_X)["meta"]
+    assert every["axis_levels"] == {"color": ["a", "b", "c"]}
+    first = _plot(client, encoding=CATEGORICAL_X, filters=_colors("b", "c"))["meta"]
+    assert first["axis_levels"] == {"color": ["b", "c"]}
+    assert first["x_auto"] == [[-0.5, 1.5]]
+    specs = []
+    run = TaskBroker.run
+
+    async def kept_run(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        if isinstance(task, PlotTask):
+            specs.append(task.spec)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", kept_run)
+    body = {**SIZE, "x_ranges": [None], "y_ranges": [[-1, 1]], "filters": _colors("a")}
+    view = client.post("/api/view", json=body).json()["meta"]
+    assert view["axis_levels"] == {"color": ["a"]}
+    assert view["x_ranges"] == [[-0.5, 0.5]]
+    assert specs[-1].view.find_axis_levels == ["color"]
+    # The overview of that filter takes the levels the view found.
+    whole = client.post("/api/overview", json={**SIZE, "filters": _colors("a")}).json()
+    assert whole["meta"]["axis_levels"] == {"color": ["a"]}
+    assert specs[-1].view.find_axis_levels == []
+    zoom = client.post("/api/view", json=body).json()["meta"]
+    assert zoom["axis_levels"] == {"color": ["a"]}
+    assert specs[-1].view.find_axis_levels == []
+
+
+def test_the_symbol_levels_follow_the_filter(client: TestClient) -> None:
+    """A categorical symbol has the levels of the rows of the filter."""
+    filters = [{"column": "facet", "levels": ["q"]}]
+    meta = _plot(client, encoding=CATEGORICAL_X, filters=filters)["meta"]
+    assert meta["symbol"]["levels"] == ["q"]
+    assert _plot(client, encoding=CATEGORICAL_X)["meta"]["symbol"]["levels"] == [
+        "p",
+        "q",
+    ]

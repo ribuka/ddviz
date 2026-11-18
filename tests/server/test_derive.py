@@ -209,9 +209,9 @@ def test_another_filter_finds_the_color_levels_unless_known(
     filters = [Filter(column="label", levels=["r1"])]
     files = {"label": ["label.parquet"]}
     same = resized_spec(manifest, 400, 300, [], {}, [[0, 1]], [[0, 1]])
-    assert not same.view.find_color
+    assert "color" not in same.view.find_levels
     other = resized_spec(manifest, 400, 300, filters, files, [[0, 1]], [[0, 1]])
-    assert other.view.find_color
+    assert "color" in other.view.find_levels
     assert not other.keep_unfiltered_color_levels
     known = replace(
         manifest,
@@ -221,7 +221,7 @@ def test_another_filter_finds_the_color_levels_unless_known(
     taken = resized_spec(
         manifest, 400, 300, filters, files, [[0, 1]], [[0, 1]], known=known
     )
-    assert not taken.view.find_color
+    assert "color" not in taken.view.find_levels
     assert taken.view.levels["color"] == ["b"]
     # A result of another filter gives nothing.
     elsewhere = resized_spec(
@@ -240,7 +240,7 @@ def test_kept_color_levels_stay_with_another_filter(manifest: PlotManifest) -> N
         kept, 400, 300, filters, {"label": ["l.parquet"]}, [[0, 1]], [[0, 1]]
     )
     assert spec.keep_unfiltered_color_levels
-    assert not spec.view.find_color
+    assert "color" not in spec.view.find_levels
     assert spec.view.levels["color"] == ["a", "b", "c"]
     selected = selection_spec(kept, box_selection(kept, 0, (0.0, 1.0), (0.0, 1.0)))
     assert selected.keep_unfiltered_color_levels
@@ -515,3 +515,42 @@ def test_a_selection_keeps_the_cuts_drawn(faceted: PlotManifest) -> None:
     assert spec.view.find_cuts == []
     assert spec.view.cuts == {"col": FILTERED}
     assert drawn_cuts(drawn) == {"col": FILTERED}
+
+
+@pytest.fixture
+def banded(manifest: PlotManifest) -> PlotManifest:
+    """Return `manifest` with the color column on a categorical x as well."""
+    return replace(
+        manifest,
+        spec=replace(manifest.spec, x=["color"], categorical=["color"]),
+        axis_levels={"color": ["a", "b", "c"]},
+    )
+
+
+def test_another_filter_finds_the_levels_of_its_rows(banded: PlotManifest) -> None:
+    """Another filter asks the worker for the levels of the categorical roles and axes of its rows, and leaves a categorical axis its bands; the same filter keeps them."""
+    filters = [Filter(column="label", levels=["r1"])]
+    files = {"label": ["label.parquet"]}
+    same = resized_spec(banded, 400, 300, [], {}, [None], [[0, 1]])
+    assert same.view.find_levels == []
+    assert same.view.find_axis_levels == []
+    assert same.view.axis_levels == {"color": ["a", "b", "c"]}
+    other = resized_spec(banded, 400, 300, filters, files, [None], [[0, 1]])
+    assert other.view.find_levels == ["color", "col"]
+    assert other.view.find_axis_levels == ["color"]
+    assert other.view.axis_levels == {}
+    # The worker spans the bands of the levels it finds.
+    assert other.view.x_ranges == [None]
+    known = replace(
+        banded,
+        spec=replace(banded.spec, filters=filters),
+        all_levels={**banded.all_levels, "color": ["b"], "col": ["q"]},
+        axis_levels={"color": ["b"]},
+    )
+    taken = resized_spec(
+        banded, 400, 300, filters, files, [None], [[0, 1]], known=known
+    )
+    assert taken.view.find_levels == []
+    assert taken.view.find_axis_levels == []
+    assert taken.view.levels["col"] == ["q"]
+    assert taken.view.axis_levels == {"color": ["b"]}

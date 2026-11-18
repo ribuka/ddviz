@@ -50,11 +50,11 @@ def _auto(values: pl.Series) -> tuple[float, float]:
 def test_filter_keeps_the_series_and_bins_only_its_rows(
     scatter_spec: ScatterSpec, filtered: ScatterSpec, scatter_frame: pl.DataFrame
 ) -> None:
-    """The series stay those of every row; the axes span the rows of the filter; the panel of facet p, left without rows, goes."""
+    """The series are those of the rows of the filter, here all of them; the axes span those rows; the facet p, left without rows, goes."""
     whole = aggregate(scatter_spec)
     agg = aggregate(filtered)
     assert agg.levels == {**whole.levels, "col": ["q"]}
-    assert agg.all_levels == whole.levels
+    assert agg.all_levels == agg.levels
     rows = scatter_frame.filter(
         pl.col("facet") == "q", pl.col("x").is_between(-1.0, 0.5)
     )

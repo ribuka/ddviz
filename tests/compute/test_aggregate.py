@@ -22,7 +22,7 @@ from ddviz.compute.aggregate import (
 from ddviz.shared.axisscale import NoPositiveValuesError
 from ddviz.shared.scatter import (
     Filter,
-    FilteredColorLevelsError,
+    FilteredLevelsError,
     ScatterSpec,
     Selection,
     View,
@@ -125,7 +125,7 @@ def test_a_role_with_too_many_levels_is_refused(scatter_spec: ScatterSpec) -> No
     """A numeric column on color has a level per row and is refused before binning, with its levels over every row or of the filter."""
     with pytest.raises(ValueError, match="水準が上限を超えるため描けない"):
         aggregate(replace(scatter_spec, color="x", keep_unfiltered_color_levels=True))
-    with pytest.raises(FilteredColorLevelsError):
+    with pytest.raises(FilteredLevelsError):
         aggregate(replace(scatter_spec, color="x"))
 
 
@@ -163,7 +163,7 @@ def test_the_axis_level_limit_is_its_own(
         with pytest.raises(
             ValueError,
             match=f"（color は 3 個で、X・Y のカテゴリの軸の上限は {limit} 個）。"
-            "水準はフィルタの前の行から数えるため、別の列を使う",
+            "フィルタで水準を絞るか、別の列を使う",
         ):
             aggregate(spec)
     else:

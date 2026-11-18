@@ -16,6 +16,7 @@ from ddviz.compute.tasks.plot import run_plot, run_selection
 from ddviz.server.encoding import Encoding
 from ddviz.server.plan import FACET_BINS, scatter_spec
 from ddviz.shared.manifest import IMAGES, read_manifest
+from ddviz.shared.missing import MISSING
 from ddviz.shared.scatter import Binning, Filter, ScatterSpec, Selection, View
 
 
@@ -208,7 +209,7 @@ def test_numeric_facet_of_few_values_and_its_selection(
 
 
 def test_filter_drops_numeric_facet_intervals(path: Path, frame: pl.DataFrame) -> None:
-    """Under the cuts kept by the page, a filter keeping only low values drops the intervals left without rows; the bins land in the kept panels."""
+    """Under the cuts kept by the page, a filter keeping only low values drops the intervals left without rows, and the missing level its rows lack; the bins land in the kept panels."""
     whole = aggregate(_spec(path, col="v"))
     breaks = whole.cuts["col"]["breaks"]
     spec = replace(
@@ -218,7 +219,9 @@ def test_filter_drops_numeric_facet_intervals(path: Path, frame: pl.DataFrame) -
     )
     agg = aggregate(spec)
     assert agg.levels["col"] == whole.levels["col"][:2]
-    assert agg.all_levels == whole.all_levels
+    # The rows of the filter have no missing value (Issue #279).
+    assert whole.all_levels["col"][-1] == MISSING
+    assert agg.all_levels == {**whole.all_levels, "col": whole.all_levels["col"][:-1]}
     panels, *_ = agg.grid.unpack(agg.bins["__key"].to_numpy())
     assert set(panels.tolist()) <= {0, 1}
     v = _finite_v(frame)

@@ -39,7 +39,7 @@ LEGEND_NAMES = "#legend .legend-item .legend-name"
 SWATCHES = """() => [...document.querySelectorAll('#legend .legend-item .swatch')].map(
   (s) => getComputedStyle(s).backgroundColor)"""
 REFUSED = (
-    "エラー: Color の水準がフィルタの後も上限の 100 個を超えるため描けない（g）。"
+    "エラー: 水準がフィルタの後も上限を超えるため描けない（Color の g は上限 100 個）。"
     "フィルタで水準を絞るか、別の列を使う"
 )
 
@@ -378,7 +378,7 @@ def test_a_filter_past_the_limit_goes_back_to_the_last_drawn(app_page: Page) -> 
     with page.expect_response("**/api/overview") as refused:
         box(page, "half", "hi").check()
     assert refused.value.status == 400
-    assert refused.value.json()["error"] == "filtered_color_levels"
+    assert refused.value.json()["error"] == "filtered_levels"
     expect(status).to_have_text(REFUSED)
     expect_lo(page)
     settle(page)
@@ -527,7 +527,7 @@ def test_an_older_refusal_after_a_newer_success_changes_nothing(app_page: Page) 
         body=json.dumps(
             {
                 "detail": REFUSED.removeprefix("エラー: "),
-                "error": "filtered_color_levels",
+                "error": "filtered_levels",
             }
         ),
     )

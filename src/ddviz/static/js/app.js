@@ -124,7 +124,7 @@ const STAGES = {
   ranges: "フィルタ後の軸の範囲を調べ中…",
   scale: "フィルタ後の色の範囲を調べ中…",
   cuts: "フィルタ後の区間を調べ中…",
-  colors: "フィルタ後の Color の水準を調べ中…",
+  filtered_levels: "フィルタ後の水準を調べ中…",
   facets: "パネルの水準を調べ中…",
   boxes: "箱ひげを計算中…",
   smooth: "平滑化を計算中…",
@@ -1180,8 +1180,8 @@ async function requestView({ x: xRanges, y: yRanges }, { onFailed = null } = {})
 
 
 // Tells of a failed view or overview (the latest request), whose answer is
-// `text`. One that the color levels of its filter refused
-// (`ddviz.compute.aggregate.FilteredColorLevelsError`) leaves the figure, the
+// `text`. One that the levels of its filter refused
+// (`ddviz.shared.scatter.FilteredLevelsError`) leaves the figure, the
 // legend and the selection drawn, and puts the filter pane back to the
 // conditions of the result drawn last (`RestorePoint`), without asking for
 // anything; but when the axes were moved meanwhile, or the result shown is
@@ -1192,7 +1192,7 @@ function viewFailed(text) {
   statusLine.error(errorText(text));
   let refused = false;
   try {
-    refused = JSON.parse(text).error === "filtered_color_levels";
+    refused = JSON.parse(text).error === "filtered_levels";
   } catch {
     // Not the server's JSON: no filter to go back from.
   }

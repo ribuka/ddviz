@@ -7,6 +7,9 @@ worker does not find them again. The color scale of a numeric color column
 filter, unless the page keeps one under the lock of the axes
 (`ddviz.shared.scatter.ScatterSpec.color_scale`); so are the cuts of a
 numeric symbol, row or col column (`ddviz.shared.scatter.ScatterSpec.kept_cuts`).
+The levels of the categorical roles (`ddviz.shared.scatter.ScatterSpec.levels_of_filter`)
+and axes are those of the rows of the filter: a result of another filter
+leaves them for the worker to find again.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from ddviz.shared.layout import (
     left_margin,
 )
 from ddviz.shared.manifest import PlotManifest
-from ddviz.shared.scatter import Filter, ScatterSpec, Selection, View
+from ddviz.shared.scatter import ONE_BAND, Filter, ScatterSpec, Selection, View
 
 
 def facets_of(manifest: PlotManifest) -> dict:
@@ -100,6 +103,15 @@ def _own_cuts(manifest: PlotManifest | None, filters: list[Filter]) -> dict[str,
     return {r: c for r, c in drawn_cuts(manifest).items() if r not in kept}
 
 
+def _drawn_axis_levels(
+    manifest: PlotManifest | None, filters: list[Filter]
+) -> dict[str, list[str]]:
+    """Return the levels a result of `filters` draws of each categorical axis column; none for a result of another filter."""
+    if manifest is None or manifest.spec.filters != filters:
+        return {}
+    return dict(manifest.axis_levels)
+
+
 def _own_scale(manifest: PlotManifest | None, filters: list[Filter]) -> dict | None:
     """Return the color scale a result draws when it is that of the rows of `filters`; None for one of another filter, or kept by the page."""
     if (
@@ -116,10 +128,11 @@ def _view(
     x_ranges: list,
     y_ranges: list,
     same_filter: bool,
-    colors: list | None = None,
+    filter_levels: dict[str, list] | None = None,
     auto: PlotManifest | None = None,
     scale: dict | None = None,
     role_cuts: dict[str, dict] | None = None,
+    axis_levels: dict[str, list[str]] | None = None,
 ) -> View:
     """Return the view of the given ranges with the result's levels, cuts, color range, boxes and smoothing lines.
 
@@ -130,9 +143,14 @@ def _view(
 
     For another filter, the facet levels, the boxes and the smoothing lines
     are left for the worker to find again over the rows it keeps, and so
-    are the color levels of a spec that finds them over those rows
-    (`ddviz.shared.scatter.ScatterSpec.filters_color`), unless `colors`
-    gives them, from a result of that filter. The stacks of the points on
+    are the levels of the roles that it finds over those rows
+    (`ddviz.shared.scatter.ScatterSpec.levels_of_filter`), unless
+    `filter_levels` gives them, from a result of that filter. The levels of
+    each categorical axis column are those of `axis_levels` (by default the
+    result's); the worker finds those left out
+    (`ddviz.shared.scatter.View.find_axis_levels`), and spans the bands of
+    the levels drawn when a categorical axis takes its automatic range.
+    The stacks of the points on
     a categorical axis (`ddviz.compute.stacks`) depend on the ranges and
     the size: the worker places them again.
 
@@ -143,7 +161,8 @@ def _view(
     (`drawn_cuts`), the worker finding those of the roles left out
     (`ddviz.shared.scatter.View.find_cuts`). The facet levels, the boxes
     and the smoothing lines of the same filter are those of other panels
-    when the cuts differ from the result's: the worker finds them again.
+    when the cuts or the axis levels differ from the result's: the worker
+    finds them again.
     """
     levels = manifest.all_levels
     cuts, color_range = manifest.cuts, manifest.color_range
@@ -155,39 +174,51 @@ def _view(
     role_cuts = role_cuts or {}
     find_cuts = [r for r in drawn_cuts(manifest) if r not in role_cuts]
     cuts = {**cuts, **role_cuts}
+    axis_levels = manifest.axis_levels if axis_levels is None else axis_levels
+    find_axis_levels = [c for c in manifest.axis_levels if c not in axis_levels]
     same_panels = (
         same_filter
         and not find_cuts
         and all(cuts[r] == manifest.cuts[r] for r in role_cuts)
+        and axis_levels == manifest.axis_levels
     )
-    find_color = False
-    if manifest.spec.filters_color() and not same_filter:
-        if colors is None:
-            find_color = True
+    find_levels = []
+    if not same_filter:
+        if filter_levels is None:
+            find_levels = manifest.spec.levels_of_filter()
         else:
-            levels = {**levels, "color": colors}
+            levels = {**levels, **filter_levels}
+    categorical = set(manifest.axis_levels)
 
-    def ranges(given: list, known: list | None) -> list:
+    def ranges(given: list, columns: list[str], known: list | None) -> list:
+        # A categorical axis spans the bands of the levels the worker draws.
         return [
-            (None if known is None else list(known[i])) if r is None else list(r)
-            for i, r in enumerate(given)
+            list(r)
+            if r is not None
+            else None
+            if known is None or c in categorical
+            else list(known[i])
+            for i, (r, c) in enumerate(zip(given, columns, strict=True))
         ]
 
     x_auto = None if auto is None else [list(r) for r in auto.x_auto]
     y_auto = None if auto is None else [list(r) for r in auto.y_auto]
     return View(
-        x_ranges=ranges(x_ranges, x_auto),
-        y_ranges=ranges(y_ranges, y_auto),
+        x_ranges=ranges(x_ranges, manifest.spec.x, x_auto),
+        y_ranges=ranges(y_ranges, manifest.spec.y, y_auto),
         x_auto=x_auto,
         y_auto=y_auto,
         levels=levels,
         facets=facets_of(manifest) if same_panels else None,
         cuts=cuts,
         color_range=color_range,
-        axis_levels=manifest.axis_levels,
+        axis_levels={
+            c: axis_levels[c] for c in manifest.axis_levels if c in axis_levels
+        },
         boxes=manifest.boxes if same_panels else [],
         smooths=manifest.smooths if same_panels else [],
-        find_color=find_color,
+        find_levels=find_levels,
+        find_axis_levels=find_axis_levels,
         find_color_scale=numeric and scale is None,
         find_cuts=find_cuts,
     )
@@ -211,11 +242,12 @@ def resized_spec(
 
     The overview's facet panels are kept for the same filter; another
     filter finds its own (`ddviz.compute.aggregate.aggregate`). So does
-    it its color levels, when the spec finds them over the rows of the
-    filter (`ddviz.shared.scatter.ScatterSpec.filters_color`), unless
-    `known` is a result of that filter: a view aggregated with the new
-    filter while zoomed gives them to the next views and to the overview,
-    so that the series of one filter stay the same. The automatic ranges
+    it the levels of the roles it finds over the rows of the filter
+    (`ddviz.shared.scatter.ScatterSpec.levels_of_filter`) and those of the
+    categorical axis columns, unless `known` is a result of that filter: a
+    view aggregated with the new filter while zoomed gives them to the
+    next views and to the overview, so that the series and the bands of
+    one filter stay the same. The automatic ranges
     (`ddviz.compute.aggregate.Aggregation.x_auto`) come from the overview
     or `known`, whichever is of the filter; else the worker finds them,
     once per filter. So does the color scale of a numeric color column
@@ -245,8 +277,9 @@ def resized_spec(
         Bottom margin the page asks for, in pixels; kept within the height
         (`ddviz.shared.layout.bottom_margin`).
     known : PlotManifest, optional
-        Another result of the plot, whose color levels, automatic ranges
-        and color scale are taken when its filter is `filters`.
+        Another result of the plot, whose levels of the roles and the
+        categorical axes, automatic ranges and color scale are taken when
+        its filter is `filters`.
     color_scale : dict, optional
         The color scale the page keeps (`ddviz.server.plotoptions.parse_color_scale`),
         for a numeric color column; None for that of the filter.
@@ -270,11 +303,17 @@ def resized_spec(
     if len(x_ranges) != len(spec.x) or len(y_ranges) != len(spec.y):
         raise ValueError("one range per x and y column")
     same = spec.filters == filters
-    colors = None
+    filter_levels = None
     auto = manifest if same else None
     if known is not None and known.spec.filters == filters:
-        colors = known.all_levels["color"]
+        filter_levels = {r: known.all_levels[r] for r in spec.levels_of_filter()}
         auto = known
+    # The one band is no column: it is the same for every filter.
+    known_axes = {
+        **{c: v for c, v in manifest.axis_levels.items() if c == ONE_BAND},
+        **_drawn_axis_levels(known, filters),
+        **_drawn_axis_levels(manifest, filters),
+    }
     own = _own_scale(manifest, filters) or _own_scale(known, filters)
     scale = own if color_scale is None else color_scale
     numeric = drawn_scale(manifest) is not None
@@ -292,7 +331,15 @@ def resized_spec(
         margin_left=left_margin(margin_left, width),
         margin_bottom=bottom_margin(margin_bottom, height),
         view=_view(
-            manifest, x_ranges, y_ranges, same, colors, auto, scale, own_cuts | cuts
+            manifest,
+            x_ranges,
+            y_ranges,
+            same,
+            filter_levels,
+            auto,
+            scale,
+            own_cuts | cuts,
+            known_axes,
         ),
     )
 
@@ -357,6 +404,8 @@ def unchanged(manifest: PlotManifest | None, spec: ScatterSpec) -> bool:
             else r not in manifest.spec.kept_cuts
             for r in drawn_cuts(manifest)
         )
+        and not spec.view.find_axis_levels
+        and spec.view.axis_levels == manifest.axis_levels
     )
 
 
