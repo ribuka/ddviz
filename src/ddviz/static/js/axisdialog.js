@@ -628,12 +628,48 @@ function lineFields(form, settings) {
   list.className = "axis-dialog-lines";
   box.append(list);
   let lines = settings.lines.map((line) => ({ ...line }));
-  // The edit under way: the row's index, the text in its field, why it is
-  // wrong ("" for not shown yet), and the field drawn; null for none.
+  // The edit under way: the row's index, the text it started from (the
+  // value as listed), the text in its field, why it is wrong ("" for not
+  // shown yet), and the field and error line drawn; null for none.
   let editing = null;
   // Whether the rows are being drawn again: the field taken out of the list
   // then may lose focus, which must not end its edit a second time.
   let rendering = false;
+  // Whether a pointer is pressed in the dialog, and whether the field lost
+  // the focus to that press: the edit then ends after the press's click
+  // (which may itself end it: another pencil, OK, Apply).
+  let pressing = false;
+  let leftWhilePressing = false;
+  form.dialog.addEventListener("pointerdown", () => {
+    pressing = true;
+  }, true);
+  const released = () => {
+    // After the click that follows the release.
+    setTimeout(() => {
+      pressing = false;
+      if (!leftWhilePressing) return;
+      leftWhilePressing = false;
+      if (editing && document.activeElement !== editing.input) commit();
+    });
+  };
+  form.dialog.addEventListener("pointerup", released, true);
+  form.dialog.addEventListener("pointercancel", released, true);
+  const valueSpan = (line) => {
+    const at = document.createElement("span");
+    at.className = "axis-dialog-line-value";
+    at.textContent = valueText(kind, line.value);
+    return at;
+  };
+  // Shows the value of the row edited again in place of its field, leaving
+  // the rest of the list as it is: a click that ended the edit by taking
+  // the focus (another pencil, a "削除", the color) still lands on its
+  // control, and Tab still moves on.
+  const endEdit = () => {
+    const { index, input, errorLine } = editing;
+    editing = null;
+    input.replaceWith(valueSpan(lines[index]));
+    errorLine.remove();
+  };
   const renderLines = () => {
     rendering = true;
     list.replaceChildren(
@@ -660,8 +696,7 @@ function lineFields(form, settings) {
               // Esc takes back the edit only: the dialog stays open.
               event.preventDefault();
               event.stopPropagation();
-              editing = null;
-              renderLines();
+              endEdit();
               list.children[i]?.querySelector(".axis-dialog-line-edit")?.focus();
               return;
             }
@@ -670,12 +705,15 @@ function lineFields(form, settings) {
             if (commit()) list.children[i]?.querySelector(".axis-dialog-line-edit")?.focus();
           });
           at.addEventListener("blur", () => {
-            if (!rendering && editing?.input === field) commit();
+            if (rendering || editing?.input !== field) return;
+            // A press that took the focus ends the edit once its click is
+            // done: drawn back at once, the value could move the control
+            // pressed away from under the pointer.
+            if (pressing) leftWhilePressing = true;
+            else commit();
           });
         } else {
-          at = document.createElement("span");
-          at.className = "axis-dialog-line-value";
-          at.textContent = valueText(kind, line.value);
+          at = valueSpan(line);
         }
         const color = document.createElement("input");
         Object.assign(color, { type: "color", value: line.color, title: "色" });
@@ -712,21 +750,21 @@ function lineFields(form, settings) {
     rendering = false;
   };
   // Ends the edit with the value in its field; returns whether it was right.
-  // A right one replaces the line's value alone (the line kept, if the
-  // value is the same) and shows the value again; a wrong one says why.
+  // A right one replaces the line's value alone and shows the value again;
+  // a wrong one says why. The text left as it started is the very value it
+  // was written from (as `known` of the range): the text of a temporal
+  // value is rounded to microseconds, which must not move the line.
   const commit = () => {
-    const read = readValue(kind, editing.text);
-    if (read.error) {
-      editing.error = read.error;
-      editing.errorLine.textContent = read.error;
-      return false;
+    if (editing.text !== editing.shown) {
+      const read = readValue(kind, editing.text);
+      if (read.error) {
+        editing.error = read.error;
+        editing.errorLine.textContent = read.error;
+        return false;
+      }
+      lines[editing.index].value = read.value;
     }
-    const { index } = editing;
-    if (read.value !== lines[index].value) {
-      lines = lines.map((line, j) => (j === index ? { ...line, value: read.value } : line));
-    }
-    editing = null;
-    renderLines();
+    endEdit();
     return true;
   };
   // Ends an edit left in its field; false, focusing it, while it is wrong.
@@ -740,7 +778,8 @@ function lineFields(form, settings) {
   // Edits the value of row `i`, when no edit with a wrong value is left.
   const startEdit = (i) => {
     if (!settle()) return;
-    editing = { index: i, text: valueText(kind, lines[i].value), error: "", input: null, errorLine: null };
+    const shown = valueText(kind, lines[i].value);
+    editing = { index: i, shown, text: shown, error: "", input: null, errorLine: null };
     renderLines();
     editing.input.focus();
     editing.input.select();

@@ -750,6 +750,56 @@ def test_leaving_the_field_commits_the_edit(page: Page) -> None:
     assert [line["value"] for line in applied(page)[-1]["settings"]["lines"]] == [4, 5]
 
 
+def test_a_click_that_commits_the_edit_still_lands(page: Page) -> None:
+    """While a right value is typed, one click on another row's pencil commits it and edits that row, one click on a 削除 commits and deletes, and Tab moves on to the color."""
+    dialog = open_dialog(page, range=[0, 10])
+    add_lines(dialog, "1", "2", "3")
+    rows = dialog.locator(".axis-dialog-line")
+    field = dialog.locator("input.axis-dialog-line-input")
+    rows.first.locator(".axis-dialog-line-edit").click()
+    field.fill("4")
+    rows.nth(1).locator(".axis-dialog-line-edit").click()
+    expect(rows.nth(1).locator("input.axis-dialog-line-input")).to_be_focused()
+    expect(rows.nth(1).locator("input.axis-dialog-line-input")).to_have_value("2")
+    expect(rows.first.locator(".axis-dialog-line-value")).to_have_text("4")
+
+    field.fill("5")
+    rows.nth(2).get_by_role("button", name="削除").click()
+    expect(rows).to_have_count(2)
+    expect(line_values(dialog)).to_have_text(["4", "5"])
+
+    rows.first.locator(".axis-dialog-line-edit").click()
+    field.fill("6")
+    field.press("Tab")
+    expect(rows.first.locator("input[type=color]")).to_be_focused()
+    expect(line_values(dialog)).to_have_text(["6", "5"])
+
+    rows.first.locator(".axis-dialog-line-edit").click()
+    field.fill("7")
+    rows.first.get_by_role("button", name="削除").click()
+    expect(line_values(dialog)).to_have_text(["5"])
+    dialog.get_by_role("button", name="適用").click()
+    assert [line["value"] for line in applied(page)[-1]["settings"]["lines"]] == [5]
+
+
+def test_a_temporal_line_left_as_written_keeps_its_value(page: Page) -> None:
+    """A Time line below a microsecond, edited and left as written, keeps its very value by Enter and by leaving the field."""
+    dialog = open_dialog(page, kind="time", range=[0, DAY_MS])
+    add_lines(dialog, "00:00:00.123456789")
+    dialog.get_by_role("button", name="適用").click()
+    exact = applied(page)[-1]["settings"]["lines"][0]["value"]
+    assert exact == pytest.approx(123.456789, abs=1e-9)
+    assert exact != pytest.approx(123.457, abs=1e-9)
+    pencil = dialog.locator(".axis-dialog-line-edit")
+    pencil.click()
+    dialog.locator("input.axis-dialog-line-input").press("Enter")
+    pencil.click()
+    dialog.locator("input[name=dtick]").click()
+    expect(dialog.locator("input.axis-dialog-line-input")).to_have_count(0)
+    dialog.get_by_role("button", name="適用").click()
+    assert applied(page)[-1]["settings"]["lines"][0]["value"] == exact
+
+
 def test_esc_takes_back_the_edit_and_keeps_the_dialog(page: Page) -> None:
     """Esc in the field puts the value back, clears the reason and leaves the dialog open; Esc outside it closes the dialog."""
     dialog = open_dialog(page, range=[0, 10])
