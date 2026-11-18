@@ -324,6 +324,73 @@ def test_a_row_group_of_many_columns_is_within_the_first_chunk(
     assert max(groups) <= first
 
 
+def _texts_spec(tmp_path: Path, texts: list[str]) -> tuple[pl.DataFrame, ScatterSpec]:
+    """Return a frame of x, y and the texts `s`, written as a file, and a spec that draws it with every column."""
+    n = len(texts)
+    frame = pl.DataFrame({"x": [float(i) for i in range(n)], "y": [1.0] * n, "s": texts})
+    path = tmp_path / "texts.parquet"
+    frame.write_parquet(path)
+    spec = ScatterSpec(
+        files={c: [str(path)] for c in frame.columns},
+        x=["x"],
+        y=["y"],
+        color=None,
+        row=None,
+        col=None,
+        width=300,
+        height=200,
+        hover=list(frame.columns),
+    )
+    return frame, spec
+
+
+def _groups(tmp_path: Path) -> list[tuple[int, int]]:
+    """Return the first row and the rows of each row group of the only Parquet file written."""
+    (file,) = tmp_path.glob("data-*/data.parquet")
+    meta = pq.ParquetFile(file).metadata
+    rows = [meta.row_group(i).num_rows for i in range(meta.num_row_groups)]
+    return list(zip(itertools.accumulate(rows[:-1], initial=0), rows, strict=True))
+
+
+def test_a_row_group_of_long_texts_after_short_ones_is_within_a_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Texts of 1 KiB after short ones keep every row group of a Parquet file within half the bytes of a chunk, as the chunks after the first are."""
+    texts = ["a"] * 992 + ["w" * 1024] * 1_984
+    frame, spec = _texts_spec(tmp_path, texts)
+    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
+    saved = _export(tmp_path, spec, rows="filtered")
+    assert saved.drop("index").equals(frame)
+    groups = _groups(tmp_path)
+    assert sum(rows for _, rows in groups) == len(texts)
+    # The row index, x, y and the offset of s, besides the longest s.
+    estimates = [
+        rows * (4 * plotdata.VALUE_BYTES + max(map(len, texts[start : start + rows])))
+        for start, rows in groups
+    ]
+    assert max(estimates) <= 32 * 2**10
+    # The first chunk holds 992 rows, the others 31: row groups of 31 rows.
+    assert {rows for _, rows in groups[:-1]} == {31}
+
+
+def test_a_row_far_larger_than_the_others_makes_a_row_group_for_each_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A text larger than a chunk among short ones writes a row group for each chunk, not one for each row."""
+    texts = ["a"] * 3_000
+    texts[1_500] = "w" * 40_000
+    frame, spec = _texts_spec(tmp_path, texts)
+    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
+    messages: list[dict] = []
+    saved = _export(tmp_path, spec, rows="filtered", messages=messages)
+    assert saved.drop("index").equals(frame)
+    done = [m["done"] for m in messages[1:]]
+    chunks = [b - a for a, b in itertools.pairwise(done)]
+    # The long text is a chunk of its own.
+    assert 1 in chunks[:-1]
+    assert [rows for _, rows in _groups(tmp_path)] == chunks
+
+
 @pytest.mark.parametrize(
     "nested",
     [

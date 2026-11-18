@@ -5,9 +5,11 @@ filter keeps; the columns are those the task lists, with the row index
 first. The rows are found from the column cache, then read a chunk after
 another, so that only a chunk's values or two are held at once: a chunk
 ends where its values reach its budget, measured before they are read
-(`_cut`). A CSV appends each chunk and reports it written; a Parquet file
-streams the chunks to a sink (`ddviz.compute.chunksink`), which writes one
-while the next is read, so that its chunks take half the budget, and
+(`_cut`). A CSV cuts and appends each chunk and reports it written. A
+Parquet file cuts every chunk first, keeping their rows alone, then streams
+them to a sink (`ddviz.compute.chunksink`), which writes one while the next
+is read, so that its chunks take half the budget; its row groups are kept
+within the rows of the fewest of a chunk (`_row_group_rows`), and it
 reports each chunk the sink receives (`run_plot_data`).
 """
 
@@ -15,14 +17,14 @@ from __future__ import annotations
 
 import bisect
 import itertools
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 import polars as pl
 
 from ddviz.compute.aggregate import INDEX
 from ddviz.compute.axisposition import on_axis
-from ddviz.compute.chunksink import sink_chunks
+from ddviz.compute.chunksink import PARQUET_ROW_GROUP_ROWS, sink_chunks, write_chunks
 from ddviz.compute.convert import column_expr, input_dtypes
 from ddviz.compute.missing import drawn_conditions
 from ddviz.compute.progress import Emit
@@ -232,6 +234,21 @@ def _cut(
     return max(1, min(len(index), held))
 
 
+def _row_group_rows(sizes: list[int]) -> int | None:
+    """Return the rows of a row group of a Parquet file of chunks of `sizes` rows, or None for a row group for each chunk.
+
+    Every chunk but the last holds at least the fewest rows of them (those
+    of the only chunk when there is one; 1 when it has none), so that many
+    rows of a chunk are within its budget, as are those of the last chunk;
+    the rows are at most `PARQUET_ROW_GROUP_ROWS`. When row groups of these
+    rows would be more than twice as many as the chunks (rows far larger
+    than the others make a chunk of few rows), None.
+    """
+    rows = min(PARQUET_ROW_GROUP_ROWS, max(1, min(sizes[:-1] or sizes)))
+    groups = -(-sum(sizes) // rows)
+    return rows if groups <= 2 * len(sizes) else None
+
+
 def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
     """Write the rows of a plot task's result as a file.
 
@@ -310,13 +327,22 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
             return None
         return lengths.sum_horizontal()
 
-    def chunks(budget: int, max_rows: int) -> Iterator[pl.DataFrame]:
-        """Yield the chunks of the file: at least one, with no row when there are none."""
+    def cuts(budget: int, max_rows: int) -> Iterator[pl.Series]:
+        """Yield the row indices of each chunk of the file, in order: at least one chunk, of no row when there are none."""
         start = 0
         while True:
             chunk = indices.slice(start, max_rows).collect()[INDEX]
             if len(chunk):
                 chunk = chunk[: _cut(chunk, bytes_of, fixed, budget)]
+            start += len(chunk)
+            yield chunk
+            del chunk
+            if start >= total:
+                return
+
+    def read(chunks: Iterable[pl.Series]) -> Iterator[pl.DataFrame]:
+        """Yield the values of the rows of each chunk, the row index first."""
+        for chunk in chunks:
             lo, hi = (chunk.min(), chunk.max()) if len(chunk) else (0, -1)
             frames = [chunk.to_frame()]
             if cached:
@@ -325,7 +351,6 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
                 frames.append(
                     _source(task.source, others, target, chunk, lo, hi).drop(INDEX)
                 )
-            start += len(chunk)
             table = pl.concat(frames, how="horizontal").select(
                 pl.col(INDEX).alias(name), *task.columns
             )
@@ -333,29 +358,37 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
             del chunk, frames
             yield table
             del table
-            if start >= total:
-                return
 
     file = f"data.{task.file_format}"
     path = out / file
     if task.file_format == "csv":
         done = 0
         with path.open("wb") as csv:
-            for i, table in enumerate(chunks(CHUNK_BYTES, MAX_CHUNK_ROWS)):
+            for i, table in enumerate(read(cuts(CHUNK_BYTES, MAX_CHUNK_ROWS))):
                 table.write_csv(csv, include_bom=i == 0, include_header=i == 0)
                 done += table.height
                 emit({**progress, "done": done, "total": total})
     else:
         # The sink makes the next chunk while it writes one: half the bytes
-        # and rows keep the two within those of a CSV chunk. A row group
-        # it holds until written is kept within the rows of the first chunk,
-        # so within these bytes too, however many columns there are, unless
-        # later rows are larger than the first chunk's (`chunksink`).
-        sink_chunks(
-            chunks(CHUNK_BYTES // 2, MAX_CHUNK_ROWS // 2),
-            path,
-            lambda done: emit({**progress, "done": done, "total": total}),
+        # and rows keep the two within those of a CSV chunk. Every chunk is
+        # cut first, its rows alone kept, so that the rows of a row group
+        # are known before it is written (`_row_group_rows`).
+        sizes = [len(chunk) for chunk in cuts(CHUNK_BYTES // 2, MAX_CHUNK_ROWS // 2)]
+        starts = itertools.accumulate(sizes[:-1], initial=0)
+        chunks = read(
+            indices.slice(start, rows).collect()[INDEX]
+            for start, rows in zip(starts, sizes, strict=True)
         )
+
+        def received(done: int) -> None:
+            """Report the rows the file received so far."""
+            emit({**progress, "done": done, "total": total})
+
+        group = _row_group_rows(sizes)
+        if group is None:
+            write_chunks(chunks, path, received)
+        else:
+            sink_chunks(chunks, path, group, received)
         emit({**progress, "done": total, "total": total})
     (out / "rows.parquet").unlink(missing_ok=True)
     write_manifest(out, {"kind": "plot_data", "file": file})
