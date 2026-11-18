@@ -1712,17 +1712,22 @@ const builder = new Builder(
   {
     // The state derived from the graph, which a failed plot rolls back with
     // it. The wrap's number to a row with none set is the drawn result's.
+    // The axis columns that keep their levels go back too, before the plot
+    // that restores the committed graph (`plotFailed`) asks for them.
     save: () => ({
       drawnRolesKey,
       placedRolesKey,
       plottedEncoding,
       elements: elementBar?.state() ?? null,
+      keepAxisLevels: axes.levels.columns(),
       ...options.saved(),
     }),
     load: (state) => {
       const wrap = plottedEncoding?.wrap;
       ({ drawnRolesKey, placedRolesKey, plottedEncoding } = state);
       options.load(state);
+      axes.levels.clear();
+      for (const column of state.keepAxisLevels) axes.levels.set(column, true);
       if (state.elements) elementBar.restore(state.elements);
       options.wrapAuto = current?.wrap_auto_cols ?? null;
       setWrapAuto(options.wrapAuto);
