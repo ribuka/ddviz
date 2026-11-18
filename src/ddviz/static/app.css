@@ -870,6 +870,28 @@ body.filter-reordering * {
   border-style: dashed;
   cursor: not-allowed;
 }
+/* Undo and redo of the drawing settings (`static/js/undo.js`), at the left
+   end of the row in a browser; in the window, in its title bar
+   (titlebar.css). */
+#top > .undo-button {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+#top > .undo-redo { margin-right: 6px; }
+#top > .undo-button:hover:not(:disabled) { color: var(--text); }
+#top > .undo-button:disabled {
+  color: var(--text-disabled-icon);
+  cursor: default;
+}
 #top > [data-role="wrap"] { flex: 0 0 30px; }
 #top > [data-role="wrap"].filled { flex: 0 1 auto; max-width: 60%; flex-wrap: nowrap; }
 #builder > [data-role="y"] { grid-area: 2 / 1; }

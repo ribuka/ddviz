@@ -3,6 +3,12 @@
 
 import { DEFAULT_SMOOTHING } from "./smoothmenu.js";
 
+// Returns a copy of an object of level names as one with a prototype, for
+// JSON: a level "__proto__" stays a key of its own (a spread defines it).
+function plain(object) {
+  return { ...object };
+}
+
 // How the page asks the server to draw a graph (`ddviz.server.plotoptions`
 // and `ddviz.server.models.PlotRequest`), kept while the page is open.
 export class PlotOptions {
@@ -128,6 +134,45 @@ export class PlotOptions {
       keepColorLevels: this.keepColorLevels,
       showNullRows: { ...this.showNullRows },
     };
+  }
+
+  // Returns every setting as JSON values, for the drawing settings of undo
+  // and redo (`history.js`): the shapes picked only while `symbol` (the
+  // Symbol zone's column, stashed or not) is their column, as a request
+  // takes them; the number to a row with none set is the result's.
+  settings(symbol) {
+    const shapes = this.#levelShapes;
+    const picked = symbol !== null && shapes.column === symbol && Object.keys(shapes.shapes).length;
+    return {
+      colorBins: structuredClone(this.colorBins),
+      smoothing: structuredClone(this.smoothing),
+      shapeSize: this.shapeSize,
+      lineWidth: this.lineWidth,
+      lineAggregation: this.lineAggregation,
+      showNullRows: { ...this.showNullRows },
+      keepColorLevels: this.keepColorLevels,
+      wrapCols: this.wrapCols,
+      levelSizes: [...this.#levelSizes].map(([column, sizes]) => [column, plain(sizes)]),
+      levelShapes: picked ? { column: symbol, shapes: plain(shapes.shapes) } : null,
+    };
+  }
+
+  // Sets every setting from `state` (`settings`).
+  applySettings(state) {
+    this.colorBins = structuredClone(state.colorBins);
+    this.smoothing = structuredClone(state.smoothing);
+    this.shapeSize = state.shapeSize;
+    this.lineWidth = state.lineWidth;
+    this.lineAggregation = state.lineAggregation;
+    // In place: the zones' menu holds the object (zonemenu.js).
+    Object.assign(this.showNullRows, state.showNullRows);
+    this.keepColorLevels = state.keepColorLevels;
+    this.wrapCols = state.wrapCols;
+    this.#levelSizes = new Map(state.levelSizes.map(([column, sizes]) => [column, Object.assign(Object.create(null), sizes)]));
+    const shapes = state.levelShapes;
+    this.#levelShapes = shapes
+      ? { column: shapes.column, shapes: Object.assign(Object.create(null), shapes.shapes) }
+      : { column: undefined, shapes: Object.create(null) };
   }
 
   // Sets back the settings `saved` returned, from `state` (`Builder`'s load).

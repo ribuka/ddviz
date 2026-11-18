@@ -170,6 +170,34 @@ export class Builder {
     };
   }
 
+  // Returns the zones of `state` (a snapshot) as JSON values, for the
+  // drawing settings of undo and redo (`history.js`): the graph, the kinds
+  // of its columns (sorted by name) and the stashed roles.
+  static settings(state) {
+    const { encoding, numeric, temporal, stashed } = state;
+    const columns = [...new Set([...encoding.x, ...encoding.y, ...STASHABLE.map((role) => encoding[role])])]
+      .filter((name) => name !== null)
+      .sort();
+    return {
+      encoding: structuredClone(encoding),
+      numeric: columns.map((name) => [name, numeric.get(name) ?? null]),
+      temporal: columns.map((name) => [name, temporal.get(name) ?? null]),
+      stashed: [...stashed].sort(),
+    };
+  }
+
+  // Sets the zones to `settings` (`Builder.settings`) as an edit, without
+  // telling `onChange`: the page plots the graph itself. The related state
+  // is the page's to set.
+  load(settings) {
+    this.encoding = structuredClone(settings.encoding);
+    for (const [name, numeric] of settings.numeric) this.numeric.set(name, numeric);
+    for (const [name, temporal] of settings.temporal) this.temporal.set(name, temporal);
+    this.stashed = new Set(settings.stashed);
+    this.edits += 1;
+    this.render();
+  }
+
   // Makes `state` (a snapshot; by default the state now) the one a rollback
   // goes back to.
   commit(state = this.snapshot()) {
