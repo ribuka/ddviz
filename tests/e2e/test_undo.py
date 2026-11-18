@@ -11,7 +11,7 @@ import pytest
 from playwright.sync_api import Page, Request, Route, expect
 
 from tests.e2e.test_app_menu import FAKE_API, GEOMETRY
-from tests.e2e.test_axis_freeze import card, set_range
+from tests.e2e.test_axis_freeze import card
 from tests.e2e.test_kept_ranges import zoom
 from tests.e2e.test_scatter import (
     drop_on_filters,
@@ -180,11 +180,16 @@ def test_undo_takes_back_each_setting(app_page: Page) -> None:
 
     # A condition of the filter.
     drop_on_filters(page, page.locator("#columns .column").filter(has=page.get_by_text("x", exact=True)), 1)
-    set_range(page, "x", "0", "1")
+    # One edit: the low end alone. Each end entered is an edit of its own,
+    # and each result drawn a step.
+    inputs = card(page, "x").locator(".filter-range input")
+    with page.expect_request("**/api/overview"):
+        inputs.first.fill("0")
+        inputs.first.press("Enter")
+    wait_idle(page)
     body = press(page, "Control+z")
     assert body["filters"] == []
     # The card added is a step of its own: it stays, at its whole range.
-    inputs = card(page, "x").locator(".filter-range input")
     expect(inputs.first).not_to_have_value("0")
     # Redo sends the condition again.
     body = press(page, "Control+y")
