@@ -607,7 +607,17 @@ function tickFields(form, settings, drawn, angle) {
   return { dtick, unit, minor, monthly, format, digits, separators, turn, calendarFields };
 }
 
-// The reference lines: {value, lines()}; `lines()` returns copies of the lines listed.
+// The pencil of a reference line's row (as `undo.js` writes its icons).
+const PENCIL =
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" aria-hidden="true">' +
+  '<path d="M11 2.5 13.5 5 5.5 13H3v-2.5z M9.5 4l2.5 2.5" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+
+// The reference lines: {value, lines(), settle()}; `lines()` returns copies
+// of the lines listed. The pencil of a row edits its value in place: Enter
+// or leaving the field replaces the value alone (its color, dash and place
+// kept), Esc puts the value back; a wrong value shows why on the row and
+// keeps the field. `settle()` ends an edit left in the field, and returns
+// false (focusing the field) while its value is wrong.
 function lineFields(form, settings) {
   const { kind, errors } = form;
   const box = form.section("参照線");
@@ -618,14 +628,55 @@ function lineFields(form, settings) {
   list.className = "axis-dialog-lines";
   box.append(list);
   let lines = settings.lines.map((line) => ({ ...line }));
+  // The edit under way: the row's index, the text in its field, why it is
+  // wrong ("" for not shown yet), and the field drawn; null for none.
+  let editing = null;
+  // Whether the rows are being drawn again: the field taken out of the list
+  // then may lose focus, which must not end its edit a second time.
+  let rendering = false;
   const renderLines = () => {
+    rendering = true;
     list.replaceChildren(
       ...lines.map((line, i) => {
         const row = document.createElement("div");
         row.className = "axis-dialog-line";
-        const at = document.createElement("span");
-        at.className = "axis-dialog-line-value";
-        at.textContent = valueText(kind, line.value);
+        const edit = document.createElement("button");
+        Object.assign(edit, { type: "button", className: "axis-dialog-line-edit", title: "値を編集", innerHTML: PENCIL });
+        edit.setAttribute("aria-label", "値を編集");
+        edit.addEventListener("click", () => startEdit(i));
+        let at;
+        if (editing?.index === i) {
+          at = document.createElement("input");
+          Object.assign(at, { type: "text", className: "axis-dialog-line-input", value: editing.text });
+          at.inputMode = isDateKind(kind) ? "text" : "decimal";
+          at.spellcheck = false;
+          editing.input = at;
+          const field = at;
+          at.addEventListener("input", () => {
+            if (editing?.input === field) editing.text = field.value;
+          });
+          at.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && !event.isComposing) {
+              // Esc takes back the edit only: the dialog stays open.
+              event.preventDefault();
+              event.stopPropagation();
+              editing = null;
+              renderLines();
+              list.children[i]?.querySelector(".axis-dialog-line-edit")?.focus();
+              return;
+            }
+            if (!plainEnter(event)) return;
+            event.preventDefault();
+            if (commit()) list.children[i]?.querySelector(".axis-dialog-line-edit")?.focus();
+          });
+          at.addEventListener("blur", () => {
+            if (!rendering && editing?.input === field) commit();
+          });
+        } else {
+          at = document.createElement("span");
+          at.className = "axis-dialog-line-value";
+          at.textContent = valueText(kind, line.value);
+        }
         const color = document.createElement("input");
         Object.assign(color, { type: "color", value: line.color, title: "色" });
         color.addEventListener("input", () => {
@@ -641,14 +692,58 @@ function lineFields(form, settings) {
         remove.type = "button";
         remove.textContent = "削除";
         remove.addEventListener("click", () => {
+          if (editing?.index === i) editing = null;
+          else if (editing && editing.index > i) editing.index -= 1;
           lines = lines.filter((_, j) => j !== i);
           renderLines();
         });
-        row.append(at, color, dash, remove);
+        row.append(edit, at, color, dash, remove);
+        if (editing?.index === i) {
+          const error = document.createElement("span");
+          error.className = "axis-dialog-error";
+          error.textContent = editing.error;
+          editing.errorLine = error;
+          row.append(error);
+        }
         return row;
       }),
     );
     list.hidden = !lines.length;
+    rendering = false;
+  };
+  // Ends the edit with the value in its field; returns whether it was right.
+  // A right one replaces the line's value alone (the line kept, if the
+  // value is the same) and shows the value again; a wrong one says why.
+  const commit = () => {
+    const read = readValue(kind, editing.text);
+    if (read.error) {
+      editing.error = read.error;
+      editing.errorLine.textContent = read.error;
+      return false;
+    }
+    const { index } = editing;
+    if (read.value !== lines[index].value) {
+      lines = lines.map((line, j) => (j === index ? { ...line, value: read.value } : line));
+    }
+    editing = null;
+    renderLines();
+    return true;
+  };
+  // Ends an edit left in its field; false, focusing it, while it is wrong.
+  const settle = () => {
+    if (editing && !commit()) {
+      editing.input.focus();
+      return false;
+    }
+    return true;
+  };
+  // Edits the value of row `i`, when no edit with a wrong value is left.
+  const startEdit = (i) => {
+    if (!settle()) return;
+    editing = { index: i, text: valueText(kind, lines[i].value), error: "", input: null, errorLine: null };
+    renderLines();
+    editing.input.focus();
+    editing.input.select();
   };
   renderLines();
   const addLine = () => {
@@ -665,7 +760,7 @@ function lineFields(form, settings) {
     event.preventDefault();
     addLine();
   });
-  return { value, lines: () => lines.map((line) => ({ ...line })) };
+  return { value, lines: () => lines.map((line) => ({ ...line })), settle };
 }
 
 // Disables every control but `turn`, as a categorical axis has only its
@@ -715,6 +810,8 @@ export function openAxisDialog({ title, kind = "number", range, settings, drawn 
       onApply(null, null, turned.value);
       return true;
     }
+    // An edit of a reference line's value left wrong applies nothing.
+    if (!lines.settle()) return false;
     const read = readFields({
       kind,
       min: ends.min.value,

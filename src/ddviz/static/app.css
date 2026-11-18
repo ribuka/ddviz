@@ -2324,7 +2324,9 @@ html.desktop #toasts {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin: 4px 0 0 102px;
+  /* The fields' 102px less the pencil and the row's gap: the values line up
+     with the input of 値 above. */
+  margin: 4px 0 0 76px;
 }
 
 .axis-dialog-line {
@@ -2335,6 +2337,32 @@ html.desktop #toasts {
 
 .axis-dialog-line-value {
   width: 110px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The pencil that edits a line's value in place. */
+.axis-dialog-line-edit {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.axis-dialog-line-edit:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.axis-dialog-line-input {
+  width: 110px;
+  font: inherit;
   font-variant-numeric: tabular-nums;
 }
 

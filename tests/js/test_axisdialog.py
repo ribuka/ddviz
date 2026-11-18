@@ -676,3 +676,184 @@ def test_enter_in_the_line_adds_it_unless_it_commits_a_conversion(page: Page) ->
     expect(rows).to_have_count(0)
     press_plain_enter(value)
     expect(rows).to_have_count(1)
+
+
+# ---- editing a reference line's value in place ----
+
+NUMBER_ERROR = "数値を入れてください"
+
+
+def add_lines(dialog: Locator, *values: str) -> None:
+    """Add a reference line of each value, in order."""
+    for value in values:
+        dialog.locator("input[name=line]").fill(value)
+        dialog.get_by_role("button", name="追加").click()
+
+
+def line_values(dialog: Locator) -> Locator:
+    """Return the values listed as text (the rows not being edited)."""
+    return dialog.locator(".axis-dialog-line-value")
+
+
+def test_the_pencil_edits_a_value_keeping_its_line(page: Page) -> None:
+    """The pencil, left of the value, puts the value in a field all selected; Enter replaces the value alone, keeps the dialog open and applies nothing; Apply draws it in place."""
+    dialog = open_dialog(page, range=[0, 10])
+    add_lines(dialog, "1", "2", "3")
+    rows = dialog.locator(".axis-dialog-line")
+    second = rows.nth(1)
+    second.locator("input[type=color]").evaluate(
+        "(e) => { e.value = '#ff0000'; e.dispatchEvent(new Event('input')); }"
+    )
+    second.locator("select").select_option("dot")
+    order = second.evaluate("(row) => [...row.children].map((c) => c.className || c.tagName)")
+    assert order == ["axis-dialog-line-edit", "axis-dialog-line-value", "INPUT", "SELECT", "BUTTON"]
+    pencil = second.locator(".axis-dialog-line-edit")
+    expect(pencil).to_have_attribute("title", "値を編集")
+    expect(pencil).to_have_attribute("aria-label", "値を編集")
+    expect(pencil).to_have_attribute("type", "button")
+    expect(pencil.locator("svg")).to_have_attribute("viewBox", "0 0 16 16")
+    expect(pencil.locator("svg")).to_have_attribute("aria-hidden", "true")
+
+    pencil.click()
+    field = second.locator("input.axis-dialog-line-input")
+    expect(field).to_be_focused()
+    expect(field).to_have_value("2")
+    assert field.evaluate("(e) => [e.selectionStart, e.selectionEnd]") == [0, 1]
+    field.fill("2.5")
+    field.press("Enter")
+    expect(dialog).to_be_visible()
+    assert applied(page) == []
+    expect(line_values(dialog)).to_have_text(["1", "2.5", "3"])
+    expect(second.locator("input[type=color]")).to_have_value("#ff0000")
+    expect(second.locator("select")).to_have_value("dot")
+
+    dialog.get_by_role("button", name="適用").click()
+    lines = applied(page)[-1]["settings"]["lines"]
+    assert [line["value"] for line in lines] == [1, 2.5, 3]
+    assert lines[1] == {"value": 2.5, "color": "#ff0000", "dash": "dot"}
+
+
+def test_leaving_the_field_commits_the_edit(page: Page) -> None:
+    """Clicking elsewhere (the interval) commits the value typed; OK while a right value is typed applies it."""
+    dialog = open_dialog(page, range=[0, 10])
+    add_lines(dialog, "1", "2")
+    dialog.locator(".axis-dialog-line-edit").first.click()
+    dialog.locator("input.axis-dialog-line-input").fill("4")
+    dialog.locator("input[name=dtick]").click()
+    expect(dialog.locator("input.axis-dialog-line-input")).to_have_count(0)
+    expect(line_values(dialog)).to_have_text(["4", "2"])
+    assert applied(page) == []
+    dialog.locator(".axis-dialog-line-edit").nth(1).click()
+    dialog.locator("input.axis-dialog-line-input").fill("5")
+    dialog.get_by_role("button", name="OK").click()
+    expect(dialog).to_have_count(0)
+    assert [line["value"] for line in applied(page)[-1]["settings"]["lines"]] == [4, 5]
+
+
+def test_esc_takes_back_the_edit_and_keeps_the_dialog(page: Page) -> None:
+    """Esc in the field puts the value back, clears the reason and leaves the dialog open; Esc outside it closes the dialog."""
+    dialog = open_dialog(page, range=[0, 10])
+    add_lines(dialog, "1")
+    dialog.locator(".axis-dialog-line-edit").click()
+    field = dialog.locator("input.axis-dialog-line-input")
+    field.fill("abc")
+    field.press("Enter")
+    expect(dialog.locator(".axis-dialog-line .axis-dialog-error")).to_have_text(NUMBER_ERROR)
+    field.press("Escape")
+    expect(page.locator("dialog.axis-dialog[open]")).to_have_count(1)
+    expect(field).to_have_count(0)
+    expect(line_values(dialog)).to_have_text(["1"])
+    expect(dialog.locator(".axis-dialog-line .axis-dialog-error")).to_have_count(0)
+    dialog.locator("input[name=dtick]").press("Escape")
+    expect(dialog).to_have_count(0)
+    assert applied(page) == []
+
+
+def test_a_wrong_value_keeps_the_field_and_applies_nothing(page: Page) -> None:
+    """A wrong value says why at the row's end and keeps the field; Apply, OK, Enter in a field and another pencil then do nothing but focus it; a right value clears the reason; deleting the row drops the edit."""
+    dialog = open_dialog(page, range=[0, 10])
+    add_lines(dialog, "1", "2")
+    rows = dialog.locator(".axis-dialog-line")
+    rows.first.locator(".axis-dialog-line-edit").click()
+    field = dialog.locator("input.axis-dialog-line-input")
+    field.fill("abc")
+    field.press("Enter")
+    expect(rows.first.locator(".axis-dialog-error")).to_have_text(NUMBER_ERROR)
+    assert rows.first.evaluate("(row) => row.lastElementChild.className") == "axis-dialog-error"
+    expect(field).to_be_visible()
+    expect(line_values(dialog)).to_have_text(["2"])
+    for name in ["適用", "OK"]:
+        dialog.get_by_role("button", name=name).click()
+        assert applied(page) == []
+        expect(dialog).to_be_visible()
+        expect(field).to_be_focused()
+    press_plain_enter(dialog.locator("input[name=min]"))
+    assert applied(page) == []
+    expect(dialog).to_be_visible()
+    expect(field).to_be_focused()
+    rows.nth(1).locator(".axis-dialog-line-edit").click()
+    expect(rows.nth(1).locator("input.axis-dialog-line-input")).to_have_count(0)
+    expect(field).to_be_focused()
+
+    field.fill("1.5")
+    field.press("Enter")
+    expect(dialog.locator(".axis-dialog-line .axis-dialog-error")).to_have_count(0)
+    expect(line_values(dialog)).to_have_text(["1.5", "2"])
+
+    rows.nth(1).locator(".axis-dialog-line-edit").click()
+    field.fill("")
+    field.press("Enter")
+    expect(rows.nth(1).locator(".axis-dialog-error")).not_to_be_empty()
+    rows.nth(1).get_by_role("button", name="削除").click()
+    expect(rows).to_have_count(1)
+    expect(field).to_have_count(0)
+    dialog.get_by_role("button", name="適用").click()
+    assert [line["value"] for line in applied(page)[-1]["settings"]["lines"]] == [1.5]
+
+
+def test_enter_in_the_edit_commits_unless_it_commits_a_conversion(page: Page) -> None:
+    """A plain Enter in the field commits the value; the Enter of an IME conversion does not."""
+    dialog = open_dialog(page, range=[0, 10])
+    add_lines(dialog, "1")
+    dialog.locator(".axis-dialog-line-edit").click()
+    field = dialog.locator("input.axis-dialog-line-input")
+    field.fill("7")
+    press_conversion_enters(field)
+    expect(field).to_be_visible()
+    expect(line_values(dialog)).to_have_count(0)
+    press_plain_enter(field)
+    expect(field).to_have_count(0)
+    expect(line_values(dialog)).to_have_text(["7"])
+    assert applied(page) == []
+
+
+# For each kind of temporal axis: another value typed in the edit, and the
+# value it stands for.
+EDITED = {
+    "datetime": ("2026-10-31 03:00", at_ms("2026-10-31 03:00")),
+    "date": ("2026-11-05", at_ms("2026-11-05 00:00")),
+    "time": ("06:30", 6.5 * 3_600_000),
+    "duration": ("42", 42),
+}
+
+
+@pytest.mark.parametrize("kind", list(CASES))
+def test_a_temporal_line_is_edited_as_it_is_added(page: Page, kind: str) -> None:
+    """On a temporal axis the field holds the text listed, and a value typed lands as its kind's value."""
+    _, _, line, _, _, listed, _ = CASES[kind]
+    other, moved = EDITED[kind]
+    dialog = open_dialog(page, kind=kind, range=SHOWN[kind])
+    add_lines(dialog, line)
+    dialog.locator(".axis-dialog-line-edit").click()
+    field = dialog.locator("input.axis-dialog-line-input")
+    expect(field).to_have_value(listed)
+    field.fill(other)
+    field.press("Enter")
+    dialog.get_by_role("button", name="適用").click()
+    assert applied(page)[-1]["settings"]["lines"] == [{"value": pytest.approx(moved, abs=1e-3), **LINE}]
+
+
+def test_a_categorical_axis_cannot_edit_its_lines(page: Page) -> None:
+    """The dialog of a categorical axis disables the pencil of each line."""
+    dialog = open_dialog(page, kind="category", range=[0, 1], settings={"lines": [{"value": 0.5, **LINE}]})
+    expect(dialog.locator(".axis-dialog-line-edit")).to_be_disabled()
