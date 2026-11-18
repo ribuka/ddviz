@@ -58,13 +58,13 @@ jobs:
         run: uv run -m pytest
 
   e2e:
-    name: E2E (${{ matrix.shard }}/3)
+    name: E2E (${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
     # The 2 vCPUs of a runner run one browser at a time; jobs run side by side.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6]
 
     steps:
       - uses: actions/checkout@v6
@@ -94,7 +94,7 @@ jobs:
 
       - name: E2E test
         env:
-          E2E_SHARD: ${{ matrix.shard }}/3
+          E2E_SHARD: ${{ matrix.shard }}/6
         run: uv run -m pytest -m e2e --tracing retain-on-failure --durations=30
 
       - name: Upload Playwright traces
