@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import polars as pl
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from ddviz.compute import chunksink
-from ddviz.compute.chunksink import chunk_frame, sink_chunks
+from ddviz.compute.chunksink import chunk_frame, sink_chunks, write_chunks
 
 
 def _chunks() -> list[pl.DataFrame]:
@@ -32,46 +34,116 @@ def _chunks() -> list[pl.DataFrame]:
     return frames
 
 
-def test_the_file_is_the_frames_one_under_another(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The file holds the frames in their order, compressed with zstd, in row groups of at most `PARQUET_ROW_GROUP_ROWS`."""
-    monkeypatch.setattr(chunksink, "PARQUET_ROW_GROUP_ROWS", 4)
+def _row_groups(path: Path) -> list[int]:
+    """Return the rows of each row group of a Parquet file."""
+    meta = pq.ParquetFile(path).metadata
+    return [meta.row_group(i).num_rows for i in range(meta.num_row_groups)]
+
+
+def _typed() -> list[pl.DataFrame]:
+    """Return frames of the same schema with values of many types: categories, dates, times with a time zone, nested texts and nulls."""
+    frame = pl.DataFrame(
+        {
+            "index": pl.Series(range(6), dtype=pl.UInt32),
+            "s": ["a", None, "ccc", "d", "", "f"],
+            "c": pl.Series(["a", "b", "a", "c", "b", "a"], dtype=pl.Categorical),
+            "e": pl.Series(["a", "b"] * 3, dtype=pl.Enum(["a", "b", "z"])),
+            "b": [True, False, None, True, False, True],
+            "i": pl.Series([1, 2, 3, None, 5, 6], dtype=pl.Int8),
+            "d": [date(2026, 1, i) for i in range(1, 7)],
+            "t": pl.Series(
+                [datetime(2026, 1, 2, i, tzinfo=UTC) for i in range(6)]
+            ).dt.convert_time_zone("Asia/Tokyo"),
+            "l": [["a"], [], None, ["b", "c"], ["d"], ["e"]],
+            "st": [{"s": str(i), "n": i} for i in range(6)],
+            "bin": [bytes([i]) for i in range(6)],
+        }
+    )
+    return [frame[:2], frame[2:5], frame[5:]]
+
+
+def test_the_file_is_the_frames_one_under_another(tmp_path: Path) -> None:
+    """The file holds the frames in their order, compressed with zstd, in row groups of the rows given, whatever the frames."""
     frames = _chunks()
     path = tmp_path / "data.parquet"
     received: list[int] = []
-    sink_chunks(iter(frames), path, received.append)
+    sink_chunks(iter(frames), path, 4, received.append)
     assert pl.read_parquet(path).equals(pl.concat(frames))
+    assert _row_groups(path) == [4] * 6 + [1]
     meta = pq.ParquetFile(path).metadata
     groups = [meta.row_group(i) for i in range(meta.num_row_groups)]
-    assert sum(g.num_rows for g in groups) == 25
-    assert max(g.num_rows for g in groups) == 4
     assert {g.column(c).compression for g in groups for c in range(3)} == {"ZSTD"}
     # Before each frame after the first, the rows of those before it.
     assert received == [5, 6, 6, 18]
-
-
-def test_a_row_group_is_within_the_rows_of_the_first_frame(tmp_path: Path) -> None:
-    """With `PARQUET_ROW_GROUP_ROWS` as it is, no row group holds more rows than the first frame."""
-    frames = [_chunks()[3][a:b] for a, b in ((0, 3), (3, 6), (6, 8))]
-    assert [f.height for f in frames] == [3, 3, 2]
-    path = tmp_path / "data.parquet"
-    sink_chunks(iter(frames), path)
-    assert pl.read_parquet(path).equals(pl.concat(frames))
-    meta = pq.ParquetFile(path).metadata
-    groups = [meta.row_group(i).num_rows for i in range(meta.num_row_groups)]
-    assert sum(groups) == 8
-    assert max(groups) <= 3
 
 
 def test_no_rows_give_a_file_of_typed_columns(tmp_path: Path) -> None:
     """A single frame of no row writes a file of no row with the frame's types."""
     empty = _chunks()[2]
     path = tmp_path / "empty.parquet"
-    sink_chunks([empty], path)
+    sink_chunks([empty], path, 1)
     saved = pl.read_parquet(path)
     assert saved.height == 0
     assert saved.schema == empty.schema
+
+
+def test_writing_a_row_group_for_each_frame(tmp_path: Path) -> None:
+    """`write_chunks` writes the frames in their order, compressed with zstd, a row group for each frame."""
+    frames = [f for f in _chunks() if f.height]
+    path = tmp_path / "data.parquet"
+    received: list[int] = []
+    write_chunks(iter(frames), path, received.append)
+    assert pl.read_parquet(path).equals(pl.concat(frames))
+    assert _row_groups(path) == [5, 1, 12, 7]
+    meta = pq.ParquetFile(path).metadata
+    groups = [meta.row_group(i) for i in range(meta.num_row_groups)]
+    assert {g.column(c).compression for g in groups for c in range(3)} == {"ZSTD"}
+    # After each frame after the first is made, the rows of those before it.
+    assert received == [5, 6, 18]
+
+
+def test_a_frame_of_many_rows_is_cut_into_row_groups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`write_chunks` cuts a frame of more than `PARQUET_ROW_GROUP_ROWS` rows into row groups of those rows."""
+    monkeypatch.setattr(chunksink, "PARQUET_ROW_GROUP_ROWS", 5)
+    frames = [f for f in _chunks() if f.height]
+    path = tmp_path / "data.parquet"
+    write_chunks(iter(frames), path)
+    assert pl.read_parquet(path).equals(pl.concat(frames))
+    assert _row_groups(path) == [5, 1, 5, 5, 2, 5, 2]
+
+
+def test_both_ways_write_the_same_types(tmp_path: Path) -> None:
+    """`sink_chunks` and `write_chunks` write the same values with the same polars and arrow types."""
+    frames = _typed()
+    sunk, written = tmp_path / "sunk.parquet", tmp_path / "written.parquet"
+    sink_chunks(iter(frames), sunk, 2)
+    write_chunks(iter(frames), written)
+    whole = pl.concat(frames)
+    assert pl.read_parquet(sunk).equals(whole)
+    assert pl.read_parquet(written).equals(whole)
+    assert pl.read_parquet(written).schema == whole.schema
+    assert pq.read_schema(written).types == pq.read_schema(sunk).types
+    assert pq.read_schema(written).field("index").type == pa.uint32()
+    assert pq.read_schema(written).field("s").type == pa.large_string()
+
+
+@pytest.mark.parametrize(
+    "write", [write_chunks, lambda c, p: sink_chunks(c, p, 2)], ids=["write", "sink"]
+)
+def test_an_error_making_a_frame_comes_out_as_it_is(
+    tmp_path: Path, write: Callable[[Iterator[pl.DataFrame], Path], None]
+) -> None:
+    """An error raised making a frame after the first comes out with its own type."""
+
+    def frames() -> Iterator[pl.DataFrame]:
+        """Yield the first frame, then fail."""
+        yield _chunks()[0]
+        raise MemoryError("out of memory")
+
+    with pytest.raises(MemoryError, match="out of memory"):
+        write(frames(), tmp_path / "data.parquet")
 
 
 @pytest.mark.parametrize(
@@ -90,9 +162,7 @@ def test_a_query_of_the_frame_is_that_of_the_frames(
 ) -> None:
     """Selecting, filtering and taking the first rows of the lazy frame give what they give on the frames together."""
     frames = _chunks()
-    assert query(chunk_frame(iter(frames))).collect().equals(
-        query(pl.concat(frames))
-    )
+    assert query(chunk_frame(iter(frames))).collect().equals(query(pl.concat(frames)))
 
 
 def test_the_first_frame_is_taken_at_once_the_others_as_read() -> None:
