@@ -4,6 +4,14 @@ The frames are the source of a polars IO plugin (`register_io_source`),
 whose lazy frame is streamed to `sink_parquet`: polars writes a frame while
 the next is made, and writes the columns in parallel. The plugin API is
 unstable; `pyproject.toml` pins the polars version it was checked with.
+
+polars holds the rows of a row group until it has them all, so a row group
+is kept within the rows of the first frame: when frames are cut to a budget
+of bytes, a row group holds about that budget as long as the later rows
+are no larger than those of the first frame, however many columns there
+are. Later rows larger than those (long texts after short ones) gather
+more than the budget in a row group: `sink_parquet` cuts row groups by
+rows only.
 """
 
 from __future__ import annotations
@@ -13,7 +21,7 @@ from pathlib import Path
 
 import polars as pl
 
-# Rows of a row group of the file at most.
+# Rows of a row group of the file at most, whatever the frames.
 PARQUET_ROW_GROUP_ROWS = 1_048_576
 
 
@@ -39,9 +47,32 @@ def chunk_frame(
     polars.LazyFrame
         The frames one under another.
     """
+    return _chunk_frame(chunks, received)[0]
+
+
+def _chunk_frame(
+    chunks: Iterable[pl.DataFrame], received: Callable[[int], None] | None
+) -> tuple[pl.LazyFrame, int]:
+    """Return the lazy frame of `chunk_frame` and the rows of its first frame.
+
+    Parameters
+    ----------
+    chunks : iterable of polars.DataFrame
+        As for `chunk_frame`.
+    received : callable or None
+        As for `chunk_frame`.
+
+    Returns
+    -------
+    polars.LazyFrame
+        The frames one under another.
+    int
+        The rows of the first frame, taken at once.
+    """
     rest = iter(chunks)
     held = [next(rest)]
     schema = held[0].schema
+    first_rows = held[0].height
 
     def frames() -> Iterator[pl.DataFrame]:
         """Yield the first frame, then the others."""
@@ -74,7 +105,7 @@ def chunk_frame(
             if n_rows is not None and taken >= n_rows:
                 return
 
-    return pl.io.plugins.register_io_source(source, schema=schema)
+    return pl.io.plugins.register_io_source(source, schema=schema), first_rows
 
 
 def sink_chunks(
@@ -84,9 +115,9 @@ def sink_chunks(
 ) -> None:
     """Write frames of the same schema one after another as one Parquet file.
 
-    The file is compressed with zstd, in row groups of
-    `PARQUET_ROW_GROUP_ROWS` rows at most. An error raised by `chunks`
-    comes out as it is.
+    The file is compressed with zstd, in row groups of at most the rows of
+    the first frame (1 when it has none) and `PARQUET_ROW_GROUP_ROWS`. An
+    error raised by `chunks` comes out as it is.
 
     Parameters
     ----------
@@ -97,6 +128,9 @@ def sink_chunks(
     received : callable, optional
         Called as `chunk_frame` calls it, from a thread of polars.
     """
-    chunk_frame(chunks, received).sink_parquet(
-        path, compression="zstd", row_group_size=PARQUET_ROW_GROUP_ROWS
+    frame, first_rows = _chunk_frame(chunks, received)
+    frame.sink_parquet(
+        path,
+        compression="zstd",
+        row_group_size=min(PARQUET_ROW_GROUP_ROWS, max(1, first_rows)),
     )

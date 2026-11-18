@@ -51,6 +51,19 @@ def test_the_file_is_the_frames_one_under_another(
     assert received == [5, 6, 6, 18]
 
 
+def test_a_row_group_is_within_the_rows_of_the_first_frame(tmp_path: Path) -> None:
+    """With `PARQUET_ROW_GROUP_ROWS` as it is, no row group holds more rows than the first frame."""
+    frames = [_chunks()[3][a:b] for a, b in ((0, 3), (3, 6), (6, 8))]
+    assert [f.height for f in frames] == [3, 3, 2]
+    path = tmp_path / "data.parquet"
+    sink_chunks(iter(frames), path)
+    assert pl.read_parquet(path).equals(pl.concat(frames))
+    meta = pq.ParquetFile(path).metadata
+    groups = [meta.row_group(i).num_rows for i in range(meta.num_row_groups)]
+    assert sum(groups) == 8
+    assert max(groups) <= 3
+
+
 def test_no_rows_give_a_file_of_typed_columns(tmp_path: Path) -> None:
     """A single frame of no row writes a file of no row with the frame's types."""
     empty = _chunks()[2]

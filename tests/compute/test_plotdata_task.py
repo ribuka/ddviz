@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 import polars as pl
+import pyarrow.parquet as pq
 import pytest
 
 from ddviz.compute.tasks import plotdata
@@ -285,6 +286,42 @@ def test_long_texts_make_chunks_of_fewer_rows(
     assert all(0 < sum(c) <= budget for c in chunks)
     # Each chunk ends where the next row would not fit.
     assert all(sum(c) + nxt[0] > budget for c, nxt in itertools.pairwise(chunks))
+
+
+def test_a_row_group_of_many_columns_is_within_the_first_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Parquet file of many columns has row groups of at most the rows of the first chunk, and the same rows and values."""
+    n = 500
+    frame = pl.DataFrame(
+        {"x": [float(i) for i in range(n)], "y": [1.0] * n}
+        | {f"c{j}": [float(i * j) for i in range(n)] for j in range(100)}
+    )
+    path = tmp_path / "wide.parquet"
+    frame.write_parquet(path)
+    spec = ScatterSpec(
+        files={c: [str(path)] for c in frame.columns},
+        x=["x"],
+        y=["y"],
+        color=None,
+        row=None,
+        col=None,
+        width=300,
+        height=200,
+        hover=list(frame.columns),
+    )
+    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
+    messages: list[dict] = []
+    saved = _export(tmp_path, spec, rows="filtered", messages=messages)
+    assert saved.drop("index").equals(frame)
+    # Before the second chunk, the rows of the first.
+    first = messages[2]["done"]
+    assert 0 < first < n
+    (file,) = tmp_path.glob("data-*/data.parquet")
+    meta = pq.ParquetFile(file).metadata
+    groups = [meta.row_group(i).num_rows for i in range(meta.num_row_groups)]
+    assert sum(groups) == n
+    assert max(groups) <= first
 
 
 @pytest.mark.parametrize(
