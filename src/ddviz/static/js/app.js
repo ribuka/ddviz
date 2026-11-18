@@ -28,6 +28,7 @@ import { openPlotMenu } from "./plotmenu.js";
 import { PlotImageCopy } from "./plotimage.js";
 import { PlotOptions } from "./plotoptions.js";
 import {
+  axisCoordinates,
   figureKey,
   rangeUpdate,
   sameAxes,
@@ -773,10 +774,12 @@ function keptView() {
 // Returns the view of a new result `meta` that keeps the drawn figure's
 // ranges (`shownRanges`) of the axes kept: set by hand, or continuous under
 // the lock (`AxisRanges.carried`). Null when no range is kept, or without a
-// figure.
+// figure. The shown ranges are positions of the result drawn (`current`),
+// not of the overview: a view of another filter has the bands of its own
+// levels, which the overview of the old filter may not have.
 function carriedView(meta) {
-  if (!overview || !gd._fullLayout) return null;
-  return axisRanges.carried(overview.meta, shownRanges(gd, overview.meta), meta);
+  if (!overview || !current || !gd._fullLayout) return null;
+  return axisRanges.carried(current, shownRanges(gd, current), meta);
 }
 
 // A superseded plot that the server finished before the newer request came
@@ -1121,10 +1124,14 @@ async function showAgain({ figure, meta, size, bitmaps, ranges, whole, drawn, mi
   autoMeta = meta;
   // The images and the panels' placement change; the axes of a view stay
   // where the user put them, but for those that take the automatic range
-  // of the filter. The figure on screen is still of the result drawn: a
+  // of the filter, and those whose coordinates changed (a categorical axis
+  // with other levels), which the server drew over their automatic range
+  // (`rangeLevels`). The figure on screen is still of the result drawn: a
   // result with more panels names axes that it lacks.
   const shown = shownRanges(gd, current);
-  const kept = (role) => shown[role].map((range, i) => (ranges[role][i] === null ? meta[`${role}_ranges`][i] : range));
+  const own = (role, i) =>
+    ranges[role][i] === null || axisCoordinates(current, role, i) !== axisCoordinates(meta, role, i);
+  const kept = (role) => shown[role].map((range, i) => (own(role, i) ? meta[`${role}_ranges`][i] : range));
   const view = { x: kept("x"), y: kept("y") };
   if (!whole) requested = view;
   setCurrent(meta);
@@ -1156,10 +1163,29 @@ async function requestOverview({ onFailed = null } = {}) {
   });
 }
 
+// Returns the levels of the result shown (`current`) of each categorical axis
+// column with a range in `ranges`: the bands its range is a position among.
+// The server draws such an axis over its automatic range when the levels it
+// draws are others (`View.range_levels`). The one band of a figure without
+// x is no column.
+function rangeLevels(ranges) {
+  const levels = {};
+  for (const role of ["x", "y"]) {
+    ranges[role].forEach((range, i) => {
+      if (range === null || (role === "x" && current.one_band)) return;
+      const column = current[`${role}_columns`][i];
+      const own = current.axis_levels?.[column];
+      if (own) levels[column] = own;
+    });
+  }
+  return levels;
+}
+
 // Aggregates the shown ranges again. Until the result comes, plotly keeps
 // drawing the current images stretched to the new axes, faded, and the area
 // they do not cover stays blank. A null range is the automatic range of the
-// filter, which the server finds or knows.
+// filter, which the server finds or knows. The range of a categorical axis
+// goes with its levels (`rangeLevels`).
 async function requestView({ x: xRanges, y: yRanges }, { onFailed = null } = {}) {
   // The server takes values, ascending: the powers of 10 of the exponents of
   // a log axis (`axisscale.js`).
@@ -1170,7 +1196,7 @@ async function requestView({ x: xRanges, y: yRanges }, { onFailed = null } = {})
   };
   return requestAgain({
     path: "/api/view",
-    body: { x_ranges: values.x, y_ranges: values.y },
+    body: { x_ranges: values.x, y_ranges: values.y, range_levels: rangeLevels({ x: xRanges, y: yRanges }) },
     ranges: { x: xRanges, y: yRanges },
     whole: false,
     status: "表示範囲を集約中…",

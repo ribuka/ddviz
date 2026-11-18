@@ -14,6 +14,7 @@ from ddviz.server.plotoptions import (
     parse_level_shapes,
     parse_line_aggregation,
     parse_line_width,
+    parse_range_levels,
     parse_shape_size,
     parse_shape_sizes,
     parse_smoothing,
@@ -321,3 +322,29 @@ def test_parse_cuts_refuses_another_form(raw: object) -> None:
     """Cuts of a role not cut, or not of the form of intervals, are refused naming ``cuts``."""
     with pytest.raises(ValueError, match="cuts"):
         parse_cuts(raw, ["col"], 5)
+
+
+def test_parse_range_levels_takes_the_levels_of_categorical_axes() -> None:
+    """The levels of the categorical axis columns are kept by column, up to the most of an axis; null is none."""
+    assert parse_range_levels({"g": ["a", "b"]}, ["g", "h"], 2) == {"g": ["a", "b"]}
+    assert parse_range_levels({}, ["g"], 2) == {}
+    assert parse_range_levels(None, ["g"], 2) == {}
+    assert parse_range_levels({"g": []}, ["g"], 2) == {"g": []}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        [],
+        "g",
+        {"x": ["a"]},
+        {"g": "a"},
+        {"g": None},
+        {"g": ["a", 1]},
+        {"g": ["a", "b", "c"]},
+    ],
+)
+def test_parse_range_levels_refuses_another_form(raw: object) -> None:
+    """Levels of a column that is no categorical axis, or not a list of at most the most levels of strings, are refused naming ``range_levels``."""
+    with pytest.raises(ValueError, match="range_levels"):
+        parse_range_levels(raw, ["g"], 2)

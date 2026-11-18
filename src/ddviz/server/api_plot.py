@@ -45,6 +45,7 @@ from ddviz.server.plotoptions import (
     parse_level_shapes,
     parse_line_aggregation,
     parse_line_width,
+    parse_range_levels,
     parse_shape_size,
     parse_shape_sizes,
     parse_smoothing,
@@ -57,7 +58,7 @@ from ddviz.server.source import Source
 from ddviz.shared.axisscale import NoPositiveValuesError, axis_positions
 from ddviz.shared.manifest import IMAGES
 from ddviz.shared.palette import DEFAULT_COLORS
-from ddviz.shared.scatter import FilteredLevelsError, ScatterSpec
+from ddviz.shared.scatter import ONE_BAND, FilteredLevelsError, ScatterSpec
 from ddviz.shared.tasks import PlotTask
 
 
@@ -175,9 +176,17 @@ def plot_router(
         return JSONResponse(result)
 
     async def respec(
-        request: SizeRequest, x_ranges: list | None = None, y_ranges: list | None = None
+        request: SizeRequest,
+        x_ranges: list | None = None,
+        y_ranges: list | None = None,
+        range_levels: object = None,
     ) -> ScatterSpec:
-        """Return the overview's spec for a request's size, filter and ranges (by default the automatic ranges of the filter)."""
+        """Return the overview's spec for a request's size, filter and ranges (by default the automatic ranges of the filter).
+
+        `range_levels` are the levels the ranges of the categorical axes are
+        positions among, as the page sends them
+        (`ddviz.server.plotoptions.parse_range_levels`).
+        """
         if results.overview is None:
             raise HTTPException(409, "no plot")
         if source.converting:
@@ -197,6 +206,11 @@ def plot_router(
                 request.cuts,
                 [r for r in manifest.spec.binned if r != "color"],
                 FACET_BINS,
+            )
+            range_levels = parse_range_levels(
+                range_levels,
+                [c for c in manifest.spec.categorical if c != ONE_BAND],
+                current.plot.max_axis_levels,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -220,6 +234,7 @@ def plot_router(
                 known=known,
                 color_scale=color_scale,
                 cuts=cuts,
+                range_levels=range_levels,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -366,7 +381,7 @@ def plot_router(
             y_ranges = axis_positions(request.y_ranges, drawn.y, drawn.log_y)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        spec = await respec(request, x_ranges, y_ranges)
+        spec = await respec(request, x_ranges, y_ranges, request.range_levels)
         return await aggregate_again(spec, results.view, results.set_view)
 
     @router.post("/api/overview")

@@ -1895,6 +1895,59 @@ def test_the_axis_levels_follow_the_filter(
     assert specs[-1].view.find_axis_levels == []
 
 
+def test_a_range_of_other_levels_takes_the_automatic_range(
+    client: TestClient,
+) -> None:
+    """A view's categorical range given among levels (``range_levels``) other than those its filter draws spans the bands drawn; the same levels, or none given, keep the range."""
+    _plot(client, encoding=CATEGORICAL_X)
+    every = {"color": ["a", "b", "c"]}
+    zoom = {**SIZE, "x_ranges": [[0.5, 2.5]], "y_ranges": [[-1, 1]]}
+    view = client.post(
+        "/api/view",
+        json={**zoom, "filters": _colors("a", "c"), "range_levels": every},
+    ).json()["meta"]
+    assert view["axis_levels"] == {"color": ["a", "c"]}
+    assert view["x_ranges"] == [[-0.5, 1.5]]
+    assert view["y_ranges"] == [[-1, 1]]
+    # A filter that keeps every color keeps the range.
+    wide = [{"column": "x", "range": [-100, 100]}]
+    view = client.post(
+        "/api/view", json={**zoom, "filters": wide, "range_levels": every}
+    ).json()["meta"]
+    assert view["axis_levels"] == every
+    assert view["x_ranges"] == [[0.5, 2.5]]
+    # Without range levels the range is that given.
+    view = client.post(
+        "/api/view", json={**zoom, "filters": _colors("a", "c"), "range_levels": None}
+    ).json()["meta"]
+    assert view["x_ranges"] == [[0.5, 2.5]]
+
+
+def test_wrong_range_levels_are_refused_before_any_task(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``range_levels`` of a column that is no categorical axis, or levels not a list of strings, are a 400 naming them; no task runs, the conversion of a filter's column included."""
+    _plot(client, encoding=CATEGORICAL_X)
+    tasks: list[object] = []
+    run = TaskBroker.run
+
+    async def counted(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        tasks.append(task)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", counted)
+    zoom = {**SIZE, "x_ranges": [[0.5, 2.5]], "y_ranges": [[-1, 1]]}
+    unconverted = [{"column": "label", "levels": ["r1"]}]
+    for wrong in ({"y": ["a"]}, {"color": "a"}, {"color": [1]}, ["a"]):
+        response = client.post(
+            "/api/view",
+            json={**zoom, "filters": unconverted, "range_levels": wrong},
+        )
+        assert response.status_code == 400, wrong
+        assert "range_levels" in response.json()["detail"]
+    assert tasks == []
+
+
 def test_the_symbol_levels_follow_the_filter(client: TestClient) -> None:
     """A categorical symbol has the levels of the rows of the filter."""
     filters = [{"column": "facet", "levels": ["q"]}]
