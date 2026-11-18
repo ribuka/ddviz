@@ -11,8 +11,15 @@
 // item of the other zones' menu (zonemenu.js); toggling it takes effect at
 // once, the form staying open and the draft of the number kept; a plot
 // that fails turns it back (`setWrapNullRows`).
+//
+// At the bottom, under a separator, the item "Stash" of the other zones'
+// menu (zonemenu.js) stashes the wrap column or takes the stash off and
+// closes the form; Enter on it does that, not apply the number. A number
+// applied while the column is stashed is kept for when the stash is taken
+// off.
 import { plainEnter } from "./keys.js";
-import { menuHeading, Popup } from "./popup.js";
+import { menuHeading, menuSeparator, Popup } from "./popup.js";
+import { checkedItem, STASH_TEXT } from "./zonemenu.js";
 
 // The largest number taken: JavaScript's integers are exact up to it.
 export const WRAP_COLS_MAX = Number.MAX_SAFE_INTEGER;
@@ -61,9 +68,11 @@ export function setWrapNullRows(checked) {
 
 // Opens the form at a right click. `cols` is the number set (null for
 // automatic), `auto` as `setWrapAuto`; `onApply` gets the number applied
-// (null for automatic), whether or not it changed. `showNullRows` is the
-// checkbox's state, and `onNullRows(checked)` runs when it is toggled.
-export function openWrapMenu(event, cols, auto, onApply, { showNullRows, onNullRows }) {
+// (null for automatic), whether or not it changed. `stashed` tells whether
+// the column is stashed, and `onStash()` runs when "Stash" is picked.
+// `showNullRows` is the checkbox's state, and `onNullRows(checked)` runs
+// when it is toggled.
+export function openWrapMenu(event, cols, auto, onApply, { stashed, onStash, showNullRows, onNullRows }) {
   const form = document.createElement("form");
   form.className = "scale-menu wrap-menu";
   form.noValidate = true;
@@ -110,7 +119,11 @@ export function openWrapMenu(event, cols, auto, onApply, { showNullRows, onNullR
   const nullText = document.createElement("span");
   nullText.textContent = "Show null rows";
   nullRows.append(nullBox, nullText);
-  form.append(nullRows, menuHeading("1 行のパネル数"), automatic.label, manual.label, field, error, apply);
+  const stash = checkedItem("stash", STASH_TEXT, stashed, onStash, closeWrapMenu);
+  stash.classList.add("wrap-menu-stash");
+  const separator = menuSeparator();
+  separator.classList.add("wrap-menu-separator");
+  form.append(nullRows, menuHeading("1 行のパネル数"), automatic.label, manual.label, field, error, apply, separator, stash);
 
   const showMode = (isManual) => {
     input.disabled = !isManual;
@@ -150,7 +163,8 @@ export function openWrapMenu(event, cols, auto, onApply, { showNullRows, onNullR
   });
   // Enter applies from the choices too, not only from the text field.
   form.addEventListener("keydown", (event) => {
-    if (!plainEnter(event) || event.target === apply) return;
+    // On the apply button and on "Stash", Enter clicks them.
+    if (!plainEnter(event) || event.target === apply || event.target === stash) return;
     event.preventDefault();
     submit();
   });

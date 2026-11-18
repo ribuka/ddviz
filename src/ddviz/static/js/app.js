@@ -6,7 +6,7 @@ import { AxisRanges, autoRanges, axisColumns, lockable, movedAxes } from "./axis
 import { axisKey } from "./axiskey.js";
 import { toValues } from "./axisscale.js";
 import { bandTickUpdate, withBandTicks } from "./bandticks.js";
-import { Builder } from "./builder.js";
+import { Builder, STASHABLE } from "./builder.js";
 import { showCasts } from "./casts.js";
 import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } from "./colorscale.js";
 import { openColumnMenu } from "./columnmenu.js";
@@ -588,10 +588,11 @@ async function drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, 
   // The legend and the colors and shapes picked change once the figure is
   // drawn: a figure that fails keeps them for the graph drawn again.
   legend.set(meta);
-  // The colors picked for the levels stay while the color column does.
-  keepPicked(meta.color.column);
-  // The shapes picked stay while the symbol column does.
-  options.pickedShapes(encoding.symbol);
+  // The colors picked for the levels stay while the color column does, and
+  // the shapes picked while the symbol column does: those of the chips, so
+  // a stash (`Builder.toggleStash`) keeps them.
+  keepPicked(candidate.encoding.color);
+  options.pickedShapes(candidate.encoding.symbol);
   layers.attach();
   sticky.attach();
   listenToFigure();
@@ -1550,6 +1551,12 @@ let drawnRolesKey = drawnRoles({
   elements: ["points"],
   symbol: null,
 });
+// The columns of the chips of the roles that can be stashed (`STASHABLE`),
+// stashed or not: the key of the zones as last edited.
+function placedRoles(encoding) {
+  return JSON.stringify(Object.fromEntries(STASHABLE.map((role) => [role, encoding[role]])));
+}
+let placedRolesKey = placedRoles({ color: null, symbol: null, row: null, col: null, wrap: null });
 // Cuts a numeric color column another way, or draws it as a gradient (null):
 // the series change, so the graph is plotted again.
 function setColorBins(bins) {
@@ -1606,16 +1613,22 @@ const builder = new Builder(
     const smooth = hasSmoothPair(encoding, builder.numeric);
     const line = hasLinePair(encoding, builder.numeric);
     if (elementBar?.allow({ line, box: hasBoxPair(encoding, builder.numeric), smooth })) return;
+    // The settings of a column go with the column of its chip, not the one
+    // drawn: a stash (`Builder.toggleStash`) keeps them.
+    const placed = placedRoles(builder.encoding);
     const key = drawnRoles(encoding);
-    if (key === drawnRolesKey) return;
-    const drawn = JSON.parse(drawnRolesKey);
-    if (encoding.color !== drawn[2]) options.colorBins = null;
-    if (encoding.wrap !== drawn[5]) {
+    // A stashed chip removed leaves the drawn graph as it is, but is an edit
+    // as any other: it is plotted again, so that its result commits it.
+    if (key === drawnRolesKey && placed === placedRolesKey) return;
+    const before = JSON.parse(placedRolesKey);
+    if (builder.encoding.color !== before.color) options.colorBins = null;
+    if (builder.encoding.wrap !== before.wrap) {
       options.wrapCols = null;
       options.wrapAuto = null;
       closeWrapMenu();
     }
     drawnRolesKey = key;
+    placedRolesKey = placed;
     if (drawable(encoding, builder.numeric)) {
       plot(encoding);
     } else {
@@ -1631,13 +1644,14 @@ const builder = new Builder(
     // it. The wrap's number to a row with none set is the drawn result's.
     save: () => ({
       drawnRolesKey,
+      placedRolesKey,
       plottedEncoding,
       elements: elementBar?.state() ?? null,
       ...options.saved(),
     }),
     load: (state) => {
       const wrap = plottedEncoding?.wrap;
-      ({ drawnRolesKey, plottedEncoding } = state);
+      ({ drawnRolesKey, placedRolesKey, plottedEncoding } = state);
       options.load(state);
       if (state.elements) elementBar.restore(state.elements);
       options.wrapAuto = current?.wrap_auto_cols ?? null;
@@ -1685,9 +1699,19 @@ document.querySelector('#builder .zone[data-role="wrap"]').addEventListener("con
     (cols) => {
       if (cols === options.wrapCols) return;
       options.wrapCols = cols;
-      if (plottedEncoding?.wrap) plot(plottedEncoding);
+      if (plottedEncoding?.wrap) {
+        plot(plottedEncoding);
+      } else {
+        // Not drawn (the column stashed, or no figure): the number goes to
+        // the committed state too, so that a later failed plot's rollback
+        // keeps it (`Builder.rollback`).
+        const { committed } = builder;
+        if (committed.related) builder.commit({ ...committed, related: { ...committed.related, wrapCols: cols } });
+      }
     },
     {
+      stashed: builder.isStashed("wrap"),
+      onStash: () => builder.toggleStash("wrap"),
       showNullRows: options.showNullRows.wrap,
       onNullRows: (checked) => {
         options.showNullRows.wrap = checked;
@@ -1702,6 +1726,8 @@ document.querySelector('#builder .zone[data-role="wrap"]').addEventListener("con
 // without a graph to plot, the next plot takes it.
 attachZoneMenu(builderRoot, {
   hasColumn: (role) => builder.placed(role).length > 0,
+  isStashed: (role) => builder.isStashed(role),
+  toggleStash: (role) => builder.toggleStash(role),
   showNullRows: options.showNullRows,
   onNullRows: plotNullRows,
   categoricalColor: () => {

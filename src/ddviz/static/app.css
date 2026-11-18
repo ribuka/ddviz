@@ -1014,6 +1014,14 @@ body.filter-reordering * {
   outline: 2px solid var(--accent);
 }
 
+/* A stashed chip (`Builder.toggleStash`): the graph is drawn without it. */
+.chip.stashed {
+  opacity: 0.5;
+}
+.chip.stashed .chip-name {
+  text-decoration: line-through;
+}
+
 .chip-name {
   min-inline-size: 0;
   overflow: hidden;
@@ -1774,6 +1782,11 @@ html.desktop #toasts {
 }
 .wrap-menu .scale-menu-heading {
   padding: 2px 0;
+}
+/* "Stash" and its separator run to the form's edges, as in a menu. */
+.wrap-menu-stash,
+.wrap-menu-separator {
+  margin-inline: -12px;
 }
 .wrap-menu-choice,
 .wrap-menu-null-rows {
