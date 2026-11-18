@@ -12,7 +12,18 @@ from ddviz.shared.scatter import Binning, ScatterSpec
 
 
 def numeric_color(spec: ScatterSpec) -> bool:
-    """Return whether the color column is numeric: a gradient, or cut into intervals."""
+    """Return whether the color column is numeric: a gradient, or cut into intervals.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot.
+
+    Returns
+    -------
+    bool
+        Whether the plot has a color column, and it is numeric.
+    """
     return spec.gradient or "color" in spec.binned
 
 
@@ -23,6 +34,18 @@ def found_color_scale(spec: ScatterSpec, filtered: bool) -> dict | None:
     column cut into intervals; None without a finite value. The rows of
     the filter are read in passes of their own, of the color column and the
     filter's columns alone, as the automatic ranges are (`ddviz.compute.plotscan.range_query`).
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot, with a numeric color column.
+    filtered : bool
+        Whether to take only the rows of the local filter.
+
+    Returns
+    -------
+    dict or None
+        The color scale, None without a finite value.
     """
     if spec.gradient:
         found = found_ranges(spec, [spec.color], filtered=filtered)[spec.color]
@@ -37,6 +60,22 @@ def found_cuts(
 
     The rows of the filter are read in a pass of their own, of the column
     and the filter's columns alone.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot.
+    column : str
+        The numeric column.
+    binning : Binning
+        How the column is cut into intervals.
+    filtered : bool
+        Whether to take only the rows of the local filter.
+
+    Returns
+    -------
+    dict or None
+        The cuts, None without a finite value.
     """
     if filtered and spec.filters:
         scan = plot_scan(spec, [column, *filter_columns(spec.filters)]).filter(
@@ -57,6 +96,19 @@ def color_scale(spec: ScatterSpec, progress: Callable[[str], None]) -> dict | No
     the filter; one that the filter leaves without a finite value takes
     that of every row: the overview's own, or found again by a view. The
     overview without a filter keeps that of every row, with no pass more.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot.
+    progress : callable
+        Called with ``"scale"`` before the rows are read.
+
+    Returns
+    -------
+    dict or None
+        The color scale, None to keep the one known (or for a color column
+        that is not numeric).
     """
     if not numeric_color(spec):
         return None
@@ -93,6 +145,20 @@ def role_cuts(
     without a finite value takes those of every row: the overview's own,
     or found again by a view. The overview without a filter keeps those of
     every row, with no pass more. A column on two roles is read once.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot.
+    roles : dict
+        The column of each role, None for a role without one.
+    progress : callable
+        Called with ``"cuts"`` before the rows are read.
+
+    Returns
+    -------
+    dict
+        The cuts of each role found again.
     """
     view = spec.view
     found: dict[str, dict] = {}
@@ -136,6 +202,26 @@ def scaled(
     The levels of each role cut into intervals are the names of its cuts,
     the missing level kept last: a view is given the levels of another
     result, and the cuts of the rows of its filter.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot.
+    roles : dict
+        The column of each role, None for a role without one.
+    scale : dict or None
+        The color scale (`color_scale`), None to keep the one known.
+    levels : dict
+        The levels of each role.
+    cuts : dict
+        The cuts of each role cut into intervals, with those found again.
+    color_range : tuple of float or None
+        The range of a gradient color column known.
+
+    Returns
+    -------
+    tuple
+        The levels, the cuts and the color range.
     """
     if scale is not None and spec.gradient:
         lo, hi = scale["range"]

@@ -28,7 +28,21 @@ LEVEL_ROWS_PER_PASS = 25_000_000
 
 @dataclass(frozen=True)
 class Overview:
-    """What the overview finds over every row (`overview`)."""
+    """What the overview finds over every row (`overview`).
+
+    Attributes
+    ----------
+    ranges : dict
+        The finite minimum and maximum of each numeric axis column, or None.
+    levels : dict
+        The levels of each role.
+    cuts : dict
+        The cuts of each binned role.
+    color_range : tuple of float or None
+        The range of a gradient color column.
+    axis_levels : dict
+        The levels of each categorical axis column.
+    """
 
     # The finite minimum and maximum of each numeric axis column, or None.
     ranges: dict[str, tuple[float, float] | None]
@@ -52,6 +66,17 @@ def check_levels(
     of role has to meet both. These are the roles and axes whose levels are
     of every row: those of the rows of the local filter are counted there
     (`found_levels`).
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot, with its limits.
+    roles : dict
+        The column of each role whose levels are of every row.
+    counted : dict
+        The number of levels of each column over every row.
+    axes : list of str
+        The categorical axis columns whose levels are of every row.
 
     Raises
     ------
@@ -127,6 +152,21 @@ def overview(
     value: among the rows of the local filter for a numeric column
     (`has_missing`); a categorical column counts it as one of its levels
     against the limits of its roles (`check_levels`).
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot.
+    roles : dict
+        The column of each role, None for one whose levels are found among
+        the rows of the filter.
+    axes : list of str
+        The categorical axis columns whose levels are of every row.
+
+    Returns
+    -------
+    Overview
+        The ranges, levels, cuts and color range over every row.
     """
     numeric = [
         c for c in dict.fromkeys([*spec.x, *spec.y]) if c not in spec.categorical
@@ -214,7 +254,24 @@ def overview(
 def values_among_filter(
     spec: ScatterSpec, column: str, start: int, length: int
 ) -> pl.Series:
-    """Return the values of a column, as text, of the rows ``start`` to ``start + length`` that pass the local filter, once each; a null among them if any."""
+    """Return the values of a column, as text, of the rows ``start`` to ``start + length`` that pass the local filter, once each; a null among them if any.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot, with its local filter.
+    column : str
+        The column.
+    start : int
+        The first row.
+    length : int
+        The rows to read.
+
+    Returns
+    -------
+    polars.Series
+        The distinct values, as text.
+    """
     return (
         plot_scan(spec, [column, *filter_columns(spec.filters)])
         .slice(start, length)
@@ -237,6 +294,15 @@ def levels_among_filter(
     stops as soon as they pass `limit`, so that a column of a level per row
     (an ID) never holds them all. The levels are text, as those found over
     every row, in natural order, the empty text one of them.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot, with its local filter.
+    column : str
+        The categorical column.
+    limit : int
+        The most levels to find.
 
     Returns
     -------
@@ -268,6 +334,18 @@ def has_missing(spec: ScatterSpec, columns: list[str]) -> dict[str, bool]:
 
     Each column is read with the filter's columns alone, apart from the
     overview's pass (`overview`).
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot.
+    columns : list of str
+        The numeric columns.
+
+    Returns
+    -------
+    dict
+        Whether each column has a null or NaN value.
     """
     if not columns:
         return {}
@@ -284,7 +362,20 @@ def has_missing(spec: ScatterSpec, columns: list[str]) -> dict[str, bool]:
 
 
 def role_name(spec: ScatterSpec, role: str) -> str:
-    """Return the name the page gives a role (its zone)."""
+    """Return the name the page gives a role (its zone).
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot.
+    role : str
+        The role: ``"color"``, ``"symbol"``, ``"row"`` or ``"col"``.
+
+    Returns
+    -------
+    str
+        The name of the role.
+    """
     if role == "col":
         return "Wrap" if spec.wrap else "Group X"
     return {"color": "Color", "symbol": "Symbol", "row": "Group Y"}[role]
@@ -309,6 +400,25 @@ def found_levels(
     every row has only the missing level, or else its one level. An axis
     column has the levels of those rows, up to `ScatterSpec.max_axis_levels`.
     A column on two of them is read once.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot, with its local filter.
+    roles : dict
+        The column of each role, None for a role without one.
+    levels : dict
+        The levels of each role known.
+    find : list of str
+        The roles whose levels are found among the rows of the filter.
+    axes : list of str
+        The categorical axis columns whose levels are found among the rows
+        of the filter.
+
+    Returns
+    -------
+    tuple of dict
+        The levels of each role of `find`, and of each axis column of `axes`.
 
     Raises
     ------
@@ -388,7 +498,18 @@ def found_levels(
 
 
 def missing_name_message(columns: list[str]) -> str:
-    """Return the error of columns with a value that is the missing level's name."""
+    """Return the error of columns with a value that is the missing level's name.
+
+    Parameters
+    ----------
+    columns : list of str
+        The columns.
+
+    Returns
+    -------
+    str
+        The error message.
+    """
     return (
         f"列 {'、'.join(columns)} の値に欠損の水準の内部名（{MISSING!r}）と同じ"
         "文字列があるため描けない"
@@ -405,6 +526,20 @@ def facet_levels(
     A filter that keeps no rows keeps every panel. A role that draws its
     missing rows (`ddviz.shared.scatter.ScatterSpec.null_roles`) keeps its
     missing level only while a row of the filter is missing.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot, with its local filter.
+    levels : dict
+        The levels of each role.
+    cuts : dict
+        The cuts of each binned role.
+
+    Returns
+    -------
+    dict
+        The levels, the row and col levels without rows dropped.
     """
     facets = {r: getattr(spec, r) for r in ("row", "col") if getattr(spec, r)}
     if not spec.filters or not facets:

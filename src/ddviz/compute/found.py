@@ -12,7 +12,29 @@ from ddviz.shared.scatter import ONE_BAND, Boxes, ScatterSpec, Smooths
 
 @dataclass(frozen=True)
 class Found:
-    """What the overview found, or a view carries: the ranges, levels, cuts and boxes and lines known."""
+    """What the overview found, or a view carries: the ranges, levels, cuts and boxes and lines known.
+
+    Attributes
+    ----------
+    x_ranges, y_ranges : list of tuple of float
+        The range each x and each y column is drawn over.
+    x_auto, y_auto : list of tuple of float
+        The automatic range of each x and each y column.
+    all_levels : dict
+        The levels of each role and column, before the facets of the filter.
+    levels : dict
+        The drawn levels.
+    cuts : dict
+        The cuts of each role cut into intervals.
+    color_range : tuple of float or None
+        The range of a gradient color column.
+    axis_levels : dict
+        The levels of each categorical axis column.
+    known_boxes : list of Boxes
+        The box plots a view already knows.
+    known_smooths : list of Smooths
+        The smooth lines a view already knows.
+    """
 
     x_ranges: list[tuple[float, float]]
     y_ranges: list[tuple[float, float]]
@@ -49,6 +71,22 @@ def find(
     (`View.find_levels`, `View.find_axis_levels`). A categorical axis spans
     the bands of its levels. Raises `NoPositiveValuesError` when a log axis
     has no positive value among every row.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot, with its view, if any.
+    roles : dict
+        The column of each role, None for a role without one.
+    logs : ddviz.compute.foundranges.LogAxes
+        The positive ranges of the log axes among the rows of the filter.
+    progress : callable
+        Called with the name of each stage as it starts.
+
+    Returns
+    -------
+    Found
+        The ranges, levels, cuts, and boxes and lines known.
     """
     view = spec.view
     numeric = numeric_roles(spec)

@@ -18,6 +18,20 @@ def plot_scan(
     Each query gets its own scan: queries in one `collect_all` sharing a scan
     followed by a ``select`` made the streaming engine peak at about 6.7GB on
     100M rows, against about 1.2GB with separate scans.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot, with the file of each column.
+    columns : list of str
+        The columns to read; one given twice is read once.
+    row_index : str or None, optional
+        The name of a row index column to add, None for none.
+
+    Returns
+    -------
+    polars.LazyFrame
+        The scan of the columns.
     """
     return scan_columns({c: spec.files[c] for c in dict.fromkeys(columns)}, row_index)
 
@@ -30,6 +44,23 @@ def range_query(
     `filtered` takes only the rows of the local filter, reading the column
     and the filter's columns alone; `log` only the positive values, those
     a log axis draws.
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot.
+    column : str
+        The numeric column.
+    filtered : bool, optional
+        Whether to take only the rows of the local filter.
+    log : bool, optional
+        Whether to take only the positive values.
+
+    Returns
+    -------
+    polars.LazyFrame
+        The query of one row with ``min`` and ``max``, null without such a
+        value.
     """
     value = pl.col(column).cast(pl.Float64)
     # Not ``value.filter(...)``: a filter inside an expression holds the rows
@@ -48,7 +79,25 @@ def range_query(
 def found_ranges(
     spec: ScatterSpec, columns: list[str], filtered: bool, log: bool = False
 ) -> dict[str, tuple[float, float] | None]:
-    """Return the finite (`log`: positive) minimum and maximum of each column, None for one without such a value (`range_query`)."""
+    """Return the finite (`log`: positive) minimum and maximum of each column, None for one without such a value (`range_query`).
+
+    Parameters
+    ----------
+    spec : ScatterSpec
+        The plot.
+    columns : list of str
+        The numeric columns.
+    filtered : bool
+        Whether to take only the rows of the local filter.
+    log : bool, optional
+        Whether to take only the positive values.
+
+    Returns
+    -------
+    dict
+        The minimum and maximum of each column, None for one without such a
+        value.
+    """
     if not columns:
         return {}
     found = pl.collect_all(
