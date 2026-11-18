@@ -1976,22 +1976,22 @@ attachZoneMenu(builderRoot, {
   toggleStash: (role) => builder.toggleStash(role),
   showNullRows: options.showNullRows,
   onNullRows: plotNullRows,
-  categoricalColor: () => {
-    const [column] = builder.placed("color");
+  categorical: (role) => {
+    const [column] = builder.placed(role);
     return column !== undefined && !builder.numeric.get(column);
   },
-  keepLevels: () => options.keepColorLevels,
-  onKeepLevels: async () => {
-    const before = options.keepColorLevels;
-    options.keepColorLevels = !before;
+  keepLevels: (role) => options.keepLevels[role],
+  onKeepLevels: async (role) => {
+    const before = options.keepLevels[role];
+    options.keepLevels[role] = !before;
     if (!plottedEncoding) {
       builder.commit();
       record(captureSettings());
       return;
     }
-    const toggled = options.keepColorLevels;
-    if ((await plot(plottedEncoding)) === "refused" && options.keepColorLevels === toggled) {
-      options.keepColorLevels = before;
+    const toggled = options.keepLevels[role];
+    if ((await plot(plottedEncoding)) === "refused" && options.keepLevels[role] === toggled) {
+      options.keepLevels[role] = before;
     }
   },
 });

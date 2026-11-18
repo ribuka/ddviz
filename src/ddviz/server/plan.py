@@ -373,6 +373,7 @@ def scatter_spec(
     line_width: int | None = None,
     line_aggregation: str = "raw",
     keep_unfiltered_color_levels: bool = False,
+    keep_unfiltered_symbol_levels: bool = False,
     keep_unfiltered_axis_levels: list[str] | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
@@ -466,6 +467,9 @@ def scatter_spec(
     keep_unfiltered_color_levels : bool, optional
         Whether a categorical color column keeps its levels over every row
         (`ScatterSpec.keep_unfiltered_color_levels`).
+    keep_unfiltered_symbol_levels : bool, optional
+        Whether a categorical symbol column keeps its levels over every row
+        (`ScatterSpec.keep_unfiltered_symbol_levels`).
     keep_unfiltered_axis_levels : list of str, optional
         The categorical x and y columns whose bands are the levels over
         every row (`ddviz.server.plotoptions.parse_keep_axis_levels`,
@@ -564,5 +568,6 @@ def scatter_spec(
         margin_left=left_margin(margin_left, width),
         margin_bottom=bottom_margin(margin_bottom, height),
         keep_unfiltered_color_levels=keep_unfiltered_color_levels,
+        keep_unfiltered_symbol_levels=keep_unfiltered_symbol_levels,
         keep_unfiltered_axis_levels=list(keep_unfiltered_axis_levels or []),
     )

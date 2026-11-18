@@ -38,6 +38,7 @@ def test_a_new_one_requests_the_defaults(js_page: Page) -> None:
             "wrap": True,
         },
         "keep_unfiltered_color_levels": False,
+        "keep_unfiltered_symbol_levels": False,
     }
 
 
@@ -104,18 +105,20 @@ def test_the_request_copies_show_null_rows(js_page: Page) -> None:
 
 
 def test_load_sets_back_what_saved_returned(js_page: Page) -> None:
-    """`load(saved())` sets back the color's cutting, the number to a row, keeping the levels and Show null rows, the last in the same object."""
+    """`load(saved())` sets back the color's cutting, the number to a row, keeping the levels of Color and of Symbol each, and Show null rows, the last two in the same object."""
     result = _call(
         js_page,
         """o.colorBins = { n: 5, by: "range" };
         o.wrapCols = 3;
-        o.keepColorLevels = true;
+        o.keepLevels.symbol = true;
         o.showNullRows.col = false;
         const shown = o.showNullRows;
+        const kept = o.keepLevels;
         const state = o.saved();
         o.colorBins = null;
         o.wrapCols = null;
-        o.keepColorLevels = false;
+        o.keepLevels.color = true;
+        o.keepLevels.symbol = false;
         o.showNullRows.col = true;
         o.showNullRows.wrap = false;
         o.load(state);
@@ -123,7 +126,9 @@ def test_load_sets_back_what_saved_returned(js_page: Page) -> None:
           state,
           o.colorBins,
           o.wrapCols,
-          o.keepColorLevels,
+          o.keepLevels,
+          o.keepLevels === kept,
+          o.request({ symbol: null }).keep_unfiltered_symbol_levels,
           o.showNullRows,
           o.showNullRows === shown,
         ];""",
@@ -134,11 +139,13 @@ def test_load_sets_back_what_saved_returned(js_page: Page) -> None:
         {
             "colorBins": bins,
             "wrapCols": 3,
-            "keepColorLevels": True,
+            "keepLevels": {"color": False, "symbol": True},
             "showNullRows": show,
         },
         bins,
         3,
+        {"color": False, "symbol": True},
+        True,
         True,
         show,
         True,

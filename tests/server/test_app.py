@@ -1389,6 +1389,34 @@ def test_a_kept_setting_goes_with_the_derived_results(client: TestClient) -> Non
     assert overview["meta"]["series"] == ["a"]
 
 
+def test_keep_unfiltered_symbol_levels_goes_with_the_derived_results(
+    client: TestClient,
+) -> None:
+    """``keep_unfiltered_symbol_levels`` gives the symbol the levels of every row, its views too; off or left out, those of the filter; a setting that is no boolean is refused."""
+    symbol = {"x": ["x"], "y": ["y"], "symbol": "color"}
+    only_a = [{"column": "color", "levels": ["a"]}]
+    body = {"encoding": symbol, **SIZE, **HIDE_NULLS, "filters": only_a}
+    plotted = client.post("/api/plot", json=body)
+    assert plotted.status_code == 200, plotted.text
+    assert plotted.json()["meta"]["symbol"]["levels"] == ["a"]
+    kept = client.post("/api/plot", json={**body, "keep_unfiltered_symbol_levels": True})
+    assert kept.json()["meta"]["symbol"]["levels"] == ["a", "b", "c"]
+    zoom = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": [[-1, 1]]}
+    only_b = [{"column": "color", "levels": ["b"]}]
+    view = client.post("/api/view", json={**zoom, "filters": only_b}).json()
+    assert view["meta"]["symbol"]["levels"] == ["a", "b", "c"]
+    overview = client.post("/api/overview", json={**SIZE, "filters": only_b}).json()
+    assert overview["meta"]["symbol"]["levels"] == ["a", "b", "c"]
+    client.post("/api/plot", json={**body, "keep_unfiltered_symbol_levels": False})
+    view = client.post("/api/view", json={**zoom, "filters": only_b}).json()
+    assert view["meta"]["symbol"]["levels"] == ["b"]
+    for bad in ("yes", 1, None, [True]):
+        response = client.post(
+            "/api/plot", json={**body, "keep_unfiltered_symbol_levels": bad}
+        )
+        assert response.status_code == 422, bad
+
+
 def test_another_filter_finds_the_color_levels_again(client: TestClient) -> None:
     """The overview and a view of another filter find its color levels; a zoom or pan of the same filter keeps them, and so does the overview of the filter a view was drawn with."""
     body = {"encoding": LABELED, **SIZE, **HIDE_NULLS, "filters": _labels("r1", "r2")}

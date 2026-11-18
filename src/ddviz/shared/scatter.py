@@ -373,7 +373,7 @@ class ScatterSpec:
         of the categorical roles (`levels_of_filter`) and axes, the missing
         levels, the automatic ranges, the color scale and the cuts, but for
         what the page keeps (`keep_unfiltered_color_levels`,
-        `keep_unfiltered_axis_levels`, `color_scale`, `kept_cuts`).
+        `keep_unfiltered_symbol_levels`, `keep_unfiltered_axis_levels`, `color_scale`, `kept_cuts`).
     max_levels : int
         Most levels a color, symbol, row or col column may have; more are refused
         before binning. A numeric column on these roles has about one level
@@ -456,6 +456,12 @@ class ScatterSpec:
         the local filter aside, with those left without rows in the legend;
         otherwise its levels are those of the rows of the local filter
         (`filters_color`).
+    keep_unfiltered_symbol_levels : bool
+        Whether a categorical symbol column keeps its levels over every row,
+        the local filter aside, with those left without rows in the legend;
+        otherwise its levels are those of the rows of the local filter
+        (`levels_of_filter`). A symbol cut into intervals keeps its cuts
+        otherwise (``kept_cuts``).
     keep_unfiltered_axis_levels : list of str
         Categorical x and y columns whose bands are the levels over every
         row, the local filter aside, in their natural order, with those
@@ -513,6 +519,7 @@ class ScatterSpec:
     margin_left: int = MARGIN_LEFT
     margin_bottom: int = MARGIN_BOTTOM
     keep_unfiltered_color_levels: bool = False
+    keep_unfiltered_symbol_levels: bool = False
     keep_unfiltered_axis_levels: list[str] = field(default_factory=list)
     color_scale: dict | None = None
     kept_cuts: dict[str, dict] = field(default_factory=dict)
@@ -523,8 +530,8 @@ class ScatterSpec:
         Returns
         -------
         list of str
-            The categorical color (`filters_color`), symbol, row and col:
-            their levels are
+            The categorical color (`filters_color`), symbol (without
+            `keep_unfiltered_symbol_levels`), row and col: their levels are
             those of the rows the filter keeps; and a numeric role that
             draws its missing rows (``null_roles``), whose missing level is
             drawn when those rows have a missing value
@@ -532,6 +539,14 @@ class ScatterSpec:
         """
         numeric = {"color"} if self.gradient else set()
         numeric |= set(self.binned)
+        kept = {
+            role
+            for role, keep in (
+                ("color", self.keep_unfiltered_color_levels),
+                ("symbol", self.keep_unfiltered_symbol_levels),
+            )
+            if keep
+        }
         roles = []
         for role in ("color", "symbol", "row", "col"):
             if getattr(self, role) is None:
@@ -539,7 +554,7 @@ class ScatterSpec:
             if role in numeric:
                 if role in self.null_roles:
                     roles.append(role)
-            elif not (role == "color" and self.keep_unfiltered_color_levels):
+            elif role not in kept:
                 roles.append(role)
         return roles
 

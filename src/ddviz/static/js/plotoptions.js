@@ -39,12 +39,13 @@ export class PlotOptions {
   // Wrap zone's form (wrapmenu.js); kept whatever column the zone holds, true
   // after a reload. A failed plot turns it back (`saved`).
   showNullRows = { color: true, symbol: true, row: true, col: true, wrap: true };
-  // Whether a categorical color column keeps its levels over every row, those
-  // the filter leaves without rows staying in the legend
-  // (`ddviz.server.models.PlotRequest.keep_unfiltered_color_levels`), set in
-  // the Color zone's menu (zonemenu.js); kept whatever column the zone holds,
-  // off after a reload. Off, the levels are those of the filter's rows.
-  keepColorLevels = false;
+  // Whether a categorical column on the Color or the Symbol zone keeps its
+  // levels over every row, those the filter leaves without rows staying in
+  // the legend (`ddviz.server.models.PlotRequest.keep_unfiltered_color_levels`,
+  // `keep_unfiltered_symbol_levels`), set in each zone's menu (zonemenu.js,
+  // which changes this object); kept whatever column the zone holds, off
+  // after a reload. Off, the levels are those of the filter's rows.
+  keepLevels = { color: false, symbol: false };
   // Wrapped panels to a row, or null to make them closest to square
   // (`ddviz.server.plotoptions.parse_wrap_cols`); back to null for another
   // wrap column. The user sets it in the Wrap zone's form (wrapmenu.js).
@@ -80,7 +81,8 @@ export class PlotOptions {
       shape_sizes: this.#levelSizes.get(encoding.symbol) || null,
       level_shapes: shapes,
       show_null_rows: { ...this.showNullRows },
-      keep_unfiltered_color_levels: this.keepColorLevels,
+      keep_unfiltered_color_levels: this.keepLevels.color,
+      keep_unfiltered_symbol_levels: this.keepLevels.symbol,
     };
   }
 
@@ -131,7 +133,7 @@ export class PlotOptions {
     return {
       colorBins: this.colorBins,
       wrapCols: this.wrapCols,
-      keepColorLevels: this.keepColorLevels,
+      keepLevels: { ...this.keepLevels },
       showNullRows: { ...this.showNullRows },
     };
   }
@@ -150,7 +152,7 @@ export class PlotOptions {
       lineWidth: this.lineWidth,
       lineAggregation: this.lineAggregation,
       showNullRows: { ...this.showNullRows },
-      keepColorLevels: this.keepColorLevels,
+      keepLevels: { ...this.keepLevels },
       wrapCols: this.wrapCols,
       levelSizes: [...this.#levelSizes].map(([column, sizes]) => [column, plain(sizes)]),
       levelShapes: picked ? { column: symbol, shapes: plain(shapes.shapes) } : null,
@@ -166,7 +168,7 @@ export class PlotOptions {
     this.lineAggregation = state.lineAggregation;
     // In place: the zones' menu holds the object (zonemenu.js).
     Object.assign(this.showNullRows, state.showNullRows);
-    this.keepColorLevels = state.keepColorLevels;
+    Object.assign(this.keepLevels, state.keepLevels);
     this.wrapCols = state.wrapCols;
     this.#levelSizes = new Map(state.levelSizes.map(([column, sizes]) => [column, Object.assign(Object.create(null), sizes)]));
     const shapes = state.levelShapes;
@@ -177,8 +179,9 @@ export class PlotOptions {
 
   // Sets back the settings `saved` returned, from `state` (`Builder`'s load).
   load(state) {
-    ({ colorBins: this.colorBins, wrapCols: this.wrapCols, keepColorLevels: this.keepColorLevels } = state);
-    // In place: the zones' menu holds the object (zonemenu.js).
+    ({ colorBins: this.colorBins, wrapCols: this.wrapCols } = state);
+    // In place: the zones' menu holds the objects (zonemenu.js).
     Object.assign(this.showNullRows, state.showNullRows);
+    Object.assign(this.keepLevels, state.keepLevels);
   }
 }

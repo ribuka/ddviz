@@ -454,6 +454,18 @@ def test_symbol_levels_take_their_own_shapes() -> None:
     assert spec.marker_shapes(["q"]) == [None]
 
 
+def test_keep_unfiltered_symbol_levels_goes_to_the_spec() -> None:
+    """Off unless asked; on, a categorical symbol's levels are not those of the filter."""
+    encoding = Encoding(x=("a",), y=("b",), symbol="s")
+    files = {c: [f"{c}.parquet"] for c in encoding.columns()}
+    spec = scatter_spec(encoding, files, 400, 300, [])
+    assert not spec.keep_unfiltered_symbol_levels
+    assert "symbol" in spec.levels_of_filter()
+    kept = scatter_spec(encoding, files, 400, 300, [], keep_unfiltered_symbol_levels=True)
+    assert kept.keep_unfiltered_symbol_levels
+    assert "symbol" not in kept.levels_of_filter()
+
+
 def test_keep_unfiltered_color_levels_goes_to_the_spec() -> None:
     """Off unless asked; the spec finds the color levels of the filter only for a categorical color column."""
     encoding = Encoding(x=("a",), y=("b",), color="g")

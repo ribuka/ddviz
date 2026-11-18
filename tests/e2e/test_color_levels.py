@@ -198,11 +198,11 @@ def test_the_levels_of_the_filter_and_the_menu_item(app_page: Page) -> None:
     place(page, "g", "color")
     expect(page.locator(LEGEND_NAMES)).to_have_text([f"g{i}" for i in range(1, 11)])
 
-    # Symbol's menu has Show null rows alone.
+    # Symbol's menu has a setting of its own (Issue #282), off.
     place(page, "s", "symbol")
     page.locator('.zone[data-role="symbol"] .chip').click(button="right")
     expect(page.locator(NULL_ROWS)).to_be_visible()
-    expect(page.locator(KEEP)).to_have_count(0)
+    expect(page.locator(KEEP)).to_have_class("scale-menu-item")
     page.keyboard.press("Escape")
     move(page, "symbol", "#columns")
     wait_idle(page)

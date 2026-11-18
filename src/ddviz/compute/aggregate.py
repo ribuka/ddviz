@@ -420,14 +420,19 @@ def _check_levels(
             over.append((c, refused))
     if not over:
         return
-    # A color or an axis column that keeps its levels counts them before the
+    # A color, a symbol or an axis column that keeps its levels counts them before the
     # filter; any other has them of the rows of the filter, which lowers them.
     refused = {c for c, _ in over}
     settings = [
         name
         for kept, name in (
             (
-                spec.keep_unfiltered_color_levels and spec.color in refused,
+                (spec.keep_unfiltered_color_levels and spec.color in refused)
+                or (
+                    spec.keep_unfiltered_symbol_levels
+                    and "symbol" not in spec.binned
+                    and spec.symbol in refused
+                ),
                 "「フィルタで除外された水準も凡例に残す」",
             ),
             (
