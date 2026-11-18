@@ -19,7 +19,14 @@ import pytest
 from playwright.sync_api import Page, Route, expect
 
 from ddviz.server.settings import ImageCopySettings, PlotSettings, Settings
-from tests.e2e.test_scatter import FRAMES, place, wait_apart, wait_idle
+from tests.e2e.test_scatter import (
+    FRAMES,
+    drawn_task,
+    new_result,
+    place,
+    wait_apart,
+    wait_idle,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -407,10 +414,8 @@ def test_a_scrolled_grid_and_legend_are_copied_whole_as_shown(page: Page) -> Non
     assert page.evaluate("([s, r, c]) => countIn(s, r, (p) => near(p, c, 0))", [scale, whole, accent]) == 0
 
 
-def test_a_selection_panned_out_of_sight_is_cut_at_its_panel(page: Page) -> None:
-    """A box selected, then moved partly above its panel by a pan, is cut at the panel's top edge: nothing of it in the top margin."""
-    place(page, "x", "x")
-    place(page, "y", "y")
+def select_box(page: Page) -> None:
+    """Select rows with a Box Select drag over the middle of the first panel, and wait for its rows' layer."""
     box = page.evaluate(
         """() => {
           const gd = document.getElementById("plot");
@@ -427,8 +432,10 @@ def test_a_selection_panned_out_of_sight_is_cut_at_its_panel(page: Page) -> None
     page.mouse.up()
     wait_idle(page)
     expect(page.locator("#plot .selectionlayer path").first).to_be_attached()
-    # Move the view down by a quarter (a pan, as plotly's relayout): the
-    # box's top leaves the panel.
+
+
+def pan_down(page: Page) -> None:
+    """Move the view down by a quarter (a pan, as plotly's relayout)."""
     page.evaluate(
         """() => {
           const gd = document.getElementById("plot");
@@ -437,6 +444,15 @@ def test_a_selection_panned_out_of_sight_is_cut_at_its_panel(page: Page) -> None
           return Plotly.relayout(gd, { "yaxis.range": [y0 - d, y1 - d] });
         }"""
     )
+
+
+def test_a_selection_panned_out_of_sight_is_cut_at_its_panel(page: Page) -> None:
+    """A box selected, then moved partly above its panel by a pan, is cut at the panel's top edge: nothing of it in the top margin."""
+    place(page, "x", "x")
+    place(page, "y", "y")
+    select_box(page)
+    # The box's top leaves the panel.
+    pan_down(page)
     wait_idle(page)
     page.wait_for_function("() => !document.querySelector('#plot').classList.contains('busy')")
     top = page.evaluate(
@@ -456,6 +472,34 @@ def test_a_selection_panned_out_of_sight_is_cut_at_its_panel(page: Page) -> None
     # The outline still shows inside the panel.
     inside = [ox + panel["left"] + 3, oy + panel["top"] + 3, ox + panel["right"] - 3, oy + panel["bottom"] - 3]
     assert page.evaluate(f"([s, r]) => countIn(s, r, {gray})", [scale, inside]) > 20
+
+
+def test_a_pan_over_a_selection_shows_its_layer_asked_for(page: Page) -> None:
+    """The view a pan draws asks for the selected rows' layer again: until it comes, the status tells 「選んだ行を集約中…」, not the view's rows, and the copy is disabled (Issue #296)."""
+    place(page, "x", "x")
+    place(page, "y", "y")
+    select_box(page)
+    status = page.locator("#status")
+    expect(status).to_contain_text("選んだ行：")
+    task = drawn_task(page)
+    held: list[Route] = []
+    page.route("**/api/selection", lambda route: held.append(route))
+    with page.expect_request("**/api/selection"):
+        pan_down(page)
+        new_result(page, task)
+    page.wait_for_function("() => !document.querySelector('#plot').classList.contains('busy')")
+    page.evaluate(FRAMES)
+    expect(status).to_have_text("選んだ行を集約中…")
+    open_menu(page)
+    expect(page.locator(".plot-menu .scale-menu-item", has_text="Copy graph image")).to_be_disabled()
+    page.keyboard.press("Escape")
+    assert len(held) == 1
+    held[0].continue_()
+    page.unroute("**/api/selection")
+    expect(status).to_contain_text("選んだ行：")
+    wait_idle(page)
+    open_menu(page)
+    expect(page.locator(".plot-menu .scale-menu-item", has_text="Copy graph image")).to_be_enabled()
 
 
 def test_a_wrapped_grid_names_its_wrap_column(page: Page) -> None:

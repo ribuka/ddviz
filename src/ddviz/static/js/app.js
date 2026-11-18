@@ -853,8 +853,12 @@ function resumeShown() {
 
 // Shows the status of a result drawn, and marks the status with its task:
 // tests wait for a new result by the mark, as the text may stay the same.
+// While the selected rows' layer is asked for, the status keeps that
+// request's 「選んだ行を集約中…」 until its layer shows its rows: a view
+// drawn asks for the layer (`setPending(false)`) before it shows its rows.
 function showRows(meta, where = "") {
   statusLine.element.dataset.task = meta.task;
+  if (boxSelection.asking) return;
   statusLine.show(rowsText(meta, where));
 }
 
