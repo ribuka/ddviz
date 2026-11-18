@@ -1585,44 +1585,51 @@ function clearPlot() {
   logWarning.hidden = true;
 }
 
+// Plots the drawn graph again, when there is one and, with `element`, when it draws that element.
+function replot(element = null) {
+  if (!plottedEncoding) return;
+  if (element !== null && !plottedEncoding.elements.includes(element)) return;
+  plot(plottedEncoding);
+}
+
 // Draws the markers of every series in another size, dropping the sizes of
 // single symbol levels: the graph is plotted again.
 function setShapeSize(size) {
   options.setShapeSize(size);
-  if (plottedEncoding) plot(plottedEncoding);
+  replot();
 }
 
 // Draws the shapes of a symbol level in another size: the graph is plotted again.
 function setLevelSize(column, level, size) {
   options.setLevelSize(column, level, size);
-  if (plottedEncoding) plot(plottedEncoding);
+  replot();
 }
 
 // Draws the points of a symbol level in another shape, or in the shape of
 // its place again (null): the graph is plotted again.
 function setLevelShape(column, level, shape) {
   options.setLevelShape(column, level, shape);
-  if (plottedEncoding) plot(plottedEncoding);
+  replot();
 }
 
 // Draws the lines of every series in another width: a graph with them is
 // plotted again.
 function setLineWidth(width) {
   options.lineWidth = width;
-  if (plottedEncoding?.elements.includes("line")) plot(plottedEncoding);
+  replot("line");
 }
 
 // Joins the rows of one X another way: a graph with lines is plotted again.
 function setLineAggregation(aggregation) {
   options.lineAggregation = aggregation;
-  if (plottedEncoding?.elements.includes("line")) plot(plottedEncoding);
+  replot("line");
 }
 
 // Fits the smoothing lines another way: a graph with them is plotted again.
 function setSmoothing(picked) {
   options.smoothing = picked;
   elementBar.setSmoothText(smoothingText(picked));
-  if (plottedEncoding?.elements.includes("smooth")) plot(plottedEncoding);
+  replot("smooth");
 }
 
 let drawnRolesKey = drawnRoles({
@@ -1645,7 +1652,7 @@ let placedRolesKey = placedRoles({ color: null, symbol: null, row: null, col: nu
 // the series change, so the graph is plotted again.
 function setColorBins(bins) {
   options.colorBins = bins;
-  if (plottedEncoding) plot(plottedEncoding);
+  replot();
 }
 
 // Picks the color of a color level, or the palette's again (null).
