@@ -17,8 +17,7 @@ from ddviz.compute.cuts import in_level
 from ddviz.compute.missing import drawn_conditions, is_missing, role_index
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.stacked import marker_boxes, stack_frame
-from ddviz.compute.stacks import DX, DY, PX, PY, Axis, ranked, stack_groups
-from ddviz.shared.layout import GAP, WRAP_GAP, facet_grid, grid_layout
+from ddviz.compute.stacks import DX, DY, PX, PY, pair_axes, ranked, stack_groups
 from ddviz.shared.missing import MISSING
 from ddviz.shared.scatter import BAND, ScatterSpec
 
@@ -114,28 +113,7 @@ def _cell_conditions(spec: ScatterSpec) -> list[pl.Expr]:
 
 def _panel_bins(spec: ScatterSpec) -> tuple[int, int]:
     """Return the pixels of a panel of the drawn result along x and y."""
-    facets = spec.view.facets or spec.view.levels
-    axes = facet_grid(
-        len(facets["row"]),
-        len(facets["col"]),
-        len(spec.x),
-        len(spec.y),
-        spec.wrap,
-        spec.wrap_cols,
-        spec.width,
-        spec.height,
-        spec.margin_left,
-        spec.margin_bottom,
-    )
-    layout = grid_layout(
-        spec.width,
-        spec.height,
-        axes.rows,
-        axes.cols,
-        WRAP_GAP if spec.wrap else GAP,
-        spec.margin_left,
-        spec.margin_bottom,
-    )
+    _, layout = spec.facet_layout(spec.view.facets or spec.view.levels)
     return layout.panel_width, layout.panel_height
 
 
@@ -165,15 +143,14 @@ def _stacked(
     view = spec.view
     xi, yj = spec.x.index(selection.x), spec.y.index(selection.y)
     width, height = _panel_bins(spec)
-    categorical = set(spec.categorical)
-    axis_x = Axis(
-        selection.x in categorical, *view.x_ranges[xi], width, selection.x in spec.log_x
-    )
-    axis_y = Axis(
-        selection.y in categorical,
-        *view.y_ranges[yj],
+    axis_x, axis_y = pair_axes(
+        spec,
+        selection.x,
+        selection.y,
+        view.x_ranges[xi],
+        view.y_ranges[yj],
+        width,
         height,
-        selection.y in spec.log_y,
     )
     x0, x1 = selection.x_range
     y0, y1 = selection.y_range

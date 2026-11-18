@@ -422,3 +422,21 @@ def test_one_categorical_column_on_both_axes_with_nulls(tmp_path: Path) -> None:
     points = _points(agg)
     assert points["row"].to_list() == [0, 2, 3]
     assert agg.pile_bins.height == 0
+
+
+def test_pair_axes_categorical_x_log_y(tmp_path: Path) -> None:
+    """A categorical x is banded and a log y is log, each with its range and pixels."""
+    frame = pl.DataFrame({"g": ["a"], "y": [1.0]})
+    spec = _spec(tmp_path, frame, log_y=["y"])
+    x, y = stacks.pair_axes(spec, "g", "y", (-0.5, 2.5), (0.0, 3.0), 120, 80)
+    assert (x.banded, x.lo, x.hi, x.bins, x.log) == (True, -0.5, 2.5, 120, False)
+    assert (y.banded, y.lo, y.hi, y.bins, y.log) == (False, 0.0, 3.0, 80, True)
+
+
+def test_pair_axes_numeric_x_categorical_y(tmp_path: Path) -> None:
+    """A numeric x is neither banded nor log, and a categorical y is banded."""
+    frame = pl.DataFrame({"g": ["a"], "y": [1.0]})
+    spec = _spec(tmp_path, frame, x=["y"], y=["g"])
+    x, y = stacks.pair_axes(spec, "y", "g", (1.0, 9.0), (-0.5, 4.5), 200, 150)
+    assert (x.banded, x.lo, x.hi, x.bins, x.log) == (False, 1.0, 9.0, 200, False)
+    assert (y.banded, y.lo, y.hi, y.bins, y.log) == (True, -0.5, 4.5, 150, False)

@@ -372,7 +372,7 @@ Parquet の読込と集約は、UI とは別のプロセスで行う（2026-10-2
 
 - `tasks/` に、worker が実行するタスクを種類ごとに置く。`run.py` はタスクの型で関数を選ぶ `run_task`、`columns.py` は schema・nonnull・summary、`plot.py` は plot と selection、`images.py` は系列の画像の書き出し、`table.py` は表のページ、`plotdata.py` は保存する図のデータ（plot_data）。
 - `selection.py` に、範囲選択の条件（`selection_filter`、`selection_columns`）を置く。集約（`aggregate.py`）と表のタスクの両方が使うため、集約から切り出した。描く行の条件（`drawn_conditions`）は `missing.py` にある。
-- 2 か所以上で使う小さな部品は、意味の近いモジュールに 1 つだけ置く（2026-11-15 決定。Issue #199）：行の中心（`bands.band_center`）、「位置が有限で範囲の中」の条件（`axisposition.within`）、非数値の列の番号とラベル（`codes.text_codes`。`tasks/plot.py` の `_column_array` と `tasks/piles.py` の `_array` が使い、数値の列の扱いはそれぞれに残す）。理由：片方だけ直すと、集約と範囲選択、ホバーと積み重ねで食い違うため。
+- 2 か所以上で使う小さな部品は、意味の近いモジュールに 1 つだけ置く（2026-11-15 決定。Issue #199）：行の中心（`bands.band_center`）、「位置が有限で範囲の中」の条件（`axisposition.within`）、非数値の列の番号とラベル（`codes.text_codes`。`tasks/plot.py` の `_column_array` と `tasks/piles.py` の `_array` が使い、数値の列の扱いはそれぞれに残す）、facet の水準からのパネルの配置（`ScatterSpec.facet_layout`。`facet_grid` と `grid_layout` を `WRAP_GAP if wrap else GAP` で呼ぶ。集約の `_drawn`、範囲選択の `_panel_bins`、結果を使い回せるかの判定 `derive.py` が使う。2026-11-19 決定。Issue #305）、組の x・y の `Axis`（`stacks.pair_axes`。集約と範囲選択の `_stacked` が使う。Issue #305）。理由：片方だけ直すと、集約と範囲選択、ホバーと積み重ね、描く図と結果の使い回しの判定で食い違うため。配置を `shared/layout.py` ではなく `ScatterSpec` のメソッドに置くのは、`layout` が `scatter` を import すると `scatter → layout` の向きと循環するため。`pair_axes` を `compute/stacks.py` に置くのは、`Axis` が compute 側の型で `shared` から import できないため。
 - 進捗のメッセージの型 `Emit` は `progress.py` の 1 か所に置く（以前は `task.py` と `convert.py` の 2 か所にあった）。
 
 タスクと manifest の型（2026-10-30 決定）：

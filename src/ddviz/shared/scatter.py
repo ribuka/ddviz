@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 
-from ddviz.shared.layout import MARGIN_BOTTOM, MARGIN_LEFT
+from ddviz.shared.layout import (
+    GAP,
+    MARGIN_BOTTOM,
+    MARGIN_LEFT,
+    WRAP_GAP,
+    AxisGrid,
+    GridLayout,
+    facet_grid,
+    grid_layout,
+)
 from ddviz.shared.missing import MISSING, MISSING_SHAPE
 from ddviz.shared.shapes import default_shape
 
@@ -697,6 +707,52 @@ class ScatterSpec:
             )
             for i, v in enumerate(symbol_levels)
         ]
+
+    def facet_layout(
+        self, levels: Mapping[str, Sequence]
+    ) -> tuple[AxisGrid, GridLayout]:
+        """Return the panels of the figure and their layout for its facet levels.
+
+        The drawn result, the box selection and the check whether a result
+        can stand for a task all place the panels here, so they agree on
+        each panel's size.
+
+        Parameters
+        ----------
+        levels : Mapping of str to Sequence
+            The levels of each role; only those of ``"row"`` and ``"col"``
+            are counted.
+
+        Returns
+        -------
+        AxisGrid
+            The panels (`ddviz.shared.layout.facet_grid`).
+        GridLayout
+            Their layout in the figure (`ddviz.shared.layout.grid_layout`),
+            `WRAP_GAP` apart for a wrapped grid, else `GAP`.
+        """
+        axes = facet_grid(
+            len(levels["row"]),
+            len(levels["col"]),
+            len(self.x),
+            len(self.y),
+            self.wrap,
+            self.wrap_cols,
+            self.width,
+            self.height,
+            self.margin_left,
+            self.margin_bottom,
+        )
+        layout = grid_layout(
+            self.width,
+            self.height,
+            axes.rows,
+            axes.cols,
+            WRAP_GAP if self.wrap else GAP,
+            self.margin_left,
+            self.margin_bottom,
+        )
+        return axes, layout
 
     def to_dict(self) -> dict:
         """Return the spec as a JSON-ready dict.
