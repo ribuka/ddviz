@@ -1935,6 +1935,29 @@ def test_a_double_click_on_a_numeric_axis_sets_its_range_ticks_and_lines(
     assert page.evaluate(f"[{full}.yaxis.dtick, {full}.shapes.length]") == [0.5, 2]
     assert len(views) == 1
 
+    # The pencil edits the line's value in the list; Apply moves the line on
+    # every panel of the column, asking the server for nothing.
+    plots: list[str] = []
+    page.on("request", lambda r: "/api/plot" in r.url and plots.append(r.url))
+    page.mouse.dblclick(tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2)
+    expect(dialog).to_be_visible()
+    dialog.locator(".axis-dialog-line-edit").click()
+    field = dialog.locator("input.axis-dialog-line-input")
+    expect(field).to_have_value("0.25")
+    field.fill("-0.5")
+    field.press("Enter")
+    expect(dialog.locator(".axis-dialog-line-value")).to_have_text(["-0.5"])
+    dialog.get_by_role("button", name="適用").click()
+    page.wait_for_function(
+        f"{full}.shapes.length === 2 && {full}.shapes.every((s) => s.y0 === -0.5)"
+    )
+    shapes = page.evaluate(f"{full}.shapes.map((s) => [s.yref, s.y0, s.y1, s.line.dash])")
+    assert shapes == [["y", -0.5, -0.5, "dash"], ["y2", -0.5, -0.5, "dash"]]
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    assert plots == []
+    assert len(views) == 1
+
     # Emptied ticks and no lines are plotly's own again.
     page.mouse.dblclick(tick["x"] + tick["width"] / 2, tick["y"] + tick["height"] / 2)
     dialog.locator("input[name=dtick]").fill("")
