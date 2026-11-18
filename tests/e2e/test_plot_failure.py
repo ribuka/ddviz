@@ -394,7 +394,12 @@ def test_a_failure_keeps_the_zoom_and_the_selection(app_page: Page) -> None:
     with page.expect_response("**/api/view") as filtered:
         level.locator("input").check()
     assert filtered.value.ok
-    expect(status).to_contain_text("（フィルタ後）")
+    # The filtered view is drawn; the status tells the selected rows over it
+    # once their layer comes (its own request, after the view).
+    meta = filtered.value.json()["meta"]
+    assert meta["filters"]
+    expect(status).to_have_attribute("data-task", str(meta["task"]))
+    expect(status).to_contain_text("選んだ行：")
     # The page logs only the images this test failed.
     assert [e.splitlines()[0].split(" of task")[0] for e in errors] == ["Error: images"]
 
