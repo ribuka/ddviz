@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 
 from ddviz.compute import aggregate as aggregate_module
+from ddviz.compute import foundlevels
 from ddviz.compute.aggregate import aggregate
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.server.figure import build_figure
@@ -229,9 +230,9 @@ def test_the_reading_stops_once_past_the_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Read 100 rows at a time, the second slice passes 100 levels: no slice after it is read, and nothing is binned."""
-    monkeypatch.setattr(aggregate_module, "LEVEL_ROWS_PER_PASS", 100)
+    monkeypatch.setattr(foundlevels, "LEVEL_ROWS_PER_PASS", 100)
     read = []
-    values = aggregate_module._values_among_filter
+    values = foundlevels.values_among_filter
 
     def counted(spec: ScatterSpec, column: str, start: int, length: int) -> pl.Series:
         read.append(start)
@@ -240,7 +241,7 @@ def test_the_reading_stops_once_past_the_limit(
     def no_bins(*args: object, **kwargs: object) -> None:
         raise AssertionError("binned")
 
-    monkeypatch.setattr(aggregate_module, "_values_among_filter", counted)
+    monkeypatch.setattr(foundlevels, "values_among_filter", counted)
     monkeypatch.setattr(aggregate_module, "_binned", no_bins)
     monkeypatch.setattr(aggregate_module, "stacked_bins", no_bins)
     # Every level is kept: the first slice has v1 to v100, the second v101
@@ -255,6 +256,6 @@ def test_the_levels_of_slices_are_merged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Read 100 rows at a time, the levels are those of every slice, in natural order."""
-    monkeypatch.setattr(aggregate_module, "LEVEL_ROWS_PER_PASS", 100)
+    monkeypatch.setattr(foundlevels, "LEVEL_ROWS_PER_PASS", 100)
     spec = _spec(tmp_path, _frame(), filters=[Filter("k", levels=["149", "3", "120"])])
     assert aggregate(spec).levels["color"] == ["v4", "v121", "v150"]

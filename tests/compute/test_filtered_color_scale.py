@@ -9,7 +9,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from ddviz.compute import aggregate as aggregate_module
+from ddviz.compute import foundcolor
 from ddviz.compute.aggregate import COUNT, Aggregation, aggregate
 from ddviz.compute.cuts import cut_labels
 from ddviz.shared.missing import MISSING
@@ -179,13 +179,13 @@ def test_a_view_finds_the_scale_of_its_filter_only_when_asked(
 ) -> None:
     """A view of the same filter (a zoom, a size, a selection) keeps the scale it is given; one of another filter finds it once; one given a scale kept uses it."""
     calls = []
-    found = aggregate_module._found_color_scale
+    found = foundcolor.found_color_scale
 
     def counted(*args: object, **kwargs: object) -> object:
         calls.append(kwargs.get("filtered"))
         return found(*args, **kwargs)
 
-    monkeypatch.setattr(aggregate_module, "_found_color_scale", counted)
+    monkeypatch.setattr(foundcolor, "found_color_scale", counted)
     spec = _binned(tmp_path, 2, "values")
     overview = aggregate(spec)
     # Without a filter, the overview's every row is the scale: no pass more.

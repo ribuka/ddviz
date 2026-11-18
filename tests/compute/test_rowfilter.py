@@ -40,7 +40,7 @@ def _kept(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 def _auto(values: pl.Series) -> tuple[float, float]:
-    """Return the padded range of the finite values (`ddviz.compute.aggregate._padded`)."""
+    """Return the padded range of the finite values (`ddviz.compute.foundranges.padded`)."""
     finite = values.filter(values.is_finite())
     lo, hi = finite.min(), finite.max()
     pad = (hi - lo) * 0.02

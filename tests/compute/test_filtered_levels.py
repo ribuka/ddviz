@@ -1,4 +1,4 @@
-"""Whatever the plot draws follows the rows of the local filter: the levels of the categorical axes and roles, and the missing levels (`ddviz.compute.aggregate._found_levels`)."""
+"""Whatever the plot draws follows the rows of the local filter: the levels of the categorical axes and roles, and the missing levels (`ddviz.compute.foundlevels.found_levels`)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from ddviz.compute import aggregate as aggregate_module
+from ddviz.compute import foundlevels
 from ddviz.compute.aggregate import aggregate
 from ddviz.server.plan import FACET_BINS
 from ddviz.shared.missing import MISSING
@@ -217,13 +217,13 @@ def test_a_view_that_knows_the_levels_reads_none(
     spec = _spec(tmp_path, x=["cx"], categorical=["cx"], symbol="s", filters=CAT_A)
     whole = aggregate(spec)
     read = []
-    among = aggregate_module._levels_among_filter
+    among = foundlevels.levels_among_filter
 
     def counted(spec: ScatterSpec, column: str, limit: int) -> object:
         read.append(column)
         return among(spec, column, limit)
 
-    monkeypatch.setattr(aggregate_module, "_levels_among_filter", counted)
+    monkeypatch.setattr(foundlevels, "levels_among_filter", counted)
     known = View(
         x_ranges=[None],
         y_ranges=[None],
