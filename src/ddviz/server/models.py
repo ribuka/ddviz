@@ -29,7 +29,11 @@ class PlotRequest(BaseModel):
     ``margin_bottom`` the bottom margin, for the x tick labels at an angle
     set (`ddviz.shared.layout.bottom_margin`). ``keep_unfiltered_color_levels``
     keeps the levels of a categorical color column over every row
-    (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_color_levels`).
+    (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_color_levels`), and
+    ``keep_unfiltered_axis_levels`` those of the categorical x and y columns
+    it names, kept as sent for `ddviz.server.plotoptions.parse_keep_axis_levels`
+    to check
+    (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_axis_levels`).
     ``wrap_cols``, ``shape_size`` and ``line_width`` are kept as sent, for
     `ddviz.server.plotoptions` to take JSON integers only, and
     ``line_aggregation`` for it to give the reason of a wrong one.
@@ -57,6 +61,7 @@ class PlotRequest(BaseModel):
     show_null_rows: ShowNullRows = ShowNullRows()
     axis_scales: object = None
     keep_unfiltered_color_levels: StrictBool = False
+    keep_unfiltered_axis_levels: object = []
     color_scale: object = None
     cuts: object = None
 

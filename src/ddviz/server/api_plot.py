@@ -31,6 +31,7 @@ from ddviz.server.hover import HoverIndex
 from ddviz.server.models import PlotRequest, SizeRequest, ViewRequest
 from ddviz.server.plan import (
     FACET_BINS,
+    categorical_axes,
     color_kind,
     cut_roles,
     drawable,
@@ -42,6 +43,7 @@ from ddviz.server.plotoptions import (
     parse_color_bins,
     parse_color_scale,
     parse_cuts,
+    parse_keep_axis_levels,
     parse_level_shapes,
     parse_line_aggregation,
     parse_line_width,
@@ -297,7 +299,8 @@ def plot_router(
                 400, "x and y need a column, or y numeric columns alone"
             )
         # Checked before the conversion: the scale kept of a color neither a
-        # gradient nor cut is none.
+        # gradient nor cut is none, and the axes that keep their levels are
+        # categorical axis columns of the graph.
         try:
             color_scale = parse_color_scale(
                 request.color_scale,
@@ -305,6 +308,9 @@ def plot_router(
                 max_levels,
             )
             cuts = parse_cuts(request.cuts, cut_roles(encoding, numeric), FACET_BINS)
+            keep_axis_levels = parse_keep_axis_levels(
+                request.keep_unfiltered_axis_levels, categorical_axes(encoding, numeric)
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         # The page refuses edits while converting; a plot now would kill the conversion.
@@ -340,6 +346,7 @@ def plot_router(
                 line_width=line_width,
                 line_aggregation=line_aggregation,
                 keep_unfiltered_color_levels=request.keep_unfiltered_color_levels,
+                keep_unfiltered_axis_levels=keep_axis_levels,
             )
             spec = replace(spec, color_scale=color_scale, kept_cuts=cuts)
         except ValueError as error:

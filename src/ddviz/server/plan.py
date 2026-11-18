@@ -324,6 +324,30 @@ def cut_roles(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
     ]
 
 
+def categorical_axes(encoding: Encoding, numeric: dict[str, bool]) -> list[str]:
+    """Return the categorical x and y columns of a graph: those drawn in bands, one per level.
+
+    Parameters
+    ----------
+    encoding : Encoding
+        The graph.
+    numeric : dict of str to bool
+        Whether each column is numeric (a temporal one is).
+
+    Returns
+    -------
+    list of str
+        The columns, once each, as `scatter_spec` makes them
+        `ScatterSpec.categorical`, but the one band of a graph without x,
+        which is no column.
+    """
+    return [
+        c
+        for c in dict.fromkeys([*encoding.x, *encoding.y])
+        if not numeric.get(c, True)
+    ]
+
+
 def scatter_spec(
     encoding: Encoding,
     files: dict[str, list[str]],
@@ -349,6 +373,7 @@ def scatter_spec(
     line_width: int | None = None,
     line_aggregation: str = "raw",
     keep_unfiltered_color_levels: bool = False,
+    keep_unfiltered_axis_levels: list[str] | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -438,6 +463,13 @@ def scatter_spec(
         How the lines treat the rows of one x
         (`ddviz.server.plotoptions.parse_line_aggregation`,
         `ScatterSpec.line_aggregation`).
+    keep_unfiltered_color_levels : bool, optional
+        Whether a categorical color column keeps its levels over every row
+        (`ScatterSpec.keep_unfiltered_color_levels`).
+    keep_unfiltered_axis_levels : list of str, optional
+        The categorical x and y columns whose bands are the levels over
+        every row (`ddviz.server.plotoptions.parse_keep_axis_levels`,
+        `ScatterSpec.keep_unfiltered_axis_levels`); None for none.
 
     Returns
     -------
@@ -532,4 +564,5 @@ def scatter_spec(
         margin_left=left_margin(margin_left, width),
         margin_bottom=bottom_margin(margin_bottom, height),
         keep_unfiltered_color_levels=keep_unfiltered_color_levels,
+        keep_unfiltered_axis_levels=list(keep_unfiltered_axis_levels or []),
     )

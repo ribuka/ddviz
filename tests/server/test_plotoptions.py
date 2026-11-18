@@ -11,6 +11,7 @@ from ddviz.server.plotoptions import (
     parse_color_bins,
     parse_color_scale,
     parse_cuts,
+    parse_keep_axis_levels,
     parse_level_shapes,
     parse_line_aggregation,
     parse_line_width,
@@ -348,3 +349,19 @@ def test_parse_range_levels_refuses_another_form(raw: object) -> None:
     """Levels of a column that is no categorical axis, or not a list of at most the most levels of strings, are refused naming ``range_levels``."""
     with pytest.raises(ValueError, match="range_levels"):
         parse_range_levels(raw, ["g"], 2)
+
+
+def test_parse_keep_axis_levels_takes_categorical_axis_columns() -> None:
+    """The categorical axis columns named are kept once each; none is an empty list."""
+    assert parse_keep_axis_levels(["g", "h", "g"], ["g", "h"]) == ["g", "h"]
+    assert parse_keep_axis_levels([], ["g"]) == []
+    assert parse_keep_axis_levels([], []) == []
+
+
+@pytest.mark.parametrize(
+    "raw", [None, "g", {"g": True}, ["g", 1], [None], ["v"], ["unknown"]]
+)
+def test_parse_keep_axis_levels_refuses_another_form(raw: object) -> None:
+    """Not a list of strings, or a column that is not a categorical axis column of the graph (a numeric one, one unknown), is refused naming ``keep_unfiltered_axis_levels``."""
+    with pytest.raises(ValueError, match="keep_unfiltered_axis_levels"):
+        parse_keep_axis_levels(raw, ["g"])

@@ -439,6 +439,10 @@ class FigureMeta(TypedDict):
     facet_labels: list[dict]
     # The levels of each categorical axis column.
     axis_levels: dict[str, list[str]]
+    # The categorical axis columns whose levels are those of every row, the
+    # local filter aside (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_axis_levels`):
+    # the page checks them in the axis menu (``static/js/axismenu.js``).
+    keep_unfiltered_axis_levels: list[str]
     # Whether the x axis is the one band (`ddviz.shared.scatter.ONE_BAND`).
     one_band: bool
     # The kind of each temporal column (`ddviz.shared.temporal.KINDS`): a
@@ -706,6 +710,7 @@ def _meta(
         scroll=layout.scroll,
         facet_labels=labels,
         axis_levels=manifest.axis_levels,
+        keep_unfiltered_axis_levels=list(spec.keep_unfiltered_axis_levels),
         one_band=spec.x == [ONE_BAND],
         temporal=spec.temporal,
     )

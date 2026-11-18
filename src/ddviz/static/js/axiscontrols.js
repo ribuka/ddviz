@@ -12,6 +12,7 @@ import {
 import { axisAt, labelAt, yMarginAt } from "./axishit.js";
 import { AxisDirections, ascending, oriented } from "./axisdirection.js";
 import { axisKey } from "./axiskey.js";
+import { AxisLevels } from "./axislevels.js";
 import { openAxisMenu } from "./axismenu.js";
 import { AxisScales } from "./axisscale.js";
 import { sameOrder, sameRange } from "./ranges.js";
@@ -19,8 +20,9 @@ import { linearRange, plotlyRange } from "./temporal.js";
 
 // Returns the drawing settings of the axes (`AxisControls.settings`) of the
 // dialog's settings and the angles (Maps by column and by role and column)
-// and the log and reversed columns (`{x, y}` of Sets), as JSON values sorted.
-function axisSettings(dialog, angles, logs, reversed) {
+// and the log and reversed columns (`{x, y}` of Sets) and the columns that
+// keep the levels of every row (a Set), as JSON values sorted.
+function axisSettings(dialog, angles, logs, reversed, keepLevels) {
   const sorted = (map) => [...map].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const columns = (sets) => ({ x: [...sets.x].sort(), y: [...sets.y].sort() });
   return {
@@ -28,25 +30,28 @@ function axisSettings(dialog, angles, logs, reversed) {
     angles: sorted(angles),
     logs: columns(logs),
     reversed: columns(reversed),
+    keepLevels: [...keepLevels].sort(),
   };
 }
 
 // Returns the drawing settings of the axes `state` changed by `edit`, which
-// gets them as `{dialog, angles, logs, reversed}` of Maps and Sets.
+// gets them as `{dialog, angles, logs, reversed, keepLevels}` of Maps and Sets.
 function editAxisSettings(state, edit) {
   const parts = {
     dialog: new Map(structuredClone(state.dialog)),
     angles: new Map(state.angles),
     logs: { x: new Set(state.logs.x), y: new Set(state.logs.y) },
     reversed: { x: new Set(state.reversed.x), y: new Set(state.reversed.y) },
+    keepLevels: new Set(state.keepLevels),
   };
   edit(parts);
-  return axisSettings(parts.dialog, parts.angles, parts.logs, parts.reversed);
+  return axisSettings(parts.dialog, parts.angles, parts.logs, parts.reversed, parts.keepLevels);
 }
 
 // The settings of the axis columns kept while the page is open: the dialog's
 // ticks, labels and reference lines, the angle of the tick labels, the log
-// scale and the direction; and the axes' right-click menu and double click.
+// scale, the direction and the levels of a categorical column; and the axes'
+// right-click menu and double click.
 export class AxisControls {
   // The settings of the axis columns with a dialog (`axisdialog.js`: numeric
   // and temporal), by column name: their ticks, the format of their labels
@@ -66,6 +71,8 @@ export class AxisControls {
   scales = new AxisScales();
   // The direction of each x and y column while the input is open (`axisdirection.js`).
   directions = new AxisDirections();
+  // The categorical columns that keep the levels of every row (`axislevels.js`).
+  levels = new AxisLevels();
   settingsOf = (column) => this.#settings.get(column);
   angleOf = (role, column) => this.#angles.get(`${role}:${column}`) ?? null;
 
@@ -111,9 +118,16 @@ export class AxisControls {
 
   // Returns the settings of the axis columns as JSON values, for the drawing
   // settings of undo and redo (`history.js`): the dialog's and the angles by
-  // column, and the log and reversed columns of each role.
+  // column, the log and reversed columns of each role, and the columns that
+  // keep the levels of every row.
   settings() {
-    return axisSettings(this.#settings, this.#angles, this.scales.logs, this.directions.reversed);
+    return axisSettings(
+      this.#settings,
+      this.#angles,
+      this.scales.logs,
+      this.directions.reversed,
+      this.levels.columns(),
+    );
   }
 
   // Sets the settings of the axis columns from `state` (`settings`), without
@@ -123,6 +137,8 @@ export class AxisControls {
     this.#angles = new Map(state.angles);
     this.scales.clear();
     this.directions.clear();
+    this.levels.clear();
+    for (const column of state.keepLevels) this.levels.set(column, true);
     for (const axis of ["x", "y"]) {
       for (const column of state.logs[axis]) this.scales.set(axis, column, true);
       for (const column of state.reversed[axis]) this.directions.set(axis, column, true);
@@ -193,6 +209,10 @@ export class AxisControls {
       onLog: (log) => this.setLog(meta, axis, column, log),
       reversed: this.directions.isReversed(axis, column),
       onReverse: (reversed) => this.setReversed(axis, column, reversed),
+      // The bands of a categorical column (not the one band of an empty X).
+      keepLevels: (meta.keep_unfiltered_axis_levels ?? []).includes(column),
+      categorical: !(axis === "x" && meta.one_band) && Boolean(meta.axis_levels?.[column]),
+      onKeepLevels: (keep) => this.setKeepLevels(meta, column, keep),
     });
   }
 
@@ -295,6 +315,20 @@ export class AxisControls {
     if (meta !== this.current() || !this.plotted()) return;
     this.scales.set(axis, column, log);
     if ((await this.replot()) === "refused") this.scales.set(axis, column, !log);
+  }
+
+  // Keeps the levels of every row as the bands of a categorical column of the
+  // drawn result `meta`, or takes those of the filter again: the graph is
+  // plotted again, as for a log axis (`setLog`), the column's axes over
+  // their new automatic range when their bands change (`carriedView`). A
+  // refusal (too many levels over every row) keeps the drawn plot, its
+  // selection and the setting.
+  async setKeepLevels(meta, column, keep) {
+    if (meta !== this.current() || !this.plotted()) return;
+    this.levels.set(column, keep);
+    if ((await this.replot()) === "refused" && this.levels.has(column) === keep) {
+      this.levels.set(column, !keep);
+    }
   }
 
   // Listens to the right clicks on the axes, which open their menu, and to
