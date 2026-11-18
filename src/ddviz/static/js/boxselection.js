@@ -134,7 +134,11 @@ export class BoxSelection {
     }
     if (mine !== this.#generation || !this.#state || !bitmaps) {
       closeImages(bitmaps);
-      if (this.#state && mine === this.#generation) this.#state.base = null;
+      // A layer that could not be read is not awaited: the status shows the drawn result's rows again.
+      if (this.#state && mine === this.#generation) {
+        this.#state.base = null;
+        this.showRows(meta);
+      }
       return;
     }
     const state = this.#state;
