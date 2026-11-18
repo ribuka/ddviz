@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 from ddviz.server.settings import PlotSettings, Settings
 from tests.e2e.test_scatter import HAS_COLOR, PAINTED_PIXEL, SETTLED, place
@@ -310,3 +310,46 @@ def close_toasts(page: Page) -> None:
     for button in toasts.get_by_role("button", name="閉じる").all():
         button.click()
     expect(toasts).to_have_count(0)
+
+
+def test_a_failed_show_null_rows_of_wrap_keeps_the_form_and_its_draft(
+    app_page: Page,
+) -> None:
+    """When the images of the plot toggled in the Wrap form do not come, the setting turns back and the form stays open with the draft of the number."""
+    page = app_page
+    expect(page.locator("#columns .column").filter(has_text="k")).to_be_visible()
+    place(page, "x", "x")
+    place(page, "y", "y")
+    place(page, "k", "wrap")
+    expect_panels(page, 4)
+    wrap = page.locator('.zone[data-role="wrap"]')
+    form = page.locator(".wrap-menu")
+    box = form.get_by_role("checkbox", name="Show null rows")
+    manual = form.get_by_role("radio", name="指定")
+    field = form.get_by_label("パネル数")
+    wrap.locator(".chip-name").click(button="right")
+    manual.check()
+    field.fill("7")
+
+    failed: list[str] = []
+
+    def images(route: Route) -> None:
+        if not failed:
+            failed.append(route.request.url)
+            route.fulfill(status=500, body="gone")
+        else:
+            route.continue_()
+
+    page.route("**/api/images/*", images)
+    box.click()
+    expect(page.locator("#status")).to_contain_text("図の画像を読み込めなかった")
+    expect(form).to_be_visible()
+    expect(box).to_be_checked()
+    expect(manual).to_be_checked()
+    expect(field).to_have_value("7")
+    # The drawn graph is plotted again, with the setting turned back.
+    page.wait_for_function(f"() => ({PANELS})() === 4")
+    page.wait_for_function(PAINTED_PIXEL)
+    page.unroute("**/api/images/*")
+    expect(form).to_be_visible()
+    expect(field).to_have_value("7")

@@ -1438,7 +1438,7 @@ Color と symbol の列が null（浮動小数点の NaN も同じ）の行を�
 
 Group X / Group Y / Wrap の列が欠損（null。数値・日時の区間の列は NaN も）の行を、末尾の `(null)` のパネルとして描く。規則は Color / symbol の「欠損の水準」と同じ（`ddviz.compute.missing.is_missing`、`drawn_conditions`、`role_index`）。±inf は今までどおり描かない。
 
-- 設定：欄ごとの boolean で、3 つとも既定 true（ユーザー判断：欠損の行を既定で見せ、隠したいときも切り替えられる）。Color / Symbol と同じく、列の差し替え・削除・移動・交換でも欄に残り、ページを読み直すと true に戻る（保存しない。`static/js/plotoptions.js` の `PlotOptions.showNullRows` の `row` / `col` / `wrap`）。切り替えると全体図を集約し直す（選択は解除）。失敗したら設定を戻す（「欠損の水準」の「失敗したとき」。Wrap のフォームが開いていればチェックも戻る：`wrapmenu.js` の `setWrapNullRows`）。
+- 設定：欄ごとの boolean で、3 つとも既定 true（ユーザー判断：欠損の行を既定で見せ、隠したいときも切り替えられる）。Color / Symbol と同じく、列の差し替え・削除・移動・交換でも欄に残り、ページを読み直すと true に戻る（保存しない。`static/js/plotoptions.js` の `PlotOptions.showNullRows` の `row` / `col` / `wrap`）。切り替えると全体図を集約し直す（選択は解除）。失敗したら設定を戻す（「欠損の水準」の「失敗したとき」。Wrap のフォームが開いていればチェックも戻る：`wrapmenu.js` の `setWrapNullRows`）。ロールバック（`Builder` の `load`）は、Wrap の列が変わらなければフォームとパネル数の下書きを残してチェックだけを戻し、別の列に戻るときだけフォームを閉じる（Issue #101。画像の取得の失敗など `serverAhead` の経路でもフォームが残る。2026-11-18 のクロスレビューの指摘）。
 - 操作：
   - Group X / Group Y：欄（ラベル、チップ、余白）の右クリックで、Color / Symbol と同じメニュー（`static/js/zonemenu.js` の `NULL_ROLES`）にチェック付きの `Show null rows` を出す。欄に列があるときだけ開く。「フィルタで除外された水準も凡例に残す」は Color だけのまま。
   - Wrap：右クリックのフォーム（`static/js/wrapmenu.js`）の見出し「1 行のパネル数」の上にチェックボックス `Show null rows` を足す。切り替えた時点で集約し直し、フォームは閉じない（適用ボタンを待たない。ユーザー判断：Color / Symbol のメニューと同じ即時の動きで、右クリックの入口は 1 つのまま）。パネル数の下書きは残る。
@@ -1448,7 +1448,7 @@ Group X / Group Y / Wrap の列が欠損（null。数値・日時の区間の列
 - ローカルフィルタ（`ddviz.compute.aggregate._facet_levels`）：欠損を描く役割では欠損の行も通して欠損の水準に数え、フィルタに合う行に欠損があるときだけ欠損のパネルを残す。フィルタの (null) のチェックを外せば欠損のパネルは消える。
 - 範囲選択（`ddviz.compute.selection._cell_conditions`）：欠損のパネルで選んだときは、そのパネルの条件を「列が欠損」（`is_missing`）にする（文字列の一致や区間の条件ではない）。
 - 描く行：`drawn_conditions` が `row` / `col` も `null_roles` を見るので、点・箱ひげ図・平滑線・折れ線・カテゴリの軸の積み上げ・ホバー・範囲選択・選択の表・データの保存（`Drawn rows`）は同じ条件に従う。false なら今までどおり欠損の行を描かない。
-- 確かめたこと（2026-11-18）：`tests/compute/test_missing.py`（カテゴリの Group X / Group Y / Wrap と数値の Group X / Group Y で、`null_roles` に役割があれば水準の末尾が `MISSING` で欠損の行がそのパネルに入り、無ければ除かれること、±inf を描かないこと、上限のエラー、フィルタで欠損のパネルが残る・消えること、欠損のパネルの範囲選択がそのパネルの欠損の行だけを選ぶこと）、`tests/server/test_plan.py` と `test_app.py`（既定 true、false での除外、Wrap は `wrap` の設定だけが効くこと、非 bool と知らないキーで 422）、`tests/server/test_figure.py`（見出しの `(null)` と `(null)（文字列）`）、Chrome の E2E `tests/e2e/test_nulls.py`（Group X / Group Y の欄の右クリックでの切り替えで `(null)` のパネルが出入りすること、Wrap のフォームのチェックで即座に集約し直しフォームが開いたままのこと、欄の移動で設定が残ること、`plot.max_levels` を超える切り替えが失敗すると Color・Group X・Wrap の設定が戻り図が保たれること）。
+- 確かめたこと（2026-11-18）：`tests/compute/test_missing.py`（カテゴリの Group X / Group Y / Wrap と数値の Group X / Group Y で、`null_roles` に役割があれば水準の末尾が `MISSING` で欠損の行がそのパネルに入り、無ければ除かれること、±inf を描かないこと、上限のエラー、フィルタで欠損のパネルが残る・消えること、欠損のパネルの範囲選択がそのパネルの欠損の行だけを選ぶこと）、`tests/server/test_plan.py` と `test_app.py`（既定 true、false での除外、Wrap は `wrap` の設定だけが効くこと、非 bool と知らないキーで 422）、`tests/server/test_figure.py`（見出しの `(null)` と `(null)（文字列）`）、Chrome の E2E `tests/e2e/test_nulls.py`（Group X / Group Y の欄の右クリックでの切り替えで `(null)` のパネルが出入りすること、Wrap のフォームのチェックで即座に集約し直しフォームが開いたままのこと、欄の移動で設定が残ること、`plot.max_levels` を超える切り替えが失敗すると Color・Group X・Wrap の設定が戻り図が保たれること、Wrap のフォームでの切り替えの画像の取得が失敗してもフォームと下書きが残りチェックが戻ること）。
 
 ### カテゴリの軸の点の重なり（2026-11-05 ユーザー判断・実装。Issue #86。計測は「カテゴリの軸の点の重なりの集約」）
 

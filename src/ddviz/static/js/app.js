@@ -1636,12 +1636,20 @@ const builder = new Builder(
       ...options.saved(),
     }),
     load: (state) => {
+      const wrap = plottedEncoding?.wrap;
       ({ drawnRolesKey, plottedEncoding } = state);
       options.load(state);
       if (state.elements) elementBar.restore(state.elements);
       options.wrapAuto = current?.wrap_auto_cols ?? null;
       setWrapAuto(options.wrapAuto);
-      closeWrapMenu();
+      // The Wrap form stays, with its draft, for the same wrap column (a
+      // failed "Show null rows" of its own), showing the setting rolled
+      // back; it closes for another one (Issue #101).
+      if (plottedEncoding?.wrap === wrap) {
+        setWrapNullRows(options.showNullRows.wrap);
+      } else {
+        closeWrapMenu();
+      }
     },
   },
 );
