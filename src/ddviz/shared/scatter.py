@@ -217,6 +217,12 @@ class View:
         ``"col"``) whose cuts the worker finds again over the rows of the
         local filter in place of those of ``cuts``, which are of another
         filter.
+    range_levels : dict of str to list of str
+        Levels of the categorical axis columns that the page's ranges
+        (``x_ranges``, ``y_ranges``) are positions of: those of the result
+        it shows. A column whose given range is of other levels than those
+        the view draws takes its automatic range instead (the bands of the
+        levels drawn); one left out keeps the range given.
     """
 
     x_ranges: list[list[float] | None]
@@ -234,6 +240,7 @@ class View:
     find_axis_levels: list[str] = field(default_factory=list)
     find_color_scale: bool = False
     find_cuts: list[str] = field(default_factory=list)
+    range_levels: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

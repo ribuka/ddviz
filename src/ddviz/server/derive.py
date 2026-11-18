@@ -133,6 +133,7 @@ def _view(
     scale: dict | None = None,
     role_cuts: dict[str, dict] | None = None,
     axis_levels: dict[str, list[str]] | None = None,
+    range_levels: dict[str, list[str]] | None = None,
 ) -> View:
     """Return the view of the given ranges with the result's levels, cuts, color range, boxes and smoothing lines.
 
@@ -150,7 +151,9 @@ def _view(
     result's); the worker finds those left out
     (`ddviz.shared.scatter.View.find_axis_levels`), and spans the bands of
     the levels drawn when a categorical axis takes its automatic range.
-    The stacks of the points on
+    `range_levels` are the levels the given ranges of the categorical axes
+    are positions among (`ddviz.shared.scatter.View.range_levels`). The
+    stacks of the points on
     a categorical axis (`ddviz.compute.stacks`) depend on the ranges and
     the size: the worker places them again.
 
@@ -221,6 +224,7 @@ def _view(
         find_axis_levels=find_axis_levels,
         find_color_scale=numeric and scale is None,
         find_cuts=find_cuts,
+        range_levels=dict(range_levels or {}),
     )
 
 
@@ -237,6 +241,7 @@ def resized_spec(
     known: PlotManifest | None = None,
     color_scale: dict | None = None,
     cuts: dict[str, dict] | None = None,
+    range_levels: dict[str, list[str]] | None = None,
 ) -> ScatterSpec:
     """Return the spec of the overview for other ranges, size or filter, reusing its levels.
 
@@ -286,6 +291,11 @@ def resized_spec(
     cuts : dict of str to dict, optional
         The cuts the page keeps (`ddviz.server.plotoptions.parse_cuts`), by
         role; a role left out takes those of the filter.
+    range_levels : dict of str to list of str, optional
+        Levels of the result the page shows, of each categorical axis column
+        whose range it gives (`ddviz.server.plotoptions.parse_range_levels`):
+        a range of other levels than those drawn becomes the automatic one
+        (`ddviz.shared.scatter.View.range_levels`).
 
     Returns
     -------
@@ -340,6 +350,7 @@ def resized_spec(
             scale,
             own_cuts | cuts,
             known_axes,
+            range_levels,
         ),
     )
 
@@ -406,6 +417,10 @@ def unchanged(manifest: PlotManifest | None, spec: ScatterSpec) -> bool:
         )
         and not spec.view.find_axis_levels
         and spec.view.axis_levels == manifest.axis_levels
+        # A range of other levels than those drawn becomes the automatic one.
+        and all(
+            spec.view.axis_levels.get(c) == v for c, v in spec.view.range_levels.items()
+        )
     )
 
 

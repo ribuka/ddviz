@@ -109,8 +109,12 @@ class ViewRequest(SizeRequest):
     """Body of ``POST /api/view``: the data range of each x and y column of the zoomed view and the plot area size.
 
     A null range leaves its column at the automatic range of the request's
-    filter (`ddviz.compute.aggregate.Aggregation.x_auto`).
+    filter (`ddviz.compute.aggregate.Aggregation.x_auto`). ``range_levels``
+    gives, for a categorical axis column with a range, the levels its range
+    is a position among, kept as sent for the server to check
+    (`ddviz.server.plotoptions.parse_range_levels`); null for none.
     """
 
     x_ranges: list[tuple[float, float] | None]
     y_ranges: list[tuple[float, float] | None]
+    range_levels: object = None

@@ -59,6 +59,7 @@ from ddviz.shared.scatter import (
     FilteredLevelsError,
     ScatterSpec,
     Smooths,
+    View,
     filtered_levels_message,
 )
 
@@ -1090,6 +1091,30 @@ def _with_bands(
     ]
 
 
+def _view_ranges(
+    columns: list[str],
+    given: list[list[float] | None],
+    auto: list[tuple[float, float]],
+    view: View,
+    axis_levels: dict[str, list[str]],
+) -> list[tuple[float, float]]:
+    """Return the ranges a view draws its `columns` over: those `given`, or else the automatic ones `auto`.
+
+    A categorical column whose range is given as a position among levels
+    (`View.range_levels`) other than those it draws (`axis_levels`) takes
+    its automatic range, the bands of the levels drawn: the range would
+    show other levels.
+    """
+
+    def stale(c: str) -> bool:
+        return c in view.range_levels and view.range_levels[c] != axis_levels.get(c)
+
+    return [
+        a if r is None or stale(c) else (r[0], r[1])
+        for c, r, a in zip(columns, given, auto, strict=True)
+    ]
+
+
 def _find(
     spec: ScatterSpec,
     roles: dict[str, str | None],
@@ -1134,14 +1159,8 @@ def _find(
         else:
             progress("ranges")
             x_auto, y_auto = _auto_ranges(spec, _log_auto(spec, logs), axis_levels)
-        x_ranges = [
-            a if r is None else (r[0], r[1])
-            for r, a in zip(view.x_ranges, x_auto, strict=True)
-        ]
-        y_ranges = [
-            a if r is None else (r[0], r[1])
-            for r, a in zip(view.y_ranges, y_auto, strict=True)
-        ]
+        x_ranges = _view_ranges(spec.x, view.x_ranges, x_auto, view, axis_levels)
+        y_ranges = _view_ranges(spec.y, view.y_ranges, y_auto, view, axis_levels)
     else:
         # Before the levels: a log axis without a positive value is refused.
         log = _log_auto(spec, logs)

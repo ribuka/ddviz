@@ -221,6 +221,57 @@ def parse_cuts(raw: object, roles: Iterable[str], max_levels: int) -> dict[str, 
     }
 
 
+def parse_range_levels(
+    raw: object, columns: Iterable[str], max_axis_levels: int
+) -> dict[str, list[str]]:
+    """Return the levels of the categorical axes that the page's ranges are positions of, checked against the spec they are for.
+
+    Parameters
+    ----------
+    raw : object
+        The ``range_levels`` of ``POST /api/view``: a dict of a categorical
+        axis column to the levels of the result the page shows
+        (``meta.axis_levels``), or None for none.
+    columns : iterable of str
+        The categorical axis columns of the spec
+        (`ddviz.shared.scatter.ScatterSpec.categorical` but the one band).
+    max_axis_levels : int
+        Most levels of a categorical axis column (``plot.max_axis_levels``).
+
+    Returns
+    -------
+    dict of str to list of str
+        The levels by column (`ddviz.shared.scatter.View.range_levels`).
+
+    Raises
+    ------
+    ValueError
+        When `raw` is neither a dict nor None, has a column not in
+        `columns`, or levels that are not a list of at most
+        `max_axis_levels` strings.
+    """
+    if raw is None:
+        return {}
+    columns = set(columns)
+    unknown = sorted(c for c in raw if c not in columns) if isinstance(raw, dict) else []
+    if not isinstance(raw, dict) or unknown:
+        raise ValueError(
+            "range_levels is a dict of the categorical axis columns "
+            f"({sorted(columns)}) or null: {raw!r}"
+        )
+    for column, levels in raw.items():
+        if (
+            not isinstance(levels, list)
+            or len(levels) > max_axis_levels
+            or not all(isinstance(v, str) for v in levels)
+        ):
+            raise ValueError(
+                f"range_levels of {column} is a list of at most "
+                f"{max_axis_levels} strings: {levels!r}"
+            )
+    return {c: list(v) for c, v in raw.items()}
+
+
 def parse_smoothing(raw: dict | None) -> Smoothing | None:
     """Return how the page asks to fit the smoothing lines, checked.
 
