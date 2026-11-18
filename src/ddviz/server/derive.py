@@ -252,7 +252,10 @@ def resized_spec(
     categorical axis columns, unless `known` is a result of that filter: a
     view aggregated with the new filter while zoomed gives them to the
     next views and to the overview, so that the series and the bands of
-    one filter stay the same. The automatic ranges
+    one filter stay the same. A categorical axis column whose levels are
+    those of every row
+    (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_axis_levels`) keeps
+    the overview's for any filter. The automatic ranges
     (`ddviz.compute.aggregate.Aggregation.x_auto`) come from the overview
     or `known`, whichever is of the filter; else the worker finds them,
     once per filter. So does the color scale of a numeric color column
@@ -318,9 +321,12 @@ def resized_spec(
     if known is not None and known.spec.filters == filters:
         filter_levels = {r: known.all_levels[r] for r in spec.levels_of_filter()}
         auto = known
-    # The one band is no column: it is the same for every filter.
+    # The one band is no column: it is the same for every filter. So are the
+    # levels of every row of an axis column that keeps them: the view does
+    # not find them again among the rows of its filter.
+    kept = [ONE_BAND, *spec.keep_unfiltered_axis_levels]
     known_axes = {
-        **{c: v for c, v in manifest.axis_levels.items() if c == ONE_BAND},
+        **{c: v for c, v in manifest.axis_levels.items() if c in kept},
         **_drawn_axis_levels(known, filters),
         **_drawn_axis_levels(manifest, filters),
     }

@@ -372,8 +372,8 @@ class ScatterSpec:
         the rows they keep (`ddviz.compute.aggregate.aggregate`): the levels
         of the categorical roles (`levels_of_filter`) and axes, the missing
         levels, the automatic ranges, the color scale and the cuts, but for
-        what the page keeps (`keep_unfiltered_color_levels`, `color_scale`,
-        `kept_cuts`).
+        what the page keeps (`keep_unfiltered_color_levels`,
+        `keep_unfiltered_axis_levels`, `color_scale`, `kept_cuts`).
     max_levels : int
         Most levels a color, symbol, row or col column may have; more are refused
         before binning. A numeric column on these roles has about one level
@@ -456,6 +456,13 @@ class ScatterSpec:
         the local filter aside, with those left without rows in the legend;
         otherwise its levels are those of the rows of the local filter
         (`filters_color`).
+    keep_unfiltered_axis_levels : list of str
+        Categorical x and y columns whose bands are the levels over every
+        row, the local filter aside, in their natural order, with those
+        left without rows as empty bands; the other categorical axis
+        columns have the levels of the rows of the local filter. A view of
+        another filter keeps the overview's levels of these
+        (`ddviz.server.derive.resized_spec`).
     color_scale : dict or None
         The color scale of a numeric color column that the page keeps under
         the lock of the axes (``#axis-freeze``): ``{"range": [lo, hi]}`` for
@@ -506,6 +513,7 @@ class ScatterSpec:
     margin_left: int = MARGIN_LEFT
     margin_bottom: int = MARGIN_BOTTOM
     keep_unfiltered_color_levels: bool = False
+    keep_unfiltered_axis_levels: list[str] = field(default_factory=list)
     color_scale: dict | None = None
     kept_cuts: dict[str, dict] = field(default_factory=dict)
 

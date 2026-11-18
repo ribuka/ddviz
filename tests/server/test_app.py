@@ -1948,6 +1948,72 @@ def test_wrong_range_levels_are_refused_before_any_task(
     assert tasks == []
 
 
+def test_a_kept_axis_has_the_levels_of_every_row(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``keep_unfiltered_axis_levels`` keeps the levels of every row of a categorical x, in the meta too; the views and the overview of another filter take them over without finding them again."""
+    keep = {"keep_unfiltered_axis_levels": ["color"]}
+    off = _plot(client, encoding=CATEGORICAL_X, filters=_colors("b", "c"))["meta"]
+    assert off["axis_levels"] == {"color": ["b", "c"]}
+    assert off["keep_unfiltered_axis_levels"] == []
+    on = _plot(client, encoding=CATEGORICAL_X, filters=_colors("b", "c"), **keep)
+    assert on["meta"]["axis_levels"] == {"color": ["a", "b", "c"]}
+    assert on["meta"]["keep_unfiltered_axis_levels"] == ["color"]
+    assert on["meta"]["x_auto"] == [[-0.5, 2.5]]
+    specs = []
+    run = TaskBroker.run
+
+    async def kept_run(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        if isinstance(task, PlotTask):
+            specs.append(task.spec)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", kept_run)
+    every = {"color": ["a", "b", "c"]}
+    zoom = {**SIZE, "x_ranges": [[0.5, 2.5]], "y_ranges": [[-1, 1]]}
+    view = client.post(
+        "/api/view",
+        json={**zoom, "filters": _colors("a"), "range_levels": every},
+    ).json()["meta"]
+    assert view["axis_levels"] == every
+    assert view["keep_unfiltered_axis_levels"] == ["color"]
+    # The levels are the same: the range stays.
+    assert view["x_ranges"] == [[0.5, 2.5]]
+    assert specs[-1].view.find_axis_levels == []
+    whole = client.post("/api/overview", json={**SIZE, "filters": _colors("b")})
+    assert whole.json()["meta"]["axis_levels"] == every
+    assert whole.json()["meta"]["keep_unfiltered_axis_levels"] == ["color"]
+    assert specs[-1].view.find_axis_levels == []
+
+
+def test_wrong_kept_axes_are_refused_before_any_task(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``keep_unfiltered_axis_levels`` naming a column that is not a categorical axis column, or not a list of strings, is a 400 naming it; no task runs, the conversion of the graph's columns included."""
+    # The schema is read once, before the check.
+    client.get("/api/schema")
+    tasks: list[object] = []
+    run = TaskBroker.run
+
+    async def counted(self: TaskBroker, task: object, pool: str = "plot") -> object:
+        tasks.append(task)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", counted)
+    for wrong in (["y"], ["facet"], ["unknown"], "color", {"color": True}, [1], None):
+        response = client.post(
+            "/api/plot",
+            json={
+                "encoding": CATEGORICAL_X,
+                **SIZE,
+                "keep_unfiltered_axis_levels": wrong,
+            },
+        )
+        assert response.status_code == 400, wrong
+        assert "keep_unfiltered_axis_levels" in response.json()["detail"]
+    assert tasks == []
+
+
 def test_the_symbol_levels_follow_the_filter(client: TestClient) -> None:
     """A categorical symbol has the levels of the rows of the filter."""
     filters = [{"column": "facet", "levels": ["q"]}]

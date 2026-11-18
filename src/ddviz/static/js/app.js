@@ -658,6 +658,7 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     filters,
     ...options.request(encoding),
     axis_scales: axes.scales.request(encoding),
+    keep_unfiltered_axis_levels: axes.levels.request(encoding, builder.numeric),
     // Under the lock, the color scale shown (`shownScale`) stays while the color does.
     color_scale: axisRanges.carriedColorScale(shownScale(), encoding.color, options.colorBins),
     // So do the cuts of a numeric symbol, row or col column on its role.
@@ -1758,13 +1759,14 @@ function shownSettings() {
 }
 
 // Returns `settings` with the settings committed at once (`recordImmediate`)
-// as they are now: the axes' but their scales, which a plot commits, and the
+// as they are now: the axes' but their scales and the columns that keep their
+// levels, which a plot commits, and the
 // cards of the filter pane with the conditions of `settings`
 // (`FilterPane.withCards`).
 function withImmediate(settings) {
   return {
     ...settings,
-    axes: { ...axes.settings(), logs: settings.axes.logs },
+    axes: { ...axes.settings(), logs: settings.axes.logs, keepLevels: settings.axes.keepLevels },
     filters: filterPane.withCards(settings.filters),
   };
 }

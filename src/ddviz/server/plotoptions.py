@@ -272,6 +272,44 @@ def parse_range_levels(
     return {c: list(v) for c, v in raw.items()}
 
 
+def parse_keep_axis_levels(raw: object, columns: Iterable[str]) -> list[str]:
+    """Return the categorical axis columns whose bands the page asks to be the levels of every row, checked against the graph.
+
+    Parameters
+    ----------
+    raw : object
+        The ``keep_unfiltered_axis_levels`` of ``POST /api/plot``: a list of
+        column names.
+    columns : iterable of str
+        The categorical x and y columns of the graph
+        (`ddviz.server.plan.categorical_axes`).
+
+    Returns
+    -------
+    list of str
+        The columns, once each
+        (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_axis_levels`).
+
+    Raises
+    ------
+    ValueError
+        When `raw` is not a list of strings, or names a column not in
+        `columns`.
+    """
+    columns = list(columns)
+    if not isinstance(raw, list) or not all(isinstance(c, str) for c in raw):
+        raise ValueError(
+            f"keep_unfiltered_axis_levels is a list of column names: {raw!r}"
+        )
+    other = [c for c in raw if c not in columns]
+    if other:
+        raise ValueError(
+            "keep_unfiltered_axis_levels names the categorical x and y columns "
+            f"({columns}), not {other}"
+        )
+    return list(dict.fromkeys(raw))
+
+
 def parse_smoothing(raw: dict | None) -> Smoothing | None:
     """Return how the page asks to fit the smoothing lines, checked.
 

@@ -420,13 +420,28 @@ def _check_levels(
             over.append((c, refused))
     if not over:
         return
-    # A color column that keeps its levels counts them before the filter;
-    # any other has them of the rows of the filter, which lowers them.
-    kept = spec.color if spec.keep_unfiltered_color_levels else None
+    # A color or an axis column that keeps its levels counts them before the
+    # filter; any other has them of the rows of the filter, which lowers them.
+    refused = {c for c, _ in over}
+    settings = [
+        name
+        for kept, name in (
+            (
+                spec.keep_unfiltered_color_levels and spec.color in refused,
+                "「フィルタで除外された水準も凡例に残す」",
+            ),
+            (
+                any(c in refused for c in spec.keep_unfiltered_axis_levels if c in axes),
+                "「フィルタで除外された水準も軸に残す」",
+            ),
+        )
+        if kept
+    ]
     advice = (
         "水準はフィルタの前の行から数える設定のため、別の列を使うか、"
-        "「フィルタで除外された水準も凡例に残す」を外す"
-        if any(c == kept for c, _ in over)
+        + "か".join(settings)
+        + "を外す"
+        if settings
         else "フィルタで水準を絞るか、別の列を使う"
     )
     raise ValueError(
@@ -1126,7 +1141,8 @@ def _find(
     The overview finds the levels over every row (`_overview`) but for
     those of the rows of the local filter (`_found_levels`): the
     categorical roles of `ScatterSpec.levels_of_filter` and the categorical
-    axis columns, when the spec has a filter (a categorical color column
+    axis columns but those of `ScatterSpec.keep_unfiltered_axis_levels`
+    (whose levels are of every row, a view's too), when the spec has a filter (a categorical color column
     always, so that its limit is checked without holding the levels of an
     ID column). It spans the automatic ranges (`_auto_ranges`); a view its
     own, but for a column without one, and finds the automatic ranges
@@ -1146,10 +1162,17 @@ def _find(
         axis_levels = view.axis_levels
         known_boxes = view.boxes
         known_smooths = view.smooths
-        if view.find_levels or view.find_axis_levels:
+        # An axis column that keeps its levels has those of every row, which
+        # the view takes from the overview (`View.axis_levels`).
+        find_axes = [
+            c
+            for c in view.find_axis_levels
+            if c not in spec.keep_unfiltered_axis_levels
+        ]
+        if view.find_levels or find_axes:
             progress("filtered_levels")
             found_levels, found_axes = _found_levels(
-                spec, roles, all_levels, view.find_levels, view.find_axis_levels
+                spec, roles, all_levels, view.find_levels, find_axes
             )
             all_levels = {**all_levels, **found_levels}
             axis_levels = {**axis_levels, **found_axes}
@@ -1167,7 +1190,12 @@ def _find(
         progress("levels")
         if spec.filters:
             find = [r for r in spec.levels_of_filter() if r not in numeric]
-            axes = [c for c in spec.categorical if c != ONE_BAND]
+            # An axis column that keeps its levels has those of every row.
+            axes = [
+                c
+                for c in spec.categorical
+                if c != ONE_BAND and c not in spec.keep_unfiltered_axis_levels
+            ]
         else:
             find = ["color"] if spec.filters_color() else []
             axes = []
