@@ -11,14 +11,15 @@ import polars as pl
 import pytest
 
 from ddviz.compute import aggregate as aggregate_module
+from ddviz.compute import foundranges
 from ddviz.compute.aggregate import (
     COUNT,
     INDEX,
     KEY,
     Aggregation,
-    _range_query,
     aggregate,
 )
+from ddviz.compute.plotscan import range_query
 from ddviz.shared.axisscale import NoPositiveValuesError
 from ddviz.shared.scatter import (
     Filter,
@@ -534,8 +535,8 @@ def test_range_skips_nan_inf_and_null(tmp_path: Path) -> None:
         height=100,
         hover=[],
     )
-    assert _range_query(spec, "v").collect().row(0) == (-2.5, 3.0)
-    assert _range_query(spec, "nan").collect().row(0) == (None, None)
+    assert range_query(spec, "v").collect().row(0) == (-2.5, 3.0)
+    assert range_query(spec, "nan").collect().row(0) == (None, None)
 
 
 def _auto_spec(tmp_path: Path, frame: pl.DataFrame, **fields: object) -> ScatterSpec:
@@ -729,13 +730,13 @@ def test_a_view_finds_the_automatic_ranges_of_its_filter_unless_known(
     spec = _auto_spec(tmp_path, STEPS)
     overview = aggregate(spec)
     calls = []
-    found = aggregate_module._found_ranges
+    found = foundranges.found_ranges
 
     def counted(*args: object, **kwargs: object) -> object:
         calls.append(args[1])
         return found(*args, **kwargs)
 
-    monkeypatch.setattr(aggregate_module, "_found_ranges", counted)
+    monkeypatch.setattr(foundranges, "found_ranges", counted)
     filtered = replace(
         spec,
         filters=[Filter("x", range=[10.0, 20.0])],

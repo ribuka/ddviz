@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 import polars as pl
 
 from ddviz.compute.axisposition import on_axis, position, within
-from ddviz.compute.bands import JITTER_X, band_range, jitter, level_index
+from ddviz.compute.bands import JITTER_X, jitter, level_index
 from ddviz.compute.boxes import (
     GROUP,
     VALUE,
@@ -18,42 +18,30 @@ from ddviz.compute.boxes import (
     is_outlier,
     outlier_position,
 )
-from ddviz.compute.cuts import cut_index, cut_labels, find_cuts
+from ddviz.compute.found import Found, find
+from ddviz.compute.foundranges import LogAxes, log_axes
 from ddviz.compute.lines import VALUE as LINE_VALUE
 from ddviz.compute.lines import LinePixels, line_frame, line_pixels
 from ddviz.compute.missing import (
     drawn_conditions,
-    is_missing,
-    numeric_columns,
-    numeric_roles,
     role_index,
 )
+from ddviz.compute.plotscan import plot_scan
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
-from ddviz.compute.scan import scan_columns
 from ddviz.compute.selection import selection_columns, selection_filter
 from ddviz.compute.smooth import bin_query, fit_lines
 from ddviz.compute.stacked import ROWS, TOP, marker_boxes, stack_frame, stacked_bins
 from ddviz.compute.stacks import pair_axes
 from ddviz.shared.axisscale import (
-    RANGE_PADDING,
-    NoPositiveValuesError,
-    no_positive_message,
-    padded_log_range,
     values,
 )
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import AxisGrid, GridLayout
-from ddviz.shared.missing import MISSING
-from ddviz.shared.natural import natural_key
 from ddviz.shared.scatter import (
     ONE_BAND,
-    Binning,
     Boxes,
-    FilteredLevelsError,
     ScatterSpec,
     Smooths,
-    View,
-    filtered_levels_message,
 )
 
 KEY = "__key"
@@ -73,11 +61,6 @@ MAX_PILES = 100_000
 # about the same time (2.2s and 1.9s on 200M rows). 10M rows at a time
 # peaked a little lower (1.50GB on 200M) but reads the files in more passes.
 ROWS_PER_PASS = 25_000_000
-# Rows the levels of a column among the rows of the local filter are found
-# from at a time (`_levels_among_filter`): the levels of each slice are
-# merged into those found so far, and the reading stops once they pass the
-# limit.
-LEVEL_ROWS_PER_PASS = 25_000_000
 
 
 @dataclass(frozen=True)
@@ -122,7 +105,7 @@ class Aggregation:
         Automatic range of each x and each y column, in the same
         coordinates: a continuous axis spans the finite values (on a log
         axis, the positive ones) of its column alone among the rows that
-        pass the local filter, padded (`_padded`, `padded_log_range`); a
+        pass the local filter, padded (`ddviz.compute.foundranges.padded`, `padded_log_range`); a
         column without one there spans those of every row, and a
         categorical axis its bands. The overview's ranges are these.
     levels : dict
@@ -140,10 +123,10 @@ class Aggregation:
     cuts : dict
         Cuts of each role in the spec's ``binned`` (`ddviz.compute.cuts`);
         those of the color are of the rows of the local filter
-        (`_color_scale`).
+        (`ddviz.compute.foundcolor.color_scale`).
     color_range : tuple of float or None
         For a gradient, the finite minimum and maximum of the color column
-        among the rows of the local filter (`_color_scale`); the bins then
+        among the rows of the local filter (`ddviz.compute.foundcolor.color_scale`); the bins then
         also hold the color of their representative row, and so do the
         selected bins.
     axis_levels : dict
@@ -215,16 +198,6 @@ class Aggregation:
     line_values: pl.Series | None = None
 
 
-def _padded(lo: float | None, hi: float | None) -> tuple[float, float]:
-    """Return a data range with a margin, or a unit range around a constant."""
-    if lo is None or hi is None:
-        return (0.0, 1.0)
-    if lo == hi:
-        return (lo - 0.5, hi + 0.5)
-    pad = (hi - lo) * RANGE_PADDING
-    return (lo - pad, hi + pad)
-
-
 def _bin_expr(value: pl.Expr, bounds: tuple[float, float], n: int) -> pl.Expr:
     """Return the bin index of a position over `bounds` split into `n` bins."""
     lo, hi = bounds
@@ -240,7 +213,7 @@ def _binned(
     Parameters
     ----------
     scan : polars.LazyFrame
-        The rows, with their row index `INDEX` (`_scan`): a slice keeps the
+        The rows, with their row index `INDEX` (`ddviz.compute.plotscan.plot_scan`): a slice keeps the
         index of the whole scan, so the representative row of a bin is the
         same row whichever slice it is in.
     rows : int
@@ -267,687 +240,7 @@ def _binned(
     return found
 
 
-def _scan(
-    spec: ScatterSpec, columns: list[str], row_index: str | None = None
-) -> pl.LazyFrame:
-    """Return a scan of only `columns` of the plot.
-
-    Each query gets its own scan: queries in one `collect_all` sharing a scan
-    followed by a ``select`` made the streaming engine peak at about 6.7GB on
-    100M rows, against about 1.2GB with separate scans.
-    """
-    return scan_columns({c: spec.files[c] for c in dict.fromkeys(columns)}, row_index)
-
-
-def _range_query(
-    spec: ScatterSpec, column: str, filtered: bool = False, log: bool = False
-) -> pl.LazyFrame:
-    """Return the query of the finite minimum and maximum of a numeric column.
-
-    `filtered` takes only the rows of the local filter, reading the column
-    and the filter's columns alone; `log` only the positive values, those
-    a log axis draws.
-    """
-    value = pl.col(column).cast(pl.Float64)
-    # Not ``value.filter(...)``: a filter inside an expression holds the rows
-    # it keeps until the minimum is taken, and the ranges of x and y on 1.11
-    # billion rows went past 6GB; nulls in their place peaked at 0.69GB.
-    finite = pl.when(on_axis(value, log)).then(value)
-    if filtered and spec.filters:
-        scan = _scan(spec, [column, *filter_columns(spec.filters)]).filter(
-            *filter_conditions(spec.filters)
-        )
-    else:
-        scan = _scan(spec, [column])
-    return scan.select(finite.min().alias("min"), finite.max().alias("max"))
-
-
-def _found_ranges(
-    spec: ScatterSpec, columns: list[str], filtered: bool, log: bool = False
-) -> dict[str, tuple[float, float] | None]:
-    """Return the finite (`log`: positive) minimum and maximum of each column, None for one without such a value (`_range_query`)."""
-    if not columns:
-        return {}
-    found = pl.collect_all(
-        [_range_query(spec, c, filtered, log) for c in columns], engine="streaming"
-    )
-    out = {}
-    for c, f in zip(columns, found, strict=True):
-        lo, hi = f.row(0)
-        out[c] = None if lo is None else (lo, hi)
-    return out
-
-
-@dataclass(frozen=True)
-class _LogAxes:
-    """What the rows of the local filter hold for the log axes (`_log_axes`)."""
-
-    ranges: dict[str, tuple[float, float] | None]
-    nonpositive: list[tuple[str, str]]
-
-
-def _log_axes(spec: ScatterSpec) -> _LogAxes:
-    """Return the positive finite range of each column on a log axis, and those with a value not positive.
-
-    Over the rows of the local filter, in one pass per column.
-    """
-    columns = list(dict.fromkeys([*spec.log_x, *spec.log_y]))
-    if not columns:
-        return _LogAxes({}, [])
-    queries = []
-    for c in columns:
-        value = pl.col(c).cast(pl.Float64)
-        # Nulls in place of the others, as `_range_query` does.
-        positive = pl.when(on_axis(value, True)).then(value)
-        queries.append(
-            _scan(spec, [c, *filter_columns(spec.filters)])
-            .filter(*filter_conditions(spec.filters))
-            .select(
-                positive.min().alias("min"),
-                positive.max().alias("max"),
-                (value.is_finite() & (value <= 0)).any().alias("nonpositive"),
-            )
-        )
-    found = pl.collect_all(queries, engine="streaming")
-    ranges, flagged = {}, set()
-    for c, f in zip(columns, found, strict=True):
-        lo, hi, nonpositive = f.row(0)
-        ranges[c] = None if lo is None else (lo, hi)
-        if nonpositive:
-            flagged.add(c)
-    nonpositive = [
-        (role, c)
-        for role, logs in (("x", spec.log_x), ("y", spec.log_y))
-        for c in logs
-        if c in flagged
-    ]
-    return _LogAxes(ranges, nonpositive)
-
-
-@dataclass(frozen=True)
-class _Overview:
-    """What the overview finds over every row (`_overview`)."""
-
-    # The finite minimum and maximum of each numeric axis column, or None.
-    ranges: dict[str, tuple[float, float] | None]
-    levels: dict[str, list]
-    cuts: dict[str, dict]
-    color_range: tuple[float, float] | None
-    axis_levels: dict[str, list[str]]
-
-
-def _check_levels(
-    spec: ScatterSpec,
-    roles: dict[str, str | None],
-    counted: dict[str, int],
-    axes: list[str],
-) -> None:
-    """Refuse the columns with more levels over every row than a role they are on allows.
-
-    A column on the color, symbol, row or col role (`roles`) may have at
-    most `ScatterSpec.max_levels` levels, a categorical x or y column
-    (`axes`) at most `ScatterSpec.max_axis_levels`; a column on both kinds
-    of role has to meet both. These are the roles and axes whose levels are
-    of every row: those of the rows of the local filter are counted there
-    (`_found_levels`).
-
-    Raises
-    ------
-    ValueError
-        Naming each column refused, its levels and the limit it passes.
-    """
-    series = {c for r, c in roles.items() if c and r not in numeric_roles(spec)}
-    over = []
-    for c, n in counted.items():
-        limits = []
-        if c in series:
-            limits.append((spec.max_levels, "Color・Symbol・Group・Wrap の上限"))
-        if c in axes:
-            limits.append((spec.max_axis_levels, "X・Y のカテゴリの軸の上限"))
-        refused = [
-            f"{c} は {n:,} 個で、{name}は {limit:,} 個"
-            for limit, name in limits
-            if n > limit
-        ]
-        if refused:
-            over.append((c, refused))
-    if not over:
-        return
-    # A color, a symbol or an axis column that keeps its levels counts them before the
-    # filter; any other has them of the rows of the filter, which lowers them.
-    refused = {c for c, _ in over}
-    settings = [
-        name
-        for kept, name in (
-            (
-                (spec.keep_unfiltered_color_levels and spec.color in refused)
-                or (
-                    spec.keep_unfiltered_symbol_levels
-                    and "symbol" not in spec.binned
-                    and spec.symbol in refused
-                ),
-                "「フィルタで除外された水準も凡例に残す」",
-            ),
-            (
-                any(c in refused for c in spec.keep_unfiltered_axis_levels if c in axes),
-                "「フィルタで除外された水準も軸に残す」",
-            ),
-        )
-        if kept
-    ]
-    advice = (
-        "水準はフィルタの前の行から数える設定のため、別の列を使うか、"
-        + "か".join(settings)
-        + "を外す"
-        if settings
-        else "フィルタで水準を絞るか、別の列を使う"
-    )
-    raise ValueError(
-        "水準が上限を超えるため描けない（"
-        + "。".join(text for _, refused in over for text in refused)
-        + "）。"
-        + advice
-    )
-
-
-def _overview(
-    spec: ScatterSpec, roles: dict[str, str | None], axes: list[str]
-) -> _Overview:
-    """Return the data range of each numeric axis column and the levels of each role, over every row.
-
-    The ranges and the levels of the categorical roles (`roles`, None for
-    one whose levels are found among the rows of the filter) and of the
-    categorical axis columns `axes` come in one pass, the cuts of each
-    binned role in passes of their own (`ddviz.compute.cuts.find_cuts`). A
-    role that draws its missing rows
-    (`ddviz.shared.scatter.ScatterSpec.null_roles`) ends in the missing
-    level (`ddviz.shared.missing.MISSING`) when its column has a null or NaN
-    value: among the rows of the local filter for a numeric column
-    (`_has_missing`); a categorical column counts it as one of its levels
-    against the limits of its roles (`_check_levels`).
-    """
-    numeric = [
-        c for c in dict.fromkeys([*spec.x, *spec.y]) if c not in spec.categorical
-    ]
-    used = list(
-        dict.fromkeys(
-            [
-                *(c for r, c in roles.items() if c and r not in numeric_roles(spec)),
-                *axes,
-            ]
-        )
-    )
-    # The one band has its level without reading the data.
-    used = [c for c in used if c != ONE_BAND]
-    gradient = [spec.color] if spec.gradient else []
-    # Whether each numeric column of a role that draws its missing rows has
-    # any; a categorical one has a null level among its levels.
-    read_as_numbers = numeric_columns(spec)
-    asked = [
-        c
-        for c in dict.fromkeys(roles[r] for r in spec.null_roles if roles.get(r))
-        if c in read_as_numbers
-    ]
-    # Levels and ranges come from the unfiltered scan: a row filter on the
-    # same pass made the streaming engine peak at about 6.5GB on 100M rows,
-    # against about 1.1GB without it. The ranges of the rows of the filter
-    # come in passes of their own (`_auto_ranges`); these stand in for an
-    # axis column the filter leaves without a value.
-    found = pl.collect_all(
-        [
-            *[_range_query(spec, c) for c in numeric],
-            *[_scan(spec, [c]).group_by(pl.col(c).cast(pl.String)).len() for c in used],
-            *[_range_query(spec, c) for c in gradient],
-        ],
-        engine="streaming",
-    )
-    has_null = _has_missing(spec, asked)
-    color_range = None
-    no_values = False
-    if gradient:
-        lo, hi = found.pop().row(0)
-        no_values = lo is None
-        color_range = (0.0, 1.0) if lo is None else (lo, hi)
-    ranges = {}
-    for c, f in zip(numeric, found, strict=False):
-        lo, hi = f.row(0)
-        ranges[c] = None if lo is None else (lo, hi)
-    column_levels = {}
-    for c, f in zip(used, found[len(numeric) :], strict=True):
-        column_levels[c] = sorted(f[c].drop_nulls().to_list(), key=natural_key)
-        has_null[c] = f[c].null_count() > 0
-    missing = {r for r in spec.null_roles if roles.get(r) and has_null[roles[r]]}
-    # The missing level's name is no text of the data.
-    taken = [c for c in column_levels if MISSING in column_levels[c]]
-    if taken:
-        raise ValueError(_missing_name_message(taken))
-    if ONE_BAND in axes:
-        column_levels[ONE_BAND] = [""]
-    axis_levels = {c: column_levels[c] for c in axes}
-    # The missing level drawn counts as one level of its column.
-    counted = {
-        c: len(v) + any(roles[r] == c for r in missing)
-        for c, v in column_levels.items()
-    }
-    _check_levels(spec, roles, counted, axes)
-    cuts = {
-        role: find_cuts(_scan(spec, [roles[role]]), roles[role], binning)
-        for role, binning in spec.binned.items()
-    }
-    levels = {}
-    for role, c in roles.items():
-        if c is None or (role == "color" and spec.gradient):
-            levels[role] = [None]
-        elif role in cuts:
-            levels[role] = cut_labels(cuts[role], spec.temporal.get(c))
-        else:
-            levels[role] = column_levels[c]
-        if role in missing:
-            # A gradient without a finite value has only the missing level.
-            empty = role == "color" and spec.gradient and no_values
-            levels[role] = [MISSING] if empty else [*levels[role], MISSING]
-    return _Overview(ranges, levels, cuts, color_range, axis_levels)
-
-
-def _values_among_filter(
-    spec: ScatterSpec, column: str, start: int, length: int
-) -> pl.Series:
-    """Return the values of a column, as text, of the rows ``start`` to ``start + length`` that pass the local filter, once each; a null among them if any."""
-    return (
-        _scan(spec, [column, *filter_columns(spec.filters)])
-        .slice(start, length)
-        .filter(*filter_conditions(spec.filters))
-        .select(pl.col(column).cast(pl.String))
-        .unique()
-        .collect(engine="streaming")[column]
-    )
-
-
-def _levels_among_filter(
-    spec: ScatterSpec, column: str, limit: int
-) -> tuple[list[str], bool] | None:
-    """Return the levels of a categorical column among the rows of the local filter, and whether those rows have a null value.
-
-    Reads only the column and the filter's columns, in a pass of its own: a
-    row filter on the overview's pass made it peak far higher
-    (`_overview`). The rows are read `LEVEL_ROWS_PER_PASS` at a time, the
-    levels of each slice merged into those found so far, and the reading
-    stops as soon as they pass `limit`, so that a column of a level per row
-    (an ID) never holds them all. The levels are text, as those found over
-    every row, in natural order, the empty text one of them.
-
-    Returns
-    -------
-    tuple of (list of str, bool) or None
-        The levels and whether a null value is among the rows; None when
-        the levels pass `limit`.
-
-    Raises
-    ------
-    ValueError
-        When a value is the missing level's name.
-    """
-    rows = _scan(spec, [column]).select(pl.len()).collect().item()
-    found: set[str] = set()
-    has_null = False
-    for start in range(0, max(rows, 1), LEVEL_ROWS_PER_PASS):
-        part = _values_among_filter(spec, column, start, LEVEL_ROWS_PER_PASS)
-        has_null = has_null or part.null_count() > 0
-        found.update(part.drop_nulls().to_list())
-        if len(found) > limit:
-            return None
-    if MISSING in found:
-        raise ValueError(_missing_name_message([column]))
-    return sorted(found, key=natural_key), has_null
-
-
-def _has_missing(spec: ScatterSpec, columns: list[str]) -> dict[str, bool]:
-    """Return whether each numeric column has a null or NaN value among the rows of the local filter (every row without a filter).
-
-    Each column is read with the filter's columns alone, apart from the
-    overview's pass (`_overview`).
-    """
-    if not columns:
-        return {}
-    found = pl.collect_all(
-        [
-            _scan(spec, [c, *filter_columns(spec.filters)])
-            .filter(*filter_conditions(spec.filters))
-            .select(is_missing(c, numeric=True).any())
-            for c in columns
-        ],
-        engine="streaming",
-    )
-    return {c: bool(f.item()) for c, f in zip(columns, found, strict=True)}
-
-
-def _role_name(spec: ScatterSpec, role: str) -> str:
-    """Return the name the page gives a role (its zone)."""
-    if role == "col":
-        return "Wrap" if spec.wrap else "Group X"
-    return {"color": "Color", "symbol": "Symbol", "row": "Group Y"}[role]
-
-
-def _found_levels(
-    spec: ScatterSpec,
-    roles: dict[str, str | None],
-    levels: dict[str, list],
-    find: list[str],
-    axes: list[str],
-) -> tuple[dict[str, list], dict[str, list[str]]]:
-    """Return the levels of the roles `find` and of the categorical axis columns `axes` among the rows of the local filter.
-
-    A categorical role (`ddviz.shared.scatter.ScatterSpec.levels_of_filter`)
-    has the levels of its column among those rows (`_levels_among_filter`),
-    then the missing level (`ddviz.shared.missing.MISSING`) when it draws
-    its missing rows and they have a null value, which counts as one level
-    against `ScatterSpec.max_levels`. A numeric role keeps its levels
-    (`levels`), but for the missing level, last when those rows have a null
-    or NaN value (`_has_missing`); a gradient without a finite value over
-    every row has only the missing level, or else its one level. An axis
-    column has the levels of those rows, up to `ScatterSpec.max_axis_levels`.
-    A column on two of them is read once.
-
-    Raises
-    ------
-    FilteredLevelsError
-        Naming each role and axis past its limit.
-    ValueError
-        When a value is the missing level's name.
-    """
-    numeric = numeric_roles(spec)
-    # Each column read, with the limits of its roles and axes.
-    limits: dict[str, list[tuple[int, str, str | None]]] = {}
-    for role in find:
-        if role not in numeric:
-            limits.setdefault(roles[role], []).append(
-                (spec.max_levels, _role_name(spec, role), role)
-            )
-    for c in axes:
-        limits.setdefault(c, []).append(
-            (spec.max_axis_levels, "X・Y のカテゴリの軸", None)
-        )
-    found = {
-        c: _levels_among_filter(spec, c, max(n for n, _, _ in ls))
-        for c, ls in limits.items()
-    }
-    # A facet role the filter leaves without a level to draw keeps the
-    # levels of every row, its panels empty: a figure has a panel at least.
-    # A missing row left is a level of a role that draws it, role by role.
-    empty = [
-        r
-        for r in ("row", "col")
-        if r in find
-        and r not in numeric
-        and found[roles[r]] is not None
-        and not found[roles[r]][0]
-        and not (found[roles[r]][1] and r in spec.null_roles)
-    ]
-    every_row = {
-        c: _levels_among_filter(replace(spec, filters=[]), c, spec.max_levels)
-        for c in dict.fromkeys(roles[r] for r in empty)
-    }
-    of_every_row = {r: every_row[roles[r]] for r in empty}
-    over = []
-    out_levels: dict[str, list] = {}
-    out_axes: dict[str, list[str]] = {}
-    for c, ls in limits.items():
-        for limit, name, role in ls:
-            got = of_every_row.get(role, found[c])
-            if got is None:
-                over.append((name, c, limit))
-                continue
-            column_levels, has_null = got
-            if role is None:
-                if len(column_levels) > limit:
-                    over.append((name, c, limit))
-                out_axes[c] = column_levels
-                continue
-            drawn = list(column_levels)
-            if role in spec.null_roles and has_null:
-                drawn.append(MISSING)
-            if len(drawn) > limit:
-                over.append((name, c, limit))
-            out_levels[role] = drawn
-    if over:
-        raise FilteredLevelsError(filtered_levels_message(over))
-    missing_roles = [r for r in find if r in numeric]
-    has_null = _has_missing(
-        spec, list(dict.fromkeys(roles[r] for r in missing_roles))
-    )
-    for role in missing_roles:
-        normal = [v for v in levels[role] if v != MISSING]
-        if not normal:
-            # A gradient without a finite value over every row.
-            out_levels[role] = [MISSING] if has_null[roles[role]] else [None]
-        else:
-            out_levels[role] = [*normal, MISSING] if has_null[roles[role]] else normal
-    return out_levels, out_axes
-
-
-def _numeric_color(spec: ScatterSpec) -> bool:
-    """Return whether the color column is numeric: a gradient, or cut into intervals."""
-    return spec.gradient or "color" in spec.binned
-
-
-def _found_color_scale(spec: ScatterSpec, filtered: bool) -> dict | None:
-    """Return the color scale of the finite values of a numeric color column, among the rows of the local filter (`filtered`) or every row.
-
-    ``{"range": (lo, hi)}`` for a gradient, the cuts (`find_cuts`) of a
-    column cut into intervals; None without a finite value. The rows of
-    the filter are read in passes of their own, of the color column and the
-    filter's columns alone, as the automatic ranges are (`_range_query`).
-    """
-    if spec.gradient:
-        found = _found_ranges(spec, [spec.color], filtered=filtered)[spec.color]
-        return None if found is None else {"range": found}
-    return _found_cuts(spec, spec.color, spec.binned["color"], filtered)
-
-
-def _found_cuts(
-    spec: ScatterSpec, column: str, binning: Binning, filtered: bool
-) -> dict | None:
-    """Return the cuts (`find_cuts`) of the finite values of a numeric column, among the rows of the local filter (`filtered`) or every row; None without a finite value.
-
-    The rows of the filter are read in a pass of their own, of the column
-    and the filter's columns alone.
-    """
-    if filtered and spec.filters:
-        scan = _scan(spec, [column, *filter_columns(spec.filters)]).filter(
-            *filter_conditions(spec.filters)
-        )
-    else:
-        scan = _scan(spec, [column])
-    cuts = find_cuts(scan, column, binning)
-    return cuts if cuts["breaks"] else None
-
-
-def _color_scale(spec: ScatterSpec, progress: Callable[[str], None]) -> dict | None:
-    """Return the color scale a numeric color column draws with, or None to keep the one known.
-
-    The scale kept by the page (`ScatterSpec.color_scale`) comes first.
-    Else the overview of a filter, and a view that finds it again
-    (`ddviz.shared.scatter.View.find_color_scale`), take that of the rows of
-    the filter; one that the filter leaves without a finite value takes
-    that of every row: the overview's own, or found again by a view. The
-    overview without a filter keeps that of every row, with no pass more.
-    """
-    if not _numeric_color(spec):
-        return None
-    if spec.color_scale is not None:
-        return spec.color_scale
-    view = spec.view
-    if (view is None and not spec.filters) or (
-        view is not None and not view.find_color_scale
-    ):
-        return None
-    progress("scale")
-    found = _found_color_scale(spec, filtered=True)
-    if found is None and spec.filters:
-        if view is None:
-            return None
-        found = _found_color_scale(spec, filtered=False)
-    if found is None:
-        # As the overview has it for a column without a finite value.
-        return (
-            {"range": (0.0, 1.0)} if spec.gradient else {"breaks": [], "values": False}
-        )
-    return found
-
-
-def _role_cuts(
-    spec: ScatterSpec, roles: dict[str, str | None], progress: Callable[[str], None]
-) -> dict[str, dict]:
-    """Return the cuts the roles of ``binned`` but the color (symbol, row, col) draw with; a role left out keeps those known.
-
-    As the color scale (`_color_scale`): the cuts kept by the page
-    (`ScatterSpec.kept_cuts`) come first. Else the overview of a filter,
-    and a view that finds them again (`ddviz.shared.scatter.View.find_cuts`),
-    take those of the rows of the filter; a role that the filter leaves
-    without a finite value takes those of every row: the overview's own,
-    or found again by a view. The overview without a filter keeps those of
-    every row, with no pass more. A column on two roles is read once.
-    """
-    view = spec.view
-    found: dict[str, dict] = {}
-    by_column: dict[tuple[str, Binning], dict | None] = {}
-    for role, binning in spec.binned.items():
-        if role == "color":
-            continue
-        if role in spec.kept_cuts:
-            found[role] = spec.kept_cuts[role]
-            continue
-        if (view is None and not spec.filters) or (
-            view is not None and role not in view.find_cuts
-        ):
-            continue
-        key = (roles[role], binning)
-        if key not in by_column:
-            progress("cuts")
-            cuts = _found_cuts(spec, roles[role], binning, filtered=True)
-            if cuts is None and spec.filters and view is not None:
-                cuts = _found_cuts(spec, roles[role], binning, filtered=False)
-            by_column[key] = cuts
-        cuts = by_column[key]
-        if cuts is not None:
-            found[role] = cuts
-        elif view is not None:
-            # As the overview has it for a column without a finite value.
-            found[role] = {"breaks": [], "values": False}
-    return found
-
-
-def _scaled(
-    spec: ScatterSpec,
-    roles: dict[str, str | None],
-    scale: dict | None,
-    levels: dict[str, list],
-    cuts: dict,
-    color_range: tuple[float, float] | None,
-) -> tuple[dict[str, list], dict, tuple[float, float] | None]:
-    """Return the levels, the cuts and the color range with the color scale `scale` (`_color_scale`, None to keep the one known) and the cuts of the other roles (`cuts`).
-
-    The levels of each role cut into intervals are the names of its cuts,
-    the missing level kept last: a view is given the levels of another
-    result, and the cuts of the rows of its filter.
-    """
-    if scale is not None and spec.gradient:
-        lo, hi = scale["range"]
-        color_range = (float(lo), float(hi))
-    elif scale is not None:
-        cuts = {**cuts, "color": scale}
-    cuts = {
-        role: {"breaks": [float(b) for b in c["breaks"]], "values": bool(c["values"])}
-        for role, c in cuts.items()
-    }
-    named = dict(levels)
-    for role in spec.binned:
-        names = cut_labels(cuts[role], spec.temporal.get(roles[role]))
-        if levels[role][-1:] == [MISSING]:
-            names = [*names, MISSING]
-        named[role] = names
-    return named, cuts, color_range
-
-
-def _missing_name_message(columns: list[str]) -> str:
-    """Return the error of columns with a value that is the missing level's name."""
-    return (
-        f"列 {'、'.join(columns)} の値に欠損の水準の内部名（{MISSING!r}）と同じ"
-        "文字列があるため描けない"
-    )
-
-
-def _facet_levels(
-    spec: ScatterSpec, levels: dict[str, list], cuts: dict[str, dict]
-) -> dict[str, list]:
-    """Return `levels` with the row and col levels left without rows by the local filter dropped.
-
-    Reads only the facet columns and the filter's columns, in a pass of its
-    own: on 100M rows it took at most 0.55s, peaking under 2.0GB.
-    A filter that keeps no rows keeps every panel. A role that draws its
-    missing rows (`ddviz.shared.scatter.ScatterSpec.null_roles`) keeps its
-    missing level only while a row of the filter is missing.
-    """
-    facets = {r: getattr(spec, r) for r in ("row", "col") if getattr(spec, r)}
-    if not spec.filters or not facets:
-        return levels
-    keys = []
-    conditions = {}
-    for r, c in facets.items():
-        numeric = r in spec.binned
-        draws_missing = r in spec.null_roles
-        if numeric:
-            key = cut_index(c, cuts[r])
-            valid = pl.col(c).cast(pl.Float64).is_finite()
-        else:
-            key = pl.col(c).cast(pl.String)
-            valid = pl.col(c).is_not_null()
-        if draws_missing:
-            # The rows of the missing level count in it: -1 for a cut
-            # column, whose levels are the cuts' indexes.
-            missing = is_missing(c, numeric)
-            key = pl.when(missing).then(pl.lit(-1 if numeric else MISSING)).otherwise(key)
-            valid = valid | missing
-        keys.append(key.alias(r))
-        conditions[(c, numeric, draws_missing)] = valid
-    found = (
-        _scan(spec, [*facets.values(), *filter_columns(spec.filters)])
-        .filter(*conditions.values(), *filter_conditions(spec.filters))
-        .group_by(keys)
-        .len()
-        .collect(engine="streaming")
-    )
-    if found.height == 0:
-        return levels
-    kept = dict(levels)
-    for role in facets:
-        present = set(found[role].to_list())
-        if role in spec.binned:
-            present = {MISSING if i == -1 else levels[role][i] for i in present}
-        kept[role] = [v for v in levels[role] if v in present]
-    return kept
-
-
-@dataclass(frozen=True)
-class _Found:
-    """What the overview found, or a view carries: the ranges, levels, cuts and boxes and lines known."""
-
-    x_ranges: list[tuple[float, float]]
-    y_ranges: list[tuple[float, float]]
-    # The automatic ranges of the filter (`Aggregation.x_auto`).
-    x_auto: list[tuple[float, float]]
-    y_auto: list[tuple[float, float]]
-    all_levels: dict[str, list]
-    # The drawn levels: `all_levels` with the facets of the filter.
-    levels: dict[str, list]
-    cuts: dict
-    color_range: tuple[float, float] | None
-    axis_levels: dict[str, list[str]]
-    known_boxes: list[Boxes]
-    known_smooths: list[Smooths]
-
-
-def _index(spec: ScatterSpec, found: _Found, role: str) -> pl.Expr:
+def _index(spec: ScatterSpec, found: Found, role: str) -> pl.Expr:
     """Return the index of each row's level of a role among the drawn levels."""
     return role_index(
         spec, role, found.levels[role], found.all_levels[role], found.cuts.get(role)
@@ -959,8 +252,8 @@ class _Drawn:
     """What every stage after the levels shares: the spec, what was found, the panels and the expressions of each row."""
 
     spec: ScatterSpec
-    found: _Found
-    logs: _LogAxes
+    found: Found
+    logs: LogAxes
     # The columns of the color, symbol, row and col.
     used: list[str]
     axes: AxisGrid
@@ -1009,243 +302,11 @@ class _RowCount:
         if self._rows is None:
             # Any column read from files: the one band has none.
             column = next(c for c in [*self._spec.x, *self._spec.y] if c != ONE_BAND)
-            self._rows = _scan(self._spec, [column]).select(pl.len()).collect().item()
+            self._rows = plot_scan(self._spec, [column]).select(pl.len()).collect().item()
         return self._rows
 
 
-def _log_auto(spec: ScatterSpec, logs: _LogAxes) -> dict[str, tuple[float, float]]:
-    """Return the automatic range of each column on a log axis, as positions.
-
-    The padded exponents of its positive values among the rows of the
-    filter (`_log_axes`), or among every row when the filter leaves it
-    none.
-
-    Raises
-    ------
-    NoPositiveValuesError
-        When a column has no positive value among every row either.
-    """
-    columns = list(dict.fromkeys([*spec.log_x, *spec.log_y]))
-    found = {c: logs.ranges[c] for c in columns}
-    left = [c for c in columns if found[c] is None]
-    if left and spec.filters:
-        found.update(_found_ranges(spec, left, filtered=False, log=True))
-    empty = [
-        (role, c)
-        for role, logged in (("x", spec.log_x), ("y", spec.log_y))
-        for c in logged
-        if found[c] is None
-    ]
-    if empty:
-        raise NoPositiveValuesError(no_positive_message(empty))
-    return {c: padded_log_range(*found[c]) for c in columns}
-
-
-def _linear_auto(
-    spec: ScatterSpec, every_row: dict[str, tuple[float, float] | None] | None
-) -> dict[str, tuple[float, float]]:
-    """Return the automatic range of each numeric column on a linear axis.
-
-    The padded range of its finite values among the rows of the filter,
-    each column alone, in a pass of its own that reads it and the filter's
-    columns; a column the filter leaves without a value takes that of every
-    row (`every_row`, from the overview, or found again), and a column
-    without any value the unit range (`_padded`).
-    """
-    columns = [
-        c
-        for c in dict.fromkeys(
-            [
-                *(c for c in spec.x if c not in spec.log_x),
-                *(c for c in spec.y if c not in spec.log_y),
-            ]
-        )
-        if c not in spec.categorical
-    ]
-    if not spec.filters and every_row is not None:
-        found = {c: every_row[c] for c in columns}
-    else:
-        found = _found_ranges(spec, columns, filtered=True)
-    left = [c for c in columns if found[c] is None]
-    if left and spec.filters:
-        if every_row is None:
-            found.update(_found_ranges(spec, left, filtered=False))
-        else:
-            found.update({c: every_row[c] for c in left})
-    return {c: _padded(*(found[c] or (None, None))) for c in columns}
-
-
-def _auto_ranges(
-    spec: ScatterSpec,
-    log: dict[str, tuple[float, float]],
-    axis_levels: dict[str, list[str]],
-    every_row: dict[str, tuple[float, float] | None] | None = None,
-) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
-    """Return the automatic range of each x and each y column (`Aggregation.x_auto`), given those of the log axes (`_log_auto`)."""
-    linear = _linear_auto(spec, every_row)
-    bands = {c: band_range(v) for c, v in axis_levels.items()}
-
-    def auto(columns: list[str], logged: list[str]) -> list[tuple[float, float]]:
-        return [
-            bands[c] if c in bands else log[c] if c in logged else linear[c]
-            for c in columns
-        ]
-
-    return auto(spec.x, spec.log_x), auto(spec.y, spec.log_y)
-
-
-def _with_bands(
-    columns: list[str], auto: list[list[float]], axis_levels: dict[str, list[str]]
-) -> list[tuple[float, float]]:
-    """Return the automatic ranges `auto` of `columns`, a categorical one spanning the bands of its levels (`axis_levels`)."""
-    return [
-        band_range(axis_levels[c]) if c in axis_levels else (r[0], r[1])
-        for c, r in zip(columns, auto, strict=True)
-    ]
-
-
-def _view_ranges(
-    columns: list[str],
-    given: list[list[float] | None],
-    auto: list[tuple[float, float]],
-    view: View,
-    axis_levels: dict[str, list[str]],
-) -> list[tuple[float, float]]:
-    """Return the ranges a view draws its `columns` over: those `given`, or else the automatic ones `auto`.
-
-    A categorical column whose range is given as a position among levels
-    (`View.range_levels`) other than those it draws (`axis_levels`) takes
-    its automatic range, the bands of the levels drawn: the range would
-    show other levels.
-    """
-
-    def stale(c: str) -> bool:
-        return c in view.range_levels and view.range_levels[c] != axis_levels.get(c)
-
-    return [
-        a if r is None or stale(c) else (r[0], r[1])
-        for c, r, a in zip(columns, given, auto, strict=True)
-    ]
-
-
-def _find(
-    spec: ScatterSpec,
-    roles: dict[str, str | None],
-    logs: _LogAxes,
-    progress: Callable[[str], None],
-) -> _Found:
-    """Return the ranges and levels of the overview, or of a view, then the drawn facet levels.
-
-    The overview finds the levels over every row (`_overview`) but for
-    those of the rows of the local filter (`_found_levels`): the
-    categorical roles of `ScatterSpec.levels_of_filter` and the categorical
-    axis columns but those of `ScatterSpec.keep_unfiltered_axis_levels`
-    (whose levels are of every row, a view's too), when the spec has a filter (a categorical color column
-    always, so that its limit is checked without holding the levels of an
-    ID column). It spans the automatic ranges (`_auto_ranges`); a view its
-    own, but for a column without one, and finds the automatic ranges
-    unless it knows them, and the levels the spec asks for again
-    (`View.find_levels`, `View.find_axis_levels`). A categorical axis spans
-    the bands of its levels. Raises `NoPositiveValuesError` when a log axis
-    has no positive value among every row.
-    """
-    view = spec.view
-    numeric = numeric_roles(spec)
-    if view is not None:
-        all_levels = view.levels
-        cuts = view.cuts
-        color_range = view.color_range
-        if color_range is not None:
-            color_range = (color_range[0], color_range[1])
-        axis_levels = view.axis_levels
-        known_boxes = view.boxes
-        known_smooths = view.smooths
-        # An axis column that keeps its levels has those of every row, which
-        # the view takes from the overview (`View.axis_levels`).
-        find_axes = [
-            c
-            for c in view.find_axis_levels
-            if c not in spec.keep_unfiltered_axis_levels
-        ]
-        if view.find_levels or find_axes:
-            progress("filtered_levels")
-            found_levels, found_axes = _found_levels(
-                spec, roles, all_levels, view.find_levels, find_axes
-            )
-            all_levels = {**all_levels, **found_levels}
-            axis_levels = {**axis_levels, **found_axes}
-        if view.x_auto is not None and view.y_auto is not None:
-            x_auto = _with_bands(spec.x, view.x_auto, axis_levels)
-            y_auto = _with_bands(spec.y, view.y_auto, axis_levels)
-        else:
-            progress("ranges")
-            x_auto, y_auto = _auto_ranges(spec, _log_auto(spec, logs), axis_levels)
-        x_ranges = _view_ranges(spec.x, view.x_ranges, x_auto, view, axis_levels)
-        y_ranges = _view_ranges(spec.y, view.y_ranges, y_auto, view, axis_levels)
-    else:
-        # Before the levels: a log axis without a positive value is refused.
-        log = _log_auto(spec, logs)
-        progress("levels")
-        if spec.filters:
-            find = [r for r in spec.levels_of_filter() if r not in numeric]
-            # An axis column that keeps its levels has those of every row.
-            axes = [
-                c
-                for c in spec.categorical
-                if c != ONE_BAND and c not in spec.keep_unfiltered_axis_levels
-            ]
-        else:
-            find = ["color"] if spec.filters_color() else []
-            axes = []
-        # The levels of the rows of the filter are found on their own,
-        # after the limits of the levels over every row.
-        overview = _overview(
-            spec,
-            {**roles, **dict.fromkeys(find)},
-            [c for c in spec.categorical if c not in axes],
-        )
-        all_levels, cuts = overview.levels, overview.cuts
-        color_range = overview.color_range
-        axis_levels = overview.axis_levels
-        if find or axes:
-            progress("filtered_levels")
-            found_levels, found_axes = _found_levels(
-                spec, roles, all_levels, find, axes
-            )
-            all_levels = {**all_levels, **found_levels}
-            axis_levels = {**axis_levels, **found_axes}
-        known_boxes = []
-        known_smooths = []
-        if spec.filters:
-            progress("ranges")
-        x_auto, y_auto = _auto_ranges(spec, log, axis_levels, overview.ranges)
-        x_ranges, y_ranges = x_auto, y_auto
-    scale = _color_scale(spec, progress)
-    cuts = {**cuts, **_role_cuts(spec, roles, progress)}
-    all_levels, cuts, color_range = _scaled(
-        spec, roles, scale, all_levels, cuts, color_range
-    )
-    if view is not None and view.facets is not None:
-        levels = {**all_levels, **view.facets}
-    else:
-        progress("facets")
-        levels = _facet_levels(spec, all_levels, cuts)
-    return _Found(
-        x_ranges=x_ranges,
-        y_ranges=y_ranges,
-        x_auto=x_auto,
-        y_auto=y_auto,
-        all_levels=all_levels,
-        levels=levels,
-        cuts=cuts,
-        color_range=color_range,
-        axis_levels=axis_levels,
-        known_boxes=known_boxes,
-        known_smooths=known_smooths,
-    )
-
-
-def _drawn(spec: ScatterSpec, found: _Found, logs: _LogAxes, used: list[str]) -> _Drawn:
+def _drawn(spec: ScatterSpec, found: Found, logs: LogAxes, used: list[str]) -> _Drawn:
     """Return the panels of the drawn levels and the expressions of each row's panel and series."""
     levels = found.levels
     axes, layout = spec.facet_layout(levels)
@@ -1299,13 +360,13 @@ def aggregate(
     symbol, row or col, and rows the local filter leaves out (`ddviz.compute.rowfilter`).
     What the plot draws follows the rows of the local filter: the overview
     finds the levels of the categorical roles and axes among them
-    (`_found_levels`; a color or symbol column that keeps its levels has
-    those of every row, `_overview`), and spans the automatic ranges of its
+    (`ddviz.compute.foundlevels.found_levels`; a color or symbol column that keeps its levels has
+    those of every row, `ddviz.compute.foundlevels.overview`), and spans the automatic ranges of its
     filter (`Aggregation.x_auto`); a view takes the levels from the spec,
     but for those of another filter it finds again, and its ranges but for
     those it leaves to the automatic ones. With a filter, the facet levels
     left without rows are then dropped, with their panels
-    (`_facet_levels`), unless the view already knows the facet levels of
+    (`ddviz.compute.foundlevels.facet_levels`), unless the view already knows the facet levels of
     its filter.
 
     With a selection, the selected rows are also aggregated into bins of
@@ -1331,8 +392,8 @@ def aggregate(
     ------
     ValueError
         When a column has more levels than a role it is on allows
-        (`_check_levels`); `FilteredLevelsError` for a column past a limit
-        among the rows of the filter (`_found_levels`).
+        (`ddviz.compute.foundlevels.check_levels`); `FilteredLevelsError` for a column past a limit
+        among the rows of the filter (`ddviz.compute.foundlevels.found_levels`).
     """
     roles = {
         "color": spec.color,
@@ -1343,8 +404,8 @@ def aggregate(
     used = list(dict.fromkeys(c for c in roles.values() if c is not None))
 
     # A selection's layer keeps the ranges of its result.
-    logs = _LogAxes({}, []) if selection_only else _log_axes(spec)
-    found = _find(spec, roles, logs, progress)
+    logs = LogAxes({}, []) if selection_only else log_axes(spec)
+    found = find(spec, roles, logs, progress)
     drawn = _drawn(spec, found, logs, used)
     boxes = _all_boxes(drawn, progress)
     boxes_of = {(b.x, b.y): b for b in boxes}
@@ -1376,7 +437,7 @@ def aggregate(
         progress("rows")
         hover = list(dict.fromkeys(spec.hover))
         rows = (
-            _scan(spec, hover, INDEX)
+            plot_scan(spec, hover, INDEX)
             .join(bins.lazy().select(INDEX), on=INDEX, how="semi")
             .select(INDEX, *hover)
             .collect(engine="streaming")
@@ -1393,7 +454,7 @@ def aggregate(
         if spec.gradient:
             # The top selected row of each bin colors it, as in the result.
             colors = (
-                _scan(spec, [spec.color], INDEX)
+                plot_scan(spec, [spec.color], INDEX)
                 .join(selected.lazy().select(INDEX), on=INDEX, how="semi")
                 .collect(engine="streaming")
             )
@@ -1404,7 +465,7 @@ def aggregate(
         else:
             selected = selected.select(KEY, COUNT)
         selected_rows = (
-            _scan(spec, columns, INDEX)
+            plot_scan(spec, columns, INDEX)
             .filter(*conditions)
             .select(pl.len())
             .collect(engine="streaming")
@@ -1454,7 +515,7 @@ def _all_boxes(drawn: _Drawn, progress: Callable[[str], None]) -> list[Boxes]:
                 continue
             value = pl.col(y_col).cast(pl.Float64)
             frame = (
-                _scan(spec, _kept_columns(spec, [x_col, y_col, *drawn.used]))
+                plot_scan(spec, _kept_columns(spec, [x_col, y_col, *drawn.used]))
                 .filter(
                     pl.col(x_col).is_not_null(),
                     # On a log axis, the box of the positive values.
@@ -1570,7 +631,7 @@ def _pair(
     # The slices are of the scan, before the filter: each holds the same
     # rows whatever the filter keeps.
     return _binned(
-        _scan(spec, [x_col, y_col, *drawn.used, *extra_columns], INDEX),
+        plot_scan(spec, [x_col, y_col, *drawn.used, *extra_columns], INDEX),
         n_rows(),
         query,
     )
@@ -1707,7 +768,7 @@ def _lines(
         for xi, x_col in enumerate(spec.x):
             if (x_col, y_col) not in pairs:
                 continue
-            rows = _scan(
+            rows = plot_scan(
                 spec, _kept_columns(spec, [x_col, y_col, *drawn.used]), INDEX
             ).filter(*_kept(spec))
             frame = line_frame(
@@ -1751,7 +812,7 @@ def _smooths(
     x = pl.col(x_col).cast(pl.Float64)
     y = pl.col(y_col).cast(pl.Float64)
     # On a log axis, only the positive values have a place to be drawn.
-    frame = _scan(spec, _kept_columns(spec, [x_col, y_col, *drawn.used])).filter(
+    frame = plot_scan(spec, _kept_columns(spec, [x_col, y_col, *drawn.used])).filter(
         on_axis(x, x_col in spec.log_x),
         on_axis(y, y_col in spec.log_y),
         *_kept(spec),

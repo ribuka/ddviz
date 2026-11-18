@@ -8,7 +8,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from ddviz.compute import aggregate as aggregate_module
+from ddviz.compute import foundcolor
 from ddviz.compute.aggregate import Aggregation, aggregate
 from ddviz.compute.cuts import cut_labels, find_cuts
 from ddviz.server.plan import FACET_BINS
@@ -113,13 +113,13 @@ def test_a_column_on_two_roles_is_cut_once(
 ) -> None:
     """A column g on symbol and col is read once for both."""
     calls = []
-    found = aggregate_module._found_cuts
+    found = foundcolor.found_cuts
 
     def counted(*args: object, **kwargs: object) -> object:
         calls.append(args[1])
         return found(*args, **kwargs)
 
-    monkeypatch.setattr(aggregate_module, "_found_cuts", counted)
+    monkeypatch.setattr(foundcolor, "found_cuts", counted)
     agg = aggregate(_spec(tmp_path, symbol="g", col="g", filters=G_0_9))
     assert calls == ["g"]
     assert agg.cuts["symbol"] == agg.cuts["col"]
@@ -130,13 +130,13 @@ def test_a_view_finds_the_cuts_of_its_filter_only_when_asked(
 ) -> None:
     """A view of the same filter (a zoom, a size, a selection) keeps the cuts it is given; one of another filter finds them once; cuts kept by the page are drawn as they are."""
     calls = []
-    found = aggregate_module._found_cuts
+    found = foundcolor.found_cuts
 
     def counted(*args: object, **kwargs: object) -> object:
         calls.append(args[1])
         return found(*args, **kwargs)
 
-    monkeypatch.setattr(aggregate_module, "_found_cuts", counted)
+    monkeypatch.setattr(foundcolor, "found_cuts", counted)
     spec = _spec(tmp_path, col="g", symbol="g")
     overview = aggregate(spec)
     # Without a filter, the overview's every row is the cuts: no pass more.

@@ -7,7 +7,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from ddviz.compute import aggregate as aggregate_module
+from ddviz.compute import foundlevels
 from ddviz.compute.aggregate import aggregate
 from ddviz.shared.scatter import Filter, ScatterSpec, View
 
@@ -62,13 +62,13 @@ def test_a_kept_axis_column_is_not_read_among_the_filter(
 ) -> None:
     """The overview finds the levels of a kept axis column in its pass over every row, not among the rows of the filter."""
     read = []
-    among = aggregate_module._levels_among_filter
+    among = foundlevels.levels_among_filter
 
     def counted(spec: ScatterSpec, column: str, limit: int) -> object:
         read.append(column)
         return among(spec, column, limit)
 
-    monkeypatch.setattr(aggregate_module, "_levels_among_filter", counted)
+    monkeypatch.setattr(foundlevels, "levels_among_filter", counted)
     aggregate(_spec(tmp_path, filters=CAT_A, keep_unfiltered_axis_levels=["g"]))
     assert read == []
 
@@ -108,13 +108,13 @@ def test_a_view_of_another_filter_keeps_the_levels_of_a_kept_axis(
     kept = {"keep_unfiltered_axis_levels": ["g"]}
     whole = aggregate(_spec(tmp_path, filters=CAT_A, **kept))
     read = []
-    among = aggregate_module._levels_among_filter
+    among = foundlevels.levels_among_filter
 
     def counted(spec: ScatterSpec, column: str, limit: int) -> object:
         read.append(column)
         return among(spec, column, limit)
 
-    monkeypatch.setattr(aggregate_module, "_levels_among_filter", counted)
+    monkeypatch.setattr(foundlevels, "levels_among_filter", counted)
     view = View(
         x_ranges=[[1.5, 3.5]],
         y_ranges=[None],
