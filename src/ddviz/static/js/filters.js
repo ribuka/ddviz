@@ -317,6 +317,9 @@ export class FilterPane {
     // What scrolls the cards (the list itself in a page without it).
     this.body = root.querySelector(".filter-body") ?? this.list;
     this.head = root.querySelector(".filter-summary");
+    // The dashed "Drop a column to filter": shown only while no card is
+    // there (render). The whole pane takes a drop either way (attachDrop).
+    this.drop = root.querySelector(".filter-drop");
     this.up = root.querySelector(".filter-up");
     this.down = root.querySelector(".filter-down");
     this.state = "open";
@@ -756,6 +759,7 @@ export class FilterPane {
   render() {
     this.cancelReorder();
     this.list.replaceChildren(...this.cards.map((card) => this.cardElement(card)));
+    if (this.drop) this.drop.hidden = this.cards.length > 0;
     this.updateSummary();
   }
 
