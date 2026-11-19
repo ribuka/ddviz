@@ -205,16 +205,39 @@ class _Pair:
 
 
 @dataclass(frozen=True)
+class _OneOf:
+    """One of `values`."""
+
+    values: tuple
+
+
+@dataclass(frozen=True)
 class _Optional:
     """Null, or a value of the shape `shape`."""
 
     shape: object
 
 
-#: Any value, which must only be there.
+#: Any value, which must only be there: one the page passes on to the
+#: server, which refuses a wrong one (the plot fails and the empty graph
+#: stays), or only shows.
 _ANY = object()
 _NAMES = _List(str)
 _COLUMN = (str, type(None))
+_NUMBER = (int, float)
+_OPTIONAL_NUMBER = (int, float, type(None))
+#: A reference line of an axis dialog (`LINE_TYPES` of ``static/js/axisdialog.js``).
+_LINE = {"type": _OneOf(("value", "sigma", "quantile")), "value": _ANY, "color": _ANY, "dash": _ANY}
+#: The settings of an axis dialog (`emptySettings()` of ``static/js/axisdialog.js``).
+_DIALOG = {
+    "dtick": _ANY,
+    "unit": _ANY,
+    "minor": _ANY,
+    "lines": _List(_LINE),
+    "format": str,
+    "digits": _ANY,
+    "separators": bool,
+}
 
 #: The shape of ``settings`` (`captureSettings()` of ``static/js/app.js``)
 #: that the page needs to apply them (`applySettings`) and to check their
@@ -239,20 +262,21 @@ SETTINGS_SHAPE = {
     },
     "elements": {"chosen": _NAMES, "blocked": _NAMES},
     "options": {
-        "colorBins": _ANY,
-        "smoothing": _ANY,
-        "shapeSize": _ANY,
-        "lineWidth": _ANY,
-        "lineAggregation": _ANY,
+        "colorBins": _Optional({"n": _ANY, "by": _ANY}),
+        # `METHODS` of ``static/js/smoothmenu.js``, whose text the icon shows.
+        "smoothing": {"method": _OneOf(("gcv", "csaps", "lowess"))},
+        "shapeSize": _OPTIONAL_NUMBER,
+        "lineWidth": _OPTIONAL_NUMBER,
+        "lineAggregation": str,
         "showNullRows": dict,
         "keepLevels": dict,
-        "wrapCols": _ANY,
+        "wrapCols": _OPTIONAL_NUMBER,
         "levelSizes": _List(_Pair(str, dict)),
         "levelShapes": _Optional({"column": str, "shapes": dict}),
     },
     "axes": {
-        "dialog": _List(_Pair(str, dict)),
-        "angles": _List(_Pair(str, _ANY)),
+        "dialog": _List(_Pair(str, _DIALOG)),
+        "angles": _List(_Pair(str, _NUMBER)),
         "logs": {"x": _NAMES, "y": _NAMES},
         "reversed": {"x": _NAMES, "y": _NAMES},
         "keepLevels": _NAMES,
@@ -263,11 +287,11 @@ SETTINGS_SHAPE = {
             "numeric": bool,
             "range": (list, type(None)),
             "levels": list,
-            "contains": _ANY,
+            "contains": str,
             "nulls": dict,
-            "mode": _ANY,
-            "query": _ANY,
-            "order": _ANY,
+            "mode": str,
+            "query": str,
+            "order": str,
         }
     ),
 }
@@ -277,9 +301,14 @@ def _check(value: object, shape: object, path: str) -> None:
     """Raise the chooser's `ValueError` unless `value` (at the key `path`) has the shape `shape`.
 
     A shape is `_ANY`, a type or a tuple of types, a dict of the shapes of
-    an object's keys, `_List`, `_Pair` or `_Optional`.
+    an object's keys (others may be there too), `_List`, `_Pair`, `_OneOf`
+    or `_Optional`.
     """
     if shape is _ANY:
+        return
+    if isinstance(shape, _OneOf):
+        if not any(value == v and type(value) is type(v) for v in shape.values):
+            raise _unreadable(f"キー {path} の値の形が違います")
         return
     if isinstance(shape, _Optional):
         if value is not None:

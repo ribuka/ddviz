@@ -19,7 +19,7 @@ from ddviz.server.settings_store import SettingsStore
 from ddviz.shared.drawfile import parse
 from tests.e2e.conftest import TOKEN, make_app, served
 from tests.e2e.test_app_menu import FAKE_API, GEOMETRY, open_item, popups
-from tests.e2e.test_favorites import menu, open_menu
+from tests.e2e.test_favorites import menu, open_menu, set_line
 from tests.e2e.test_scatter import drop_on_filters, wait_idle, watch_errors
 from tests.e2e.test_undo import REDO, UNDO, chip_names, x_and_y
 
@@ -82,7 +82,7 @@ def opened_with(
 def test_a_saved_file_draws_the_same_graph_again(
     page: Page, app_page: Page, tmp_path: Path, scatter_path: Path, settings_store: SettingsStore
 ) -> None:
-    """The file downloaded holds the zones, the size, the filter card and the columns; a server opened with it draws them, with no step to undo."""
+    """The file downloaded holds the zones, the size, the filter card, a reference line and the columns; a server opened with it draws them, with no step to undo."""
     errors = watch_errors(page)
     expect(app_page.locator("#columns .column").first).to_be_visible()
     # Nothing drawn: nothing to save.
@@ -92,6 +92,7 @@ def test_a_saved_file_draws_the_same_graph_again(
     set_marker_size(page, 9)
     drop_on_filters(page, page.locator("#columns .column").filter(has=page.get_by_text("label", exact=True)), 1)
     wait_idle(page)
+    set_line(page, "0.5")
     name, content = download(page)
     assert name == "scatter.ddviz.json"
     assert content["format"] == "ddviz-draw-settings"
@@ -102,6 +103,7 @@ def test_a_saved_file_draws_the_same_graph_again(
     assert settings["zones"]["encoding"]["x"] == ["x"]
     assert settings["zones"]["encoding"]["y"] == ["y"]
     assert settings["options"]["shapeSize"] == 9
+    assert [[line["type"], line["value"]] for line in dict(settings["axes"]["dialog"])["y"]["lines"]] == [["value", 0.5]]
     # The chooser reads what the page saved (`SETTINGS_SHAPE`).
     assert parse(json.dumps(content)).content == content
     assert errors == []

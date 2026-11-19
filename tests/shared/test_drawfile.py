@@ -40,7 +40,7 @@ SETTINGS = {
     "elements": {"chosen": ["points"], "blocked": ["smooth"]},
     "options": {
         "colorBins": None,
-        "smoothing": {"method": "lowess"},
+        "smoothing": {"method": "lowess", "frac": 0.3},
         "shapeSize": 9,
         "lineWidth": None,
         "lineAggregation": "mean",
@@ -51,7 +51,20 @@ SETTINGS = {
         "levelShapes": {"column": "shop", "shapes": {"a": "square"}},
     },
     "axes": {
-        "dialog": [["amount", {"ticks": None}]],
+        "dialog": [
+            [
+                "amount",
+                {
+                    "dtick": None,
+                    "unit": None,
+                    "minor": None,
+                    "lines": [{"type": "sigma", "value": 2, "color": "#c00", "dash": "dash"}],
+                    "format": "auto",
+                    "digits": None,
+                    "separators": False,
+                },
+            ]
+        ],
         "angles": [["x:amount", 45]],
         "logs": {"x": ["amount"], "y": []},
         "reversed": {"x": [], "y": []},
@@ -197,8 +210,22 @@ def test_parse_refuses_with_the_message_shown(text: str, message: str) -> None:
         ("axes.dialog", [["amount", 1]], "キー settings.axes.dialog[0][1] の値の形が違います"),
         ("filters.0.name", ..., "キー settings.filters[0].name がありません"),
         ("filters.0.numeric", 0, "キー settings.filters[0].numeric の値の形が違います"),
+        ("options.smoothing", None, "キー settings.options.smoothing の値の形が違います"),
+        ("options.smoothing", {}, "キー settings.options.smoothing.method がありません"),
+        ("options.smoothing", {"method": "spline"}, "キー settings.options.smoothing.method の値の形が違います"),
+        ("options.colorBins", 5, "キー settings.options.colorBins の値の形が違います"),
+        ("options.shapeSize", "9", "キー settings.options.shapeSize の値の形が違います"),
+        ("options.lineAggregation", None, "キー settings.options.lineAggregation の値の形が違います"),
+        ("axes.dialog.0.1.lines", [{"type": "mean"}], "キー settings.axes.dialog[0][1].lines[0].type の値の形が違います"),
+        ("axes.dialog.0.1.format", ..., "キー settings.axes.dialog[0][1].format がありません"),
+        ("axes.angles", [["x:amount", "45"]], "キー settings.axes.angles[0][1] の値の形が違います"),
+        ("filters.0.mode", None, "キー settings.filters[0].mode の値の形が違います"),
     ],
-    ids=["elements", "x", "wrap", "numeric", "level-sizes", "level-shapes", "logs", "dialog", "card-name", "card-numeric"],
+    ids=[
+        "elements", "x", "wrap", "numeric", "level-sizes", "level-shapes", "logs", "dialog", "card-name",
+        "card-numeric", "smoothing-null", "smoothing-empty", "smoothing-method", "color-bins", "shape-size",
+        "line-aggregation", "line-type", "dialog-format", "angle", "card-mode",
+    ],
 )
 def test_parse_refuses_settings_the_page_cannot_apply(path: str, value: object, reason: str) -> None:
     """A key of the settings the page reads, missing or of the wrong form, is refused before the data opens (review of PR #336)."""
@@ -210,7 +237,8 @@ def test_parse_refuses_settings_the_page_cannot_apply(path: str, value: object, 
 def test_parse_takes_the_optional_and_any_values() -> None:
     """No shapes of the symbol levels, and any value of a setting the page passes on, are read."""
     settings = _with("options.levelShapes", None)
-    settings["options"]["colorBins"] = [1, 2]
+    settings["options"]["colorBins"] = {"n": 5, "by": "quantile"}
+    settings["options"]["smoothing"] = {"method": "csaps", "p": None}
     assert parse(_text(settings=settings)).content["settings"] == settings
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.metadata
 import json
 import urllib.error
@@ -605,7 +606,7 @@ def test_preferences_saved_on_the_chooser_last_across_loads_and_new(
 def _draw_file(json_path: Path, paths: list[Path], recursive: bool = False) -> dict:
     """Write a file of the drawing settings for `paths` at `json_path`; return its content."""
     content = build(
-        SETTINGS, {"a": "numeric"}, [str(p) for p in paths], recursive, json_path, "0.0.0"
+        copy.deepcopy(SETTINGS), {"a": "numeric"}, [str(p) for p in paths], recursive, json_path, "0.0.0"
     )
     json_path.write_text(json.dumps(content), encoding="utf-8")
     return content
@@ -727,17 +728,32 @@ def test_an_unreadable_draw_file_tells_why_and_keeps_the_chooser(
     assert shown.startswith(error)
 
 
-def test_settings_the_page_cannot_apply_keep_the_chooser(tmp_path: Path) -> None:
-    """A saved file whose settings lack a key the page reads opens no data and tells which (review of PR #336)."""
+@pytest.mark.parametrize(
+    ("part", "key", "value", "reason"),
+    [
+        (None, "elements", ..., "キー settings.elements がありません"),
+        ("options", "smoothing", None, "キー settings.options.smoothing の値の形が違います"),
+        ("options", "smoothing", {}, "キー settings.options.smoothing.method がありません"),
+    ],
+    ids=["elements", "smoothing-null", "smoothing-empty"],
+)
+def test_settings_the_page_cannot_apply_keep_the_chooser(
+    tmp_path: Path, part: str | None, key: str, value: object, reason: str
+) -> None:
+    """A saved file whose settings lack a key the page reads, or hold it in another form, opens no data and tells which (review of PR #336)."""
     (data,) = _files(tmp_path, "data.parquet")
     content = _draw_file(tmp_path / "graph.json", [data])
-    del content["settings"]["elements"]
+    place = content["settings"] if part is None else content["settings"][part]
+    if value is ...:
+        del place[key]
+    else:
+        place[key] = value
     (tmp_path / "graph.json").write_text(json.dumps(content), encoding="utf-8")
     window = _FakeWindow()
     app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.drop(_drop(tmp_path / "graph.json"))
     assert window.url is None
-    error = "描画設定のファイルを読めませんでした：キー settings.elements がありません"
+    error = f"描画設定のファイルを読めませんでした：{reason}"
     assert window.scripts == [f"window.ddvizDropError({json.dumps(error)})"]
 
 
