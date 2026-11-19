@@ -49,18 +49,29 @@ html.desktop:not(.caption-known) body {
 }
 
 /* Undo and redo of the drawing settings (js/undo.js), right of the `…`
-   menu, as it is; only the graph's page adds them. */
+   menu; only the graph's page adds them. They are narrower than the `…` and
+   touch each other, so that their icons are 14px apart and read as one pair;
+   the 6px margins outside keep the gaps to the `…` and to what follows redo
+   as they were (17px from an icon), so the pair stands apart from both. The
+   margins are the row's, so they still drag the window. */
 #titlebar .titlebar-undo {
   app-region: no-drag;
   flex: none;
   height: 100%;
-  min-width: 40px;
-  padding: 0 10px;
+  width: 28px;
+  padding: 0;
+  margin-left: 6px;
   display: grid;
   place-items: center;
   border: none;
   background: transparent;
   color: inherit;
+}
+
+/* -4px cancels the row's gap, so that redo touches undo. */
+#titlebar .titlebar-undo.undo-redo {
+  margin-left: -4px;
+  margin-right: 6px;
 }
 
 #titlebar .titlebar-undo:hover:not(:disabled) {

@@ -278,6 +278,17 @@ def test_the_window_has_the_buttons_in_its_title_bar(page: Page, app_page: Page)
     assert menu["x"] + menu["width"] <= a["x"]
     assert a["x"] + a["width"] <= b["x"]
     assert b["x"] + b["width"] <= title["x"]
+    # The two are narrow and touch, so their icons are 14px apart and read as
+    # one pair; the gaps outside stay 17px from an icon, as before.
+    assert a["width"] == pytest.approx(28, abs=0.5)
+    assert b["width"] == pytest.approx(28, abs=0.5)
+    assert b["x"] - (a["x"] + a["width"]) == pytest.approx(0, abs=0.5)
+    icon_a = undo.locator("svg").evaluate("(e) => e.getBoundingClientRect().toJSON()")
+    icon_b = redo.locator("svg").evaluate("(e) => e.getBoundingClientRect().toJSON()")
+    assert icon_b["left"] - icon_a["right"] == pytest.approx(14, abs=1)
+    assert icon_a["left"] - (menu["x"] + menu["width"]) == pytest.approx(17, abs=1)
+    after_redo = redo.evaluate("(e) => e.nextElementSibling.getBoundingClientRect().left")
+    assert after_redo - icon_b["right"] == pytest.approx(17, abs=1)
     for button in (undo, redo):
         assert button.evaluate("(e) => getComputedStyle(e).appRegion") == "no-drag"
         assert button.evaluate("(e) => e.getBoundingClientRect().height") == pytest.approx(menu["height"])
