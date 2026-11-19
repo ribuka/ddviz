@@ -13,24 +13,25 @@ however far its writing lags, and holds the frames it took and the pages
 made of them until they are written, so while the disk wrote slowly the
 memory grew by more than a frame for each frame taken ahead (Issue #322).
 `sink_chunks` therefore makes the next frame, then waits to hand it on
-until polars has written the row groups of the frames handed on before:
-the frame being written and the next one are the two in memory. polars
-tells which files it wrote only at the end, so whether it has written is
-judged by the writes of the file (not by its size on the disk, which
-needs the bytes of the rows): the sink is given a file object of its own
-(`_Paced`), whose `write` polars calls page by page. polars has written
-the row groups handed on once it has written, since the frame before was
-handed on, at least half what it wrote for the frame before that, and has
-been out of `write` for `IDLE_SECONDS`; while the disk is slow it stays
-in `write`, and it may pause to make the pages of a row group, hence the
-half. The wait is polled. It ends at once when a write fails (polars
-still asks for every frame before it raises the error), and after
-`STALL_SECONDS` without a write since the frame before was handed on (it
-has nothing to write), to never hang.
-Frames of less than `PACED_BYTES` are not waited for: polars gathers
-small writes (a few KiB) until more come, so their pages may not be
-written until the next frame, and such frames do not weigh on the memory.
-Cancelling kills the process, waiting or not.
+until polars has written the row groups of the frames handed on before
+it, but the last complete one. polars tells which files it wrote only at
+the end, so the sink is given a file object of its own (`_Paced`), and
+the bytes polars writes to it are read as they pass: the page headers
+are skipped with their pages, and the metadata polars writes after the
+pages of each column chunk counts a column chunk written; a row group is
+written once all its column chunks (the leaf columns of the schema) are.
+polars encodes a whole row group before it writes it, then writes it at
+once through a buffer of 8 KiB (`io::BufWriter`), so the last bytes of a
+row group come to the file only with the first ones of the next: the
+last complete row group cannot be told written, hence "but the last".
+The frame being written and the next one are then what polars holds,
+with the frame waiting. Nothing is judged by time, but two ends of the
+wait, to never hang: a write that fails (polars still asks for every
+frame before it raises the error) and `STALL_SECONDS` in which polars,
+out of `write`, writes nothing. Frames of less than `PACED_BYTES` are not
+waited for: their row groups may not fill the buffer, and they do not
+weigh on the memory. Bytes that do not read as page headers or column
+metadata end the waits. Cancelling kills the process, waiting or not.
 
 `write_chunks` writes each frame as a row group of its own with pyarrow's
 `ParquetWriter`, one after another: slower, for frames whose rows differ
@@ -39,6 +40,7 @@ too much for row groups of a number of rows.
 
 from __future__ import annotations
 
+import io
 import time
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
@@ -49,14 +51,14 @@ import pyarrow.parquet as pq
 
 # Rows of a row group of a file at most, whatever the frames.
 PARQUET_ROW_GROUP_ROWS = 1_048_576
-# Seconds out of `write` after which polars has written what it had.
-IDLE_SECONDS = 0.05
-# Seconds without a write after which the next frame is handed on anyway.
-STALL_SECONDS = 1.0
+# Seconds out of `write` without a write after which a frame is handed on anyway.
+STALL_SECONDS = 5.0
 # Seconds between looks at the writes while a frame waits.
 POLL_SECONDS = 0.01
 # Bytes (`estimated_size`) of the frames handed on since the last wait from which the next frame waits.
 PACED_BYTES = 8 * 2**20
+# The magic bytes at the start of a Parquet file.
+MAGIC = b"PAR1"
 
 
 def chunk_frame(
@@ -119,8 +121,125 @@ def chunk_frame(
     return pl.io.plugins.register_io_source(source, schema=schema)
 
 
+def _varint(b: bytes, i: int) -> tuple[int, int]:
+    """Return the unsigned varint at `i` of `b` and the index after it."""
+    value = shift = 0
+    while True:
+        byte = b[i]
+        i += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+        if byte < 0x80:
+            return value, i
+
+
+def _skip(b: bytes, i: int, kind: int) -> int:
+    """Return the index after the thrift compact value of type `kind` at `i` of `b`."""
+    if kind in (1, 2):
+        return i
+    if kind == 3:
+        return i + 1
+    if kind in (4, 5, 6):
+        return _varint(b, i)[1]
+    if kind == 7:
+        return i + 8
+    if kind == 8:
+        n, i = _varint(b, i)
+        return i + n
+    if kind in (9, 10):
+        head = b[i]
+        i += 1
+        n, item = head >> 4, head & 0x0F
+        if n == 15:
+            n, i = _varint(b, i)
+        if item in (1, 2):
+            return i + n
+        for _ in range(n):
+            i = _skip(b, i, item)
+        return i
+    if kind == 11:
+        n, i = _varint(b, i)
+        if n:
+            head = b[i]
+            i += 1
+            for _ in range(n):
+                i = _skip(b, _skip(b, i, head >> 4), head & 0x0F)
+        return i
+    if kind == 12:
+        while True:
+            head = b[i]
+            i += 1
+            if head == 0:
+                return i
+            if not head >> 4:
+                i = _varint(b, i)[1]
+            i = _skip(b, i, head & 0x0F)
+    raise ValueError(f"no thrift type {kind}")
+
+
+def _header(b: bytes) -> tuple[int, int | None]:
+    """Read the thrift struct at the start of `b`: a page header or the metadata of a column chunk.
+
+    Returns
+    -------
+    end : int
+        The index after the struct.
+    page : int or None
+        For a page header, the bytes of its page (`compressed_page_size`);
+        None for column metadata. Both begin with an int (the type);
+        the second field of column metadata is a list (the encodings),
+        that of a page header an int. The page indexes and the footer
+        polars writes after the row groups are not read.
+
+    Raises
+    ------
+    IndexError
+        When `b` ends within the struct.
+    ValueError
+        When the struct is neither.
+    """
+    i = field = count = 0
+    second = page = None
+    while True:
+        head = b[i]
+        i += 1
+        if head == 0:
+            break
+        kind = head & 0x0F
+        if head >> 4:
+            field += head >> 4
+        else:
+            v, i = _varint(b, i)
+            field = (v >> 1) ^ -(v & 1)
+        count += 1
+        if count == 1 and kind != 5:
+            raise ValueError("neither a page header nor column metadata")
+        if count == 2:
+            second = kind
+        if field == 3 and kind == 5 and second == 5:
+            v, i = _varint(b, i)
+            page = (v >> 1) ^ -(v & 1)
+        else:
+            i = _skip(b, i, kind)
+    if i > len(b):
+        raise IndexError("the struct goes on")
+    if second == 5 and page is not None:
+        return i, page
+    if second == 9:
+        return i, None
+    raise ValueError("neither a page header nor column metadata")
+
+
+def _leaves(frame: pl.DataFrame) -> int:
+    """Return the leaf columns, the column chunks of a row group, of a Parquet file of a frame's schema."""
+    buffer = io.BytesIO()
+    frame.clear().write_parquet(buffer)
+    buffer.seek(0)
+    return pq.read_metadata(buffer).num_columns
+
+
 class _Paced:
-    """The file polars writes to, which tells when the frames handed on are written.
+    """The file polars writes to, which counts the column chunks written to tell when the frames handed on are written.
 
     Parameters
     ----------
@@ -133,13 +252,17 @@ class _Paced:
     def __init__(self, file: BinaryIO, row_group_rows: int) -> None:
         self._file = file
         self._rows = row_group_rows
-        self._bytes = 0
+        self._chunks = 0
+        # Bytes of a page (or the magic) still to skip, and of a struct cut by a write.
+        self._skip = len(MAGIC)
+        self._part = bytearray()
+        self._lost = False
         self._writing = False
         self._failed = False
         self._last = time.perf_counter()
 
     def write(self, data: bytes) -> int:
-        """Write bytes, noting when polars writes."""
+        """Write bytes, reading the structs in them."""
         self._writing = True
         try:
             n = self._file.write(data)
@@ -149,7 +272,7 @@ class _Paced:
         finally:
             self._writing = False
             self._last = time.perf_counter()
-        self._bytes += n
+        self._read(memoryview(data)[:n])
         return n
 
     def flush(self) -> None:
@@ -160,42 +283,62 @@ class _Paced:
         """Return the position in the file."""
         return self._file.tell()
 
-    def frames(self, chunks: Iterable[pl.DataFrame]) -> Iterator[pl.DataFrame]:
-        """Yield the frames, each after the first once polars has written the row groups of those before it.
+    def _read(self, view: memoryview) -> None:
+        """Count the column chunks whose metadata the bytes end, skipping the pages."""
+        while view and not self._lost:
+            if self._skip:
+                n = min(self._skip, len(view))
+                self._skip -= n
+                view = view[n:]
+                continue
+            size = 256
+            while True:
+                head = bytes(self._part) + bytes(view[:size])
+                try:
+                    end, page = _header(head)
+                    break
+                except IndexError:
+                    if size >= len(view):
+                        self._part += view
+                        return
+                    size *= 8
+                except ValueError:
+                    self._lost = True
+                    return
+            view = view[end - len(self._part) :]
+            self._part.clear()
+            if page is None:
+                self._chunks += 1
+            else:
+                self._skip = page
 
-        A frame is made before it waits. The rows of a row group not yet
-        complete are not written until more come, so a frame that leaves
-        no new complete row group does not wait. polars may also stop
-        writing for a while to make the pages of a row group, so a frame
-        waits for at least half the bytes written between the hands of
-        the two frames before it: frames of about the same bytes give
-        pages of about the same bytes.
+    def frames(self, chunks: Iterable[pl.DataFrame]) -> Iterator[pl.DataFrame]:
+        """Yield the frames, each after the first once polars has written the row groups of those before it but the last complete one.
+
+        A frame is made before it waits.
         """
         rest = iter(chunks)
-        handed = groups = size = 0
-        # Bytes written when the frame before and the one before it were handed on.
-        mark = before = 0
-        at = time.perf_counter()
+        leaves = handed = size = 0
         for frame in rest:
-            if handed // self._rows > groups and size >= PACED_BYTES:
-                self._wait(mark + max(1, (mark - before) // 2), at)
-                groups, size = handed // self._rows, 0
+            if not leaves:
+                leaves = _leaves(frame)
+            need = (handed // self._rows - 1) * leaves
+            if need > self._chunks and size >= PACED_BYTES:
+                self._wait(need)
+                size = 0
             handed += frame.height
             size += frame.estimated_size()
-            before, mark, at = mark, self._bytes, time.perf_counter()
             yield frame
             # Not held while the next frame is made.
             del frame
 
-    def _wait(self, least: int, at: float) -> None:
-        """Return once polars has written `least` bytes and stopped, a write failed, or nothing was written for `STALL_SECONDS` since `at`."""
-        while not self._failed:
-            if not self._writing:
-                now = time.perf_counter()
-                if self._bytes >= least and now - self._last >= IDLE_SECONDS:
-                    return
-                if now - max(self._last, at) >= STALL_SECONDS:
-                    return
+    def _wait(self, need: int) -> None:
+        """Return once `need` column chunks are written, a write failed, the bytes were not read, or nothing was written for `STALL_SECONDS` out of `write`."""
+        since = time.perf_counter()
+        while self._chunks < need and not (self._failed or self._lost):
+            idle = time.perf_counter() - max(self._last, since)
+            if not self._writing and idle >= STALL_SECONDS:
+                return
             time.sleep(POLL_SECONDS)
 
 
@@ -209,8 +352,9 @@ def sink_chunks(
 
     The file is compressed with zstd, in row groups of `row_group_rows`
     rows (the last one fewer), whatever the frames. A frame is handed on
-    once polars has written the row groups of those before it
-    (`_Paced`). An error raised by `chunks` comes out as it is.
+    once polars has written the row groups of those before it but the
+    last complete one (`_Paced`). An error raised by `chunks` comes out
+    as it is.
 
     Parameters
     ----------

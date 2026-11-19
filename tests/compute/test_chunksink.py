@@ -98,35 +98,32 @@ def _ends(path: Path) -> list[int]:
 def test_a_frame_waits_until_those_before_it_are_written(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """While the disk writes slowly, a frame is handed on only once the row groups of the frames before it are written."""
+    """While the disk writes slowly, with pauses between the writes, a frame is handed on only once the row groups of the frames before it, but the last complete one, are written."""
     rng = np.random.default_rng(0)
     frames = [
-        pl.DataFrame({f"c{c}": rng.standard_normal(40_000) for c in range(8)})
-        for _ in range(5)
+        pl.DataFrame({f"c{c}": rng.standard_normal(40_000) for c in range(3)})
+        for _ in range(4)
     ]
     written = [0]
     write = chunksink._Paced.write
 
     def slow(self: chunksink._Paced, data: bytes) -> int:
-        """Write slowly, counting the bytes written."""
-        time.sleep(0.01)
+        """Write, counting the bytes written, then pause out of `write`."""
         n = write(self, data)
         written[0] += n
+        time.sleep(0.05)
         return n
 
     monkeypatch.setattr(chunksink._Paced, "write", slow)
     monkeypatch.setattr(chunksink, "PACED_BYTES", 0)
-    # Not to take a pause of the writing thread for the end of the writes.
-    monkeypatch.setattr(chunksink, "IDLE_SECONDS", 0.2)
     handed: list[tuple[int, int]] = []
     path = tmp_path / "data.parquet"
     sink_chunks(iter(frames), path, 30_000, lambda rows: handed.append((rows, written[0])))
     assert pl.read_parquet(path).equals(pl.concat(frames))
     ends = _ends(path)
-    assert [rows for rows, _ in handed] == [40_000, 80_000, 120_000, 160_000]
-    for rows, at in handed:
-        # The complete row groups of the rows handed on before the frame.
-        assert at >= ends[rows // 30_000 - 1]
+    assert [rows for rows, _ in handed] == [40_000, 80_000, 120_000]
+    # Before the third and the fourth frames, the first and the first three row groups.
+    assert [at >= ends[rows // 30_000 - 2] for rows, at in handed[1:]] == [True, True]
 
 
 def test_a_failed_write_ends_the_waits(
@@ -138,21 +135,24 @@ def test_a_failed_write_ends_the_waits(
         pl.DataFrame({f"c{c}": rng.standard_normal(40_000) for c in range(8)})
         for _ in range(10)
     ]
+    written = [0]
     write = chunksink._Paced.write
 
     def failing(self: chunksink._Paced, data: bytes) -> int:
         """Fail once a frame's bytes are written."""
-        if self._bytes > 2_000_000:
+        if written[0] > 2_000_000:
             self._file.close()
-        return write(self, data)
+        n = write(self, data)
+        written[0] += n
+        return n
 
     monkeypatch.setattr(chunksink._Paced, "write", failing)
     monkeypatch.setattr(chunksink, "PACED_BYTES", 0)
     start = time.perf_counter()
     with pytest.raises(pl.exceptions.ComputeError):
         sink_chunks(iter(frames), tmp_path / "data.parquet", 30_000)
-    # Waiting `STALL_SECONDS` for each frame would take 8 seconds or more.
-    assert time.perf_counter() - start < chunksink.STALL_SECONDS * 4
+    # Waiting for the row groups never written would take `STALL_SECONDS` for each frame.
+    assert time.perf_counter() - start < chunksink.STALL_SECONDS
 
 
 def test_no_rows_give_a_file_of_typed_columns(tmp_path: Path) -> None:
