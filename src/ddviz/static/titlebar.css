@@ -227,6 +227,7 @@ html.desktop:not(.caption-known) body {
 .titlebar-dialog p {
   margin: 0 0 16px;
   line-height: 1.5;
+  white-space: pre-line;
 }
 
 .titlebar-dialog-buttons {
@@ -239,4 +240,28 @@ html.desktop:not(.caption-known) body {
   min-width: 80px;
   padding: 5px 12px;
   font: inherit;
+}
+
+/* An action that cannot be undone. The colours are written here instead of
+   app.css's variables because pages without app.css embed this file too;
+   #c00 is app.css's --danger. */
+.titlebar-dialog-buttons button.danger {
+  background: #c00;
+  border: 1px solid #c00;
+  color: #fff;
+}
+
+.titlebar-dialog-buttons button.danger:hover {
+  background: #a00;
+  border-color: #a00;
+}
+
+.titlebar-dialog-buttons button.danger:active {
+  background: #800;
+  border-color: #800;
+}
+
+.titlebar-dialog-buttons button.danger:focus-visible {
+  outline: 2px solid #c00;
+  outline-offset: 2px;
 }

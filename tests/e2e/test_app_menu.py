@@ -10,6 +10,7 @@ the OS draws its caption buttons beside the row.
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -224,6 +225,9 @@ def test_the_menu_works_with_the_keyboard(menu_page: Page) -> None:
     keys.press("Enter")
     keys.press("Enter")
     expect(page.locator(".titlebar-dialog")).to_contain_text("ddviz 9.9.9")
+    expect(page.locator(".titlebar-dialog").get_by_role("button", name="OK")).not_to_have_class(
+        re.compile(r"\bdanger\b")
+    )
     keys.press("Escape")
     expect(page.locator(".titlebar-dialog")).to_have_count(0)
     assert popups(page) == []
@@ -231,7 +235,10 @@ def test_the_menu_works_with_the_keyboard(menu_page: Page) -> None:
 
 
 def test_new_asks_first_and_keeps_the_graph_when_cancelled(menu_page: Page) -> None:
-    """`New` asks with the focus on Cancel; Cancel and Esc keep the columns, filter and ranges; 戻る calls the window."""
+    """`New` asks in two lines with the focus on Cancel and a red Discard and Start Over.
+
+    Cancel and Esc keep the columns, filter and ranges; Discard and Start Over calls the window.
+    """
     page = menu_page
     place(page, "x", "x")
     place(page, "y", "y")
@@ -244,12 +251,23 @@ def test_new_asks_first_and_keeps_the_graph_when_cancelled(menu_page: Page) -> N
     dialog = page.locator(".titlebar-dialog")
 
     open_item(page, "File", "New")
-    expect(dialog).to_contain_text(
-        "現在のグラフ設定とフィルタを破棄し、Parquet 選択画面に戻りますか？"
-    )
-    assert dialog.get_by_role("button").all_inner_texts() == ["戻る", "キャンセル"]
-    assert focused(page) == "キャンセル"
-    dialog.get_by_role("button", name="キャンセル").click()
+    lines = dialog.locator("p").inner_text().split("\n")
+    assert lines == [
+        "現在のグラフ設定とフィルタを破棄し、Parquet 選択画面に戻ります。",
+        (
+            "This discards the current graph settings and filters"
+            " and returns to the Parquet file selection."
+        ),
+    ]
+    assert dialog.get_by_role("button").all_inner_texts() == ["Discard and Start Over", "Cancel"]
+    assert focused(page) == "Cancel"
+    discard = dialog.get_by_role("button", name="Discard and Start Over")
+    cancel = dialog.get_by_role("button", name="Cancel")
+    expect(discard).to_have_class(re.compile(r"\bdanger\b"))
+    expect(discard).to_have_css("background-color", "rgb(204, 0, 0)")
+    expect(discard).to_have_css("color", "rgb(255, 255, 255)")
+    expect(cancel).not_to_have_class(re.compile(r"\bdanger\b"))
+    cancel.click()
     expect(dialog).to_have_count(0)
 
     open_item(page, "File", "New")
@@ -260,7 +278,7 @@ def test_new_asks_first_and_keeps_the_graph_when_cancelled(menu_page: Page) -> N
     expect(page.locator(".filter-card")).to_have_count(1)
 
     open_item(page, "File", "New")
-    dialog.get_by_role("button", name="戻る").click()
+    dialog.get_by_role("button", name="Discard and Start Over").click()
     expect(dialog).to_have_count(0)
     page.wait_for_function("window.desktopCalls.length === 1")
     assert calls(page) == ["new"]

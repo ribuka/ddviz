@@ -47,7 +47,11 @@
     { label: "Edit", items: [{ command: "preferences", label: "Preferences…" }] },
     { label: "Help", items: [{ command: "version", label: "Version" }] },
   ];
-  const NEW_CONFIRM = "現在のグラフ設定とフィルタを破棄し、Parquet 選択画面に戻りますか？";
+  const NEW_CONFIRM =
+    "現在のグラフ設定とフィルタを破棄し、Parquet 選択画面に戻ります。\n" +
+    "This discards the current graph settings and filters and returns to the Parquet file selection.";
+  const NEW_DISCARD = "Discard and Start Over";
+  const NEW_CANCEL = "Cancel";
 
   // The window's API, once pywebview has injected it.
   const api = new Promise((resolve) => {
@@ -224,8 +228,8 @@
   async function run(command) {
     closeAll(false);
     if (command === "new") {
-      const choice = await ask(NEW_CONFIRM, ["戻る", "キャンセル"], "キャンセル");
-      if (choice === "戻る") await call("new");
+      const choice = await ask(NEW_CONFIRM, [NEW_DISCARD, NEW_CANCEL], NEW_CANCEL, NEW_DISCARD);
+      if (choice === NEW_DISCARD) await call("new");
     } else if (command === "quit") {
       await call("quit");
     } else if (command === "version") {
@@ -255,9 +259,10 @@
     });
   }
 
-  // Shows `text` with `labels` as buttons and the focus on `initial`;
-  // resolves to the label chosen, or null on Esc.
-  function ask(text, labels, initial) {
+  // Shows `text` with `labels` as buttons and the focus on `initial`; the
+  // button labelled `danger`, if given, is drawn red as an action that cannot
+  // be undone. Resolves to the label chosen, or null on Esc.
+  function ask(text, labels, initial, danger) {
     return new Promise((resolve) => {
       const backdrop = document.createElement("div");
       backdrop.className = "titlebar-backdrop";
@@ -273,6 +278,7 @@
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = label;
+        if (label === danger) b.classList.add("danger");
         b.addEventListener("click", () => done(label));
         return b;
       });
