@@ -247,6 +247,30 @@ def test_delete_moves_the_rows_up(app_page: Page) -> None:
     assert errors == []
 
 
+@pytest.mark.parametrize("height", [300])
+def test_the_pull_down_stays_in_a_small_window(app_page: Page, height: int) -> None:
+    """In a window 300px high the pull-down of three rows lies inside it, placed at its size with its rows, and the third row's × is reached."""
+    page = app_page
+    errors = watch_errors(page)
+    three_saved(page)
+    page.set_viewport_size({"width": page.viewport_size["width"], "height": height})
+    wait_idle(page)
+    pulled = open_menu(page)
+    expect(rows(page)).to_have_count(3)
+    box = pulled.bounding_box()
+    assert box["y"] >= 0
+    assert box["y"] + box["height"] <= height
+    remove = rows(page).nth(2).get_by_role("button", name="削除")
+    remove.scroll_into_view_if_needed()
+    target = remove.bounding_box()
+    assert 0 <= target["y"] and target["y"] + target["height"] <= height
+    remove.click()
+    expect(rows(page)).to_have_count(2)
+    box = pulled.bounding_box()
+    assert box["y"] + box["height"] <= height
+    assert errors == []
+
+
 def test_a_recall_while_plotting_replaces_the_plot(app_page: Page) -> None:
     """A row recalled while a plot is held draws the row's settings; the held plot, let go, is not drawn."""
     page = app_page

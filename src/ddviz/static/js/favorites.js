@@ -7,7 +7,7 @@
 // settings.
 
 import { settingsKey } from "./history.js";
-import { Popup, menuSeparator } from "./popup.js";
+import { Popup, menuSeparator, placeUnder } from "./popup.js";
 
 // The most favorites kept.
 export const MAX_FAVORITES = 3;
@@ -176,7 +176,10 @@ export class FavoritesMenu {
   }
 
   // Draws the pull-down's content again, keeping the focus on the item of
-  // its index (`focus`, by default the one focused), or on the first.
+  // its index (`focus`, by default the one focused), or on the first, and
+  // places it under the button again at its new size: `Popup.openUnder`
+  // placed it empty, and a row added or the choosing state changes its
+  // height.
   #render(focus = null) {
     const menu = this.#popup.element;
     const before = this.#items().indexOf(document.activeElement);
@@ -202,6 +205,7 @@ export class FavoritesMenu {
       menu.append(empty);
     }
     this.favorites.items.forEach((favorite, index) => menu.append(this.#row(favorite, index, index === current)));
+    placeUnder(menu, this.button);
     if (at !== null) {
       const items = this.#items();
       items[Math.min(at, items.length - 1)]?.focus();
