@@ -98,13 +98,20 @@ def _ends(path: Path) -> list[int]:
 def test_a_frame_waits_until_those_before_it_are_written(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """While the disk writes slowly, with pauses between the writes, a frame is handed on only once the row groups of the frames before it, but the last complete one, are written."""
+    """While the disk writes slowly, with pauses between the writes, a frame is made only once the row groups of the frames before the last one handed on are written."""
     rng = np.random.default_rng(0)
     frames = [
         pl.DataFrame({f"c{c}": rng.standard_normal(40_000) for c in range(3)})
-        for _ in range(4)
+        for _ in range(5)
     ]
     written = [0]
+    made: list[int] = []
+
+    def making() -> Iterator[pl.DataFrame]:
+        """Yield the frames, noting the bytes written when each is made."""
+        for frame in frames:
+            made.append(written[0])
+            yield frame
     write = chunksink._Paced.write
 
     def slow(self: chunksink._Paced, data: bytes) -> int:
@@ -116,14 +123,15 @@ def test_a_frame_waits_until_those_before_it_are_written(
 
     monkeypatch.setattr(chunksink._Paced, "write", slow)
     monkeypatch.setattr(chunksink, "PACED_BYTES", 0)
-    handed: list[tuple[int, int]] = []
     path = tmp_path / "data.parquet"
-    sink_chunks(iter(frames), path, 30_000, lambda rows: handed.append((rows, written[0])))
+    sink_chunks(making(), path, 30_000)
     assert pl.read_parquet(path).equals(pl.concat(frames))
     ends = _ends(path)
-    assert [rows for rows, _ in handed] == [40_000, 80_000, 120_000]
-    # Before the third and the fourth frames, the first and the first three row groups.
-    assert [at >= ends[rows // 30_000 - 2] for rows, at in handed[1:]] == [True, True]
+    # The third frame is made once the row group of the first frame is
+    # written, the fourth once those of the first two (rows 0 to 60,000),
+    # the fifth once those of the first three.
+    waited = zip(made[2:], [1, 2, 4], strict=True)
+    assert [at >= ends[groups - 1] for at, groups in waited] == [True] * 3
 
 
 def test_a_failed_write_ends_the_waits(

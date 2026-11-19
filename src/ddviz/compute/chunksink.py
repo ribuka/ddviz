@@ -12,20 +12,20 @@ The plugin's source has no back pressure: polars asks for the next frame
 however far its writing lags, and holds the frames it took and the pages
 made of them until they are written, so while the disk wrote slowly the
 memory grew by more than a frame for each frame taken ahead (Issue #322).
-`sink_chunks` therefore makes the next frame, then waits to hand it on
-until polars has written the row groups of the frames handed on before
-it, but the last complete one. polars tells which files it wrote only at
-the end, so the sink is given a file object of its own (`_Paced`), and
+`sink_chunks` therefore waits to make the next frame until polars has
+written the row groups of the frames before the last one handed on: the
+frame being written and the one being made are the two in memory.
+polars tells which files it wrote only at the end, so the sink is given
+a file object of its own (`_Paced`), and
 the bytes polars writes to it are read as they pass: the page headers
 are skipped with their pages, and the metadata polars writes after the
 pages of each column chunk counts a column chunk written; a row group is
 written once all its column chunks (the leaf columns of the schema) are.
 polars encodes a whole row group before it writes it, then writes it at
 once through a buffer of 8 KiB (`io::BufWriter`), so the last bytes of a
-row group come to the file only with the first ones of the next: the
-last complete row group cannot be told written, hence "but the last".
-The frame being written and the next one are then what polars holds,
-with the frame waiting. Nothing is judged by time, but two ends of the
+row group come to the file only with the first ones of the next: those
+of the frames before the last one handed on come with the row group the
+last one fills. Nothing is judged by time, but two ends of the
 wait, to never hang: a write that fails (polars still asks for every
 frame before it raises the error) and `STALL_SECONDS` in which polars,
 out of `write`, writes nothing. Frames of less than `PACED_BYTES` are not
@@ -313,20 +313,27 @@ class _Paced:
                 self._skip = page
 
     def frames(self, chunks: Iterable[pl.DataFrame]) -> Iterator[pl.DataFrame]:
-        """Yield the frames, each after the first once polars has written the row groups of those before it but the last complete one.
+        """Yield the frames, making each after the second once polars has written the row groups of the frames before the last one handed on.
 
-        A frame is made before it waits.
+        The rows of the last frame handed on fill the row group after
+        those (a frame but the last has a row group of rows at least),
+        whose bytes bring theirs out of the buffer; when the last frame
+        handed on is the last of all and fills none, the row groups but
+        the last complete one are waited for.
         """
         rest = iter(chunks)
-        leaves = handed = size = 0
-        for frame in rest:
+        leaves = before = handed = size = 0
+        while True:
+            groups = min(before // self._rows, handed // self._rows - 1)
+            if groups > 0 and groups * leaves > self._chunks and size >= PACED_BYTES:
+                self._wait(groups * leaves)
+                size = 0
+            frame = next(rest, None)
+            if frame is None:
+                return
             if not leaves:
                 leaves = _leaves(frame)
-            need = (handed // self._rows - 1) * leaves
-            if need > self._chunks and size >= PACED_BYTES:
-                self._wait(need)
-                size = 0
-            handed += frame.height
+            before, handed = handed, handed + frame.height
             size += frame.estimated_size()
             yield frame
             # Not held while the next frame is made.
@@ -351,10 +358,9 @@ def sink_chunks(
     """Write frames of the same schema one after another as one Parquet file, streamed to `sink_parquet`.
 
     The file is compressed with zstd, in row groups of `row_group_rows`
-    rows (the last one fewer), whatever the frames. A frame is handed on
-    once polars has written the row groups of those before it but the
-    last complete one (`_Paced`). An error raised by `chunks` comes out
-    as it is.
+    rows (the last one fewer), whatever the frames. A frame is made once
+    polars has written the row groups of the frames before the last one
+    handed on (`_Paced`). An error raised by `chunks` comes out as it is.
 
     Parameters
     ----------
