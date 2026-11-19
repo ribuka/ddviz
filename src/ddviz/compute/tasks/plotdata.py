@@ -8,8 +8,10 @@ cache, their indices streamed to a file (`sink_parquet`, the streaming
 engine the selection table collects its pages with), then read a chunk after
 another, so that only a chunk's values or two are held at once: a chunk
 ends where its values reach its budget, measured before they are read
-(`_cut`). A CSV cuts and appends each chunk and reports it written. A
-Parquet file cuts every chunk first, keeping their rows alone, then streams
+(`_cut`). A CSV cuts and appends each chunk and reports it written; a
+chunk with nested or binary values, which a CSV cannot hold, is written in
+`JSON_PIECES` pieces of its rows, each turned into texts only while it is
+written (`_csv_value`). A Parquet file cuts every chunk first, keeping their rows alone, then streams
 them to a sink (`ddviz.compute.chunksink`), which writes one while the next
 is read, so that its chunks take half the budget; its row groups are kept
 within the rows of the fewest of a chunk (`_row_group_rows`), and it
@@ -50,6 +52,12 @@ MAX_CHUNK_ROWS = 10_000_000
 # Bytes counted for each value besides those of texts, binaries and nested
 # values (`_length`): a number, or the offset of a text or a list.
 VALUE_BYTES = 8
+# Pieces of its rows a chunk of a CSV with nested or binary values is
+# written in (`_csv_value`): their texts, as JSON, take about 3 times the
+# bytes of the values, so a chunk turned into texts at once would hold them
+# all; 6 million rows of lists of 10 floats (526 MiB) peaked 1.6 GiB above
+# the chunk at once, 0.24 GiB in 16 pieces.
+JSON_PIECES = 16
 
 
 def index_name(columns: list[str]) -> str:
@@ -92,6 +100,57 @@ def _length(value: pl.Expr, dtype: pl.DataType) -> pl.Expr | None:
     else:
         return None
     return size.cast(pl.UInt64).fill_null(0)
+
+
+def _has_binary(dtype: pl.DataType) -> bool:
+    """Return whether a type is binary, or a list, an array or a struct with binary values inside."""
+    if dtype == pl.Binary:
+        return True
+    if isinstance(dtype, (pl.List, pl.Array)):
+        return _has_binary(dtype.inner)
+    if isinstance(dtype, pl.Struct):
+        return any(_has_binary(f.dtype) for f in dtype.fields)
+    return False
+
+
+def _binary_as_hex(value: pl.Expr, dtype: pl.DataType) -> pl.Expr:
+    """Return the values with their binaries, outside or inside nested values, as lowercase hexadecimal texts.
+
+    An array becomes a list; a part without binaries is left as it is, and a
+    null struct stays null.
+    """
+    if not _has_binary(dtype):
+        return value
+    if dtype == pl.Binary:
+        return value.bin.encode("hex")
+    if isinstance(dtype, pl.Array):
+        return _binary_as_hex(value.arr.to_list(), pl.List(dtype.inner))
+    if isinstance(dtype, pl.List):
+        return value.list.eval(_binary_as_hex(pl.element(), dtype.inner))
+    fields = [
+        _binary_as_hex(value.struct.field(f.name), f.dtype).alias(f.name)
+        for f in dtype.fields
+    ]
+    return pl.when(value.is_not_null()).then(pl.struct(fields))
+
+
+def _csv_value(name: str, dtype: pl.DataType) -> pl.Expr | None:
+    """Return the texts a CSV holds for the values of a nested or binary column, or None for a column of another type.
+
+    A binary value is its lowercase hexadecimal text (`_binary_as_hex`); a
+    list, an array or a struct is its JSON, as polars encodes a struct,
+    with its binaries as those texts (polars cannot encode a binary inside).
+    A null value stays null: an empty cell.
+    """
+    if not (dtype == pl.Binary or isinstance(dtype, (pl.List, pl.Array, pl.Struct))):
+        return None
+    value = _binary_as_hex(pl.col(name), dtype)
+    if isinstance(dtype, pl.Struct):
+        value = value.struct.json_encode()
+    elif dtype != pl.Binary:
+        # A list in a struct of a field, the struct's `{"v":` and `}` cut off.
+        value = pl.struct(value.alias("v")).struct.json_encode().str.slice(5).str.head(-1)
+    return pl.when(pl.col(name).is_not_null()).then(value).alias(name)
 
 
 def _on_axis(spec: ScatterSpec, column: str, log: list[str]) -> pl.Expr:
@@ -301,6 +360,12 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
     the rows written (for a Parquet file, those the sink received) and to
     write.
 
+    A CSV holds a nested value (a list, an array or a struct) as its JSON,
+    and a binary value, outside or inside, as its lowercase hexadecimal
+    text; a null value is an empty cell, and a NaN or an infinity inside a
+    nested value is null in its JSON. A Parquet file holds the values with
+    their types.
+
     Parameters
     ----------
     task : PlotDataTask
@@ -421,10 +486,27 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
     path = out / file
     if task.file_format == "csv":
         done = 0
+        # The texts of the nested and binary columns, found from the first
+        # chunk: every chunk has its types.
+        texts: list[pl.Expr] | None = None
         with path.open("wb") as csv:
             chunks = (chunk for chunk, _ in cuts(CHUNK_BYTES, MAX_CHUNK_ROWS))
             for i, table in enumerate(read(chunks)):
-                table.write_csv(csv, include_bom=i == 0, include_header=i == 0)
+                if texts is None:
+                    texts = [
+                        e for c, d in table.schema.items() if (e := _csv_value(c, d)) is not None
+                    ]
+                if texts and table.height:
+                    # Only a piece's texts are held at once.
+                    pieces = table.iter_slices(-(-table.height // JSON_PIECES))
+                else:
+                    pieces = iter([table])
+                for j, piece in enumerate(pieces):
+                    first = i == 0 and j == 0
+                    piece.with_columns(texts).write_csv(
+                        csv, include_bom=first, include_header=first
+                    )
+                    del piece
                 done += table.height
                 emit({**progress, "done": done, "total": total})
     else:
