@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from ddviz.compute import foundcolor, foundlevels, foundranges
 from ddviz.compute.missing import numeric_roles
-from ddviz.shared.scatter import ONE_BAND, Boxes, ScatterSpec, Smooths
+from ddviz.shared.scatter import ONE_BAND, Boxes, RefStats, ScatterSpec, Smooths
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,8 @@ class Found:
         The box plots a view already knows.
     known_smooths : list of Smooths
         The smooth lines a view already knows.
+    known_ref_stats : list of RefStats
+        The statistics of the reference lines a view already knows.
     """
 
     x_ranges: list[tuple[float, float]]
@@ -49,6 +51,7 @@ class Found:
     axis_levels: dict[str, list[str]]
     known_boxes: list[Boxes]
     known_smooths: list[Smooths]
+    known_ref_stats: list[RefStats]
 
 
 def find(
@@ -99,6 +102,7 @@ def find(
         axis_levels = view.axis_levels
         known_boxes = view.boxes
         known_smooths = view.smooths
+        known_ref_stats = view.ref_stats
         # An axis column that keeps its levels has those of every row, which
         # the view takes from the overview (`View.axis_levels`).
         find_axes = [
@@ -155,6 +159,7 @@ def find(
             axis_levels = {**axis_levels, **found_axes}
         known_boxes = []
         known_smooths = []
+        known_ref_stats = []
         if spec.filters:
             progress("ranges")
         x_auto, y_auto = foundranges.auto_ranges(spec, log, axis_levels, overview.ranges)
@@ -181,4 +186,5 @@ def find(
         axis_levels=axis_levels,
         known_boxes=known_boxes,
         known_smooths=known_smooths,
+        known_ref_stats=known_ref_stats,
     )

@@ -18,7 +18,7 @@ UNITS = ["millisecond", "second", "minute", "hour", "day", "week"]
 DIGITS_ERROR = "0〜15 の整数にしてください"
 ANGLE_ERROR = "−90〜90 の整数にしてください"
 COUNT_ERROR = "有効な正の整数を入力してください"
-LINE = {"color": "#000000", "dash": "dash"}
+LINE = {"type": "value", "color": "#000000", "dash": "dash"}
 
 # Opens the dialog with `args` (the settings over empty ones) and records
 # each apply in `window.applied` as {settings, range, angle}.
@@ -319,10 +319,11 @@ def test_a_temporal_axis_sets_its_range_and_reference_lines(page: Page, kind: st
     dialog = open_dialog(page, kind=kind, range=SHOWN[kind])
     for name in ["min", "max"]:
         assert re.fullmatch(shape, dialog.locator(f"input[name={name}]").input_value())
+    # The ends' units, then the unit of a reference line's value.
     if kind == "duration":
         expect(dialog.locator(".axis-dialog-unit")).to_have_text(["秒", "秒", "秒"])
     else:
-        expect(dialog.locator(".axis-dialog-unit")).to_have_count(0)
+        expect(dialog.locator(".axis-dialog-unit")).to_have_text([""])
     dialog.get_by_role("button", name="適用").click()
     assert applied(page)[0]["range"] == SHOWN[kind]
 
@@ -730,7 +731,7 @@ def test_the_pencil_edits_a_value_keeping_its_line(page: Page) -> None:
     dialog.get_by_role("button", name="適用").click()
     lines = applied(page)[-1]["settings"]["lines"]
     assert [line["value"] for line in lines] == [1, 2.5, 3]
-    assert lines[1] == {"value": 2.5, "color": "#ff0000", "dash": "dot"}
+    assert lines[1] == {"type": "value", "value": 2.5, "color": "#ff0000", "dash": "dot"}
 
 
 def test_leaving_the_field_commits_the_edit(page: Page) -> None:
@@ -907,3 +908,228 @@ def test_a_categorical_axis_cannot_edit_its_lines(page: Page) -> None:
     """The dialog of a categorical axis disables the pencil of each line."""
     dialog = open_dialog(page, kind="category", range=[0, 1], settings={"lines": [{"value": 0.5, **LINE}]})
     expect(dialog.locator(".axis-dialog-line-edit")).to_be_disabled()
+
+
+# ---- reference lines of the statistics of each panel's rows ----
+
+SIGMA_ERROR = "0 以上の数を入れてください"
+PERCENT_ERROR = "0〜100 の数を入れてください"
+
+
+def add_typed(dialog: Locator, *lines: tuple[str, str]) -> None:
+    """Add a reference line of each kind and text, in order."""
+    for kind, text in lines:
+        dialog.locator("select[name=line-type]").select_option(kind)
+        dialog.locator("input[name=line]").fill(text)
+        dialog.get_by_role("button", name="追加").click()
+
+
+def line_error(dialog: Locator) -> Locator:
+    """Return the error line of the field that adds a reference line."""
+    return dialog.locator(".axis-dialog-add-line .axis-dialog-error")
+
+
+def test_lines_of_each_kind_are_added_in_order(page: Page) -> None:
+    """The kind picked and the number typed make each line, listed in the order added with the text of its kind."""
+    dialog = open_dialog(page, range=[0, 10])
+    expect(dialog.locator("select[name=line-type]")).to_have_value("value")
+    add_typed(
+        dialog,
+        ("sigma", "3"),
+        ("sigma", "0"),
+        ("quantile", "95"),
+        ("quantile", "50"),
+        ("value", "1.5"),
+    )
+    expect(line_values(dialog)).to_have_text(["平均 ± 3σ", "平均", "分位 95%", "分位 50%", "1.5"])
+    dialog.get_by_role("button", name="適用").click()
+    lines = applied(page)[-1]["settings"]["lines"]
+    assert [(line["type"], line["value"]) for line in lines] == [
+        ("sigma", 3), ("sigma", 0), ("quantile", 95), ("quantile", 50), ("value", 1.5),
+    ]
+    assert all((line["color"], line["dash"]) == ("#000000", "dash") for line in lines)
+    add_typed(dialog, ("sigma", "2.5"), ("quantile", "99.865"))
+    expect(line_values(dialog).nth(5)).to_have_text("平均 ± 2.5σ")
+    expect(line_values(dialog).nth(6)).to_have_text("分位 99.865%")
+
+
+@pytest.mark.parametrize(
+    ("kind", "text", "error"),
+    [
+        ("sigma", "-1", SIGMA_ERROR),
+        ("sigma", "abc", NUMBER_ERROR),
+        ("sigma", "", NUMBER_ERROR),
+        ("quantile", "101", PERCENT_ERROR),
+        ("quantile", "-0.5", PERCENT_ERROR),
+        ("quantile", "x", NUMBER_ERROR),
+    ],
+)
+def test_a_wrong_number_of_a_statistic_adds_nothing(page: Page, kind: str, text: str, error: str) -> None:
+    """A negative n, a percentile out of 0 to 100, or no number tells why beside the field and adds no line."""
+    dialog = open_dialog(page, range=[0, 10])
+    add_typed(dialog, (kind, text))
+    expect(line_error(dialog)).to_have_text(error)
+    expect(dialog.locator(".axis-dialog-line")).to_have_count(0)
+    expect(dialog.locator("input[name=line]")).to_have_value(text)
+    dialog.get_by_role("button", name="適用").click()
+    assert applied(page)[-1]["settings"]["lines"] == []
+
+
+def test_the_unit_follows_the_kind_and_the_text_stays(page: Page) -> None:
+    """σ, % or nothing follow the field as the kind is picked; the text typed stays."""
+    dialog = open_dialog(page, range=[0, 10])
+    unit = dialog.locator(".axis-dialog-add-line .axis-dialog-unit")
+    field = dialog.locator("input[name=line]")
+    kind = dialog.locator("select[name=line-type]")
+    expect(unit).to_have_text("")
+    field.fill("2")
+    for picked, text in [("sigma", "σ"), ("quantile", "%"), ("value", ""), ("sigma", "σ")]:
+        kind.select_option(picked)
+        expect(unit).to_have_text(text)
+        expect(field).to_have_value("2")
+
+
+@pytest.mark.parametrize("kind", list(CASES))
+def test_a_temporal_axis_adds_values_alone(page: Page, kind: str) -> None:
+    """The statistics are of numeric axes: a temporal axis's dialog offers them disabled."""
+    dialog = open_dialog(page, kind=kind, range=SHOWN[kind])
+    options = dialog.locator("select[name=line-type] option")
+    expect(options).to_have_text(["値", "平均 ± nσ", "分位"])
+    assert [options.nth(i).is_disabled() for i in range(3)] == [False, True, True]
+    page.evaluate(CLOSE)
+    number = open_dialog(page, range=[0, 1]).locator("select[name=line-type] option")
+    assert [number.nth(i).is_disabled() for i in range(3)] == [False, False, False]
+
+
+def test_enter_adds_a_statistic_unless_it_commits_a_conversion(page: Page) -> None:
+    """A plain Enter in the field adds the line of the kind picked; the Enter of an IME conversion does not."""
+    dialog = open_dialog(page, range=[0, 1])
+    dialog.locator("select[name=line-type]").select_option("quantile")
+    value = dialog.locator("input[name=line]")
+    value.fill("95")
+    rows = dialog.locator(".axis-dialog-lines .axis-dialog-line")
+    press_conversion_enters(value)
+    expect(rows).to_have_count(0)
+    press_plain_enter(value)
+    expect(rows).to_have_count(1)
+    expect(dialog).to_be_visible()
+    expect(line_values(dialog)).to_have_text(["分位 95%"])
+
+
+def test_the_pencil_edits_the_number_of_a_statistic(page: Page) -> None:
+    """The pencil of a statistic's line edits its n or percentile, checked as they are added."""
+    dialog = open_dialog(page, range=[0, 10])
+    add_typed(dialog, ("sigma", "3"), ("quantile", "95"))
+    for row, wrong, error, right, listed in [
+        (0, "-2", SIGMA_ERROR, "2", "平均 ± 2σ"),
+        (1, "100.5", PERCENT_ERROR, "50", "分位 50%"),
+    ]:
+        dialog.locator(".axis-dialog-line-edit").nth(row).click()
+        field = dialog.locator(".axis-dialog-line-input")
+        expect(field).to_have_value(["3", "95"][row])
+        field.fill(wrong)
+        field.press("Enter")
+        expect(dialog.locator(".axis-dialog-line .axis-dialog-error")).to_have_text(error)
+        field.fill(right)
+        field.press("Enter")
+        expect(line_values(dialog).nth(row)).to_have_text(listed)
+    dialog.get_by_role("button", name="適用").click()
+    lines = applied(page)[-1]["settings"]["lines"]
+    assert [(line["type"], line["value"]) for line in lines] == [("sigma", 2), ("quantile", 50)]
+
+
+# Two panels of the y column "b" (and of the x column "a"), whose rows have
+# their own statistics; the second has a single row on y, the first none on x.
+STATS = [
+    {
+        "x": None,
+        "y": {"n": 10, "mean": 5.0, "std": 2.0, "quantiles": [[50, 4.5], [95, 9.0]]},
+    },
+    {
+        "x": {"n": 1, "mean": 7.0, "std": None, "quantiles": [[50, 7.0]]},
+        "y": {"n": 1, "mean": 1.0, "std": None, "quantiles": [[50, 1.0], [95, 1.0]]},
+    },
+]
+TWO_PANELS = meta(
+    panels=[
+        {"xaxis": "x", "yaxis": "y", "x": 0, "y": 0, "ref_stats": STATS[0]},
+        {"xaxis": "x2", "yaxis": "y2", "x": 0, "y": 0, "ref_stats": STATS[1]},
+    ],
+)
+
+DECORATE = """async ([meta, settings]) => {
+  const m = await import("/static/js/axisdialog.js");
+  return m.decorate({}, meta, (column) => settings[column]).shapes ?? [];
+}"""
+
+
+def line(kind: str, value: float, color: str = "#000000") -> dict:
+    """Return a reference line of `kind` and `value`."""
+    return {"type": kind, "value": value, "color": color, "dash": "dash"}
+
+
+def test_statistic_lines_lie_at_each_panels_values(page: Page) -> None:
+    """A y column's lines of the statistics are level lines at each panel's own values, labeled in their color; a panel without a deviation has no lines of n > 0, and a value's line has no label."""
+    lines = [
+        line("sigma", 3, "#ff0000"),
+        line("sigma", 0, "#00ff00"),
+        line("quantile", 50),
+        line("quantile", 95, "#0000ff"),
+        line("value", 2.5),
+    ]
+    shapes = page.evaluate(DECORATE, [TWO_PANELS, {"b": {"lines": lines}}])
+    drawn = [
+        (s["yref"], s["xref"], s["y0"], s["y1"], s.get("label", {}).get("text"))
+        for s in shapes
+    ]
+    assert drawn == [
+        ("y", "x domain", 11.0, 11.0, "+3σ"),
+        ("y", "x domain", -1.0, -1.0, "−3σ"),
+        ("y", "x domain", 5.0, 5.0, "μ"),
+        ("y", "x domain", 4.5, 4.5, "中央値"),
+        ("y", "x domain", 9.0, 9.0, "P95"),
+        ("y", "x domain", 2.5, 2.5, None),
+        ("y2", "x2 domain", 1.0, 1.0, "μ"),
+        ("y2", "x2 domain", 1.0, 1.0, "中央値"),
+        ("y2", "x2 domain", 1.0, 1.0, "P95"),
+        ("y2", "x2 domain", 2.5, 2.5, None),
+    ]
+    for shape in shapes:
+        assert (shape["x0"], shape["x1"]) == (0, 1)
+        if "label" in shape:
+            assert shape["label"] == {
+                "text": shape["label"]["text"],
+                "textposition": "end",
+                "textangle": 0,
+                "xanchor": "right",
+                "yanchor": "bottom",
+                "font": {"size": 11, "color": shape["line"]["color"]},
+            }
+    colors = [s["line"]["color"] for s in shapes[:5]]
+    assert colors == ["#ff0000", "#ff0000", "#00ff00", "#000000", "#0000ff"]
+
+
+def test_statistic_lines_of_an_x_column_are_vertical(page: Page) -> None:
+    """An x column's lines of the statistics stand across its panels, labeled right of them at the top; a panel without statistics has none."""
+    lines = [line("sigma", 2), line("quantile", 50), line("value", 3)]
+    shapes = page.evaluate(DECORATE, [TWO_PANELS, {"a": {"lines": lines}}])
+    drawn = [(s["xref"], s["yref"], s["x0"], s["x1"], s.get("label", {}).get("text")) for s in shapes]
+    assert drawn == [
+        ("x", "y domain", 3, 3, None),
+        ("x2", "y2 domain", 7.0, 7.0, "中央値"),
+        ("x2", "y2 domain", 3, 3, None),
+    ]
+    label = shapes[1]["label"]
+    assert (label["xanchor"], label["yanchor"], label["textangle"]) == ("left", "top", 0)
+    assert (shapes[1]["y0"], shapes[1]["y1"]) == (0, 1)
+
+
+def test_statistic_lines_need_a_numeric_axis_and_a_kind(page: Page) -> None:
+    """A line without a kind of `LINE_TYPES` draws nothing; nor do the statistics on a temporal axis."""
+    old = [{"value": 1, "color": "#000000", "dash": "dash"}]
+    assert page.evaluate(DECORATE, [TWO_PANELS, {"b": {"lines": old}}]) == []
+    timed = meta(
+        panels=TWO_PANELS["panels"], y_numeric=[False], temporal={"b": "duration"}
+    )
+    shapes = page.evaluate(DECORATE, [timed, {"b": {"lines": [line("sigma", 1), line("value", 4)]}}])
+    assert [(s["yref"], s["y0"]) for s in shapes] == [("y", 4), ("y2", 4)]

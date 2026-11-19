@@ -16,6 +16,7 @@ from ddviz.shared.scatter import (
     SHAPE_SIZE,
     Binning,
     Filter,
+    RefStat,
     ScatterSpec,
     Smoothing,
 )
@@ -375,6 +376,7 @@ def scatter_spec(
     keep_unfiltered_color_levels: bool = False,
     keep_unfiltered_symbol_levels: bool = False,
     keep_unfiltered_axis_levels: list[str] | None = None,
+    ref_stats: list[RefStat] | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -474,6 +476,13 @@ def scatter_spec(
         The categorical x and y columns whose bands are the levels over
         every row (`ddviz.server.plotoptions.parse_keep_axis_levels`,
         `ScatterSpec.keep_unfiltered_axis_levels`); None for none.
+    ref_stats : list of RefStat, optional
+        The statistics of the reference lines the page asks for, by column
+        (`ddviz.server.plotoptions.parse_ref_stats`): those of the
+        numeric x and y columns of the graph that are not temporal are
+        kept (`ScatterSpec.ref_stats`), the others left out without an
+        error, as the page keeps its lines by column for every graph.
+        None for none.
 
     Returns
     -------
@@ -525,6 +534,12 @@ def scatter_spec(
         binned["color"] = color_bins
     read = dict.fromkeys([*hover, *(f.column for f in filters)])
     band = {ONE_BAND: []} if x == [ONE_BAND] else {}
+    categorical = [
+        c
+        for c in dict.fromkeys([*x, *encoding.y])
+        if c == ONE_BAND or not numeric.get(c, True)
+    ]
+    axis_columns = set(x) | set(encoding.y)
     return ScatterSpec(
         files={**{c: files[c] for c in read}, **band},
         x=x,
@@ -543,11 +558,7 @@ def scatter_spec(
         max_axis_levels=max_axis_levels,
         wrap=wrap,
         wrap_cols=wrap_cols if wrap else None,
-        categorical=[
-            c
-            for c in dict.fromkeys([*x, *encoding.y])
-            if c == ONE_BAND or not numeric.get(c, True)
-        ],
+        categorical=categorical,
         points="points" in encoding.elements,
         box="box" in encoding.elements and has_box_pair(encoding, numeric),
         smooth=(smoothing or Smoothing())
@@ -570,4 +581,11 @@ def scatter_spec(
         keep_unfiltered_color_levels=keep_unfiltered_color_levels,
         keep_unfiltered_symbol_levels=keep_unfiltered_symbol_levels,
         keep_unfiltered_axis_levels=list(keep_unfiltered_axis_levels or []),
+        ref_stats=[
+            r
+            for r in ref_stats or []
+            if r.column in axis_columns
+            and r.column not in categorical
+            and r.column not in (temporal or {})
+        ],
     )

@@ -16,13 +16,14 @@ from ddviz.server.plotoptions import (
     parse_line_aggregation,
     parse_line_width,
     parse_range_levels,
+    parse_ref_stats,
     parse_shape_size,
     parse_shape_sizes,
     parse_smoothing,
     parse_wrap_cols,
     spec_color_kind,
 )
-from ddviz.shared.scatter import Binning, ScatterSpec, Smoothing
+from ddviz.shared.scatter import Binning, RefStat, ScatterSpec, Smoothing
 
 
 @pytest.mark.parametrize("by", ["values", "rows"])
@@ -144,6 +145,46 @@ def test_parse_smoothing_refuses_bad_values(raw: object) -> None:
     """An unknown method, a parameter of another method, or one out of range is refused."""
     with pytest.raises(ValueError):
         parse_smoothing(raw)
+
+
+def test_parse_ref_stats() -> None:
+    """Each column asks for its moments and percentiles, sorted without repeats; a column asking for nothing is dropped."""
+    assert parse_ref_stats({}) == []
+    raw = {
+        "y1": {"moments": True, "quantiles": [95, 5, 95.0]},
+        "x": {"quantiles": [0, 100, 0.135]},
+        "z": {"moments": False, "quantiles": []},
+        "w": {"moments": True},
+    }
+    assert parse_ref_stats(raw) == [
+        RefStat("y1", True, [5.0, 95.0]),
+        RefStat("x", False, [0.0, 0.135, 100.0]),
+        RefStat("w", True, []),
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        [],
+        "y",
+        {"y": True},
+        {"y": {"moments": "true"}},
+        {"y": {"moments": 1}},
+        {"y": {"quantiles": [101]}},
+        {"y": {"quantiles": [-1]}},
+        {"y": {"quantiles": [float("nan")]}},
+        {"y": {"quantiles": ["50"]}},
+        {"y": {"quantiles": [True]}},
+        {"y": {"quantiles": 50}},
+        {"y": {"moments": True, "n": 3}},
+    ],
+)
+def test_parse_ref_stats_refuses_other_shapes(raw: object) -> None:
+    """Not an object of objects, moments not a bool, or quantiles not a list of numbers from 0 to 100 is refused."""
+    with pytest.raises(ValueError):
+        parse_ref_stats(raw)
 
 
 def test_parse_shape_sizes() -> None:

@@ -18,7 +18,7 @@ from ddviz.server.figure import (
     build_figure,
 )
 from ddviz.shared.manifest import IMAGES, PlotManifest
-from ddviz.shared.scatter import ONE_BAND, ScatterSpec, View
+from ddviz.shared.scatter import ONE_BAND, RefStat, ScatterSpec, View
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
@@ -355,6 +355,35 @@ def test_box_plots_lie_in_the_meta_of_their_panels(
     first, second = meta["panels"][0], meta["panels"][1]
     assert first["facet"] != second["facet"]
     assert first["boxes"] != second["boxes"]
+
+
+def test_the_statistics_of_the_reference_lines_lie_in_their_panels(
+    tmp_path: Path, scatter_spec: ScatterSpec
+) -> None:
+    """Each panel holds the statistics of its x and y columns asked for, null for a role not asked for; the meta tells what was asked."""
+    spec = replace(
+        scatter_spec,
+        ref_stats=[RefStat("y", moments=True, quantiles=[5.0, 95.0])],
+    )
+    meta = _figure(spec, tmp_path / "task")["meta"]
+    assert meta["ref_stats_asked"] == {"y": {"moments": True, "quantiles": [5.0, 95.0]}}
+    assert len(meta["panels"]) == 2
+    for panel in meta["panels"]:
+        stats = panel["ref_stats"]
+        assert set(stats) == {"x", "y"}
+        assert stats["x"] is None
+        assert set(stats["y"]) == {"n", "mean", "std", "quantiles"}
+        assert stats["y"]["n"] > 1
+        assert stats["y"]["std"] > 0
+        assert [p for p, _ in stats["y"]["quantiles"]] == [5.0, 95.0]
+        low, high = (v for _, v in stats["y"]["quantiles"])
+        assert low < stats["y"]["mean"] < high
+    # The two facet cells differ in their rows, so in their statistics.
+    first, second = (p["ref_stats"]["y"] for p in meta["panels"])
+    assert first != second
+    plain = _figure(scatter_spec, tmp_path / "plain")["meta"]
+    assert plain["ref_stats_asked"] == {}
+    assert [p["ref_stats"] for p in plain["panels"]] == [{"x": None, "y": None}] * 2
 
 
 def _one_band(spec: ScatterSpec, **changes: object) -> ScatterSpec:

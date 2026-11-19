@@ -43,7 +43,9 @@ class PlotRequest(BaseModel):
     keeps under the lock of the axes (`ddviz.server.plotoptions.parse_color_scale`),
     kept as sent for it to check; null for that of the filter. ``cuts``
     are so the cuts of the numeric symbol, row and col columns, by role
-    (`ddviz.server.plotoptions.parse_cuts`).
+    (`ddviz.server.plotoptions.parse_cuts`). ``ref_stats`` are the
+    statistics of the reference lines of each column, kept as sent
+    (`ddviz.server.plotoptions.parse_ref_stats`).
     """
 
     encoding: dict
@@ -67,6 +69,7 @@ class PlotRequest(BaseModel):
     keep_unfiltered_axis_levels: object = []
     color_scale: object = None
     cuts: object = None
+    ref_stats: object = {}
 
 
 class PlotDataRequest(BaseModel):

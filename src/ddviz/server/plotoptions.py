@@ -6,7 +6,13 @@ import math
 from collections.abc import Iterable
 from itertools import pairwise
 
-from ddviz.shared.scatter import LINE_AGGREGATIONS, Binning, ScatterSpec, Smoothing
+from ddviz.shared.scatter import (
+    LINE_AGGREGATIONS,
+    Binning,
+    RefStat,
+    ScatterSpec,
+    Smoothing,
+)
 from ddviz.shared.shapes import SHAPES
 
 # The fewest intervals a numeric color column can be cut into.
@@ -344,6 +350,52 @@ def parse_smoothing(raw: dict | None) -> Smoothing | None:
     if not (_finite_number(frac) and 0 < frac <= 1):
         raise ValueError(f"frac is above 0 and at most 1: {frac}")
     return Smoothing(method, None if p is None else float(p), float(frac))
+
+
+def parse_ref_stats(raw: object) -> list[RefStat]:
+    """Return the statistics of the reference lines the page asks for, checked.
+
+    Parameters
+    ----------
+    raw : object
+        ``{column: {"moments": bool, "quantiles": [p, ...]}}``: whether the
+        mean and the standard deviation of the column are found, and the
+        percentiles (finite numbers from 0 to 100); either key may be left
+        out (no moments, no quantiles).
+
+    Returns
+    -------
+    list of RefStat
+        One per column asking for any, its percentiles ascending without
+        repeats.
+
+    Raises
+    ------
+    ValueError
+        When `raw` is not an object of objects of these keys, ``moments``
+        is not a bool, or ``quantiles`` not a list of such numbers.
+    """
+    if not isinstance(raw, dict) or not all(isinstance(c, str) for c in raw):
+        raise ValueError(f"ref_stats is an object of columns: {raw!r}")
+    asked = []
+    for column, stats in raw.items():
+        if not isinstance(stats, dict) or not set(stats) <= {"moments", "quantiles"}:
+            raise ValueError(
+                f"ref_stats of {column!r} is an object of moments and quantiles: {stats!r}"
+            )
+        moments = stats.get("moments", False)
+        quantiles = stats.get("quantiles", [])
+        if type(moments) is not bool:
+            raise ValueError(f"moments of {column!r} is true or false: {moments!r}")
+        if not isinstance(quantiles, list) or not all(
+            _finite_number(p) and 0 <= p <= 100 for p in quantiles
+        ):
+            raise ValueError(
+                f"quantiles of {column!r} are numbers from 0 to 100: {quantiles!r}"
+            )
+        if moments or quantiles:
+            asked.append(RefStat(column, moments, sorted({float(p) for p in quantiles})))
+    return asked
 
 
 def parse_shape_size(raw: object) -> int | None:

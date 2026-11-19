@@ -129,6 +129,7 @@ const STAGES = {
   facets: "パネルの水準を調べ中…",
   boxes: "箱ひげを計算中…",
   smooth: "平滑化を計算中…",
+  ref_stats: "統計を計算中…",
   lines: "点を結ぶ線を計算中…",
   bins: "点を集約中…",
   rows: "ホバー用のデータを読み込み中…",
@@ -666,6 +667,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     ...options.request(encoding),
     axis_scales: axes.scales.request(encoding),
     keep_unfiltered_axis_levels: axes.levels.request(encoding, builder.numeric),
+    // The statistics the reference lines of its numeric axes need.
+    ref_stats: axes.refStats(encoding, builder.numeric, builder.temporal),
     // Under the lock, the color scale shown (`shownScale`) stays while the color does.
     color_scale: axisRanges.carriedColorScale(shownScale(), encoding.color, options.colorBins),
     // So do the cuts of a numeric symbol, row or col column on its role.

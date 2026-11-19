@@ -166,6 +166,51 @@ class Smooths:
 
 
 @dataclass(frozen=True)
+class RefStat:
+    """The statistics the reference lines of a numeric axis column need (`ddviz.compute.refstats`).
+
+    Parameters
+    ----------
+    column : str
+        The column.
+    moments : bool
+        Whether its mean and sample standard deviation are found (the
+        lines of the mean plus or minus n standard deviations).
+    quantiles : list of float
+        The percentiles found, from 0 to 100, ascending and without
+        repeats (the lines of a quantile).
+    """
+
+    column: str
+    moments: bool = False
+    quantiles: list[float] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RefStats:
+    """The statistics of one axis column of the panels of a pair of axis columns (`ddviz.compute.refstats`).
+
+    Parameters
+    ----------
+    x, y : str
+        The pair's x and y columns.
+    role : str
+        ``"x"`` or ``"y"``: the column of the pair the statistics are of.
+    stats : list of list
+        One item per facet cell with rows: ``[row, col, n, mean, std,
+        quantiles]``, where ``row`` and ``col`` index the drawn facet
+        levels, ``n`` counts the rows, ``mean`` and ``std`` (sample, ddof
+        1) are None when not asked for (``std`` too for a single row), and
+        ``quantiles`` holds ``[p, value]`` of each percentile asked for.
+    """
+
+    x: str
+    y: str
+    role: str
+    stats: list[list]
+
+
+@dataclass(frozen=True)
 class View:
     """Zoomed view of a scatter plot.
 
@@ -208,6 +253,9 @@ class View:
     smooths : list of Smooths
         Smoothing lines of each pair, from a result with the same local
         filter; a pair without them has them fitted again.
+    ref_stats : list of RefStats
+        Statistics of the reference lines of each pair and role, from a
+        result with the same local filter; those left out are found again.
     find_levels : list of str
         The roles of `ScatterSpec.levels_of_filter` whose levels the worker
         finds again over the rows of the local filter in place of those of
@@ -246,6 +294,7 @@ class View:
     axis_levels: dict[str, list[str]] = field(default_factory=dict)
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
+    ref_stats: list[RefStats] = field(default_factory=list)
     find_levels: list[str] = field(default_factory=list)
     find_axis_levels: list[str] = field(default_factory=list)
     find_color_scale: bool = False
@@ -490,6 +539,10 @@ class ScatterSpec:
         the color (``"symbol"``, ``"row"``, ``"col"``) that the page keeps
         under the lock of the axes; a role left out takes those of the rows
         of the local filter (`ddviz.compute.aggregate`).
+    ref_stats : list of RefStat
+        The statistics of the reference lines of the numeric x and y
+        columns (not temporal), one item per column: each panel finds them
+        over the rows it draws (`ddviz.compute.refstats`).
     """
 
     files: dict[str, list[str]]
@@ -533,6 +586,7 @@ class ScatterSpec:
     keep_unfiltered_axis_levels: list[str] = field(default_factory=list)
     color_scale: dict | None = None
     kept_cuts: dict[str, dict] = field(default_factory=dict)
+    ref_stats: list[RefStat] = field(default_factory=list)
 
     def levels_of_filter(self) -> list[str]:
         """Return the roles whose levels depend on the rows of the local filter.
@@ -791,6 +845,7 @@ class ScatterSpec:
                 "binned": {
                     role: Binning(**b) for role, b in data.get("binned", {}).items()
                 },
+                "ref_stats": [RefStat(**r) for r in data.get("ref_stats", [])],
             }
         )
 
@@ -802,5 +857,6 @@ def _view(data: dict) -> View:
             **data,
             "boxes": [Boxes(**b) for b in data.get("boxes", [])],
             "smooths": [Smooths(**s) for s in data.get("smooths", [])],
+            "ref_stats": [RefStats(**r) for r in data.get("ref_stats", [])],
         }
     )

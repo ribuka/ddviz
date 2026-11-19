@@ -2297,6 +2297,13 @@ html.desktop #toasts {
   font-variant-numeric: tabular-nums;
 }
 
+/* The kind of a reference line to add, in the place of a field's label:
+   the field after it lines up with those above. */
+.axis-dialog-field select.axis-dialog-line-type {
+  flex: none;
+  width: 96px;
+}
+
 /* The check box of the thousands separators, under the fields' inputs. */
 .axis-dialog-check {
   padding-left: 102px;

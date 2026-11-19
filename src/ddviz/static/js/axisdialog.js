@@ -1,6 +1,9 @@
 // The settings of a numeric or temporal axis, opened by a double click on
 // its tick labels: its range, the interval of its ticks, how many minor
-// ticks split each interval, and reference lines across its panels. The panels of one
+// ticks split each interval, and reference lines across its panels: at a
+// value, or at the mean plus or minus n standard deviations or a quantile
+// of each panel's rows (a numeric axis's, found by the server: the panel's
+// `ref_stats`, `refstats.js`). The panels of one
 // axis column share its axis (`matches`), so the settings are kept by
 // column and drawn on every panel of the column (`decorate`); the range is
 // the view of the column, which is aggregated again as a zoom is. The
@@ -25,6 +28,18 @@ const DASHES = [
   ["dot", "点線"],
 ];
 const LINE_WIDTH = 1.5;
+// The kinds of reference line (`type` of a line of the settings): at a value
+// of the axis, at the mean plus or minus n standard deviations (`value` is
+// n), at a quantile (`value` is the percentile); and the unit written after
+// the field of each.
+export const LINE_TYPES = [
+  ["value", "値"],
+  ["sigma", "平均 ± nσ"],
+  ["quantile", "分位"],
+];
+const LINE_UNITS = { sigma: "σ", quantile: "%" };
+// The size of the labels of the lines of the statistics, in pixels.
+const LABEL_SIZE = 11;
 // Most minor ticks a tick interval is split into, on a numeric axis and on
 // a temporal one.
 const MAX_MINOR = 100;
@@ -189,6 +204,33 @@ function valueText(kind, value) {
   return kind === "number" ? numberText(value) : axisText(kind, value);
 }
 
+// Reads the number of a reference line of `type` (`LINE_TYPES`) typed in a
+// field of an axis of `kind`: `{value}` or `{error}`. A value is the axis's
+// (`readValue`); the n of the standard deviations is a finite number from
+// 0, the percentile one from 0 to 100.
+export function readLine(kind, type, text) {
+  if (type === "value") return readValue(kind, text);
+  const read = readNumber(text);
+  if (read.error) return read;
+  const value = read.value === 0 ? 0 : read.value;
+  if (type === "sigma") return value < 0 ? { error: "0 以上の数を入れてください" } : { value };
+  return value < 0 || value > 100 ? { error: "0〜100 の数を入れてください" } : { value };
+}
+
+// Returns the text a reference line of an axis of `kind` is listed with:
+// its value, "平均 ± 3σ" ("平均" for n = 0) or "分位 95%".
+export function lineText(kind, line) {
+  if (line.type === "sigma") return line.value === 0 ? "平均" : `平均 ± ${String(line.value)}σ`;
+  if (line.type === "quantile") return `分位 ${String(line.value)}%`;
+  return valueText(kind, line.value);
+}
+
+// Returns the text the field of a reference line's edit starts from: the
+// value as listed, or the n or percentile alone.
+function editText(kind, line) {
+  return line.type === "value" ? valueText(kind, line.value) : numberText(line.value);
+}
+
 // Whether `settings` change nothing of plotly's own axis: no settings to keep.
 export function isEmpty(settings) {
   return (
@@ -328,10 +370,40 @@ export function tickAttributes(settings, kind = "number") {
   };
 }
 
+// Returns where a reference line lies on a panel of an axis of `kind`, as
+// `[at, label]` pairs: a value's line at its value (plotly's date text on a
+// date axis, `dateText`) without a label; the lines of the statistics at the
+// values of the panel's rows (`stats`: its `ref_stats` of the line's axis,
+// null for none), on a numeric axis only. n > 0 standard deviations draw two
+// lines ("+3σ", "−3σ"), none without a deviation (a single row); n = 0 the
+// mean ("μ"); a quantile one line ("P95", "中央値" for 50).
+function linePlaces(kind, line, stats) {
+  if (line.type === "value") return [[isDateKind(kind) ? dateText(line.value) : line.value, null]];
+  if (kind !== "number" || !stats) return [];
+  if (line.type === "sigma") {
+    if (stats.mean === null) return [];
+    if (line.value === 0) return [[stats.mean, "μ"]];
+    if (stats.std === null) return [];
+    const n = String(line.value);
+    const step = line.value * stats.std;
+    return [
+      [stats.mean + step, `+${n}σ`],
+      [stats.mean - step, `−${n}σ`],
+    ];
+  }
+  if (line.type === "quantile") {
+    const found = stats.quantiles.find(([p]) => p === line.value);
+    return found ? [[found[1], line.value === 50 ? "中央値" : `P${String(line.value)}`]] : [];
+  }
+  return [];
+}
+
 // Returns the plotly shapes of the reference lines of every axis column of
 // a result (`meta`) with a dialog (`axisKind`): a vertical line across each
-// panel of an x column, a horizontal one across each panel of a y column.
-// A line on a date axis is at plotly's date text (`dateText`).
+// panel of an x column, a horizontal one across each panel of a y column,
+// each panel's own for the lines of the statistics (`linePlaces`). Their
+// labels lie inside the panel, level, in the line's color: a horizontal
+// line's above it at the right end, a vertical one's right of it at the top.
 function lineShapes(meta, settingsOf) {
   const shapes = [];
   for (const panel of meta.panels) {
@@ -341,21 +413,33 @@ function lineShapes(meta, settingsOf) {
     ];
     for (const [kind, column, along, other, axis] of across) {
       const settings = kind ? settingsOf(column) : undefined;
+      const [ref, otherRef] = axis === "x" ? ["xref", "yref"] : ["yref", "xref"];
+      const [at0, at1, span0, span1] = axis === "x" ? ["x0", "x1", "y0", "y1"] : ["y0", "y1", "x0", "x1"];
       for (const line of settings?.lines ?? []) {
-        const at = isDateKind(kind) ? dateText(line.value) : line.value;
-        const [ref, otherRef] = axis === "x" ? ["xref", "yref"] : ["yref", "xref"];
-        const [at0, at1, span0, span1] = axis === "x" ? ["x0", "x1", "y0", "y1"] : ["y0", "y1", "x0", "x1"];
-        shapes.push({
-          type: "line",
-          layer: "above",
-          [ref]: along,
-          [otherRef]: `${other} domain`,
-          [at0]: at,
-          [at1]: at,
-          [span0]: 0,
-          [span1]: 1,
-          line: { color: line.color, dash: line.dash, width: LINE_WIDTH },
-        });
+        for (const [at, text] of linePlaces(kind, line, panel.ref_stats?.[axis] ?? null)) {
+          const shape = {
+            type: "line",
+            layer: "above",
+            [ref]: along,
+            [otherRef]: `${other} domain`,
+            [at0]: at,
+            [at1]: at,
+            [span0]: 0,
+            [span1]: 1,
+            line: { color: line.color, dash: line.dash, width: LINE_WIDTH },
+          };
+          if (text !== null) {
+            shape.label = {
+              text,
+              textposition: "end",
+              textangle: 0,
+              xanchor: axis === "x" ? "left" : "right",
+              yanchor: axis === "x" ? "top" : "bottom",
+              font: { size: LABEL_SIZE, color: line.color },
+            };
+          }
+          shapes.push(shape);
+        }
       }
     }
   }
@@ -607,7 +691,10 @@ const PENCIL =
   '<path d="M11 2.5 13.5 5 5.5 13H3v-2.5z M9.5 4l2.5 2.5" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 
 // The reference lines: {value, lines(), settle()}; `lines()` returns copies
-// of the lines listed. The pencil of a row edits its value in place: Enter
+// of the lines listed. A line is added with its kind picked (`LINE_TYPES`;
+// the statistics on a numeric axis only) and its number typed, the unit of
+// the kind written after it; another kind keeps the text typed. The pencil
+// of a row edits its value (a statistic's n or percentile) in place: Enter
 // or leaving the field replaces the value alone (its color, dash and place
 // kept), Esc puts the value back; a wrong value shows why on the row and
 // keeps the field. `settle()` ends an edit left in the field, and returns
@@ -615,9 +702,34 @@ const PENCIL =
 function lineFields(form, settings) {
   const { kind, errors } = form;
   const box = form.section("参照線");
-  const value = form.field(box, "値", "", "line");
+  const adding = document.createElement("div");
+  adding.className = "axis-dialog-field axis-dialog-add-line";
+  const type = document.createElement("select");
+  Object.assign(type, { name: "line-type", className: "axis-dialog-line-type", title: "参照線の種類" });
+  for (const [key, text] of LINE_TYPES) {
+    const option = new Option(text, key, key === "value", key === "value");
+    // The statistics of the panels' rows are of a numeric column alone.
+    option.disabled = key !== "value" && kind !== "number";
+    type.append(option);
+  }
+  const value = document.createElement("input");
+  Object.assign(value, { type: "text", inputMode: isDateKind(kind) ? "text" : "decimal", value: "", name: "line" });
+  value.spellcheck = false;
+  value.setAttribute("aria-label", "参照線の値");
+  // The unit of the kind picked; a duration's values are seconds.
+  const unit = document.createElement("span");
+  unit.className = "axis-dialog-unit";
+  const showUnit = () => {
+    unit.textContent = LINE_UNITS[type.value] ?? (kind === "duration" ? "秒" : "");
+  };
+  type.addEventListener("change", showUnit);
+  showUnit();
   const add = Object.assign(document.createElement("button"), { type: "button", textContent: "追加" });
-  value.parentElement.insertBefore(add, errors.get("line"));
+  const lineError = document.createElement("span");
+  lineError.className = "axis-dialog-error";
+  errors.set("line", lineError);
+  adding.append(type, value, unit, add, lineError);
+  box.append(adding);
   const list = document.createElement("div");
   list.className = "axis-dialog-lines";
   box.append(list);
@@ -651,7 +763,7 @@ function lineFields(form, settings) {
   const valueSpan = (line) => {
     const at = document.createElement("span");
     at.className = "axis-dialog-line-value";
-    at.textContent = valueText(kind, line.value);
+    at.textContent = lineText(kind, line);
     return at;
   };
   // Shows the value of the row edited again in place of its field, leaving
@@ -678,7 +790,7 @@ function lineFields(form, settings) {
         if (editing?.index === i) {
           at = document.createElement("input");
           Object.assign(at, { type: "text", className: "axis-dialog-line-input", value: editing.text });
-          at.inputMode = isDateKind(kind) ? "text" : "decimal";
+          at.inputMode = isDateKind(kind) && line.type === "value" ? "text" : "decimal";
           at.spellcheck = false;
           editing.input = at;
           const field = at;
@@ -750,7 +862,7 @@ function lineFields(form, settings) {
   // value is rounded to microseconds, which must not move the line.
   const commit = () => {
     if (editing.text !== editing.shown) {
-      const read = readValue(kind, editing.text);
+      const read = readLine(kind, lines[editing.index].type, editing.text);
       if (read.error) {
         editing.error = read.error;
         editing.errorLine.textContent = read.error;
@@ -772,7 +884,7 @@ function lineFields(form, settings) {
   // Edits the value of row `i`, when no edit with a wrong value is left.
   const startEdit = (i) => {
     if (!settle()) return;
-    const shown = valueText(kind, lines[i].value);
+    const shown = editText(kind, lines[i]);
     editing = { index: i, shown, text: shown, error: "", input: null, errorLine: null };
     renderLines();
     editing.input.focus();
@@ -780,10 +892,10 @@ function lineFields(form, settings) {
   };
   renderLines();
   const addLine = () => {
-    const read = readValue(kind, value.value);
-    errors.get("line").textContent = read.error ?? "";
+    const read = readLine(kind, type.value, value.value);
+    lineError.textContent = read.error ?? "";
     if (read.error) return;
-    lines = [...lines, { value: read.value, color: LINE_COLOR, dash: LINE_DASH }];
+    lines = [...lines, { type: type.value, value: read.value, color: LINE_COLOR, dash: LINE_DASH }];
     value.value = "";
     renderLines();
   };

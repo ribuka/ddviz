@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ddviz.shared.keys import BinGrid
 from ddviz.shared.layout import AxisGrid, GridLayout
-from ddviz.shared.scatter import Boxes, ScatterSpec, Selection, Smooths
+from ddviz.shared.scatter import Boxes, RefStats, ScatterSpec, Selection, Smooths
 
 MANIFEST = "manifest.json"
 # File of a plot task holding the PNG of every panel and series one after
@@ -152,6 +152,9 @@ class PlotManifest:
     smooths : list of Smooths
         Smoothing lines of the pairs of a numeric x and a numeric y
         (`ddviz.compute.aggregate.Aggregation.smooths`).
+    ref_stats : list of RefStats
+        Statistics of the reference lines of each pair and role
+        (`ddviz.compute.aggregate.Aggregation.ref_stats`).
     nonpositive : list of list of str
         The role and the name of each column on a log axis with a value
         not positive among the rows of the local filter
@@ -184,6 +187,7 @@ class PlotManifest:
     pile_bytes: int = 0
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
+    ref_stats: list[RefStats] = field(default_factory=list)
     nonpositive: list[list[str]] = field(default_factory=list)
 
     def write(self, out: Path) -> None:
@@ -233,6 +237,7 @@ class PlotManifest:
             pile_bytes=data["pile_bytes"],
             boxes=[Boxes(**b) for b in data["boxes"]],
             smooths=[Smooths(**k) for k in data["smooths"]],
+            ref_stats=[RefStats(**r) for r in data["ref_stats"]],
             nonpositive=[list(p) for p in data["nonpositive"]],
         )
 

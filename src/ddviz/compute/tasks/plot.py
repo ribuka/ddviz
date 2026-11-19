@@ -255,6 +255,7 @@ def run_plot(spec: ScatterSpec, out: Path, emit: Emit) -> None:
         pile_bytes=pile_bytes,
         boxes=agg.boxes,
         smooths=agg.smooths,
+        ref_stats=agg.ref_stats,
         nonpositive=[list(p) for p in agg.nonpositive],
     ).write(out)
 
