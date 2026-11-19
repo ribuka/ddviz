@@ -87,6 +87,35 @@ html.desktop:not(.caption-known) body {
   outline-offset: -2px;
 }
 
+/* The favorites of the drawing settings (js/favorites.js), right of redo:
+   the size, hover and drag of the `…` menu; only the graph's page adds it. */
+#titlebar .titlebar-favorites {
+  app-region: no-drag;
+  flex: none;
+  height: 100%;
+  min-width: 40px;
+  padding: 0 10px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+#titlebar .titlebar-favorites:hover:not(:disabled),
+#titlebar .titlebar-favorites[aria-expanded="true"] {
+  background: rgb(0 0 0 / 8%);
+}
+
+#titlebar .titlebar-favorites:disabled {
+  color: #a0a0a0;
+}
+
+#titlebar .titlebar-favorites:focus-visible {
+  outline: 2px solid #2a6fdb;
+  outline-offset: -2px;
+}
+
 /* The history of the saves of the plot's data (js/saves.js), at the right
    end, 8px left of the OS caption buttons; a ring around it shows the saves
    running (Issue #194). Only the graph's page adds it. */

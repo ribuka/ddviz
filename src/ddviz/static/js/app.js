@@ -13,6 +13,7 @@ import { openColumnMenu } from "./columnmenu.js";
 import { attachColumnList } from "./columns.js";
 import { openDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
+import { Favorites, FavoritesMenu } from "./favorites.js";
 import { FilterPane, filterSettings, filtersKey, RestorePoint } from "./filters.js";
 import { drawable, drawnRoles, hasBoxPair, hasLinePair, hasSmoothPair } from "./graph.js";
 import { SettingsHistory } from "./history.js";
@@ -25,7 +26,7 @@ import { levelText } from "./names.js";
 import { MemoryMeter } from "./memory.js";
 import { showSaveResult, StatusLine, Toasts, errorText } from "./notice.js";
 import { openPlotMenu } from "./plotmenu.js";
-import { PlotImageCopy } from "./plotimage.js";
+import { captureScene, PlotImageCopy, thumbnail } from "./plotimage.js";
 import { PlotOptions } from "./plotoptions.js";
 import {
   axisCoordinates,
@@ -267,12 +268,17 @@ let plotting = 0;
 let plottingRestore = false;
 let drawing = 0;
 // The drawing settings committed, for undo and redo (`history.js`), and the
-// step being applied (`applyStep`): `{index, generation, move}` of its plot,
-// where `move` says whether its result moves to the step (`record`).
+// settings being applied (`applySettings`): `{index, generation, move}` of
+// their plot, where `index` is the step of undo or redo (null for a
+// favorite recalled) and `move` says whether its result moves to the step
+// (`record`).
 const settingsHistory = new SettingsHistory();
 let applying = null;
 // The buttons of undo and redo (`undo.js`), once made.
 let undoControls = null;
+// The favorites of the drawing settings and their button (`favorites.js`).
+const favorites = new Favorites();
+let favoritesMenu = null;
 
 // Marks the plot area busy while a plot is in flight or the page waits for
 // a result of a view or a new size (`setPending`), at once and also while a
@@ -1826,7 +1832,7 @@ function record(settings, mine = null) {
 // settings, the angle or the direction of an axis column (`part` "axes"), a
 // card of the filter pane added, removed or moved ("filters"). Its step is
 // the step shown with that change alone (`edit` of that part): an edit
-// being plotted or applied (`applyStep`), or a condition whose result is
+// being plotted or applied (`applySettings`), or a condition whose result is
 // not drawn yet, is not in it, but in the step its result makes. The step
 // being applied no longer moves there: its result is a step of its own.
 function recordImmediate(part, edit) {
@@ -1856,21 +1862,27 @@ function revertSettings() {
   if (shown) applyOthers(structuredClone(shown.settings));
 }
 
-// Applies the drawing settings of the step `index`, as an edit of them by
-// hand: the graph is plotted, and the history moves to the step once its
-// result is committed (`record`); a failure leaves it (`plotFailed`). A
-// graph without a figure is committed at once. A step that changes the axis
-// dialog's settings alone, whose lines need no statistics the drawn result
-// lacks (`drawsWithoutPlot`), is drawn on that result at once instead, as
-// from the dialog, and the history moves to it.
-function applyStep({ index, settings }) {
+// Applies the drawing settings `settings`, as an edit of them by hand: the
+// graph is plotted, and its result committed (`record`); a failure puts the
+// settings of the step shown back (`plotFailed`). A graph without a figure
+// is committed at once. Settings that change the axis dialog's settings
+// alone, whose lines need no statistics the drawn result lacks
+// (`drawsWithoutPlot`), are drawn on that result at once instead, as from
+// the dialog. With `index`, the step of undo or redo they are, the history
+// moves to that step; without (a favorite recalled), they are a new step
+// after the one shown, as an edit's (`record`, `recordImmediate`).
+function applySettings(settings, index = null) {
   statusLine.release();
   const shown = settingsHistory.steps[settingsHistory.index]?.settings;
   if (current && gd._fullLayout && plotting === 0 && shown && drawsWithoutPlot(current, shown, settings)) {
     axes.applySettings(settings.axes);
     applying = null;
-    settingsHistory.moveTo(index);
-    showUndo();
+    if (index === null) {
+      recordImmediate("axes", () => structuredClone(settings.axes));
+    } else {
+      settingsHistory.moveTo(index);
+      showUndo();
+    }
     axes.redraw();
     return;
   }
@@ -1886,16 +1898,24 @@ function applyStep({ index, settings }) {
   }
   if (drawable(encoding, builder.numeric)) {
     plot(encoding);
-    // `plot` took its generation before its first wait.
-    applying = { index, generation, move: true };
+    // `plot` took its generation before its first wait. A failure puts the
+    // step shown back (`plotFailed`) for a favorite too, whose settings
+    // are not the zones' alone.
+    applying = { index, generation, move: index !== null };
   } else {
     clearPlot();
     serverAhead = false;
     builder.commit();
     applying = null;
-    settingsHistory.moveTo(index);
+    if (index === null) record(captureSettings());
+    else settingsHistory.moveTo(index);
   }
   showUndo();
+}
+
+// Applies the step `{index, settings}` of undo or redo (`applySettings`).
+function applyStep({ index, settings }) {
+  applySettings(settings, index);
 }
 
 // Cancels the edit being plotted: the plot is dropped (a newer generation)
@@ -1950,6 +1970,7 @@ function redo() {
 // Enables the buttons as undo and redo can go: undo while a plot is in
 // flight too; neither while a conversion's overlay is shown.
 function showUndo() {
+  favoritesMenu?.refresh();
   if (undoControls === null) return;
   const blocked = !converting.hidden;
   undoControls.undo.disabled = blocked || !(plotting !== 0 || settingsHistory.canUndo);
@@ -2067,6 +2088,25 @@ builder.commit();
 record(captureSettings());
 undoControls = undoButtons(undo, redo);
 attachUndoKeys(undo, redo);
+favoritesMenu = new FavoritesMenu({
+  favorites,
+  shown: () => (settingsHistory.index < 0 ? null : settingsHistory.steps[settingsHistory.index].settings),
+  canSave: () => current !== null && Boolean(gd._fullLayout) && plotting === 0,
+  capture: () => {
+    let image = null;
+    try {
+      image = thumbnail(captureScene({ gd, meta: current, layers, legend }), window.devicePixelRatio || 1).canvas;
+    } catch (error) {
+      console.error(error);
+    }
+    return { settings: shownSettings(), thumbnail: image };
+  },
+  // A favorite recalled while a plot is in flight replaces it, as an edit
+  // by hand does: the newer request supersedes the older.
+  apply: (settings) => applySettings(settings),
+  blocked: () => !converting.hidden,
+});
+favoritesMenu.placeAfter(undoControls.redo);
 showUndo();
 // The overlay of a conversion turns the buttons and keys off while shown.
 new MutationObserver(showUndo).observe(converting, { attributes: true, attributeFilter: ["hidden"] });
