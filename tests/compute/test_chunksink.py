@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -75,6 +77,90 @@ def test_the_file_is_the_frames_one_under_another(tmp_path: Path) -> None:
     assert {g.column(c).compression for g in groups for c in range(3)} == {"ZSTD"}
     # Before each frame after the first, the rows of those before it.
     assert received == [5, 6, 6, 18]
+
+
+def _ends(path: Path) -> list[int]:
+    """Return the byte where each row group of a Parquet file ends."""
+    meta = pq.ParquetFile(path).metadata
+    ends = []
+    for i in range(meta.num_row_groups):
+        group = meta.row_group(i)
+        columns = [group.column(c) for c in range(group.num_columns)]
+        ends.append(
+            max(
+                (c.dictionary_page_offset or c.data_page_offset) + c.total_compressed_size
+                for c in columns
+            )
+        )
+    return ends
+
+
+def test_a_frame_waits_until_those_before_it_are_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While the disk writes slowly, with pauses between the writes, a frame is made only once the row groups of the frames before the last one handed on are written."""
+    rng = np.random.default_rng(0)
+    frames = [
+        pl.DataFrame({f"c{c}": rng.standard_normal(40_000) for c in range(3)})
+        for _ in range(5)
+    ]
+    written = [0]
+    made: list[int] = []
+
+    def making() -> Iterator[pl.DataFrame]:
+        """Yield the frames, noting the bytes written when each is made."""
+        for frame in frames:
+            made.append(written[0])
+            yield frame
+    write = chunksink._Paced.write
+
+    def slow(self: chunksink._Paced, data: bytes) -> int:
+        """Write, counting the bytes written, then pause out of `write`."""
+        n = write(self, data)
+        written[0] += n
+        time.sleep(0.05)
+        return n
+
+    monkeypatch.setattr(chunksink._Paced, "write", slow)
+    monkeypatch.setattr(chunksink, "PACED_BYTES", 0)
+    path = tmp_path / "data.parquet"
+    sink_chunks(making(), path, 30_000)
+    assert pl.read_parquet(path).equals(pl.concat(frames))
+    ends = _ends(path)
+    # The third frame is made once the row group of the first frame is
+    # written, the fourth once those of the first two (rows 0 to 60,000),
+    # the fifth once those of the first three.
+    waited = zip(made[2:], [1, 2, 4], strict=True)
+    assert [at >= ends[groups - 1] for at, groups in waited] == [True] * 3
+
+
+def test_a_failed_write_ends_the_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once a write fails, the frames are handed on at once: polars asks for every frame before it raises the error."""
+    rng = np.random.default_rng(0)
+    frames = [
+        pl.DataFrame({f"c{c}": rng.standard_normal(40_000) for c in range(8)})
+        for _ in range(10)
+    ]
+    written = [0]
+    write = chunksink._Paced.write
+
+    def failing(self: chunksink._Paced, data: bytes) -> int:
+        """Fail once a frame's bytes are written."""
+        if written[0] > 2_000_000:
+            self._file.close()
+        n = write(self, data)
+        written[0] += n
+        return n
+
+    monkeypatch.setattr(chunksink._Paced, "write", failing)
+    monkeypatch.setattr(chunksink, "PACED_BYTES", 0)
+    start = time.perf_counter()
+    with pytest.raises(pl.exceptions.ComputeError):
+        sink_chunks(iter(frames), tmp_path / "data.parquet", 30_000)
+    # Waiting for the row groups never written would take `STALL_SECONDS` for each frame.
+    assert time.perf_counter() - start < chunksink.STALL_SECONDS
 
 
 def test_no_rows_give_a_file_of_typed_columns(tmp_path: Path) -> None:
