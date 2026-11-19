@@ -2606,7 +2606,7 @@ def test_the_filter_pane_steps_and_drags_its_height_keeping_the_conditions(
 def test_the_maximized_filter_pane_scrolls_to_its_end_and_keeps_its_state_on_a_drop(
     app_page: Page,
 ) -> None:
-    """A maximized pane scrolls to its last card and its drop target; a chip dropped on it adds a card and keeps it maximized, a known column changes nothing."""
+    """A maximized pane scrolls to the bottom of its last card; a chip dropped on it adds a card and keeps it maximized, a known column changes nothing."""
     page = app_page
     errors = watch_errors(page)
     page.set_viewport_size({"width": 1280, "height": 520})
@@ -2636,7 +2636,16 @@ def test_the_maximized_filter_pane_scrolls_to_its_end_and_keeps_its_state_on_a_d
     body = page.locator(".filter-body")
     assert body.evaluate("e => e.scrollHeight > e.clientHeight")
     body.evaluate("e => { e.scrollTop = e.scrollHeight; }")
-    expect(page.locator(".filter-drop")).to_be_in_viewport()
+    # No drop zone with cards: the bottom of the last card shows, 8px above the end.
+    expect(page.locator(".filter-drop")).to_be_hidden()
+    gap = body.evaluate(
+        """(body) => {
+          const c = body.querySelector('.filter-list > .filter-card:last-child').getBoundingClientRect();
+          const b = body.getBoundingClientRect();
+          return b.top < c.bottom && b.bottom <= innerHeight ? b.bottom - c.bottom : null;
+        }"""
+    )
+    assert gap is not None and abs(gap - 8) <= 1
     assert body.evaluate("e => e.scrollTop + e.clientHeight >= e.scrollHeight - 1")
 
     # A known column changes nothing.

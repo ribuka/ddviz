@@ -347,6 +347,21 @@ def move_to(page: Page, x: float, y: float) -> None:
     page.mouse.move(x, y, steps=4)
 
 
+def below_last(page: Page) -> float:
+    """Return the y in the middle of the space between the last card and the bottom of the pane's body (no drop zone with cards)."""
+    gap = page.evaluate(
+        """() => {
+          const last = [...document.querySelectorAll('.filter-list > .filter-card')].at(-1).getBoundingClientRect();
+          const body = document.querySelector('.filter-body').getBoundingClientRect();
+          const drop = getComputedStyle(document.querySelector('.filter-drop')).display;
+          return [last.bottom, body.bottom, drop];
+        }"""
+    )
+    assert gap[2] == "none"
+    assert gap[1] - gap[0] >= 6
+    return (gap[0] + gap[1]) / 2
+
+
 @pytest.fixture
 def tall(clock_page: Page) -> Iterator[Page]:
     """Return the pane of `CARDS` in a left pane 900px high, its lists 40px and the pane as high as its cards: every card in view."""
@@ -412,11 +427,9 @@ def test_a_card_moves_by_its_head(tall: Page) -> None:
     order = ["t", "g", "s", "n", "id"]
     assert page.evaluate("() => [window.names(), window.dom()]") == [order, order]
 
-    # g down, past the last card onto the drop zone: the end.
+    # g down, past the last card into the space below it: the end.
     press_head(page, "g")
-    drop = page.evaluate(
-        "() => { const r = document.querySelector('.filter-drop').getBoundingClientRect(); return r.top + r.height / 2; }"
-    )
+    drop = below_last(page)
     move_to(page, first["x"], drop)
     page.mouse.up()
     order = ["t", "s", "n", "id", "g"]
@@ -531,9 +544,7 @@ def test_a_move_is_cancelled(tall: Page, how: str) -> None:
     # The new card's summary draws the pane again, which would cancel the next move.
     page.wait_for_function("() => window.pane.cards.every((c) => c.summary)")
     p = press_head(page, "n")
-    drop = page.evaluate(
-        "() => { const r = document.querySelector('.filter-drop').getBoundingClientRect(); return r.top + r.height / 2; }"
-    )
+    drop = below_last(page)
     move_to(page, p["x"], drop)
     page.mouse.up()
     assert page.evaluate("() => window.names()") == [*expected[1:], "n"]
@@ -674,3 +685,129 @@ def test_a_move_keeps_what_every_card_holds(clock_page: Page) -> None:
     assert result["heights"] == [60, 70]
     assert result["sortedConditions"] == sorted(result["sortedConditions"])
     assert result["errors"] == []
+
+
+# A filter pane with the app's styles and no card. The summary of a column
+# waits until `window.answer()` (one answer per call); `window.shown()` is
+# whether the drop zone shows.
+EMPTY = """async () => {
+  const numeric = { numeric: true, min: 0, max: 10, nulls: 0, integer: true, temporal: null };
+  const waiting = [];
+  window.fetch = (url) => new Promise((r) => waiting.push(() => r(new Response(JSON.stringify(numeric)))));
+  window.answer = () => {
+    waiting.splice(0).forEach((r) => r());
+    return new Promise((r) => setTimeout(r, 30));
+  };
+  if (!document.getElementById("css")) {
+    const link = document.createElement("link");
+    link.id = "css";
+    link.rel = "stylesheet";
+    link.href = "/static/app.css";
+    const loaded = new Promise((r) => (link.onload = r));
+    document.head.append(link);
+    await loaded;
+  }
+  document.body.innerHTML = `
+    <div id="left" style="display: flex; flex-direction: column; width: 260px; height: 600px">
+      <div id="columns" style="flex: 1"></div>
+      <div id="filters"><div class="filter-head"><span class="filter-summary"></span>
+        <button class="filter-up"></button><button class="filter-down"></button></div>
+        <div class="filter-resize"></div>
+        <div class="filter-body"><div class="filter-list"></div><div class="filter-drop">Drop a column to filter</div></div>
+      </div>
+    </div>
+    <div id="drop-tip"></div>`;
+  const { FilterPane, filterSettings } = await import("/static/js/filters.js");
+  window.errors = [];
+  window.addEventListener("error", (e) => window.errors.push(String(e.message)));
+  window.pane = new FilterPane(document.getElementById("filters"), () => {}, () => {});
+  window.filterSettings = filterSettings;
+  window.card = (name) => window.pane.cards.find((c) => c.name === name);
+  window.shown = () => {
+    const drop = document.querySelector(".filter-drop");
+    return drop.checkVisibility() && getComputedStyle(drop).display !== "none";
+  };
+}"""
+
+
+def test_the_drop_zone_shows_only_without_cards(clock_page: Page) -> None:
+    """The drop zone shows with no card and hides with one or more, whatever adds or removes them: add (before its summary too), remove, restore and applySettings."""
+    page = clock_page
+    page.evaluate(EMPTY)
+    seen = {"created": page.evaluate("() => window.shown()")}
+    page.evaluate("() => window.pane.add({ name: 'a', numeric: true })")
+    # The card still waits for its summary: "集計中…".
+    assert page.evaluate("() => window.card('a').summary") is None
+    seen["add, loading"] = page.evaluate("() => window.shown()")
+    page.evaluate("() => window.answer()")
+    seen["add"] = page.evaluate("() => window.shown()")
+    page.evaluate(
+        """async () => {
+          window.pane.add({ name: 'b', numeric: true });
+          await window.answer();
+          window.withCards = window.pane.snapshot();
+          window.settings = window.filterSettings(window.withCards);
+        }"""
+    )
+    seen["add another"] = page.evaluate("() => window.shown()")
+    page.evaluate("() => window.pane.remove(window.card('a'))")
+    seen["remove one"] = page.evaluate("() => window.shown()")
+    page.evaluate("() => window.pane.remove(window.card('b'))")
+    seen["remove all"] = page.evaluate("() => window.shown()")
+    page.evaluate("() => window.pane.restore(window.withCards)")
+    seen["restore"] = page.evaluate("() => window.shown()")
+    page.evaluate("() => window.pane.restore([])")
+    seen["restore []"] = page.evaluate("() => window.shown()")
+    # A column the pane has not seen yet comes as a new card.
+    page.evaluate(
+        """async () => {
+          window.pane.applySettings([...window.settings, { ...window.settings[0], name: 'z' }]);
+          await window.answer();
+        }"""
+    )
+    assert page.evaluate("() => window.pane.cards.length") == 3
+    seen["applySettings"] = page.evaluate("() => window.shown()")
+    page.evaluate("() => window.pane.applySettings([])")
+    seen["applySettings []"] = page.evaluate("() => window.shown()")
+    assert seen == {
+        "created": True,
+        "add, loading": False,
+        "add": False,
+        "add another": False,
+        "remove one": False,
+        "remove all": True,
+        "restore": False,
+        "restore []": True,
+        "applySettings": False,
+        "applySettings []": True,
+    }
+    assert page.evaluate("() => window.errors") == []
+
+
+def test_the_last_card_keeps_8px_below_it(clock_page: Page) -> None:
+    """With cards and no drop zone, the pane scrolled to its end shows the last card's bottom 8px above the body's, its bottom edge inside the body."""
+    page = clock_page
+    page.evaluate(CARDS, [600, []])
+    # s, a list of levels to tick with a bottom edge, moves last.
+    page.evaluate("() => window.pane.moveCard(window.card('s'), 4)")
+    got = page.evaluate(
+        """() => {
+          const body = document.querySelector('.filter-body');
+          const overflows = body.scrollHeight > body.clientHeight;
+          body.scrollTop = body.scrollHeight;
+          const b = body.getBoundingClientRect();
+          const c = window.card('s').element.getBoundingClientRect();
+          const h = window.card('s').element.querySelector('.filter-list-resize').getBoundingClientRect();
+          return {
+            overflows,
+            last: window.dom().at(-1),
+            drop: getComputedStyle(document.querySelector('.filter-drop')).display,
+            gap: b.bottom - c.bottom,
+            handle: h.height > 0 && h.top >= b.top && h.bottom <= b.bottom && h.left >= b.left && h.right <= b.right,
+          };
+        }"""
+    )
+    assert got["overflows"] and got["last"] == "s" and got["drop"] == "none"
+    assert abs(got["gap"] - 8) <= 1, got
+    assert got["handle"], got
+    assert page.evaluate("() => window.errors") == []

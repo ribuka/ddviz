@@ -332,6 +332,13 @@ button {
   border-radius: 4px;
 }
 
+/* The drop zone shows only with no card (filters.js, render): the last card
+   keeps the zone's 8px below it, so its bottom edge (.filter-list-resize)
+   does not sit on the pane's. */
+.filter-card:last-child {
+  margin-bottom: 8px;
+}
+
 /* The head moves the card (filters.js, attachReorder); its buttons do not. */
 .filter-card-head {
   display: flex;

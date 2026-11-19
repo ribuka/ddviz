@@ -193,17 +193,19 @@ def test_the_bottom_edge_sets_the_height_of_a_list_alone(app_page: Page) -> None
     assert height(picked.locator(".filter-levels")) == apart <= 181
     assert abs(height(cat) - 100) <= 1
 
-    # Taller than the pane: the pane scrolls to the edge, the next card and the drop zone.
+    # Taller than the pane: the pane scrolls to the edge, the next card and
+    # the bottom of the last card (no drop zone with cards), 8px above its end.
     body = page.locator(".filter-body")
     pane = height(body)
     for _ in range(4):
         drag_edge(page, "label", 300)
     assert height(label) > pane + 600
     body.evaluate("e => (e.scrollTop = e.scrollHeight)")
+    expect(page.locator(".filter-drop")).to_be_hidden()
+    assert abs(below_last_card(page) - 8) <= 1
     for target in (
         label_card.locator(".filter-list-resize"),
         card(page, "x"),
-        page.locator(".filter-drop"),
     ):
         target.scroll_into_view_if_needed()
         expect(target).to_be_in_viewport()
@@ -249,6 +251,19 @@ def names(page: Page) -> list[str]:
     ).all_inner_texts()
 
 
+def below_last_card(page: Page) -> float:
+    """Return how far the bottom of the pane's body is below the last card, both in the viewport."""
+    gap = page.locator(".filter-body").evaluate(
+        """(body) => {
+          const c = body.querySelector('.filter-list > .filter-card:last-child').getBoundingClientRect();
+          const b = body.getBoundingClientRect();
+          return b.top < c.bottom && b.bottom <= innerHeight ? b.bottom - c.bottom : null;
+        }"""
+    )
+    assert gap is not None
+    return gap
+
+
 def move_card(
     page: Page,
     name: str,
@@ -257,7 +272,7 @@ def move_card(
     below: bool = False,
     part: str = ".filter-card-name",
 ) -> None:
-    """Drag a card by `part` of its head to just above `to`'s middle (or just below it), or past the last card onto the drop zone."""
+    """Drag a card by `part` of its head to just above `to`'s middle (or just below it), or past the last card into the space below it."""
     grip = card(page, name).locator(part)
     grip.scroll_into_view_if_needed()
     box = grip.bounding_box()
@@ -270,9 +285,13 @@ def move_card(
     page.mouse.move(x, y)
     page.mouse.down()
     page.mouse.move(x, y + 8)
-    target = page.locator(".filter-drop") if to is None else to
-    tbox = target.bounding_box()
-    ty = tbox["y"] + tbox["height"] / 2 + (2 if below or to is None else -2)
+    if to is None:
+        # The 8px below the last card (no drop zone with cards).
+        last = page.locator(".filter-list > .filter-card").last.bounding_box()
+        ty = last["y"] + last["height"] + 4
+    else:
+        tbox = to.bounding_box()
+        ty = tbox["y"] + tbox["height"] / 2 + (2 if below else -2)
     page.mouse.move(x, ty, steps=6)
     expect(page.locator(".filter-card-preview")).to_have_count(1)
     expect(page.locator(".filter-card-line")).to_be_visible()
@@ -436,4 +455,23 @@ def test_the_pane_scrolls_at_its_edges_to_a_card_out_of_view(app_page: Page) -> 
     )
     assert page.evaluate("() => window.scrollY") == 0
     assert calls == []
+    assert errors == []
+
+
+def test_the_drop_zone_shows_only_without_cards(app_page: Page) -> None:
+    """The drop zone shows on a new page, hides once a column is dropped on the pane, stays hidden while the pane still takes another column, and shows again once every card is removed."""
+    page = app_page
+    errors = watch_errors(page)
+    drop = page.locator(".filter-drop")
+    expect(drop).to_be_visible()
+    expect(drop).to_have_text("Drop a column to filter")
+    columns = page.locator("#columns .column")
+    drop_on_filters(page, columns.filter(has=page.get_by_text("cat", exact=True)), 1)
+    expect(drop).to_be_hidden()
+    drop_on_filters(page, columns.filter(has=page.get_by_text("x", exact=True)), 2)
+    expect(drop).to_be_hidden()
+    for _ in range(2):
+        page.locator(".filter-card-remove").first.click()
+    expect(page.locator(".filter-card")).to_have_count(0)
+    expect(drop).to_be_visible()
     assert errors == []
