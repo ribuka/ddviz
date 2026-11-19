@@ -255,6 +255,52 @@ def test_a_pan_while_an_edit_is_aggregated_wins(app_page: Page) -> None:
     assert errors == []
 
 
+def test_the_latest_edit_killed_for_an_older_one_is_asked_again(app_page: Page) -> None:
+    """The latest plot, killed on the server for an older one that came or started later (409 cancelled), is asked again and drawn at the ranges panned to (Issue #321)."""
+    page = app_page
+    errors = watch_errors(page)
+    place(page, "x", "x")
+    place(page, "y", "y")
+    zoom(page, {"xaxis.range": X_ZOOM, "yaxis.range": Y_ZOOM})
+    held: list[Route] = []
+    plots: list[dict] = []
+    holding = [True]
+
+    def hold(route: Route) -> None:
+        plots.append(route.request.post_data_json["encoding"])
+        if holding[0]:
+            held.append(route)
+        else:
+            route.continue_()
+
+    page.route("**/api/plot", hold)
+    smooth = page.locator('#elements .element[data-element="smooth"]')
+    smooth.click()
+    page.wait_for_function(
+        "() => document.getElementById('plot').classList.contains('busy')"
+    )
+    page.evaluate("Plotly.relayout('plot', {'xaxis.range': [0, 2]})")
+    smooth.click()
+    while len(held) < 2:
+        page.wait_for_timeout(50)
+    holding[0] = False
+    cancelled = {"status": 409, "content_type": "application/json", "body": '{"cancelled": true}'}
+    # The server's answers when the older plot's task started after the
+    # latest one's: each killed the other's.
+    held[0].fulfill(**cancelled)
+    with page.expect_request(VIEW) as request:
+        held[1].fulfill(**cancelled)
+    body = request.value.post_data_json
+    assert body["x_ranges"] == [pytest.approx([0, 2])]
+    assert body["y_ranges"] == [pytest.approx(Y_ZOOM)]
+    settle(page)
+    assert [p["elements"] for p in plots] == [["points", "smooth"], ["points"], ["points"]]
+    assert shown(page, "xaxis") == pytest.approx([0, 2])
+    expect(smooth).to_have_attribute("aria-pressed", "false")
+    expect(page.locator("#status")).not_to_have_class(re.compile("notice-error"))
+    assert errors == []
+
+
 def x_drop(page: Page, edit: Callable[[], None], names: list[str]) -> dict:
     """Run an edit of X that plots again at a view, check X's columns, and return the view asked for."""
     with page.expect_request(VIEW) as request:
