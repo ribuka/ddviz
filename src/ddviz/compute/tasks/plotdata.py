@@ -1,8 +1,11 @@
 """Task that writes the rows of a drawn plot as a file to save.
 
-The rows are those the plot draws (`drawn_rows`), or every row the local
-filter keeps; the columns are those the task lists, with the row index
-first. The rows are found from the column cache, then read a chunk after
+The rows are those the plot draws (`drawn_rows`), every row the local
+filter keeps, or the rows a box selects, as the selection table lists them
+(`ddviz.compute.selection.selection_filter`); the columns are those the
+task lists, with the row index first. The rows are found from the column
+cache, their indices streamed to a file (`sink_parquet`, the streaming
+engine the selection table collects its pages with), then read a chunk after
 another, so that only a chunk's values or two are held at once: a chunk
 ends where its values reach its budget, measured before they are read
 (`_cut`). A CSV cuts and appends each chunk and reports it written. A
@@ -31,6 +34,7 @@ from ddviz.compute.missing import drawn_conditions
 from ddviz.compute.progress import Emit
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.scan import scan_columns
+from ddviz.compute.selection import selection_columns, selection_filter
 from ddviz.shared.generated import generated_value
 from ddviz.shared.manifest import PlotManifest, write_manifest
 from ddviz.shared.scatter import ONE_BAND, ScatterSpec
@@ -286,7 +290,11 @@ def _row_group_rows(sizes: list[int], most: int) -> int | None:
 
 
 def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
-    """Write the rows of a plot task's result as a file.
+    """Write the rows of a plot task's result, or of a selection, as a file.
+
+    The selected rows are those of the task's ``selection``, the spec the
+    server had when asked: the selection layer's directory is not read, so
+    a layer replaced meanwhile changes nothing.
 
     Progress messages carry the stage ``"export"`` and the task's
     ``export``; once the rows are counted, also ``done`` and ``total``,
@@ -296,16 +304,24 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
     Parameters
     ----------
     task : PlotDataTask
-        The result, the rows and columns, and where to read them from.
+        The result or the selection, the rows and columns, and where to
+        read them from.
     out : pathlib.Path
         Directory to write the file into; the manifest names it.
     emit : callable
         Receives progress messages.
     """
-    spec = PlotManifest.read(Path(task.result)).spec
+    if task.rows == "selected":
+        spec = task.selection
+    else:
+        spec = PlotManifest.read(Path(task.result)).spec
     progress = {"type": "progress", "stage": "export", "export": task.export}
     emit(progress)
-    if task.rows == "drawn":
+    if task.rows == "selected":
+        # As the selection table reads its pages (`run_table`).
+        conditions = selection_filter(spec, INDEX)
+        read = selection_columns(spec)
+    elif task.rows == "drawn":
         conditions = drawn_rows(spec)
         roles = [spec.color, spec.symbol, spec.row, spec.col]
         read = [

@@ -13,16 +13,19 @@ import numpy as np
 import polars as pl
 import pyarrow.parquet as pq
 import pytest
+from polars.testing import assert_frame_equal
 
 from ddviz.compute.tasks import plotdata
 from ddviz.compute.tasks.columns import run_schema
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.compute.tasks.plotdata import index_name, run_plot_data
+from ddviz.compute.tasks.table import run_table
+from ddviz.server.derive import box_selection, selection_spec
 from ddviz.shared.cache import SCHEMA
 from ddviz.shared.inputs import parquet_files
 from ddviz.shared.manifest import PlotManifest, read_manifest
 from ddviz.shared.scatter import Filter, ScatterSpec
-from ddviz.shared.tasks import PlotDataTask, SourceFiles
+from ddviz.shared.tasks import PlotDataTask, SourceFiles, TableTask
 
 # Every column in the cache: no source file is read.
 NO_SOURCE = SourceFiles([], [], "", {}, {})
@@ -106,6 +109,71 @@ def test_filtered_rows_are_those_the_filter_keeps(
     assert {"null-x", "inf-x", "null-color"} <= set(saved["label"])
     every = _export(tmp_path, scatter_spec, rows="filtered")
     assert every.equals(_indexed(scatter_frame))
+
+
+@pytest.mark.parametrize("file_format", ["csv", "parquet"])
+def test_selected_rows_are_those_the_selection_table_lists(
+    tmp_path: Path, scatter_frame: pl.DataFrame, file_format: str
+) -> None:
+    """The selected rows are the table's rows, once each in row order, with the columns asked after the row index."""
+    frame = scatter_frame.with_columns(x2=pl.col("x") * 0.5 + pl.col("y"))
+    path = tmp_path / "pairs.parquet"
+    frame.write_parquet(path, row_group_size=500)
+    spec = ScatterSpec(
+        files={c: [str(path)] for c in frame.columns},
+        x=["x", "x2"],
+        y=["y"],
+        color="color",
+        row=None,
+        col=None,
+        width=400,
+        height=300,
+        hover=["x", "x2", "y", "color"],
+        filters=[Filter("facet", levels=["p"])],
+    )
+    result = tmp_path / "plot"
+    result.mkdir()
+    run_plot(spec, result, lambda _: None)
+    manifest = PlotManifest.read(result)
+    # The box on the panel of x2.
+    selected = selection_spec(manifest, box_selection(manifest, 1, (-1.0, 1.5), (-0.5, 2.0)))
+
+    table = []
+    while True:
+        page = tmp_path / f"page-{len(table)}"
+        page.mkdir()
+        task = TableTask(selected, len(table), 100, [], {}, NO_SOURCE)
+        run_table(task, page, lambda _: None)
+        rows = read_manifest(page)["index"]
+        table += rows
+        if len(rows) < 100:
+            break
+    assert 100 < len(table) < frame.height
+
+    columns = ["x", "x2", "label"]
+    out = tmp_path / "data"
+    out.mkdir()
+    task = PlotDataTask(
+        str(result),
+        file_format,
+        "selected",
+        columns,
+        {c: selected.files[c] for c in columns},
+        NO_SOURCE,
+        "token",
+        selected,
+    )
+    run_plot_data(task, out, lambda _: None)
+    file = out / read_manifest(out)["file"]
+    if file_format == "csv":
+        saved = pl.read_csv(file)
+    else:
+        saved = pl.read_parquet(file)
+    assert saved.columns == ["index", *columns]
+    assert saved["index"].to_list() == table
+    assert_frame_equal(
+        saved, _indexed(frame).select("index", *columns)[table], check_dtypes=False
+    )
 
 
 def test_a_log_axis_draws_only_its_positive_rows(tmp_path: Path) -> None:

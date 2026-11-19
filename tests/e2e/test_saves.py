@@ -10,7 +10,9 @@ calling ``window.ddvizSaveProgress`` and ``window.ddvizSaved`` as
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
+import polars as pl
 import pytest
 from playwright.sync_api import Locator, Page, Route, expect
 
@@ -326,3 +328,100 @@ def test_the_windows_saves(app_page: Page) -> None:
     )
     button.click()
     expect(panel).to_have_count(0)
+
+
+# The export of the selected rows (`POST /api/plot-data/selection`).
+SELECTION_DATA = "**/api/plot-data/selection"
+
+
+def open_table_menu(page: Page) -> Locator:
+    """Open the save menu of the selection table's bar and return it."""
+    page.locator("#table .table-save").click()
+    menu = page.locator(".data-menu")
+    expect(menu).to_be_visible()
+    return menu
+
+
+def test_the_tables_save_button_saves_the_selected_rows(
+    app_page: Page, scatter_path: Path
+) -> None:
+    """The table bar's save button, left of ▲, opens a menu of the columns and formats; a format downloads every selected row; the columns picked are the mode bar menu's too (Issue #328)."""
+    page = app_page
+    draw(page)
+    box_select(page)
+    save = page.locator("#table .table-save").bounding_box()
+    up = page.locator("#table .table-up").bounding_box()
+    assert save["x"] + save["width"] <= up["x"]
+    assert abs((save["y"] + save["height"] / 2) - (up["y"] + up["height"] / 2)) <= 2
+    title = page.locator("#table .table-title").text_content()
+    rows = int(re.fullmatch(r"選んだ行：([\d,]+) 行", title)[1].replace(",", ""))
+    assert rows > 0
+
+    menu = open_table_menu(page)
+    expect(menu.locator(".scale-menu-heading, .scale-menu-item")).to_have_text(
+        ["選んだ行を保存", "Columns", "Drawn columns", "All columns", "CSV", "Parquet"]
+    )
+    for absent in ("Drawn rows", "All filtered rows", "保存の履歴…"):
+        expect(menu.get_by_role("button", name=absent)).to_have_count(0)
+    menu.get_by_role("radio", name="All columns").click()
+    expect(menu.get_by_role("radio", name="All columns")).to_have_attribute("aria-checked", "true")
+    with page.expect_download() as info:
+        menu.get_by_role("button", name="CSV").click()
+    expect(menu).to_have_count(0)
+    name = info.value.suggested_filename
+    assert re.search(r"_selected_\d{8}-\d{6}\.csv$", name)
+    saved = pl.read_csv(info.value.path())
+    assert saved.height == rows
+    assert saved.columns == ["index", *pl.read_parquet_schema(scatter_path)]
+    assert saved["index"].is_sorted() and saved["index"].n_unique() == rows
+    expect(
+        page.locator("#toasts .toast-save").filter(has_text=f"ダウンロードを開始しました（{name}）")
+    ).to_have_count(1)
+
+    # The columns picked are shared with the mode bar's menu, both ways.
+    menu = open_menu(page)
+    expect(menu.get_by_role("radio", name="All columns")).to_have_attribute("aria-checked", "true")
+    menu.get_by_role("radio", name="Drawn columns").click()
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
+    menu = open_table_menu(page)
+    expect(menu.get_by_role("radio", name="Drawn columns")).to_have_attribute(
+        "aria-checked", "true"
+    )
+
+
+def test_the_tables_save_waits_for_an_export_and_says_a_lost_selection(
+    app_page: Page,
+) -> None:
+    """While the mode bar's save is written, the table's menu disables its formats and says why, its radios still picked; a selection gone by the time it is asked for ends in an error toast."""
+    page = app_page
+    draw(page)
+    box_select(page)
+    held = hold(page)
+    open_menu(page).get_by_role("button", name="CSV").click()
+    route = held_one(page, held)
+    menu = open_table_menu(page)
+    expect(menu.get_by_role("button", name="CSV")).to_be_disabled()
+    expect(menu.get_by_role("button", name="Parquet")).to_be_disabled()
+    expect(menu.locator(".data-menu-note")).to_have_text("書き出しが終わると保存できます")
+    menu.get_by_role("radio", name="All columns").click()
+    expect(menu.get_by_role("radio", name="All columns")).to_have_attribute("aria-checked", "true")
+    page.keyboard.press("Escape")
+    with page.expect_download():
+        route.continue_()
+    page.unroute(PLOT_DATA)
+    expect(open_table_menu(page).get_by_role("button", name="CSV")).to_be_enabled()
+
+    page.route(
+        SELECTION_DATA,
+        lambda route: route.fulfill(
+            status=409, content_type="application/json", body='{"detail": "no selection"}'
+        ),
+    )
+    page.locator(".data-menu").get_by_role("button", name="CSV").click()
+    lost = page.locator("#toasts .toast-save").filter(
+        has_text="保存できませんでした：範囲選択が解除されました"
+    )
+    expect(lost).to_have_count(1)
+    expect(lost).to_have_class(re.compile(r"\bnotice-error\b"))
+    page.unroute(SELECTION_DATA)

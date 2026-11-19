@@ -219,12 +219,14 @@ class PlotDataTask:
     Parameters
     ----------
     result : str
-        The plot task's output directory.
+        The plot task's output directory; for ``"selected"`` rows, the
+        selection layer's, which the worker does not read.
     file_format : str
         ``"csv"`` or ``"parquet"``.
     rows : str
         ``"drawn"``: the rows the plot draws; ``"filtered"``: the rows the
-        local filter keeps.
+        local filter keeps; ``"selected"``: the rows the selection of
+        `selection` picks (`ddviz.compute.selection.selection_filter`).
     columns : list of str
         The columns of the file, in order, after the row index.
     parts : dict of str to list of str
@@ -234,6 +236,9 @@ class PlotDataTask:
         The source files.
     export : str
         Token the page gave, carried by the progress messages.
+    selection : ScatterSpec or None
+        For ``"selected"`` rows, the selection layer's spec with its
+        selection, as the server had it when asked; None otherwise.
     """
 
     KIND: ClassVar[str] = "plot_data"
@@ -244,6 +249,7 @@ class PlotDataTask:
     parts: dict[str, list[str]]
     source: SourceFiles
     export: str
+    selection: ScatterSpec | None = None
 
 
 Task = (
@@ -313,8 +319,9 @@ def task_from_dict(data: dict) -> Task:
     if cls is None:
         raise ValueError(f"unknown task kind: {data['kind']}")
     values = {f.name: data[f.name] for f in fields(cls)}
-    if "spec" in values:
-        values["spec"] = ScatterSpec.from_dict(values["spec"])
+    for key in ("spec", "selection"):
+        if values.get(key) is not None:
+            values[key] = ScatterSpec.from_dict(values[key])
     if "source" in values:
         values["source"] = SourceFiles(**values["source"])
     return cls(**values)
