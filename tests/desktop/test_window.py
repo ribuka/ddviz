@@ -32,6 +32,7 @@ from ddviz.server.settings import load_settings
 from ddviz.server.settings_store import SettingsStore
 from ddviz.shared.drawfile import DrawFileIO, build
 from ddviz.shared.inputs import input_label
+from tests.shared.test_drawfile import SETTINGS
 
 
 class _FakeWindow:
@@ -599,7 +600,6 @@ def test_preferences_saved_on_the_chooser_last_across_loads_and_new(
 
 # ---- the file of the drawing settings (Issue #287) ----
 
-SETTINGS = {"zones": {"encoding": {"x": ["a"], "y": ["b"]}}}
 
 
 def _draw_file(json_path: Path, paths: list[Path], recursive: bool = False) -> dict:
@@ -725,6 +725,20 @@ def test_an_unreadable_draw_file_tells_why_and_keeps_the_chooser(
     (script,) = window.scripts
     shown = json.loads(script.removeprefix("window.ddvizDropError(").removesuffix(")"))
     assert shown.startswith(error)
+
+
+def test_settings_the_page_cannot_apply_keep_the_chooser(tmp_path: Path) -> None:
+    """A saved file whose settings lack a key the page reads opens no data and tells which (review of PR #336)."""
+    (data,) = _files(tmp_path, "data.parquet")
+    content = _draw_file(tmp_path / "graph.json", [data])
+    del content["settings"]["elements"]
+    (tmp_path / "graph.json").write_text(json.dumps(content), encoding="utf-8")
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "graph.json"))
+    assert window.url is None
+    error = "描画設定のファイルを読めませんでした：キー settings.elements がありません"
+    assert window.scripts == [f"window.ddvizDropError({json.dumps(error)})"]
 
 
 def test_the_dialog_offers_draw_files_and_takes_one_alone(tmp_path: Path) -> None:

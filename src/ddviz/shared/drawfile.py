@@ -189,6 +189,128 @@ def _unreadable(reason: str) -> ValueError:
     return ValueError(f"描画設定のファイルを読めませんでした：{reason}")
 
 
+@dataclass(frozen=True)
+class _List:
+    """A JSON array whose items each have the shape `item`."""
+
+    item: object
+
+
+@dataclass(frozen=True)
+class _Pair:
+    """A JSON array of two items of the shapes `first` and `second` (an entry of a `Map`)."""
+
+    first: object
+    second: object
+
+
+@dataclass(frozen=True)
+class _Optional:
+    """Null, or a value of the shape `shape`."""
+
+    shape: object
+
+
+#: Any value, which must only be there.
+_ANY = object()
+_NAMES = _List(str)
+_COLUMN = (str, type(None))
+
+#: The shape of ``settings`` (`captureSettings()` of ``static/js/app.js``)
+#: that the page needs to apply them (`applySettings`) and to check their
+#: columns (``static/js/drawfile.js``): an object's keys, the types of the
+#: values the page reads, and arrays and objects it goes through. A file
+#: without it is refused on the chooser before its data opens.
+SETTINGS_SHAPE = {
+    "zones": {
+        "encoding": {
+            "x": _NAMES,
+            "y": _NAMES,
+            "color": _COLUMN,
+            "symbol": _COLUMN,
+            "row": _COLUMN,
+            "col": _COLUMN,
+            "wrap": _COLUMN,
+            "elements": _NAMES,
+        },
+        "numeric": _List(_Pair(str, (bool, type(None)))),
+        "temporal": _List(_Pair(str, _COLUMN)),
+        "stashed": _NAMES,
+    },
+    "elements": {"chosen": _NAMES, "blocked": _NAMES},
+    "options": {
+        "colorBins": _ANY,
+        "smoothing": _ANY,
+        "shapeSize": _ANY,
+        "lineWidth": _ANY,
+        "lineAggregation": _ANY,
+        "showNullRows": dict,
+        "keepLevels": dict,
+        "wrapCols": _ANY,
+        "levelSizes": _List(_Pair(str, dict)),
+        "levelShapes": _Optional({"column": str, "shapes": dict}),
+    },
+    "axes": {
+        "dialog": _List(_Pair(str, dict)),
+        "angles": _List(_Pair(str, _ANY)),
+        "logs": {"x": _NAMES, "y": _NAMES},
+        "reversed": {"x": _NAMES, "y": _NAMES},
+        "keepLevels": _NAMES,
+    },
+    "filters": _List(
+        {
+            "name": str,
+            "numeric": bool,
+            "range": (list, type(None)),
+            "levels": list,
+            "contains": _ANY,
+            "nulls": dict,
+            "mode": _ANY,
+            "query": _ANY,
+            "order": _ANY,
+        }
+    ),
+}
+
+
+def _check(value: object, shape: object, path: str) -> None:
+    """Raise the chooser's `ValueError` unless `value` (at the key `path`) has the shape `shape`.
+
+    A shape is `_ANY`, a type or a tuple of types, a dict of the shapes of
+    an object's keys, `_List`, `_Pair` or `_Optional`.
+    """
+    if shape is _ANY:
+        return
+    if isinstance(shape, _Optional):
+        if value is not None:
+            _check(value, shape.shape, path)
+        return
+    if isinstance(shape, dict):
+        if not isinstance(value, dict):
+            raise _unreadable(f"キー {path} の値の形が違います")
+        for key, inner in shape.items():
+            if key not in value:
+                raise _unreadable(f"キー {path}.{key} がありません")
+            _check(value[key], inner, f"{path}.{key}")
+        return
+    if isinstance(shape, _List):
+        if not isinstance(value, list):
+            raise _unreadable(f"キー {path} の値の形が違います")
+        for index, item in enumerate(value):
+            _check(item, shape.item, f"{path}[{index}]")
+        return
+    if isinstance(shape, _Pair):
+        if not isinstance(value, list) or len(value) != 2:
+            raise _unreadable(f"キー {path} の値の形が違います")
+        _check(value[0], shape.first, f"{path}[0]")
+        _check(value[1], shape.second, f"{path}[1]")
+        return
+    types = shape if isinstance(shape, tuple) else (shape,)
+    # JSON's true and false are not the numbers a shape of int means.
+    if not isinstance(value, types) or (isinstance(value, bool) and bool not in types):
+        raise _unreadable(f"キー {path} の値の形が違います")
+
+
 def _strings(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(v, str) for v in value)
 
@@ -245,6 +367,7 @@ def parse(text: str) -> DrawFile:
         raise _unreadable("キー source.recursive の値の形が違います")
     if not all(isinstance(v, str) for v in content["columns"].values()):
         raise _unreadable("キー columns の値の形が違います")
+    _check(content["settings"], SETTINGS_SHAPE, "settings")
     return DrawFile(paths=paths, relative=relative, recursive=recursive, content=content)
 
 

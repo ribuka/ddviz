@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 from pathlib import Path, PureWindowsPath
@@ -19,8 +20,72 @@ from ddviz.shared.drawfile import (
     resolve,
 )
 
-SETTINGS = {"zones": {"encoding": {"x": ["amount"], "y": ["shop"]}}}
+#: Drawing settings of the page's shape (`captureSettings()` of app.js).
+SETTINGS = {
+    "zones": {
+        "encoding": {
+            "x": ["amount"],
+            "y": ["shop"],
+            "color": None,
+            "symbol": "shop",
+            "row": None,
+            "col": None,
+            "wrap": None,
+            "elements": ["points"],
+        },
+        "numeric": [["amount", True], ["shop", False]],
+        "temporal": [["amount", None], ["shop", None]],
+        "stashed": ["symbol"],
+    },
+    "elements": {"chosen": ["points"], "blocked": ["smooth"]},
+    "options": {
+        "colorBins": None,
+        "smoothing": {"method": "lowess"},
+        "shapeSize": 9,
+        "lineWidth": None,
+        "lineAggregation": "mean",
+        "showNullRows": {"color": True},
+        "keepLevels": {"color": False, "symbol": False},
+        "wrapCols": None,
+        "levelSizes": [["shop", {"a": 4}]],
+        "levelShapes": {"column": "shop", "shapes": {"a": "square"}},
+    },
+    "axes": {
+        "dialog": [["amount", {"ticks": None}]],
+        "angles": [["x:amount", 45]],
+        "logs": {"x": ["amount"], "y": []},
+        "reversed": {"x": [], "y": []},
+        "keepLevels": [],
+    },
+    "filters": [
+        {
+            "name": "shop",
+            "numeric": False,
+            "range": None,
+            "levels": ["a"],
+            "contains": "",
+            "nulls": {"pick": False},
+            "mode": "pick",
+            "query": "",
+            "order": "name",
+        }
+    ],
+}
 COLUMNS = {"amount": "numeric", "shop": "categorical"}
+
+
+def _with(path: str, value: object) -> dict:
+    """Return `SETTINGS` with the key at the dotted `path` set to `value`, or removed for `...`."""
+    settings = copy.deepcopy(SETTINGS)
+    *parents, last = path.split(".")
+    place = settings
+    for key in parents:
+        place = place[int(key)] if isinstance(place, list) else place[key]
+    if value is ...:
+        del place[last]
+    else:
+        place[last] = value
+    return settings
 
 
 def _text(**changes: object) -> str:
@@ -117,6 +182,36 @@ def test_parse_refuses_with_the_message_shown(text: str, message: str) -> None:
     with pytest.raises(ValueError) as caught:
         parse(text)
     assert str(caught.value).startswith(message)
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "reason"),
+    [
+        ("elements", ..., "キー settings.elements がありません"),
+        ("zones.encoding.x", "amount", "キー settings.zones.encoding.x の値の形が違います"),
+        ("zones.encoding.wrap", ..., "キー settings.zones.encoding.wrap がありません"),
+        ("zones.numeric", [["amount"]], "キー settings.zones.numeric[0] の値の形が違います"),
+        ("options.levelSizes", None, "キー settings.options.levelSizes の値の形が違います"),
+        ("options.levelShapes", {"column": "shop"}, "キー settings.options.levelShapes.shapes がありません"),
+        ("axes.logs", {"x": []}, "キー settings.axes.logs.y がありません"),
+        ("axes.dialog", [["amount", 1]], "キー settings.axes.dialog[0][1] の値の形が違います"),
+        ("filters.0.name", ..., "キー settings.filters[0].name がありません"),
+        ("filters.0.numeric", 0, "キー settings.filters[0].numeric の値の形が違います"),
+    ],
+    ids=["elements", "x", "wrap", "numeric", "level-sizes", "level-shapes", "logs", "dialog", "card-name", "card-numeric"],
+)
+def test_parse_refuses_settings_the_page_cannot_apply(path: str, value: object, reason: str) -> None:
+    """A key of the settings the page reads, missing or of the wrong form, is refused before the data opens (review of PR #336)."""
+    with pytest.raises(ValueError) as caught:
+        parse(_text(settings=_with(path, value)))
+    assert str(caught.value) == f"描画設定のファイルを読めませんでした：{reason}"
+
+
+def test_parse_takes_the_optional_and_any_values() -> None:
+    """No shapes of the symbol levels, and any value of a setting the page passes on, are read."""
+    settings = _with("options.levelShapes", None)
+    settings["options"]["colorBins"] = [1, 2]
+    assert parse(_text(settings=settings)).content["settings"] == settings
 
 
 def test_resolve_takes_the_absolute_path_then_the_relative_one(tmp_path: Path) -> None:

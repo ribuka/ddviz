@@ -1988,8 +1988,9 @@ window.ddvizDrawFileSaved = (result) => {
 // the data lacks, or holds with another kind, are taken out with a warning
 // (`reconcile`). Their result is the first step of undo and redo (`record`
 // after the plot, or `recordFirst` after a failure).
+// Settings the page cannot apply (the chooser checks their shape,
+// `ddviz.shared.drawfile.SETTINGS_SHAPE`) leave the empty graph as that step.
 async function applyInitialDraw(draw) {
-  let checked;
   try {
     const response = await fetch("/api/column-kinds", {
       method: "POST",
@@ -1997,14 +1998,16 @@ async function applyInitialDraw(draw) {
       body: JSON.stringify({ names: referencedColumns(draw.settings) }),
     });
     if (!response.ok) throw new Error(errorText(await response.text(), response.status));
-    checked = reconcile(draw.settings, draw.columns, await response.json());
+    const checked = reconcile(draw.settings, draw.columns, await response.json());
+    if (checked.dropped.length) toasts.show(droppedText(checked.dropped));
+    applySettings(checked.settings);
   } catch (error) {
+    console.error(error);
     statusLine.error(`描画設定を適用できませんでした（${error.message}）`);
+    builder.rollback();
+    revertSettings();
     recordFirst();
-    return;
   }
-  if (checked.dropped.length) toasts.show(droppedText(checked.dropped));
-  applySettings(checked.settings);
 }
 
 // Applies the step `{index, settings}` of undo or redo (`applySettings`).
