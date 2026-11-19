@@ -589,3 +589,212 @@ def test_an_error_reading_a_chunk_comes_out_as_it_is(
     with pytest.raises(RuntimeError, match="out of memory"):
         _export(tmp_path, scatter_spec)
     assert len(calls) == 2
+
+
+def _nested_spec(
+    tmp_path: Path, frame: pl.DataFrame, read_from: str = "source"
+) -> tuple[ScatterSpec, SourceFiles]:
+    """Return a spec that draws the x and y of a frame, written as a file, and the source to read its other columns from.
+
+    With `read_from` ``"cache"``, every column is in the spec's files, as
+    the column cache holds them, and no source file is read.
+    """
+    path = tmp_path / "nested.parquet"
+    frame.write_parquet(path)
+    cache = list(frame.columns) if read_from == "cache" else ["x", "y"]
+    spec = ScatterSpec(
+        files={c: [str(path)] for c in cache},
+        x=["x"],
+        y=["y"],
+        color=None,
+        row=None,
+        col=None,
+        width=300,
+        height=200,
+        hover=["x", "y"],
+    )
+    if read_from == "cache":
+        return spec, NO_SOURCE
+    schema_dir = tmp_path / "schema"
+    schema_dir.mkdir()
+    run_schema([str(path)], schema_dir, lambda _: None)
+    found = read_manifest(schema_dir)
+    dtypes = {
+        c["name"]: c["dtype"] for c in found["columns"] if c["name"] not in cache
+    }
+    source = SourceFiles(
+        [str(path)], found["rows"], str(schema_dir / SCHEMA), dtypes, {}
+    )
+    return spec, source
+
+
+def _export_csv(
+    tmp_path: Path,
+    frame: pl.DataFrame,
+    read_from: str = "source",
+    rows: str = "filtered",
+    messages: list[dict] | None = None,
+) -> bytes:
+    """Write every column of a frame as a CSV (`_nested_spec`) and return its bytes after the BOM."""
+    spec, source = _nested_spec(tmp_path, frame, read_from)
+    _export(
+        tmp_path,
+        spec,
+        rows=rows,
+        columns=list(frame.columns),
+        source=source,
+        file_format="csv",
+        messages=messages,
+    )
+    (file,) = tmp_path.glob("data-*/data.csv")
+    return file.read_bytes().removeprefix("﻿".encode())
+
+
+@pytest.mark.parametrize("read_from", ["source", "cache"])
+@pytest.mark.parametrize("rows", ["drawn", "filtered"])
+def test_nested_columns_are_written_as_json(
+    tmp_path: Path, read_from: str, rows: str
+) -> None:
+    """Lists, structs, arrays and lists of structs are written to a CSV as their JSON, which reads back as the values; a null value is an empty cell."""
+    frame = pl.DataFrame(
+        {
+            "x": [0.0, 1.0, 2.0, 3.0],
+            "y": [1.0] * 4,
+            "li": [[1, 2], [], None, [3]],
+            "st": [
+                {"a": 1, "b": 'x,"y'},
+                {"a": None, "b": "z"},
+                None,
+                {"a": 2, "b": ""},
+            ],
+            "ar": [[3.0, None], [1.0, 2.0], None, [0.5, -1.0]],
+            "ls": [[{"s": "a"}], [], None, [{"s": None}, None]],
+        },
+        schema_overrides={"ar": pl.Array(pl.Float64, 2)},
+    )
+    content = _export_csv(tmp_path, frame, read_from, rows)
+    saved = pl.read_csv(io.BytesIO(content), infer_schema=False)
+    assert saved.columns == ["index", *frame.columns]
+    for c in ("li", "st", "ar", "ls"):
+        dtype = frame.schema[c]
+        if isinstance(dtype, pl.Array):
+            dtype = pl.List(dtype.inner)
+        assert saved[c].str.json_decode(dtype).equals(frame[c].cast(dtype)), c
+    lines = content.decode().splitlines()
+    # No whitespace in the JSON; the row of null values is empty cells.
+    assert lines[1] == (
+        '0,0.0,1.0,"[1,2]","{""a"":1,""b"":""x,\\""y""}","[3.0,null]","[{""s"":""a""}]"'
+    )
+    assert lines[2].startswith("1,1.0,1.0,[],")
+    assert lines[3] == "2,2.0,1.0,,,,"
+
+
+@pytest.mark.parametrize("read_from", ["source", "cache"])
+def test_binary_values_are_written_as_hexadecimal(
+    tmp_path: Path, read_from: str
+) -> None:
+    """A binary value, outside or inside a nested value, is its lowercase hexadecimal text; a null value is an empty cell, an empty binary and an empty list are not."""
+    frame = pl.DataFrame(
+        {
+            "x": [0.0, 1.0, 2.0],
+            "y": [1.0] * 3,
+            "b": [b"\x00a\xff", None, b""],
+            "lb": [[b"\x01", None], None, []],
+            "sb": [{"k": b"\x02", "n": 1}, None, {"k": None, "n": 2}],
+            "ab": [[b"\x03", b"\x04"], None, [None, b""]],
+        },
+        schema_overrides={"ab": pl.Array(pl.Binary, 2)},
+    )
+    content = _export_csv(tmp_path, frame, read_from)
+    assert content.decode().splitlines() == [
+        "index,x,y,b,lb,sb,ab",
+        '0,0.0,1.0,0061ff,"[""01"",null]","{""k"":""02"",""n"":1}","[""03"",""04""]"',
+        "1,1.0,1.0,,,,",
+        '2,2.0,1.0,"",[],"{""k"":null,""n"":2}","[null,""""]"',
+    ]
+
+
+def test_nan_and_infinity_inside_a_nested_value_are_null(tmp_path: Path) -> None:
+    """A NaN or an infinity inside a list is null in its JSON."""
+    frame = pl.DataFrame(
+        {"x": [0.0], "y": [1.0], "lf": [[float("nan"), float("inf"), 1.5]]}
+    )
+    content = _export_csv(tmp_path, frame)
+    assert content.decode().splitlines()[1] == '0,0.0,1.0,"[null,null,1.5]"'
+
+
+@pytest.mark.parametrize("nested", [True, False], ids=["nested", "flat"])
+def test_a_chunk_with_nested_values_is_written_in_pieces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nested: bool
+) -> None:
+    """A chunk with a nested column is written in pieces of at most 1/16 of its rows, the BOM and header in the first alone, as a chunk at once writes it; ``done`` counts the chunks. Without one, a chunk is written at once."""
+    n = 2_000
+    frame = pl.DataFrame(
+        {
+            "x": [float(i) for i in range(n)],
+            "y": [1.0] * n,
+            "v": [list(range(i, i + 10)) for i in range(n)] if nested else [0.5] * n,
+        }
+    )
+    (tmp_path / "whole").mkdir()
+    whole = _export_csv(tmp_path / "whole", frame)
+    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 32 * 2**10)
+    calls: list[tuple[int, bool, bool]] = []
+    write_csv = pl.DataFrame.write_csv
+
+    def recording(
+        self: pl.DataFrame,
+        file: object = None,
+        *,
+        include_bom: bool = False,
+        include_header: bool = True,
+        **kwargs: object,
+    ) -> str | None:
+        """Record the rows written, and whether with the BOM and the header."""
+        calls.append((self.height, include_bom, include_header))
+        return write_csv(
+            self, file, include_bom=include_bom, include_header=include_header, **kwargs
+        )
+
+    monkeypatch.setattr(pl.DataFrame, "write_csv", recording)
+    messages: list[dict] = []
+    chunked = _export_csv(tmp_path, frame, messages=messages)
+    assert chunked == whole
+    done = [m["done"] for m in messages[1:]]
+    sizes = [b - a for a, b in itertools.pairwise(done)]
+    assert done[0] == 0
+    assert sum(sizes) == n
+    assert len(sizes) >= 2
+    assert [(bom, header) for _, bom, header in calls] == [(True, True)] + [
+        (False, False)
+    ] * (len(calls) - 1)
+    pieces = [rows for rows, _, _ in calls]
+    if not nested:
+        assert pieces == sizes
+        return
+    # The pieces of each chunk, in order.
+    left = iter(pieces)
+    for size in sizes:
+        written = 0
+        while written < size:
+            rows = next(left)
+            assert rows <= -(-size // plotdata.JSON_PIECES)
+            written += rows
+        assert written == size
+    assert next(left, None) is None
+
+
+def test_no_rows_with_nested_columns_give_the_header_alone(tmp_path: Path) -> None:
+    """A filter that keeps no row writes the header of the nested and binary columns alone."""
+    frame = pl.DataFrame({"x": [0.0], "y": [1.0], "li": [[1]], "b": [b"\x01"]})
+    spec, source = _nested_spec(tmp_path, frame)
+    saved = _export(
+        tmp_path,
+        replace(spec, filters=[Filter("x", range=[5.0, 6.0])]),
+        rows="filtered",
+        columns=list(frame.columns),
+        source=source,
+        file_format="csv",
+    )
+    assert saved.height == 0
+    assert saved.columns == ["index", "x", "y", "li", "b"]
