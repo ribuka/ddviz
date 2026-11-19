@@ -300,6 +300,17 @@ export class AxisControls {
     await Plotly.relayout(gd, { [`${key}.range`]: plotlyRange(full, range) });
   }
 
+  // Draws the settings of the axis columns on the result drawn, at its
+  // ranges, without a plot (a step of undo and redo that changes the
+  // dialog's settings alone: `drawsWithoutPlot`), and measures the margin
+  // the labels need.
+  async redraw() {
+    const meta = this.current();
+    if (!meta || !this.gd._fullLayout) return;
+    await this.relayoutOwn(decorationUpdate(meta, this.settingsOf, this.angleOf));
+    if (meta === this.current()) this.followMargin(false);
+  }
+
   // Reverses the axes of a column, or puts them back, on the result drawn: only
   // their direction changes, at the shown range. Nothing is aggregated or
   // asked of the server, and the selection stays, unless the labels need

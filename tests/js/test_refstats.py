@@ -136,3 +136,48 @@ def test_apply_plots_again_only_for_more_statistics(js_page: Page) -> None:
     assert [c["relayout"] for c in calls] == [0, 1, 2, 3, 3]
     covered = js_page.evaluate(APPLY, [META, {"b": {"moments": True, "quantiles": [95]}}, [[sigma, line("quantile", 95)]]])
     assert covered == [{"replot": 0, "relayout": 1}]
+
+
+# Whether the step `target` is drawn on `META` aggregated with `asked`
+# without a plot, from the step `shown`.
+WITHOUT_PLOT = """async ([meta, asked, shown, target]) => {
+  const m = await import("/static/js/refstats.js");
+  return m.drawsWithoutPlot({ ...meta, ref_stats_asked: asked }, shown, target);
+}"""
+
+
+def step(lines: list, **changes: object) -> dict:
+    """Return drawing settings whose dialog gives "b" `lines`, with other parts changed by `changes`."""
+    axes = {"dialog": [["b", {"lines": lines}]], "angles": [], "logs": {"x": [], "y": []},
+            "reversed": {"x": [], "y": []}, "keepLevels": []}
+    out = {"zones": {"y": ["b"]}, "elements": [], "options": {}, "axes": axes, "filters": {}}
+    for key, value in changes.items():
+        if key in axes:
+            axes[key] = value
+        else:
+            out[key] = value
+    return out
+
+
+@pytest.mark.parametrize(
+    ("target", "without"),
+    [
+        # Another n, a line removed, none left: the statistics the result has.
+        (step([line("sigma", 3), line("quantile", 95)]), True),
+        (step([line("quantile", 95)]), True),
+        (step([]), True),
+        # A percentile, or the moments, the result was not aggregated with.
+        (step([line("sigma", 2), line("quantile", 5)]), False),
+        # Another part of the settings: the graph, an angle.
+        (step([line("sigma", 2)], zones={"y": ["a"]}), False),
+        (step([line("sigma", 2)], angles=[["y:b", 30]]), False),
+    ],
+)
+def test_a_step_of_the_dialog_alone_draws_without_a_plot(js_page: Page, target: dict, without: bool) -> None:
+    """A step of undo and redo that changes the dialog's settings alone, whose lines the result has the statistics of, is drawn without a plot."""
+    shown = step([line("sigma", 2), line("quantile", 95)])
+    asked = {"b": {"moments": True, "quantiles": [95]}}
+    assert js_page.evaluate(WITHOUT_PLOT, [META, asked, shown, target]) is without
+    lacking = {"b": {"moments": False, "quantiles": [95]}}
+    needs_moments = step([line("sigma", 1)])
+    assert js_page.evaluate(WITHOUT_PLOT, [META, lacking, shown, needs_moments]) is False

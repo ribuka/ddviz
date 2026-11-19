@@ -37,6 +37,7 @@ import {
   shownRanges,
   withRanges,
 } from "./ranges.js";
+import { drawsWithoutPlot } from "./refstats.js";
 import { markerSizeText, rowsText } from "./resulttext.js";
 import { Saves } from "./saves.js";
 import { openScaleMenu } from "./scalemenu.js";
@@ -1858,9 +1859,21 @@ function revertSettings() {
 // Applies the drawing settings of the step `index`, as an edit of them by
 // hand: the graph is plotted, and the history moves to the step once its
 // result is committed (`record`); a failure leaves it (`plotFailed`). A
-// graph without a figure is committed at once.
+// graph without a figure is committed at once. A step that changes the axis
+// dialog's settings alone, whose lines need no statistics the drawn result
+// lacks (`drawsWithoutPlot`), is drawn on that result at once instead, as
+// from the dialog, and the history moves to it.
 function applyStep({ index, settings }) {
   statusLine.release();
+  const shown = settingsHistory.steps[settingsHistory.index]?.settings;
+  if (current && gd._fullLayout && plotting === 0 && shown && drawsWithoutPlot(current, shown, settings)) {
+    axes.applySettings(settings.axes);
+    applying = null;
+    settingsHistory.moveTo(index);
+    showUndo();
+    axes.redraw();
+    return;
+  }
   const wrap = builder.encoding.wrap;
   applyOthers(settings);
   builder.load(settings.zones);

@@ -19,6 +19,8 @@ pytestmark = pytest.mark.e2e
 
 ROWS = 2_000
 PLOT = re.compile(r"/api/plot$")
+UNDO = "元に戻す (Ctrl+Z)"
+REDO = "やり直す (Ctrl+Y)"
 # The lines of the statistics drawn: each one's y axis, place and label.
 SHAPES = """() => (document.getElementById('plot').layout.shapes ?? [])
   .filter((s) => s.label)
@@ -72,7 +74,7 @@ def add(dialog: Locator, kind: str, text: str) -> None:
 
 
 def test_lines_of_each_panels_statistics(app_page: Page, scatter_frame: pl.DataFrame) -> None:
-    """μ ± 2σ plots once and lies at each panel's own values; another n moves it without a plot; a percentile plots once; a zoom keeps the lines; a filter moves them to its rows."""
+    """μ ± 2σ plots once and lies at each panel's own values; another n moves it without a plot; a percentile plots once; undo and redo of them plot none; a zoom keeps the lines; a filter moves them to its rows."""
     page = app_page
     errors = watch_errors(page)
     place(page, "x", "x")
@@ -104,6 +106,19 @@ def test_lines_of_each_panels_statistics(app_page: Page, scatter_frame: pl.DataF
     settle(page)
     assert len(plots) == 2
     assert drawn(page) == expected(scatter_frame, 3, 95)
+
+    # Undo and redo of the dialog's settings draw from the statistics the
+    # result has, without a plot.
+    for button, n, p in [(UNDO, 3, None), (UNDO, 2, None), (REDO, 3, None), (REDO, 3, 95)]:
+        want = expected(scatter_frame, n, p)
+        page.get_by_role("button", name=button).click()
+        page.wait_for_function(
+            f"(labels) => JSON.stringify(({SHAPES})().map((s) => s[2]).sort()) === JSON.stringify(labels)",
+            arg=sorted(line[2] for line in want),
+        )
+        settle(page)
+        assert drawn(page) == want
+    assert len(plots) == 2
 
     # A zoom keeps the lines at their values.
     zoom(page, {"yaxis.range": [0, 12]})

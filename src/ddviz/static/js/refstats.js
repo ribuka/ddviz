@@ -9,6 +9,7 @@
 // statistics.
 
 import { axisKind } from "./axisdialog.js";
+import { settingsKey } from "./history.js";
 
 // Returns the columns of the numeric axes of the result `meta` (`axisKind`
 // "number": linear, neither temporal nor categorical), each once.
@@ -49,4 +50,17 @@ export function coversStats(asked, needed) {
     const has = asked[column];
     return (!moments || has.moments) && quantiles.every((p) => has.quantiles.includes(p));
   });
+}
+
+// Whether the step of undo and redo `target` (the drawing settings of
+// `history.js`) is drawn on the result `meta` without a plot: it differs
+// from the step shown, `shown`, in the settings of the axis dialog alone
+// (`axes.dialog`: ticks, labels, reference lines), and `meta` has the
+// statistics the lines of `target` need (`coversStats`). Another n, a line
+// removed, a color or a dash then draw at once, as from the dialog.
+export function drawsWithoutPlot(meta, shown, target) {
+  const others = (settings) => settingsKey({ ...settings, axes: { ...settings.axes, dialog: [] } });
+  if (others(shown) !== others(target)) return false;
+  const dialog = new Map(target.axes.dialog);
+  return coversStats(meta.ref_stats_asked, neededStats((column) => dialog.get(column), numericColumns(meta)));
 }
