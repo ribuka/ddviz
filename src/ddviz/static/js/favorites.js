@@ -71,6 +71,7 @@ const STAR =
 export const SAVE_TEXT = "現在の描画を保存";
 export const CHOOSE_TEXT = "上書きするものを選んでください";
 export const EMPTY_TEXT = "保存済みの描画はありません";
+export const SAVE_FILE_TEXT = "描画設定を保存…";
 
 // The star button and its pull-down. The page gives:
 // - `shown()`: the settings of the step shown (the committed drawing
@@ -78,14 +79,18 @@ export const EMPTY_TEXT = "保存済みの描画はありません";
 // - `canSave()`: whether a figure is drawn and no plot is in flight;
 // - `capture()`: `{settings, thumbnail}` of the figure shown, to save;
 // - `apply(settings)`: recalls a favorite's settings;
-// - `blocked()`: whether the button is off (a conversion's overlay shown).
+// - `blocked()`: whether the button is off (a conversion's overlay shown);
+// - `saveFile` (in a browser, which has no app menu; null in the window):
+//   `{enabled(), run()}` of the item below the rows that saves the drawing
+//   settings to a file (docs/spec.md, "描画設定のファイル").
 export class FavoritesMenu {
   #popup;
   // Whether a save waits for the favorite it replaces to be picked.
   #choosing = false;
 
-  constructor({ favorites, shown, canSave, capture, apply, blocked = () => false }) {
+  constructor({ favorites, shown, canSave, capture, apply, blocked = () => false, saveFile = null }) {
     this.favorites = favorites;
+    this.saveFile = saveFile;
     this.shown = shown;
     this.canSave = canSave;
     this.capture = capture;
@@ -205,6 +210,14 @@ export class FavoritesMenu {
       menu.append(empty);
     }
     this.favorites.items.forEach((favorite, index) => menu.append(this.#row(favorite, index, index === current)));
+    if (this.saveFile) {
+      const save = this.#menuButton(SAVE_FILE_TEXT, () => {
+        this.close();
+        this.saveFile.run();
+      });
+      save.disabled = !this.saveFile.enabled();
+      menu.append(menuSeparator(), save);
+    }
     placeUnder(menu, this.button);
     if (at !== null) {
       const items = this.#items();

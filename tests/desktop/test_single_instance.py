@@ -224,7 +224,7 @@ class _NoLog:
 
 def _run_window(paths: list[str] | None) -> int:
     """Run the window path with a dummy app."""
-    return window.run_window(paths, False, lambda *a: None, lambda p: "x", None)
+    return window.run_window(paths, False, lambda *a: None, lambda p: "x", None, None)
 
 
 def test_the_first_run_opens_the_window(

@@ -163,7 +163,8 @@ def test_the_menu_works_with_the_mouse(menu_page: Page) -> None:
     page.locator(".titlebar-item").filter(has_text="Help").click()
     assert popups(page) == [["File", "Edit", "Help"], ["Version"]]
     page.locator(".titlebar-item").filter(has_text="File").click()
-    assert popups(page) == [["File", "Edit", "Help"], ["New", "Quit"]]
+    # 描画設定を保存… (Issue #287) is there, disabled without a figure.
+    assert popups(page) == [["File", "Edit", "Help"], ["New", "描画設定を保存…", "Quit"]]
     # The submenu opens on the right of the menu.
     menu, submenu = (p.bounding_box() for p in page.locator(".titlebar-popup").all())
     assert submenu["x"] >= menu["x"] + menu["width"] - 1
@@ -206,8 +207,9 @@ def test_the_menu_works_with_the_keyboard(menu_page: Page) -> None:
     keys.press("ArrowUp")
     keys.press("ArrowUp")
     keys.press("Space")
-    assert popups(page) == [["File", "Edit", "Help"], ["New", "Quit"]]
+    assert popups(page) == [["File", "Edit", "Help"], ["New", "描画設定を保存…", "Quit"]]
     assert focused(page) == "New"
+    # 描画設定を保存… is disabled without a figure: the arrows skip it.
     keys.press("ArrowDown")
     assert focused(page) == "Quit"
     keys.press("ArrowDown")

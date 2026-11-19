@@ -139,3 +139,20 @@ class ViewRequest(SizeRequest):
     x_ranges: list[tuple[float, float] | None]
     y_ranges: list[tuple[float, float] | None]
     range_levels: object = None
+
+
+class DrawFileRequest(BaseModel):
+    """Body of ``POST /api/draw-file``: the drawing settings to save and the names of the columns they refer to."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    settings: dict
+    columns: list[str]
+
+
+class ColumnKindsRequest(BaseModel):
+    """Body of ``POST /api/column-kinds``: the names of the columns whose kinds the page asks for."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    names: list[str]

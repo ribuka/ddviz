@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.metadata
 import json
 import urllib.error
@@ -18,7 +19,9 @@ from fastapi import FastAPI
 from ddviz.desktop.window import (
     _CHOOSER,
     _CLOSING,
+    CHOOSE_ONE_DRAW_FILE,
     DROP_NOT_PARQUET,
+    DROP_ONE_DRAW_FILE,
     DROP_UNREADABLE,
     TITLE,
     _Api,
@@ -28,7 +31,9 @@ from ddviz.desktop.window import (
 from ddviz.server.preferences import Preferences
 from ddviz.server.settings import load_settings
 from ddviz.server.settings_store import SettingsStore
+from ddviz.shared.drawfile import DrawFileIO, build
 from ddviz.shared.inputs import input_label
+from tests.shared.test_drawfile import SETTINGS
 
 
 class _FakeWindow:
@@ -64,13 +69,19 @@ class _FakeWindow:
         self.destroyed = True
 
 
-def _hello(paths: list[str], recursive: bool, token: str) -> FastAPI:
-    """Return an app that answers with the input and token it was built for."""
+def _hello(
+    paths: list[str], recursive: bool, token: str, initial_draw: dict | None = None
+) -> FastAPI:
+    """Return an app that answers with the input and token it was built for, and with the drawing settings at `/initial-draw`."""
     app = FastAPI()
 
     @app.get("/")
     async def index(token: str) -> list:
         return [paths, recursive, token]
+
+    @app.get("/initial-draw")
+    async def initial() -> dict | None:
+        return initial_draw
 
     return app
 
@@ -78,7 +89,7 @@ def _hello(paths: list[str], recursive: bool, token: str) -> FastAPI:
 def test_the_window_shows_the_server_and_closing_stops_it(tmp_path: Path) -> None:
     """The window loads the server's page; stopping after the window closes is no failure."""
     window = _FakeWindow()
-    app = _App(window, [str(tmp_path)], False, _hello, input_label)
+    app = _App(window, [str(tmp_path)], False, _hello, input_label, DrawFileIO())
     app.start()
     try:
         assert window.url is not None
@@ -108,7 +119,7 @@ def test_a_server_that_stops_by_itself_closes_the_window() -> None:
         return app
 
     window = _FakeWindow()
-    app = _App(window, ["data.parquet"], False, broken, input_label)
+    app = _App(window, ["data.parquet"], False, broken, input_label, DrawFileIO())
     app.start()
     app.stop()
     assert app.failed
@@ -119,7 +130,7 @@ def test_a_server_that_stops_by_itself_closes_the_window() -> None:
 def test_without_an_input_the_chooser_waits() -> None:
     """Without an input, starting opens nothing; cancelling closes the window normally."""
     window = _FakeWindow()
-    app = _App(window, None, False, _hello, input_label)
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.start()
     assert window.url is None
     assert window.dialogs == []
@@ -132,7 +143,7 @@ def test_without_an_input_the_chooser_waits() -> None:
 def test_cancelling_the_os_dialog_keeps_the_chooser() -> None:
     """Without a file chosen, the window stays on the chooser."""
     window = _FakeWindow(chosen=None)
-    app = _App(window, None, False, _hello, input_label)
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.choose("file", True)
     app.stop()
     assert window.dialogs == [(webview.FileDialog.OPEN, True)]
@@ -144,7 +155,7 @@ def test_cancelling_the_os_dialog_keeps_the_chooser() -> None:
 def test_a_chosen_folder_opens_with_its_subfolders_on_request(tmp_path: Path) -> None:
     """A folder dialog's choice starts the server once, reading subfolders when ticked."""
     window = _FakeWindow(chosen=[str(tmp_path)])
-    app = _App(window, None, False, _hello, input_label)
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.choose("folder", True)
     try:
         with urllib.request.urlopen(window.url) as response:
@@ -166,7 +177,7 @@ def test_several_chosen_files_open_as_one_input(tmp_path: Path) -> None:
     """
     names = ["data_10.parquet", "data_1.parquet", "data_2.parquet"]
     window = _FakeWindow(chosen=[str(tmp_path / n) for n in names])
-    app = _App(window, None, False, _hello, input_label)
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.choose("file", True)
     try:
         with urllib.request.urlopen(window.url) as response:
@@ -251,7 +262,7 @@ def test_dropped_files_open_as_files_chosen_in_the_dialog_are(tmp_path: Path) ->
     """Valid files open once in natural order, without subfolders; later drops do nothing."""
     files = _files(tmp_path, "data_10.parquet", "data_2.parquet")
     window = _FakeWindow()
-    app = _App(window, None, False, _hello, input_label)
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.drop(_drop(*files))
     try:
         with urllib.request.urlopen(window.url) as response:
@@ -273,7 +284,7 @@ def test_a_refused_drop_shows_why_and_a_later_drop_opens(tmp_path: Path) -> None
     """A mixed drop opens nothing and tells why on the page; a valid drop after it opens."""
     good, csv = _files(tmp_path, "data.parquet", "data.csv")
     window = _FakeWindow()
-    app = _App(window, None, False, _hello, input_label)
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.drop(_drop(good, csv))
     assert window.url is None
     assert window.scripts == [f"window.ddvizDropError({json.dumps(DROP_NOT_PARQUET)})"]
@@ -299,7 +310,7 @@ def test_a_drop_while_the_dialog_is_open_is_ignored(tmp_path: Path) -> None:
             return super().create_file_dialog(*args, **kwargs)
 
     window = _Dropping(chosen=None)
-    app = _App(window, None, False, _hello, input_label)
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.choose("file", False)
     assert window.url is None
     app.drop(_drop(good))
@@ -344,7 +355,7 @@ def test_only_the_choosers_load_subscribes_to_drops(tmp_path: Path) -> None:
     """The chooser subscribes once, below the title bar; with an input given, nothing subscribes."""
     window = _FakeWindow()
     window.dom = _Dom()
-    app = _App(window, None, False, _hello, input_label)
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.watch_drops()
     app.watch_drops()
     assert window.dom.selectors == ["#drop"]
@@ -354,7 +365,7 @@ def test_only_the_choosers_load_subscribes_to_drops(tmp_path: Path) -> None:
 
     given = _FakeWindow()
     given.dom = _Dom()
-    _App(given, [str(tmp_path)], False, _hello, input_label).watch_drops()
+    _App(given, [str(tmp_path)], False, _hello, input_label, DrawFileIO()).watch_drops()
     assert given.dom.selectors == []
     assert given.dom.area.events.drop == []
 
@@ -363,23 +374,25 @@ def test_a_page_without_the_drop_area_subscribes_later() -> None:
     """A load whose page is not the chooser yet leaves the subscription to the chooser's load."""
     window = _FakeWindow()
     window.dom = _Dom(area=False)
-    app = _App(window, None, False, _hello, input_label)
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.watch_drops()
     window.dom.has_area = True
     app.watch_drops()
     assert len(window.dom.area.events.drop) == 1
 
 
-def _recording(log: list[tuple]) -> Callable[[list[str], bool, str], FastAPI]:
+def _recording(log: list[tuple]) -> Callable[[list[str], bool, str, dict | None], FastAPI]:
     """Return a factory of `_hello` apps that log their shutdown into `log`."""
 
-    def make(paths: list[str], recursive: bool, token: str) -> FastAPI:
+    def make(
+        paths: list[str], recursive: bool, token: str, initial_draw: dict | None = None
+    ) -> FastAPI:
         @asynccontextmanager
         async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             yield
             log.append(("shutdown", paths))
 
-        app = _hello(paths, recursive, token)
+        app = _hello(paths, recursive, token, initial_draw)
         app.router.lifespan_context = lifespan
         return app
 
@@ -397,7 +410,7 @@ def test_new_stops_the_server_and_shows_the_chooser_in_the_same_window(
 ) -> None:
     """`New` shows the closing page, stops the server, then loads the chooser; the window stays."""
     window = _FakeWindow()
-    app = _App(window, [str(tmp_path)], False, _recording(window.log), input_label)
+    app = _App(window, [str(tmp_path)], False, _recording(window.log), input_label, DrawFileIO())
     app.start()
     first = window.url
     assert _get(first)[0] == [str(tmp_path)]
@@ -424,7 +437,7 @@ def test_after_new_another_input_opens_on_a_new_server(tmp_path: Path) -> None:
     first_input.mkdir()
     other.mkdir()
     window = _FakeWindow(chosen=[str(other)])
-    app = _App(window, [str(first_input)], False, _hello, input_label)
+    app = _App(window, [str(first_input)], False, _hello, input_label, DrawFileIO())
     app.start()
     first = window.url
     _, _, first_token = _get(first)
@@ -445,7 +458,7 @@ def test_after_new_another_input_opens_on_a_new_server(tmp_path: Path) -> None:
 def test_new_runs_once_and_only_with_an_input_shown(tmp_path: Path) -> None:
     """`New` before an input, twice in a row, or during another `New` stops and loads once."""
     idle = _FakeWindow()
-    _App(idle, None, False, _hello, input_label).new()
+    _App(idle, None, False, _hello, input_label, DrawFileIO()).new()
     assert idle.log == []
 
     class _Renewing(_FakeWindow):
@@ -454,7 +467,7 @@ def test_new_runs_once_and_only_with_an_input_shown(tmp_path: Path) -> None:
             app.new()  # again, while the first is under way
 
     window = _Renewing()
-    app = _App(window, [str(tmp_path)], False, _recording(window.log), input_label)
+    app = _App(window, [str(tmp_path)], False, _recording(window.log), input_label, DrawFileIO())
     app.start()
     app.new()
     app.new()
@@ -467,7 +480,7 @@ def test_new_runs_once_and_only_with_an_input_shown(tmp_path: Path) -> None:
 def test_cancelling_the_dialog_after_new_keeps_the_chooser(tmp_path: Path) -> None:
     """After `New`, a cancelled OS dialog starts no server."""
     window = _FakeWindow(chosen=None)
-    app = _App(window, [str(tmp_path)], False, _hello, input_label)
+    app = _App(window, [str(tmp_path)], False, _hello, input_label, DrawFileIO())
     app.start()
     first = window.url
     app.new()
@@ -485,7 +498,7 @@ def test_files_dropped_on_the_chooser_after_new_open(tmp_path: Path) -> None:
     (good,) = _files(tmp_path, "data.parquet")
     window = _FakeWindow()
     window.dom = _Dom()
-    app = _App(window, [str(tmp_path)], False, _hello, input_label)
+    app = _App(window, [str(tmp_path)], False, _hello, input_label, DrawFileIO())
     app.start()
     app.watch_drops()
     assert window.dom.area.events.drop == []
@@ -506,7 +519,7 @@ def test_files_dropped_on_the_chooser_after_new_open(tmp_path: Path) -> None:
 def test_quit_closes_the_window_as_the_close_button_does(tmp_path: Path) -> None:
     """`Quit` closes the window; stopping afterwards is no failure."""
     window = _FakeWindow()
-    app = _App(window, [str(tmp_path)], False, _hello, input_label)
+    app = _App(window, [str(tmp_path)], False, _hello, input_label, DrawFileIO())
     app.start()
     app.quit()
     app.stop()
@@ -516,15 +529,17 @@ def test_quit_closes_the_window_as_the_close_button_does(tmp_path: Path) -> None
 
 def test_version_is_the_packages_from_the_version_file() -> None:
     """`Version` is the installed package's version, which is the repository's VERSION."""
-    app = _App(_FakeWindow(), None, False, _hello, input_label)
+    app = _App(_FakeWindow(), None, False, _hello, input_label, DrawFileIO())
     version = (Path(__file__).parents[2] / "VERSION").read_text(encoding="utf-8")
     assert app.version() == importlib.metadata.version("ddviz") == version.strip()
 
 
-def _settings_app(store: SettingsStore) -> Callable[[list[str], bool, str], FastAPI]:
+def _settings_app(store: SettingsStore) -> Callable[[list[str], bool, str, dict | None], FastAPI]:
     """Return what builds an app answering with its input and the opacity of `store` in effect, as the UI server reads it."""
 
-    def make(paths: list[str], recursive: bool, token: str) -> FastAPI:
+    def make(
+        paths: list[str], recursive: bool, token: str, initial_draw: dict | None = None
+    ) -> FastAPI:
         app = FastAPI()
 
         @app.get("/")
@@ -564,7 +579,7 @@ def test_preferences_saved_on_the_chooser_last_across_loads_and_new(
     store = SettingsStore.load(shared)
     api = _Api(Preferences(store))
     window = _FakeWindow(chosen=[str(first_input)])
-    app = _App(window, None, False, _settings_app(store), input_label)
+    app = _App(window, None, False, _settings_app(store), input_label, DrawFileIO())
     api.app = app
     app.start()
     try:
@@ -582,3 +597,209 @@ def test_preferences_saved_on_the_chooser_last_across_loads_and_new(
         app.stop()
     assert SettingsStore.load(shared).current.plot.legend.inactive_opacity == 0.7
     assert not app.failed
+
+
+# ---- the file of the drawing settings (Issue #287) ----
+
+
+
+def _draw_file(json_path: Path, paths: list[Path], recursive: bool = False) -> dict:
+    """Write a file of the drawing settings for `paths` at `json_path`; return its content."""
+    content = build(
+        copy.deepcopy(SETTINGS), {"a": "numeric"}, [str(p) for p in paths], recursive, json_path, "0.0.0"
+    )
+    json_path.write_text(json.dumps(content), encoding="utf-8")
+    return content
+
+
+def _initial_draw(window: _FakeWindow) -> dict | None:
+    """Return the drawing settings the server shown was built with."""
+    return _get(window.url.replace("/?token=", "/initial-draw?token="))
+
+
+def test_a_dropped_draw_file_alone_is_accepted(tmp_path: Path) -> None:
+    """One `.json` file, in any case, is taken as it is."""
+    (drawn,) = _files(tmp_path, "graph.ddviz.JSON")
+    assert dropped_paths(_drop(drawn)) == ([str(drawn)], None)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [["a.json", "b.json"], ["a.json", "data.parquet"], ["data.parquet", "a.json"]],
+    ids=["two", "with-parquet", "after-parquet"],
+)
+def test_a_draw_file_with_anything_else_is_refused(tmp_path: Path, names: list[str]) -> None:
+    """Two `.json` files, or one with Parquet files, refuse the whole drop."""
+    files = _files(tmp_path, *names)
+    assert dropped_paths(_drop(*files)) == ([], DROP_ONE_DRAW_FILE)
+
+
+def test_a_dropped_draw_file_opens_its_data_with_its_settings(tmp_path: Path) -> None:
+    """The data at the file's absolute paths opens, with the file's subfolder setting, and the server gets the file."""
+    data = tmp_path / "data"
+    data.mkdir()
+    content = _draw_file(tmp_path / "graph.json", [data], recursive=True)
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "graph.json"))
+    try:
+        paths, recursive, _ = _get(window.url)
+        assert paths == [str(data)]
+        assert recursive is True
+        assert _initial_draw(window) == content
+    finally:
+        app.stop()
+    assert window.scripts == []
+
+
+def test_a_moved_draw_file_finds_its_data_from_where_it_is(tmp_path: Path) -> None:
+    """Moved with its data, the file finds the data at its path from the file, and opens it from the dialog."""
+    old, new = tmp_path / "old", tmp_path / "new"
+    _files(old, "sub/a.parquet", "sub/b.parquet")
+    _draw_file(old / "graph.json", [old / "sub" / "a.parquet", old / "sub" / "b.parquet"])
+    old.rename(new)
+    window = _FakeWindow(chosen=[str(new / "graph.json")])
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.choose("file", False)
+    try:
+        paths, _, _ = _get(window.url)
+        assert paths == [str(new / "sub" / "a.parquet"), str(new / "sub" / "b.parquet")]
+        assert _initial_draw(window)["settings"] == SETTINGS
+    finally:
+        app.stop()
+
+
+def test_data_not_found_waits_for_other_data_or_is_dropped(tmp_path: Path) -> None:
+    """Without its data, the chooser says so; the data picked next opens with the settings, unless they were dropped."""
+    (gone,) = _files(tmp_path, "gone.parquet")
+    content = _draw_file(tmp_path / "graph.json", [gone])
+    gone.unlink()
+    (other,) = _files(tmp_path, "other.parquet")
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "graph.json"))
+    assert window.url is None
+    text = f"描画設定「graph.json」のデータが見つかりません：{gone}。データを選んでください。"
+    assert window.scripts == [f"window.ddvizPendingDraw({json.dumps(text)})"]
+    app.drop(_drop(other))
+    try:
+        assert _get(window.url)[0] == [str(other)]
+        assert _initial_draw(window) == content
+    finally:
+        app.stop()
+
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "graph.json"))
+    app.forget_draw()
+    app.drop(_drop(other))
+    try:
+        assert _initial_draw(window) is None
+    finally:
+        app.stop()
+
+
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        ("{", "描画設定のファイルを読めませんでした：JSON ではありません"),
+        (
+            '{"format": "x"}',
+            "描画設定のファイルを読めませんでした：format が ddviz-draw-settings ではありません",
+        ),
+        (
+            '{"format": "ddviz-draw-settings", "version": 2}',
+            "この描画設定は読めません（版 2。この ddviz は版 1 を読みます）",
+        ),
+    ],
+    ids=["json", "format", "version"],
+)
+def test_an_unreadable_draw_file_tells_why_and_keeps_the_chooser(
+    tmp_path: Path, text: str, error: str
+) -> None:
+    """A file that cannot be read opens nothing and shows why."""
+    (tmp_path / "bad.json").write_text(text, encoding="utf-8")
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "bad.json"))
+    assert window.url is None
+    (script,) = window.scripts
+    shown = json.loads(script.removeprefix("window.ddvizDropError(").removesuffix(")"))
+    assert shown.startswith(error)
+
+
+@pytest.mark.parametrize(
+    ("part", "key", "value", "reason"),
+    [
+        (None, "elements", ..., "キー settings.elements がありません"),
+        ("options", "smoothing", None, "キー settings.options.smoothing の値の形が違います"),
+        ("options", "smoothing", {}, "キー settings.options.smoothing.method がありません"),
+    ],
+    ids=["elements", "smoothing-null", "smoothing-empty"],
+)
+def test_settings_the_page_cannot_apply_keep_the_chooser(
+    tmp_path: Path, part: str | None, key: str, value: object, reason: str
+) -> None:
+    """A saved file whose settings lack a key the page reads, or hold it in another form, opens no data and tells which (review of PR #336)."""
+    (data,) = _files(tmp_path, "data.parquet")
+    content = _draw_file(tmp_path / "graph.json", [data])
+    place = content["settings"] if part is None else content["settings"][part]
+    if value is ...:
+        del place[key]
+    else:
+        place[key] = value
+    (tmp_path / "graph.json").write_text(json.dumps(content), encoding="utf-8")
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "graph.json"))
+    assert window.url is None
+    error = f"描画設定のファイルを読めませんでした：{reason}"
+    assert window.scripts == [f"window.ddvizDropError({json.dumps(error)})"]
+
+
+def test_the_dialog_offers_draw_files_and_takes_one_alone(tmp_path: Path) -> None:
+    """The file dialog lists the drawing settings beside Parquet; one with other files is refused."""
+    drawn, data = _files(tmp_path, "graph.json", "data.parquet")
+    kinds: list[object] = []
+
+    class _Kinds(_FakeWindow):
+        def create_file_dialog(self, *args: object, **kwargs: object) -> list[str] | None:
+            kinds.append(kwargs.get("file_types"))
+            return super().create_file_dialog(*args, **kwargs)
+
+    window = _Kinds(chosen=[str(drawn), str(data)])
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.choose("file", False)
+    assert kinds == [("Parquet (*.parquet)", "描画設定 (*.json)", "すべてのファイル (*.*)")]
+    assert window.url is None
+    assert window.scripts == [f"window.ddvizDropError({json.dumps(CHOOSE_ONE_DRAW_FILE)})"]
+
+
+def test_saving_a_draw_file_writes_it_with_the_paths_from_it(tmp_path: Path) -> None:
+    """The settings sent are written where the dialog says, with the input's paths from there; a closed dialog writes nothing."""
+    (data,) = _files(tmp_path, "data/sales.parquet")
+    content = build(SETTINGS, {}, [str(data)], False, None, "0.0.0")
+    target = tmp_path / "graphs" / "mine.json"
+    target.parent.mkdir()
+    asked: list[dict] = []
+
+    class _Saving(_FakeWindow):
+        def create_file_dialog(self, *args: object, **kwargs: object) -> list[str] | None:
+            asked.append(kwargs)
+            return super().create_file_dialog(*args, **kwargs)
+
+    window = _Saving(chosen=[str(target)])
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    assert app.save_draw_file(json.dumps(content)) == {"saved": "mine.json"}
+    assert window.dialogs == [(webview.FileDialog.SAVE, False)]
+    assert asked[0]["save_filename"] == "sales.ddviz.json"
+    assert asked[0]["directory"] == str(data.parent)
+    assert asked[0]["file_types"] == ("描画設定 (*.json)",)
+    saved = json.loads(target.read_text(encoding="utf-8"))
+    assert saved["source"]["relative"] == [str(Path("..") / "data" / "sales.parquet")]
+    assert saved["settings"] == SETTINGS
+
+    window._chosen = None
+    assert app.save_draw_file(json.dumps(content)) is None
+    window._chosen = [str(tmp_path / "missing" / "x.json")]
+    assert "error" in app.save_draw_file(json.dumps(content))
