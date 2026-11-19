@@ -16,6 +16,8 @@
 //   `ceil(W * dpi / 96)` × `ceil(H * dpi / 96)` pixels whatever the device
 //   pixel ratio, and a pHYs of `dpi` (pngdpi.js). The points are the images
 //   aggregated for the screen, scaled: no aggregation for the DPI.
+// - The same composition (`composeImage`) makes the thumbnails of the
+//   favorites (`thumbnail`, favorites.js), at their own small scale.
 // - The clipboard gets a ClipboardItem whose PNG is a promise made at the
 //   click, so that the click's user activation is not spent before the
 //   image is made. An image too large fails before any canvas is made.
@@ -206,10 +208,25 @@ export function paintNow(ctx, scene, layout, scale) {
   drawLegend(ctx, layout.legend, layout.legend.x, layout.legend.y);
 }
 
-// Returns the PNG of the image: plotly's axes under and over what
-// `paintNow` painted, on white, with a pHYs of `dpi`.
-export async function finishImage(canvas, ctx, scene, layout, dpi, toImage) {
-  const scale = dpi / CSS_DPI;
+// Starts the image of `scene` laid out as `layout` (`sceneLayout`) on a new
+// canvas of `size` pixels, at `scale` pixels per CSS px: what the click took
+// is painted at once (`paintNow`), then plotly's axes under and over it, on
+// white (`composeAxes`). Returns the canvas and the promise of its end. The
+// copy (`PlotImageCopy`) and the thumbnails of the favorites (`thumbnail`)
+// share it.
+export function composeImage(scene, layout, size, scale, toImage) {
+  const canvas = document.createElement("canvas");
+  canvas.width = size.width;
+  canvas.height = size.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new CopyError("描画用の canvas を作れませんでした");
+  paintNow(ctx, scene, layout, scale);
+  return { canvas, done: composeAxes(canvas, ctx, scene, layout, scale, toImage).then(() => canvas) };
+}
+
+// Draws plotly's axes under and over what `paintNow` painted on `canvas`,
+// on white, at `scale` pixels per CSS px.
+async function composeAxes(canvas, ctx, scene, layout, scale, toImage) {
   const url = await toImage(scene.figure, { format: "svg", width: scene.width, height: scene.height });
   const [below, above] = splitSvg(svgText(url), scene.selection, scale);
   const at = [layout.figure.x * scale, layout.figure.y * scale, scene.width * scale, scene.height * scale];
@@ -222,10 +239,53 @@ export async function finishImage(canvas, ctx, scene, layout, dpi, toImage) {
   ctx.fillStyle = WHITE;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.globalCompositeOperation = "source-over";
+}
+
+// Returns the PNG of the image composed on `canvas`, with a pHYs of `dpi`.
+async function pngOf(canvas, dpi) {
   const png = await new Promise((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new CopyError("PNG にできませんでした"))), "image/png");
   });
   return new Blob([withDpi(new Uint8Array(await png.arrayBuffer()), dpi)], { type: "image/png" });
+}
+
+// The box a thumbnail of the favorites fits in, in CSS px (favorites.js).
+export const THUMBNAIL = { width: 120, height: 80 };
+
+// Returns the thumbnail of `scene` (`captureScene`) for the favorites: the
+// image the copy makes, scaled to fit THUMBNAIL with its aspect kept and
+// centered on white, on a canvas of `ratio` (the device pixel ratio)
+// pixels per CSS px, sized THUMBNAIL in CSS px. The image is composed at
+// the thumbnail's own scale, not shrunk from a larger one. Returns the
+// canvas at once, with what the click took painted, and the promise of its
+// end, with plotly's axes; a failure of the axes leaves the rest.
+export function thumbnail(scene, ratio, toImage = (...args) => window.Plotly.toImage(...args)) {
+  const layout = sceneLayout(scene, document.createElement("canvas").getContext("2d"));
+  const fit = Math.min(THUMBNAIL.width / layout.width, THUMBNAIL.height / layout.height) * ratio;
+  const size = { width: Math.max(1, Math.round(layout.width * fit)), height: Math.max(1, Math.round(layout.height * fit)) };
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(THUMBNAIL.width * ratio);
+  canvas.height = Math.round(THUMBNAIL.height * ratio);
+  canvas.style.width = `${THUMBNAIL.width}px`;
+  canvas.style.height = `${THUMBNAIL.height}px`;
+  const ctx = canvas.getContext("2d");
+  const at = [Math.floor((canvas.width - size.width) / 2), Math.floor((canvas.height - size.height) / 2)];
+  const paint = (image) => {
+    ctx.fillStyle = WHITE;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, ...at);
+  };
+  const image = composeImage(scene, layout, size, fit, toImage);
+  paint(image.canvas);
+  const done = image.done.then(
+    () => paint(image.canvas),
+    (error) => console.error(error),
+  ).then(() => {
+    image.canvas.width = 0;
+    image.canvas.height = 0;
+    return canvas;
+  });
+  return { canvas, done };
 }
 
 // Returns the SVG of plotly's data URL.
@@ -335,13 +395,9 @@ export class PlotImageCopy {
       const size = outputSize(layout.width, layout.height, dpi);
       const tooLarge = sizeError(size, dpi);
       if (tooLarge) throw new CopyError(tooLarge);
-      canvas = document.createElement("canvas");
-      canvas.width = size.width;
-      canvas.height = size.height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new CopyError("描画用の canvas を作れませんでした");
-      paintNow(ctx, scene, layout, dpi / CSS_DPI);
-      image = finishImage(canvas, ctx, scene, layout, dpi, this.toImage);
+      const composed = composeImage(scene, layout, size, dpi / CSS_DPI, this.toImage);
+      canvas = composed.canvas;
+      image = composed.done.then(() => pngOf(canvas, dpi));
     } catch (error) {
       return Promise.resolve(done(false, error));
     }

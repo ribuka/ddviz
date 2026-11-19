@@ -892,6 +892,28 @@ body.filter-reordering * {
   color: var(--text-disabled-icon);
   cursor: default;
 }
+/* The favorites of the drawing settings (`static/js/favorites.js`), right
+   of redo in a browser; in the window, in its title bar (titlebar.css). */
+#top > .favorites-button {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  margin-right: 6px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+#top > .favorites-button:hover:not(:disabled),
+#top > .favorites-button[aria-expanded="true"] { color: var(--text); }
+#top > .favorites-button:disabled {
+  color: var(--text-disabled-icon);
+  cursor: default;
+}
 #top > [data-role="wrap"] { flex: 0 0 30px; }
 #top > [data-role="wrap"].filled { flex: 0 1 auto; max-width: 60%; flex-wrap: nowrap; }
 #builder > [data-role="y"] { grid-area: 2 / 1; }
@@ -1793,6 +1815,86 @@ html.desktop #toasts {
 .scale-menu-separator {
   margin: 4px 0;
   border-top: 1px solid var(--border-separator);
+}
+
+/* The pull-down of the favorites (favorites.js): the save, then a row per
+   favorite with its thumbnail (120 × 80), its time, the mark of the one
+   shown and its ×. */
+.favorites-menu {
+  min-width: 220px;
+}
+
+.favorites-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.favorites-prompt,
+.favorites-empty {
+  padding: 3px 12px;
+  color: var(--text-hint);
+}
+
+.favorites-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 12px;
+  cursor: pointer;
+}
+
+.favorites-row:hover {
+  background: var(--bg-menu-hover);
+}
+
+.favorites-row.shown {
+  cursor: default;
+}
+
+.favorites-thumb {
+  flex: none;
+  width: 120px;
+  height: 80px;
+  border: 1px solid var(--border);
+}
+
+.favorites-thumb > canvas {
+  display: block;
+}
+
+.favorites-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.favorites-shown {
+  align-self: flex-start;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.favorites-remove {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.favorites-remove:hover {
+  background: var(--bg-hover-gray);
+  color: var(--text);
 }
 
 /* The form of the wrapped panels to a row (wrapmenu.js). */
