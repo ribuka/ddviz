@@ -1,11 +1,13 @@
-// The menu of the mode bar's download button: save the rows of the plot
-// (`ddviz.compute.tasks.plotdata`) as a CSV or a Parquet file. Radios pick
-// the rows (drawn, or every row the filter keeps) and the columns (drawn, or
-// all), kept by the page until it is reloaded. A format closes the menu and
-// starts the save (`saves.js`), whose progress and end show in a toast; no
-// format while an export runs. A click outside or Esc closes the menu. In a
-// browser, the menu's last item opens the history of the saves (in the
-// window, the title bar's button does).
+// The menus that save rows of the plot (`ddviz.compute.tasks.plotdata`) as a
+// CSV or a Parquet file: the mode bar's download button saves the plot's rows,
+// the selection table's save button the selected rows. Radios pick the rows
+// (drawn, or every row the filter keeps; the mode bar's menu only) and the
+// columns (drawn, or all; both menus share them), kept by the page until it
+// is reloaded. A format closes the menu and starts the save (`saves.js`),
+// whose progress and end show in a toast; no format while an export runs. A
+// click outside or Esc closes the menu. In a browser, the mode bar menu's
+// last item opens the history of the saves (in the window, the title bar's
+// button does).
 import { Popup } from "./popup.js";
 
 const FORMATS = [
@@ -78,18 +80,19 @@ function separator() {
   return line;
 }
 
-// Opens the menu under `anchor` (the mode bar's button). `task` returns the
-// task of the overview drawn, or null without a plot; `saves` runs the saves
-// (`saves.js`).
-export function openDataMenu(anchor, task, saves) {
+// Returns a new menu with its heading, the radios of `choices` and a
+// separator, then a button of each format, which closes the menu and starts
+// the save of what `request` returns (`Saves.start`); while an export runs,
+// the formats are disabled and a note says why.
+function saveMenu(heading, choices, saves, request) {
   close();
   saves.closeHistory();
   const menu = document.createElement("div");
   menu.className = "scale-menu data-menu";
   const head = document.createElement("div");
   head.className = "scale-menu-heading";
-  head.textContent = "データを保存";
-  menu.append(head, ...CHOICES.map(radioGroup), separator());
+  head.textContent = heading;
+  menu.append(head, ...choices.map(radioGroup), separator());
   for (const [format, text] of FORMATS) {
     const button = document.createElement("button");
     button.type = "button";
@@ -98,7 +101,7 @@ export function openDataMenu(anchor, task, saves) {
     button.disabled = saves.running;
     button.addEventListener("click", () => {
       close();
-      saves.start(task(), format, { ...picked });
+      saves.start(format, request());
     });
     menu.append(button);
   }
@@ -108,6 +111,18 @@ export function openDataMenu(anchor, task, saves) {
     note.textContent = "書き出しが終わると保存できます";
     menu.append(note);
   }
+  return menu;
+}
+
+// Opens the menu under `anchor` (the mode bar's button). `task` returns the
+// task of the overview drawn, or null without a plot; `saves` runs the saves
+// (`saves.js`).
+export function openDataMenu(anchor, task, saves) {
+  const menu = saveMenu("データを保存", CHOICES, saves, () => {
+    const drawn = task();
+    if (drawn === null) return { error: "グラフがありません" };
+    return { url: `/api/plot-data/${drawn}`, fields: { ...picked } };
+  });
   if (!saves.desktop) {
     const history = document.createElement("button");
     history.type = "button";
@@ -120,5 +135,18 @@ export function openDataMenu(anchor, task, saves) {
     });
     menu.append(separator(), history);
   }
+  popup.openUnder(menu, anchor, { align: "right", gap: 4 });
+}
+
+// Opens the menu of the selection table's save button under `anchor`: the
+// selected rows (`POST /api/plot-data/selection`), so no radios of the rows;
+// the columns are those `picked` holds, shared with the mode bar's menu. No
+// history item: the mode bar's menu or the title bar opens it.
+export function openSelectionDataMenu(anchor, saves) {
+  const columns = CHOICES.filter((c) => c.key === "columns");
+  const menu = saveMenu("選んだ行を保存", columns, saves, () => ({
+    url: "/api/plot-data/selection",
+    fields: { columns: picked.columns },
+  }));
   popup.openUnder(menu, anchor, { align: "right", gap: 4 });
 }

@@ -1351,6 +1351,15 @@ body.filter-reordering * {
   cursor: default;
 }
 
+/* The save button's disk (Plotly.Icons.disk, as the mode bar's) inline in
+   the line of its text, so that the button is as high as ▲ and ▼ beside it. */
+.table-save svg {
+  width: 0.9em;
+  height: 0.9em;
+  vertical-align: -0.1em;
+  fill: currentColor;
+}
+
 .table-scroll {
   flex: 1;
   min-height: 0;

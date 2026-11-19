@@ -83,6 +83,16 @@ class PlotDataRequest(BaseModel):
     export: str
 
 
+class SelectionDataRequest(BaseModel):
+    """Body of ``POST /api/plot-data/selection``: the file's format and columns, and the page's token for the progress (`PlotDataRequest`); the rows are the selected ones."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: Literal["csv", "parquet"]
+    columns: Literal["drawn", "all"]
+    export: str
+
+
 class ExportCancel(BaseModel):
     """Body of ``POST /api/plot-data/cancel``: the page's token of the export to cancel."""
 

@@ -11,7 +11,7 @@ import { showCasts } from "./casts.js";
 import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } from "./colorscale.js";
 import { openColumnMenu } from "./columnmenu.js";
 import { attachColumnList } from "./columns.js";
-import { openDataMenu } from "./datamenu.js";
+import { openDataMenu, openSelectionDataMenu } from "./datamenu.js";
 import { ElementBar } from "./elements.js";
 import { Favorites, FavoritesMenu } from "./favorites.js";
 import { FilterPane, filterSettings, filtersKey, RestorePoint } from "./filters.js";
@@ -954,6 +954,7 @@ function markPending() {
 // The selection of rows with a box, its layer and the table of its rows.
 const table = new SelectionTable(document.getElementById("table"));
 table.exporting = () => saves.running;
+table.onSave = (button) => openSelectionDataMenu(button, saves);
 const boxSelection = new BoxSelection({
   gd,
   layers,

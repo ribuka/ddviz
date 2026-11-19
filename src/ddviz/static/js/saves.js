@@ -2,8 +2,9 @@
 // with a cancel button, its end there with the file's actions, and the
 // history of the page's saves.
 //
-// A save writes the rows on the server (`POST /api/plot-data/{task}`, the
-// export: the bar goes to 90%), then fetches the file as a plain download
+// A save writes the rows on the server (`POST /api/plot-data/{task}` from the
+// mode bar's menu, `POST /api/plot-data/selection` from the selection
+// table's; the export: the bar goes to 90%), then fetches the file as a plain download
 // (the transfer: 90 to 100%). In the desktop window (`html.desktop`),
 // `ddviz.desktop.downloads` saves it to Downloads and tells the page how
 // far it got (`window.ddvizSaveProgress`) and how it ended
@@ -13,9 +14,9 @@
 // say, so the save ends when the download starts.
 //
 // One export at a time: the table's pool runs it, and another export would
-// kill it (`running`). The history lives as long as the page; in the window
-// a button in the title bar opens it, in a browser the save menu
-// (`datamenu.js`).
+// kill it (`running`), whichever menu starts it. The history lives as long
+// as the page; in the window a button in the title bar opens it, in a
+// browser the mode bar's save menu (`datamenu.js`).
 import { Popup } from "./popup.js";
 
 const FORMATS = { csv: "CSV", parquet: "Parquet" };
@@ -152,9 +153,12 @@ export class Saves {
     return this.saves.length === 0;
   }
 
-  // Writes the rows of the overview `task` as `format` with the rows and
-  // columns `picked`, and saves the file.
-  async start(task, format, picked) {
+  // Writes rows as `format` and saves the file. `request` is where to ask for
+  // them and what besides the format and the token: `{url, fields}` (the
+  // overview's `/api/plot-data/{task}` with its rows and columns, or the
+  // selection's `/api/plot-data/selection` with its columns), or `{error}`
+  // when there is nothing to save, which the save fails with.
+  async start(format, request) {
     const save = {
       id: crypto.randomUUID(),
       format,
@@ -174,18 +178,20 @@ export class Saves {
     this.showToast(save);
     this.refreshHistory();
     try {
-      if (task === null) throw new Error("グラフがありません");
-      const response = await fetch(`/api/plot-data/${task}`, {
+      if (request.error) throw new Error(request.error);
+      const response = await fetch(request.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ format, ...picked, export: save.id }),
+        body: JSON.stringify({ format, ...request.fields, export: save.id }),
       });
       if (response.status === 409 && (await response.clone().json().catch(() => ({}))).cancelled) {
         this.end(save, "cancelled");
         return;
       }
+      if (response.status === 404) throw new Error("図が新しくなりました。もう一度選んでください");
       if (!response.ok) {
-        throw new Error(response.status === 404 ? "図が新しくなりました。もう一度選んでください" : await detail(response));
+        const reason = await detail(response);
+        throw new Error(reason === "no selection" ? "範囲選択が解除されました" : reason);
       }
       const written = await response.json();
       save.name = written.name;

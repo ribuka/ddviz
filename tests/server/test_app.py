@@ -1047,6 +1047,49 @@ def test_plot_data_refuses_bad_requests(client: TestClient) -> None:
     assert client.post(f"/api/plot-data/{task + 99}", json=good).status_code == 404
 
 
+def test_selection_data_saves_the_selected_rows(
+    tmp_path: Path, client: TestClient, scatter_frame: pl.DataFrame
+) -> None:
+    """Without a selection, 409 ``no selection``; with one, its rows in the drawn or all columns, named ``_selected_``, fetched once."""
+    meta = _plot(client)["meta"]
+    request = {"format": "csv", "columns": "drawn", "export": "t"}
+    refused = client.post("/api/plot-data/selection", json=request)
+    assert refused.status_code == 409
+    assert refused.json() == {"detail": "no selection"}
+    box = {"task": meta["task"], "panel": 0, "x_range": [-1, 1], "y_range": [-1, 1]}
+    selected = client.post("/api/selection", json=box).json()
+    assert 0 < selected["rows"] < meta["rows"]
+
+    written = client.post("/api/plot-data/selection", json=request)
+    assert written.status_code == 200, written.text
+    name = written.json()["name"]
+    assert re.fullmatch(r"scatter_selected_\d{8}-\d{6}\.csv", name)
+    csv = client.get(f"/api/plot-data/file/{written.json()['file']}")
+    assert csv.status_code == 200
+    assert csv.headers["content-disposition"] == f'attachment; filename="{name}"'
+    drawn = pl.read_csv(io.BytesIO(csv.content))
+    assert drawn.columns == ["index", "x", "y", "color", "facet"]
+    assert drawn.height == selected["rows"]
+    assert drawn["index"].is_sorted() and drawn["index"].n_unique() == drawn.height
+    assert client.get(f"/api/plot-data/file/{written.json()['file']}").status_code == 404
+    # The task's directory is gone once the file is sent.
+    assert list((tmp_path / "run" / "table").iterdir()) == []
+
+    written = client.post(
+        "/api/plot-data/selection", json={**request, "format": "parquet", "columns": "all"}
+    ).json()
+    assert re.fullmatch(r"scatter_selected_\d{8}-\d{6}\.parquet", written["name"])
+    every = pl.read_parquet(
+        io.BytesIO(client.get(f"/api/plot-data/file/{written['file']}").content)
+    )
+    assert every.columns == ["index", *scatter_frame.columns]
+    assert every["index"].to_list() == drawn["index"].to_list()
+    assert every.drop("index").equals(scatter_frame[drawn["index"].to_list()])
+
+    for bad in ({**request, "rows": "drawn"}, {**request, "format": "xlsx"}):
+        assert client.post("/api/plot-data/selection", json=bad).status_code == 422
+
+
 def test_plot_data_keeps_an_overview_replaced_while_it_prepares(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1087,10 +1130,11 @@ def _hold_exports(monkeypatch: pytest.MonkeyPatch) -> tuple[threading.Event, thr
     return reached, release
 
 
+@pytest.mark.parametrize("selected", [False, True], ids=["overview", "selection"])
 def test_an_export_holds_the_table_and_is_cancelled_by_its_token(
-    tmp_path: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch, selected: bool
 ) -> None:
-    """While the plot's data is written, the table's pages are 409 ``exporting``; the page's token cancels it, killing the table pool's task, and no file stays."""
+    """While the plot's data or the selected rows are written, the table's pages are 409 ``exporting``; the page's token cancels it, killing the table pool's task, and no file stays."""
     meta = _plot(client)["meta"]
     box = {"task": meta["task"], "panel": 0, "x_range": [-5, 5], "y_range": [-5, 5]}
     assert client.post("/api/selection", json=box).status_code == 200
@@ -1103,11 +1147,13 @@ def test_an_export_holds_the_table_and_is_cancelled_by_its_token(
         await cancel(self, pool)
 
     monkeypatch.setattr(TaskBroker, "cancel", counted)
-    body = {"format": "csv", "rows": "drawn", "columns": "drawn", "export": "mine"}
+    body = {"format": "csv", "columns": "drawn", "export": "mine"}
+    if selected:
+        url = "/api/plot-data/selection"
+    else:
+        url, body = f"/api/plot-data/{meta['task']}", {**body, "rows": "drawn"}
     answer: list[Response] = []
-    thread = threading.Thread(
-        target=lambda: answer.append(client.post(f"/api/plot-data/{meta['task']}", json=body))
-    )
+    thread = threading.Thread(target=lambda: answer.append(client.post(url, json=body)))
     thread.start()
     try:
         assert reached.wait(30)
@@ -1127,6 +1173,31 @@ def test_an_export_holds_the_table_and_is_cancelled_by_its_token(
     assert list((tmp_path / "run" / "table").iterdir()) == []
     assert client.get("/api/table").status_code == 200
     assert client.post("/api/plot-data/cancel", json={}).status_code == 422
+
+
+def test_selection_data_keeps_the_selection_it_was_asked_for(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A selection cleared while its rows are written leaves the file with the rows selected when asked."""
+    meta = _plot(client)["meta"]
+    box = {"task": meta["task"], "panel": 0, "x_range": [-1, 1], "y_range": [-1, 1]}
+    selected = client.post("/api/selection", json=box).json()
+    reached, release = _hold_exports(monkeypatch)
+    body = {"format": "parquet", "columns": "drawn", "export": "t"}
+    answer: list[Response] = []
+    thread = threading.Thread(
+        target=lambda: answer.append(client.post("/api/plot-data/selection", json=body))
+    )
+    thread.start()
+    try:
+        assert reached.wait(30)
+        assert client.delete("/api/selection").status_code == 200
+    finally:
+        release.set()
+        thread.join(30)
+    assert answer[0].status_code == 200, answer[0].text
+    file = client.get(f"/api/plot-data/file/{answer[0].json()['file']}")
+    assert pl.read_parquet(io.BytesIO(file.content)).height == selected["rows"]
 
 
 def test_an_export_cancelled_before_its_task_never_runs(

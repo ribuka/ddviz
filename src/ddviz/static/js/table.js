@@ -8,7 +8,8 @@
 // worker (`GET /api/table`), from the column cache or from the source.
 // While the plot's data is written in the same pool, the server refuses the
 // pages (409 `exporting`): the table says so, and fetches them once the
-// export has ended (`exportEnded`, Issue #194).
+// export has ended (`exportEnded`, Issue #194). The save button of its bar
+// saves every selected row as a file (`datamenu.js`, Issue #328).
 import { attachDrag } from "./dragresize.js";
 
 const COLUMN_WIDTH = 120;
@@ -28,6 +29,8 @@ const TITLES = {
   down: { open: "表を畳む", maximized: "元の高さに戻す" },
 };
 
+const SAVE_TITLE = "選んだ行を保存（CSV / Parquet）";
+
 function formatValue(value) {
   if (value === null || value === undefined) return "";
   if (typeof value === "number" && !Number.isInteger(value)) return String(Number(value.toPrecision(6)));
@@ -44,6 +47,11 @@ export class SelectionTable {
     this.grid = root.querySelector(".table-grid");
     this.up = root.querySelector(".table-up");
     this.down = root.querySelector(".table-down");
+    // Opens the menu that saves the selected rows; disabled without rows.
+    this.save = root.querySelector(".table-save");
+    // Opens the menu of the save under the button; set by the app
+    // (`datamenu.js`, `openSelectionDataMenu`).
+    this.onSave = () => {};
     // Shown while the server refuses the pages: the plot's data is being
     // written in the table's pool (409 `exporting`), until `exportEnded`.
     this.wait = root.querySelector(".table-wait");
@@ -70,6 +78,7 @@ export class SelectionTable {
     root.querySelector(".table-next").addEventListener("click", () => this.page(1));
     this.up.addEventListener("click", () => this.step(1));
     this.down.addEventListener("click", () => this.step(-1));
+    this.save.addEventListener("click", () => this.onSave(this.save));
     this.attachResize(root.querySelector(".table-resize"));
   }
 
@@ -150,6 +159,9 @@ export class SelectionTable {
     this.pager.textContent = this.rows ? `${(this.offset + 1).toLocaleString()}–${last.toLocaleString()}` : "0";
     this.root.querySelector(".table-prev").disabled = this.offset === 0;
     this.root.querySelector(".table-next").disabled = last >= this.rows;
+    // No rows to save, as when a filter has hidden the box's panel.
+    this.save.disabled = this.rows === 0;
+    this.save.title = this.rows ? SAVE_TITLE : "選んだ行がありません";
   }
 
   // Returns the chunks of the columns in view.

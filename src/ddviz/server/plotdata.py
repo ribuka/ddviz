@@ -14,11 +14,14 @@ FORMATS = {
 }
 
 
-def file_name(source: list[str], file_format: str, moment: datetime) -> str:
+def file_name(
+    source: list[str], file_format: str, moment: datetime, selected: bool = False
+) -> str:
     """Return the name of a saved file: ``<input's name>_<YYYYMMDD-HHMMSS>.<format>``.
 
     Characters a file name may not hold, and spaces, become ``_``. For
-    several files, the name is the first one's, then ``_and_<n>_more``.
+    several files, the name is the first one's, then ``_and_<n>_more``. A
+    file of the selected rows has ``_selected`` before the time.
 
     Parameters
     ----------
@@ -29,6 +32,8 @@ def file_name(source: list[str], file_format: str, moment: datetime) -> str:
         ``"csv"`` or ``"parquet"``.
     moment : datetime.datetime
         When the file is saved.
+    selected : bool
+        Whether the file holds the selected rows.
 
     Returns
     -------
@@ -40,4 +45,5 @@ def file_name(source: list[str], file_format: str, moment: datetime) -> str:
     if more:
         stem = f"{stem} and {more} more"
     stem = re.sub(r'[\/:*?"<>|\s\x00-\x1f]+', "_", stem).strip("_.")
-    return f"{stem or 'ddviz'}_{moment:%Y%m%d-%H%M%S}.{file_format}"
+    kind = "_selected" if selected else ""
+    return f"{stem or 'ddviz'}{kind}_{moment:%Y%m%d-%H%M%S}.{file_format}"
