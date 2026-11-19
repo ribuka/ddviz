@@ -4,7 +4,8 @@ This process never imports polars; it only reads the files the workers
 write. The routes live in `ddviz.server.api_source` (the columns),
 `ddviz.server.api_plot` (drawing and hovers), `ddviz.server.api_export` (the
 plot's data), `ddviz.server.api_events` (the progress events),
-`ddviz.server.api_selection` (the selection and its table) and, in the
+`ddviz.server.api_selection` (the selection and its table),
+`ddviz.server.api_drawfile` (the file of the drawing settings) and, in the
 window, `ddviz.server.api_saves` (the saved files). Every request needs the
 token of the run
 (`ddviz.server.auth`).
@@ -21,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from ddviz.server.api_drawfile import drawfile_router
 from ddviz.server.api_events import events_router
 from ddviz.server.api_export import export_router
 from ddviz.server.api_history import history_router
@@ -55,6 +57,7 @@ def create_app(
     frontend_pids: FrontendPids | None = None,
     desktop: bool = False,
     saves: SaveActions | None = None,
+    initial_draw: dict | None = None,
 ) -> FastAPI:
     """Create the UI server for a Parquet file, a folder of them or several files.
 
@@ -87,6 +90,10 @@ def create_app(
         The window's saves of the plot's data, which the page opens, shows
         in their folder or cancels (`ddviz.server.api_saves`); None in a
         browser, which has no such routes.
+    initial_draw : dict or None
+        The content of the file of the drawing settings opened with the input
+        on the window's chooser (`ddviz.shared.drawfile`), which the page
+        applies once loaded (``/api/initial-draw``); None otherwise.
 
     Returns
     -------
@@ -150,6 +157,7 @@ def create_app(
 
     app.include_router(source_router(source, lambda: settings.current.columns.max_listed))
     app.include_router(history_router(history))
+    app.include_router(drawfile_router(source, initial_draw))
     app.include_router(memory_router(meter))
     app.include_router(
         plot_router(

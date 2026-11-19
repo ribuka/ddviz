@@ -38,6 +38,7 @@ def make_app(
     frontend_pids: Callable[[], list[int] | None] | None = None,
     desktop: bool = False,
     saves: SaveActions | None = None,
+    initial_draw: dict | None = None,
 ) -> FastAPI:
     """Build the UI server for a Parquet file, a folder of them or several files.
 
@@ -61,6 +62,9 @@ def make_app(
     saves : SaveActions or None
         The window's saves of the plot's data (`ddviz.server.api_saves`);
         None in a browser.
+    initial_draw : dict or None
+        The file of the drawing settings opened with the input on the
+        window's chooser, which the page applies once loaded; None otherwise.
 
     Returns
     -------
@@ -83,6 +87,7 @@ def make_app(
         frontend_pids,
         desktop,
         saves,
+        initial_draw,
     )
 
 
@@ -148,6 +153,7 @@ def main() -> int:
             return 1
         from ddviz.desktop.window import run_window
         from ddviz.server.preferences import Preferences
+        from ddviz.shared.drawfile import DrawFileIO
         from ddviz.shared.inputs import input_label
 
         return run_window(
@@ -156,6 +162,7 @@ def main() -> int:
             lambda *a: make_app(settings, *a),
             input_label,
             Preferences(settings),
+            DrawFileIO(),
         )
 
     close_splash()

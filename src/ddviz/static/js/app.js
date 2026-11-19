@@ -12,6 +12,7 @@ import { colorsChanged, isMissingLevel, keepPicked, levelColors, pickColor } fro
 import { openColumnMenu } from "./columnmenu.js";
 import { attachColumnList } from "./columns.js";
 import { openDataMenu, openSelectionDataMenu } from "./datamenu.js";
+import { attachmentName, droppedText, reconcile, referencedColumns } from "./drawfile.js";
 import { ElementBar } from "./elements.js";
 import { Favorites, FavoritesMenu } from "./favorites.js";
 import { FilterPane, filterSettings, filtersKey, RestorePoint } from "./filters.js";
@@ -274,6 +275,9 @@ let drawing = 0;
 // (`record`).
 const settingsHistory = new SettingsHistory();
 let applying = null;
+// The drawing settings of the empty graph the page opens with, which a
+// failed plot goes back to before the first step (`revertSettings`).
+let emptySettings = null;
 // The buttons of undo and redo (`undo.js`), once made.
 let undoControls = null;
 // The favorites of the drawing settings and their button (`favorites.js`).
@@ -824,7 +828,9 @@ function supersededDone(text) {
 // result that is not drawn (`serverAhead`), the committed graph is plotted
 // again at the drawn view with the drawn selection (`kept`), or the figure
 // removed when none was drawn. The error stays shown until the next edit
-// (`StatusLine.hold`). Returns "refused".
+// (`StatusLine.hold`). Before the first step of undo and redo (the drawing
+// settings of a file that failed to plot), the empty graph it went back to
+// is that step (`recordFirst`). Returns "refused".
 function plotFailed(message, askedSize, restoring, kept = keptView()) {
   converting.hidden = true;
   statusLine.error(message);
@@ -846,6 +852,7 @@ function plotFailed(message, askedSize, restoring, kept = keptView()) {
   } else {
     resumeShown();
   }
+  recordFirst();
   return "refused";
 }
 
@@ -1857,10 +1864,19 @@ function applyOthers(settings) {
 }
 
 // Puts back the settings of the step shown, after the zones went back to the
-// committed graph (`Builder.rollback`).
+// committed graph (`Builder.rollback`); before the first step, those of the
+// empty graph.
 function revertSettings() {
   const shown = settingsHistory.steps[settingsHistory.index];
-  if (shown) applyOthers(structuredClone(shown.settings));
+  applyOthers(structuredClone(shown ? shown.settings : emptySettings));
+}
+
+// Takes the settings now as the first step of undo and redo when there is
+// none yet: the page opened with the drawing settings of a file waits for
+// their result to be the first step (`applyInitialDraw`), and their failed or
+// cancelled plot leaves the empty graph as that step.
+function recordFirst() {
+  if (settingsHistory.index < 0) record(captureSettings());
 }
 
 // Applies the drawing settings `settings`, as an edit of them by hand: the
@@ -1914,6 +1930,83 @@ function applySettings(settings, index = null) {
   showUndo();
 }
 
+// ---- the file of the drawing settings (docs/spec.md, "描画設定のファイル") ----
+
+// Whether the drawing settings can be saved to a file: a figure drawn, no
+// plot in flight and no conversion's overlay, as a favorite's save.
+function canSaveDrawFile() {
+  return settingsHistory.index >= 0 && current !== null && Boolean(gd._fullLayout) && plotting === 0 && converting.hidden;
+}
+
+// Returns the server's answer of the file of the committed drawing settings
+// (`POST /api/draw-file`): the file's content, with its default name in
+// `Content-Disposition`. Throws when the server refuses.
+async function drawFileResponse() {
+  const settings = shownSettings();
+  const response = await fetch("/api/draw-file", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings, columns: referencedColumns(settings) }),
+  });
+  if (!response.ok) throw new Error(errorText(await response.text(), response.status));
+  return response;
+}
+
+// Downloads the file of the drawing settings, in a browser (the favorites'
+// pull-down).
+async function downloadDrawFile() {
+  try {
+    const response = await drawFileResponse();
+    const name = attachmentName(response.headers.get("Content-Disposition"), "ddviz.ddviz.json");
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (error) {
+    toasts.show(`描画設定を保存できませんでした：${error.message}`);
+  }
+}
+
+// The window's `File → 描画設定を保存…` (`titlebar.js`): whether it is
+// enabled, the file's content to save (null when it cannot be saved now),
+// and the result of the save, `{saved}`, `{error}` or null when the dialog
+// was closed.
+window.ddvizCanSaveDrawFile = canSaveDrawFile;
+window.ddvizDrawFile = async () => (canSaveDrawFile() ? (await drawFileResponse()).text() : null);
+window.ddvizDrawFileSaved = (result) => {
+  if (!result) return;
+  if (result.saved) toasts.show(`描画設定を保存しました（${result.saved}）`, "success");
+  else toasts.show(`描画設定を保存できませんでした：${result.error}`);
+};
+
+// Applies the drawing settings of the file opened with the input
+// (`/api/initial-draw`) once its columns are known: those of the settings
+// the data lacks, or holds with another kind, are taken out with a warning
+// (`reconcile`). Their result is the first step of undo and redo (`record`
+// after the plot, or `recordFirst` after a failure).
+async function applyInitialDraw(draw) {
+  let checked;
+  try {
+    const response = await fetch("/api/column-kinds", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ names: referencedColumns(draw.settings) }),
+    });
+    if (!response.ok) throw new Error(errorText(await response.text(), response.status));
+    checked = reconcile(draw.settings, draw.columns, await response.json());
+  } catch (error) {
+    statusLine.error(`描画設定を適用できませんでした（${error.message}）`);
+    recordFirst();
+    return;
+  }
+  if (checked.dropped.length) toasts.show(droppedText(checked.dropped));
+  applySettings(checked.settings);
+}
+
 // Applies the step `{index, settings}` of undo or redo (`applySettings`).
 function applyStep({ index, settings }) {
   applySettings(settings, index);
@@ -1932,6 +2025,7 @@ function cancelPlot() {
   statusLine.release();
   builder.rollback();
   revertSettings();
+  recordFirst();
   requestedSize = shownSize;
   if (serverAhead) {
     if (plottedEncoding) {
@@ -2083,10 +2177,21 @@ elementBar = new ElementBar(
   },
 );
 elementBar.setSmoothText(smoothingText(options.smoothing));
+// The file of the drawing settings the window's chooser opened with the
+// input (docs/spec.md, "描画設定のファイル"), or null.
+let initialDraw = null;
+try {
+  const response = await fetch("/api/initial-draw");
+  if (response.ok) initialDraw = await response.json();
+} catch (error) {
+  console.error(error);
+}
 // The empty graph with its element icons is the first committed state,
-// and the first step of undo and redo.
+// and the first step of undo and redo; with the drawing settings of a
+// file, their result is that step instead (`applyInitialDraw`).
 builder.commit();
-record(captureSettings());
+emptySettings = captureSettings();
+if (!initialDraw) record(captureSettings());
 undoControls = undoButtons(undo, redo);
 attachUndoKeys(undo, redo);
 favoritesMenu = new FavoritesMenu({
@@ -2106,6 +2211,11 @@ favoritesMenu = new FavoritesMenu({
   // by hand does: the newer request supersedes the older.
   apply: (settings) => applySettings(settings),
   blocked: () => !converting.hidden,
+  // A browser has no app menu: the pull-down saves the file of the drawing
+  // settings instead (`File` in the window's).
+  saveFile: document.documentElement.classList.contains("desktop")
+    ? null
+    : { enabled: canSaveDrawFile, run: downloadDrawFile },
 });
 favoritesMenu.placeAfter(undoControls.redo);
 showUndo();
@@ -2146,3 +2256,4 @@ window.ddvizApplySettings = async (values, changed) => {
 };
 await columnList.loaded;
 showCasts(document.getElementById("casts"));
+if (initialDraw) await applyInitialDraw(initialDraw);

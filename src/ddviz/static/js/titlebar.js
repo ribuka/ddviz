@@ -11,7 +11,10 @@
 //
 // `<html data-screen>` says which screen this is: `New` is enabled on
 // "graph" only, `Preferences…` on "chooser" and "graph" (not while starting
-// or closing the data, "loading"). The commands go to the window through
+// or closing the data, "loading"). `描画設定を保存…` is enabled on "graph"
+// while the page can save its drawing settings (`window.ddvizCanSaveDrawFile`
+// of app.js: a figure drawn, no plot in flight), whose file the page gives
+// (`window.ddvizDrawFile`) and the window saves where the user picks. The commands go to the window through
 // pywebview's JS API, called from `call` alone. `Preferences…` opens the
 // dialog of preferences.js, which the page loads before this script; on the
 // graph's page the dialog then calls `window.ddvizApplySettings` (app.js).
@@ -41,6 +44,7 @@
       label: "File",
       items: [
         { command: "new", label: "New" },
+        { command: "save-draw-file", label: "描画設定を保存…" },
         { command: "quit", label: "Quit" },
       ],
     },
@@ -69,6 +73,7 @@
   function enabled(command) {
     const screen = root.dataset.screen;
     if (command === "new") return screen === "graph";
+    if (command === "save-draw-file") return screen === "graph" && Boolean(window.ddvizCanSaveDrawFile?.());
     if (command === "preferences") return screen === "graph" || screen === "chooser";
     return true;
   }
@@ -230,6 +235,8 @@
     if (command === "new") {
       const choice = await ask(NEW_CONFIRM, [NEW_DISCARD, NEW_CANCEL], NEW_CANCEL, NEW_DISCARD);
       if (choice === NEW_DISCARD) await call("new");
+    } else if (command === "save-draw-file") {
+      await saveDrawFile();
     } else if (command === "quit") {
       await call("quit");
     } else if (command === "version") {
@@ -240,6 +247,21 @@
       return;
     }
     if (document.activeElement === document.body) button.focus();
+  }
+
+  // Saves the graph's drawing settings to a file the window asks for with
+  // the OS dialog: the page (app.js) gives the file's content and shows the
+  // result.
+  async function saveDrawFile() {
+    let result;
+    try {
+      const text = await window.ddvizDrawFile();
+      if (text === null) return;
+      result = await call("save_draw_file", text);
+    } catch (error) {
+      result = { error: error?.message ?? String(error) };
+    }
+    window.ddvizDrawFileSaved(result);
   }
 
   // Opens the Preferences dialog with the values in effect; it saves

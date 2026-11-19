@@ -97,7 +97,11 @@ _CLOSING = _page("loading", _MESSAGE_STYLE, "<main>前のデータを閉じて�
 # anywhere below the title bar (`#drop`) open too: the page only highlights
 # while files are dragged there and keeps WebView2 from navigating to what is
 # dropped anywhere; `_App.drop` receives the drop on `#drop` through
-# pywebview's DOM events, which alone carry the files' full paths.
+# pywebview's DOM events, which alone carry the files' full paths. A file of
+# the drawing settings (`ddviz.shared.drawfile`), picked or dropped alone,
+# opens its data with them; when the data is not found, `#pending` tells it
+# until other data is picked for the settings or they are dropped
+# ("描画設定を使わない").
 _CHOOSER = _page(
     "chooser",
     """html,body{height:100%}body{margin:0;display:flex;flex-direction:column;
@@ -109,14 +113,18 @@ main{display:flex;flex-direction:column;gap:14px;padding:28px 36px;
 background:#fff;border:1px solid #ddd;border-radius:6px;min-width:320px}
 h1{font-size:16px;margin:0 0 4px}main button{font-size:14px;padding:8px 14px}
 .row{display:flex;gap:10px}label,p{font-size:13px}p{margin:0;color:#666}
-#error{color:#c5221f}#error:empty{display:none}""",
+#error{color:#c5221f}#error:empty{display:none}
+#pending{color:#333;max-width:520px;overflow-wrap:anywhere}""",
     """<div id="drop"><main><h1>開く Parquet を選んでください</h1>
 <div class="row"><button type="button" id="file">ファイルを開く…</button>
 <button type="button" id="folder">フォルダを開く…</button></div>
 <p>ファイルは複数選べます。選んだファイルを縦につなげて 1 つの表にします。</p>
 <p>Parquet ファイルをこの画面にドラッグ＆ドロップできます。</p>
+<p>描画設定（.json）を開くと、そのデータを同じ描画設定で開きます。</p>
 <label><input type="checkbox" id="recursive"> フォルダのサブフォルダの Parquet も読む</label>
 <p id="error" role="alert"></p>
+<p id="pending" role="status" hidden><span id="pending-text"></span>
+<a href="#" id="forget">描画設定を使わない</a></p>
 <div class="row"><button type="button" id="cancel">キャンセル</button></div></main></div>
 <script>
 const drop = document.getElementById("drop");
@@ -133,6 +141,16 @@ document.getElementById("file").onclick = () => call("choose", "file", false);
 document.getElementById("folder").onclick = () => call("choose", "folder", recursive.checked);
 document.getElementById("cancel").onclick = () => call("cancel");
 window.ddvizDropError = (text) => { error.textContent = text; };
+const pending = document.getElementById("pending");
+window.ddvizPendingDraw = (text) => {
+  pending.hidden = text === null;
+  document.getElementById("pending-text").textContent = text ?? "";
+};
+document.getElementById("forget").onclick = (e) => {
+  e.preventDefault();
+  window.ddvizPendingDraw(null);
+  call("forget_draw");
+};
 // Entering a child fires dragenter before the parent's dragleave, so a
 // count of the elements entered stays above 0 until the drag leaves the
 // area, is cancelled, or drops: the highlight does not flicker.
@@ -160,10 +178,21 @@ window.addEventListener("blur", idle);
 DROP_NOT_PARQUET = ".parquet ファイルだけをドロップしてください。"
 #: Shown on the chooser when a dropped file's path is unknown or the file is gone.
 DROP_UNREADABLE = "ドロップしたファイルを確認できませんでした。ファイルを確認して、もう一度試してください。"
+#: Shown on the chooser when a drop has a file of the drawing settings and anything else.
+DROP_ONE_DRAW_FILE = "描画設定は 1 つだけドロップしてください。"
+#: Shown on the chooser when the dialog's files have one of the drawing settings and anything else.
+CHOOSE_ONE_DRAW_FILE = "描画設定は 1 つだけ選んでください。"
+#: The kinds of files of the chooser's dialog.
+OPEN_FILE_TYPES = ("Parquet (*.parquet)", "描画設定 (*.json)", "すべてのファイル (*.*)")
+
+
+def is_draw_file(name: str) -> bool:
+    """Return whether a file named `name` is taken as a file of the drawing settings (``.json`` in any case)."""
+    return name.lower().endswith(".json")
 
 
 def dropped_paths(event: dict) -> tuple[list[str], str | None]:
-    """Check the files of a drop on the chooser; all must be existing Parquet files.
+    """Check the files of a drop on the chooser: existing Parquet files, or one file of the drawing settings alone.
 
     Parameters
     ----------
@@ -175,24 +204,30 @@ def dropped_paths(event: dict) -> tuple[list[str], str | None]:
     Returns
     -------
     paths : list of str
-        The files' paths in the order dropped, or empty when the drop is to
-        be refused or carried no files (a link or text, which is ignored).
+        The files' paths in the order dropped (a file of the drawing settings
+        alone), or empty when the drop is to be refused or carried no files
+        (a link or text, which is ignored).
     error : str or None
         Why the whole drop is refused: `DROP_NOT_PARQUET` when any item is a
-        folder (even one named ``*.parquet``) or does not end in ``.parquet``
-        (in any case), else `DROP_UNREADABLE` when any item's absolute path is
-        unknown or no file is there any more; None otherwise.
+        folder (even one named ``*.parquet`` or ``*.json``) or ends in
+        neither ``.parquet`` nor ``.json`` (in any case), else
+        `DROP_ONE_DRAW_FILE` when a ``.json`` comes with any other item, else
+        `DROP_UNREADABLE` when any item's absolute path is unknown or no file
+        is there any more; None otherwise.
     """
     items = (event.get("dataTransfer") or {}).get("files") or []
     paths: list[str] = []
-    wrong = unknown = False
+    wrong = unknown = drawn = False
     for item in items:
         full = item.get("pywebviewFullPath") or ""
         path = Path(full) if full else None
         name = path.name if path is not None else str(item.get("name") or "")
-        if not name.lower().endswith(".parquet"):
+        if is_draw_file(name):
+            drawn = True
+        elif not name.lower().endswith(".parquet"):
             wrong = True
-        elif path is None or not path.is_absolute():
+            continue
+        if path is None or not path.is_absolute():
             unknown = True
         elif path.is_dir():
             wrong = True
@@ -202,6 +237,8 @@ def dropped_paths(event: dict) -> tuple[list[str], str | None]:
             paths.append(full)
     if wrong:
         return [], DROP_NOT_PARQUET
+    if drawn and len(items) > 1:
+        return [], DROP_ONE_DRAW_FILE
     if unknown:
         return [], DROP_UNREADABLE
     return paths, None
@@ -231,11 +268,35 @@ def fixed_runtime() -> Path | None:
     return Path(sys.executable).parent / "webview2"
 
 
+class OpenedDrawFile(Protocol):
+    """A file of the drawing settings opened (`ddviz.shared.drawfile.Opened`)."""
+
+    content: dict
+    recursive: bool
+    found: list[str]
+    missing: list[str]
+
+
+class DrawFiles(Protocol):
+    """What the window does with files of the drawing settings (`ddviz.shared.drawfile.DrawFileIO`; the window does not import it)."""
+
+    def read(self, json_path: Path) -> OpenedDrawFile:
+        """Read a file and find its data; raise `ValueError` with the message the chooser shows."""
+
+    def default_name(self, first: Path) -> str:
+        """Return the default name of the file for an input whose first item is `first`."""
+
+    def write(self, content: dict, target: Path) -> None:
+        """Write the file's content at `target` with the input's paths from there; raise `OSError`."""
+
+
 class _App:
     """Runs the UI server in a thread and points the window at it.
 
     `New` (`new`) stops the server of the open input and shows the chooser
-    again in the same window, for another input.
+    again in the same window, for another input. A file of the drawing
+    settings picked on the chooser opens its data with them
+    (`_read_draw_file`).
     """
 
     def __init__(
@@ -243,14 +304,16 @@ class _App:
         window: webview.Window,
         paths: list[str] | None,
         recursive: bool,
-        make_app: Callable[[list[str], bool, str], object],
+        make_app: Callable[[list[str], bool, str, dict | None], object],
         label: Callable[[list[str]], str],
+        draw_files: DrawFiles,
     ) -> None:
         self._window = window
         self._paths = paths
         self._recursive = recursive
         self._make_app = make_app
         self._label = label
+        self._draw_files = draw_files
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._closing = False
@@ -266,6 +329,9 @@ class _App:
         # received: each load subscribes once.
         self._chooser_loads = 0 if paths else 1
         self._watched = 0
+        # The drawing settings of a file opened on the chooser, until the
+        # input opened next takes them: kept while its data is not found.
+        self._pending: dict | None = None
         self.failed = False
 
     def start(self) -> None:
@@ -296,12 +362,17 @@ class _App:
                 chosen = self._window.create_file_dialog(
                     webview.FileDialog.OPEN,
                     allow_multiple=True,
-                    file_types=("Parquet (*.parquet)", "すべてのファイル (*.*)"),
+                    file_types=OPEN_FILE_TYPES,
                 )
             if not chosen:
                 return
             if kind == "folder":
                 self._open([chosen[0]], recursive)
+            elif any(is_draw_file(p) for p in chosen):
+                if len(chosen) > 1:
+                    self._show_error(CHOOSE_ONE_DRAW_FILE)
+                else:
+                    self._read_draw_file(Path(chosen[0]))
             else:
                 self._open(list(chosen), False)
         finally:
@@ -324,11 +395,84 @@ class _App:
         try:
             paths, error = dropped_paths(event)
             if error is not None:
-                self._window.run_js(f"window.ddvizDropError({json.dumps(error)})")
+                self._show_error(error)
+            elif len(paths) == 1 and is_draw_file(paths[0]):
+                self._read_draw_file(Path(paths[0]))
             elif paths:
                 self._open(paths, False)
         finally:
             self._choosing.release()
+
+    def _show_error(self, text: str) -> None:
+        """Show `text` as the chooser's error."""
+        self._window.run_js(f"window.ddvizDropError({json.dumps(text)})")
+
+    def _read_draw_file(self, json_path: Path) -> None:
+        """Open the data of the file of the drawing settings `json_path` with them.
+
+        Each input is looked for at its absolute path, then at its path from
+        the file (`DrawFiles.read`). When one is found at
+        neither, the chooser says so and keeps the settings for the data
+        picked next, until another file of them replaces them or
+        `forget_draw` drops them. A file that cannot be read tells why and
+        leaves the chooser as it was.
+
+        Parameters
+        ----------
+        json_path : pathlib.Path
+            The file picked or dropped.
+        """
+        try:
+            draw = self._draw_files.read(json_path)
+        except ValueError as error:
+            self._show_error(str(error))
+            return
+        self._pending = draw.content
+        if draw.missing:
+            text = (
+                f"描画設定「{json_path.name}」のデータが見つかりません："
+                f"{'、'.join(draw.missing)}。データを選んでください。"
+            )
+            self._window.run_js(f"window.ddvizPendingDraw({json.dumps(text)})")
+            return
+        self._open(draw.found, draw.recursive)
+
+    def forget_draw(self) -> None:
+        """Drop the drawing settings kept for the next input (the chooser's 描画設定を使わない)."""
+        self._pending = None
+
+    def save_draw_file(self, text: str) -> dict | None:
+        """Save a file of the drawing settings where the user picks with the OS dialog.
+
+        Parameters
+        ----------
+        text : str
+            The file's content from the page (``POST /api/draw-file``); its
+            ``source.relative`` is set from where it is saved
+            (`DrawFiles.write`).
+
+        Returns
+        -------
+        dict or None
+            ``{"saved": <file name>}``, ``{"error": <reason>}`` when it could
+            not be written, or None when the dialog was closed.
+        """
+        content = json.loads(text)
+        first = Path(content["source"]["paths"][0])
+        chosen = self._window.create_file_dialog(
+            webview.FileDialog.SAVE,
+            directory=str(first.parent),
+            save_filename=self._draw_files.default_name(first),
+            file_types=("描画設定 (*.json)",),
+        )
+        if not chosen:
+            return None
+        target = Path(chosen if isinstance(chosen, str) else chosen[0])
+        try:
+            self._draw_files.write(content, target)
+        except OSError as error:
+            return {"error": error.strerror or str(error)}
+        return {"saved": target.name}
 
     def watch_drops(self) -> None:
         """Receive drops on the chooser; pywebview calls this when a page has loaded.
@@ -400,6 +544,7 @@ class _App:
         """Start the server for an input and show it in the window; only the first call does."""
         if not self._opened.acquire(blocking=False):
             return
+        initial_draw, self._pending = self._pending, None
         try:
             paths = list(dict.fromkeys(str(Path(p).resolve()) for p in paths))
             self._window.title = f"ddviz - {self._label(paths)}"
@@ -408,7 +553,7 @@ class _App:
             port = sock.getsockname()[1]
             token = secrets.token_urlsafe(32)
             config = uvicorn.Config(
-                self._make_app(paths, recursive, token),
+                self._make_app(paths, recursive, token, initial_draw),
                 log_config=None,
                 access_log=False,
             )
@@ -452,10 +597,12 @@ class _App:
 
 #: Builds the UI server's app for an input, whether to read its subfolders,
 #: the token, what returns the ids of the window's WebView2 processes, and
-#: whether the page is the desktop window's (with its title bar), and the
-#: window's saves of the plot's data (`ddviz.server.api_saves.SaveActions`).
+#: whether the page is the desktop window's (with its title bar), the
+#: window's saves of the plot's data (`ddviz.server.api_saves.SaveActions`),
+#: and the file of the drawing settings opened with the input, or None.
 MakeApp = Callable[
-    [list[str], bool, str, Callable[[], list[int] | None], bool, object], object
+    [list[str], bool, str, Callable[[], list[int] | None], bool, object, dict | None],
+    object,
 ]
 
 
@@ -475,6 +622,7 @@ def run_window(
     make_app: MakeApp,
     label: Callable[[list[str]], str],
     preferences: Preferences,
+    draw_files: DrawFiles,
 ) -> int:
     """Run the app in its own window until the window closes.
 
@@ -498,6 +646,10 @@ def run_window(
         The settings of the Preferences dialog, which the app menu opens on
         the chooser and on the input's page; they outlive the UI servers,
         which read the same settings.
+    draw_files : DrawFiles
+        Reads the files of the drawing settings opened on the chooser and
+        writes those saved from the app menu
+        (`ddviz.shared.drawfile.DrawFileIO`; the window does not import it).
 
     Returns
     -------
@@ -528,7 +680,7 @@ def run_window(
                 "問題が続く場合は、このログを開発者に送ってください。"
             )
         _log.info("using %s", runtime)
-        if not _run(paths, recursive, make_app, label, preferences):
+        if not _run(paths, recursive, make_app, label, preferences, draw_files):
             return 1
         log.finish()
         return 0
@@ -578,9 +730,10 @@ def _record(window: webview.Window) -> None:
 class _Api:
     """What the window's pages may call through pywebview's JS API, and nothing else of `_App`.
 
-    The chooser calls `choose` and `cancel`; the title bar's app menu
-    (`static/js/titlebar.js`) calls `new`, `quit`, `version`, `settings` and
-    `save_settings`, on every page.
+    The chooser calls `choose`, `cancel` and `forget_draw`; the title bar's
+    app menu (`static/js/titlebar.js`) calls `new`, `quit`, `version`,
+    `settings` and `save_settings` on every page, and `save_draw_file` on the
+    graph's.
 
     Parameters
     ----------
@@ -599,6 +752,14 @@ class _Api:
     def cancel(self) -> None:
         """Close the window (`_App.cancel`)."""
         self.app.cancel()
+
+    def forget_draw(self) -> None:
+        """Drop the drawing settings kept for the next input (`_App.forget_draw`)."""
+        self.app.forget_draw()
+
+    def save_draw_file(self, text: str) -> dict | None:
+        """Save a file of the drawing settings with the OS dialog (`_App.save_draw_file`)."""
+        return self.app.save_draw_file(text)
 
     def new(self) -> None:
         """Go back to the chooser for another input (`_App.new`), once this call is answered.
@@ -643,6 +804,7 @@ def _run(
     make_app: MakeApp,
     label: Callable[[list[str]], str],
     preferences: Preferences,
+    draw_files: DrawFiles,
 ) -> bool:
     """Show the window until it closes; return whether everything went well."""
     webview.settings["SHOW_DEFAULT_MENUS"] = False
@@ -670,8 +832,9 @@ def _run(
         window,
         paths,
         recursive,
-        lambda p, r, t: make_app(p, r, t, frontend.pids, True, downloads),
+        lambda p, r, t, d: make_app(p, r, t, frontend.pids, True, downloads, d),
         label,
+        draw_files,
     )
     api.app = app
     window.events.loaded += app.watch_drops

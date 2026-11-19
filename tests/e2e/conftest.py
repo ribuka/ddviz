@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import threading
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 import uvicorn
+from fastapi import FastAPI
 from playwright.sync_api import Page
 
 from ddviz.server.app import create_app
@@ -58,22 +60,14 @@ def desktop() -> bool:
 
 
 @pytest.fixture
-def app_url(
-    tmp_path: Path, scatter_path: Path, settings_store: SettingsStore, desktop: bool
-) -> Iterator[str]:
-    """Serve `scatter_path` in a thread on a free port and return its URL."""
-    root = tmp_path / "run"
-    root.mkdir()
-    app = create_app(
-        [str(scatter_path)],
-        False,
-        root,
-        tmp_path / "cache",
-        tmp_path / "history",
-        settings_store,
-        TOKEN,
-        desktop=desktop,
-    )
+def initial_draw() -> dict | None:
+    """Return the file of the drawing settings the served app opens with (Issue #287); a test overrides it."""
+    return None
+
+
+@contextmanager
+def served(app: FastAPI) -> Iterator[str]:
+    """Serve `app` in a thread on a free port and yield its URL; stop it after."""
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
     )
@@ -84,9 +78,49 @@ def app_url(
             raise RuntimeError("the UI server did not start")
         thread.join(0.05)
     port = server.servers[0].sockets[0].getsockname()[1]
-    yield f"http://127.0.0.1:{port}"
-    server.should_exit = True
-    thread.join(30)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(30)
+
+
+def make_app(
+    tmp_path: Path,
+    scatter_path: Path,
+    settings_store: SettingsStore,
+    desktop: bool,
+    initial_draw: dict | None,
+    run: str = "run",
+) -> FastAPI:
+    """Return the UI server of `scatter_path`, with its task outputs in `tmp_path / run`."""
+    root = tmp_path / run
+    root.mkdir()
+    return create_app(
+        [str(scatter_path)],
+        False,
+        root,
+        tmp_path / "cache",
+        tmp_path / "history",
+        settings_store,
+        TOKEN,
+        desktop=desktop,
+        initial_draw=initial_draw,
+    )
+
+
+@pytest.fixture
+def app_url(
+    tmp_path: Path,
+    scatter_path: Path,
+    settings_store: SettingsStore,
+    desktop: bool,
+    initial_draw: dict | None,
+) -> Iterator[str]:
+    """Serve `scatter_path` in a thread on a free port and return its URL."""
+    app = make_app(tmp_path, scatter_path, settings_store, desktop, initial_draw)
+    with served(app) as url:
+        yield url
 
 
 @pytest.fixture
