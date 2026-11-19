@@ -784,6 +784,45 @@ def test_smoothing_lines_plot_zoom_filter_and_select(client: TestClient) -> None
     assert plotted["meta"]["panels"][0]["points"] is True
 
 
+def test_reference_statistics_plot_zoom_and_filter(
+    client: TestClient, scatter_frame: pl.DataFrame
+) -> None:
+    """The statistics asked for lie in each panel's meta, a zoom keeps them, a filter finds those of its rows; a column not of the graph is left out and a wrong shape refused."""
+    asked = {"y": {"moments": True, "quantiles": [50]}, "label": {"moments": True}}
+    body = {"encoding": ENCODING, **SIZE, **HIDE_NULLS, "ref_stats": asked}
+    meta = client.post("/api/plot", json=body).json()["meta"]
+    assert meta["ref_stats_asked"] == {"y": {"moments": True, "quantiles": [50.0]}}
+    rows = scatter_frame.filter(
+        pl.col("x").is_finite(), pl.col("y").is_finite(), pl.col("color").is_not_null()
+    )
+    stats = []
+    for panel in meta["panels"]:
+        assert panel["ref_stats"]["x"] is None
+        found = panel["ref_stats"]["y"]
+        values = rows.filter(pl.col("facet") == panel["facet"][1])["y"]
+        assert found["n"] == values.len()
+        assert found["mean"] == pytest.approx(values.mean(), rel=1e-9)
+        assert found["std"] == pytest.approx(values.std(), rel=1e-9)
+        assert found["quantiles"] == [[50.0, pytest.approx(values.median(), rel=1e-12)]]
+        stats.append(found)
+
+    view = {**SIZE, "x_ranges": [[-1, 1]], "y_ranges": meta["y_ranges"]}
+    zoomed = client.post("/api/view", json=view).json()["meta"]
+    assert [p["ref_stats"]["y"] for p in zoomed["panels"]] == stats
+    filters = [{"column": "x", "range": [0, 5]}]
+    narrowed = client.post("/api/overview", json={**SIZE, "filters": filters}).json()
+    for panel in narrowed["meta"]["panels"]:
+        values = rows.filter(
+            pl.col("facet") == panel["facet"][1], pl.col("x").is_between(0, 5)
+        )["y"]
+        assert panel["ref_stats"]["y"]["n"] == values.len()
+        assert panel["ref_stats"]["y"]["mean"] == pytest.approx(values.mean(), rel=1e-9)
+
+    for bad in ([], {"y": {"moments": "yes"}}, {"y": {"quantiles": [101]}}):
+        response = client.post("/api/plot", json={**body, "ref_stats": bad})
+        assert response.status_code == 400
+
+
 def test_show_null_rows_is_on_unless_asked_off_and_checked(client: TestClient) -> None:
     """The null color draws by default and when asked, apart when off; a setting that is no boolean is refused."""
     for extra in ({}, {"show_null_rows": {}}, {"show_null_rows": {"color": True}}):

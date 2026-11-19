@@ -1,7 +1,8 @@
 """Box plots of a numeric column by the levels of a categorical axis: exact quartiles, Tukey's whiskers and the outliers.
 
 A box is the rows of one group (a facet cell, an x level and a series).
-Its quartiles are exact, found without sorting every row: a pass counts the
+Its quartiles are exact, found without sorting every row (`group_quantiles`,
+which the reference lines of a quantile use too, `ddviz.compute.refstats`): a pass counts the
 rows of each group in `CELLS` cells of its value range, which tells the cell
 holding each wanted rank and the rank within it; a second pass reads only the
 values of those cells and sorts them. A cell of more than `CELL_ROWS` rows (a
@@ -17,6 +18,7 @@ side by side: the band's width split evenly into a slot per series, each box
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -166,14 +168,21 @@ def outlier_position(
     return center + slot_center(series, n_series) + slot * OUTLIER_SPREAD * jitter
 
 
-def _ranks(n: int) -> list[tuple[int, int, float]]:
-    """Return, for each quartile of `n` values, the ranks around it and the weight of the upper one (linear, as numpy)."""
+def _ranks(n: int, qs: Sequence[float]) -> list[tuple[int, int, float]]:
+    """Return, for each quantile `qs` (from 0 to 1) of `n` values, the ranks around it and the weight of the upper one (linear, as numpy)."""
     ranks = []
-    for q in QUARTILES:
+    for q in qs:
         position = q * (n - 1)
         low = math.floor(position)
         ranks.append((low, min(low + 1, n - 1), position - low))
     return ranks
+
+
+def _lerp(low: float, high: float, weight: float) -> float:
+    """Return the value `weight` of the way from `low` to `high`, as numpy's quantiles interpolate."""
+    step = high - low
+    # From the nearer end, as numpy does: the same float as its quantiles.
+    return high - step * (1 - weight) if weight >= 0.5 else low + step * weight
 
 
 def _cell(lo: pl.Expr, hi: pl.Expr) -> pl.Expr:
@@ -322,6 +331,43 @@ def _ranked_values(
     return found
 
 
+def group_quantiles(
+    frame: pl.LazyFrame,
+    sizes: dict[int, int],
+    bounds: dict[int, tuple[float, float]],
+    qs: Sequence[float],
+) -> dict[int, list[float]]:
+    """Return the exact quantiles of the values of each group, without sorting every row.
+
+    Parameters
+    ----------
+    frame : polars.LazyFrame
+        Rows with their group (`GROUP`, Int64 from 0) and a finite value
+        (`VALUE`, Float64).
+    sizes : dict of int to int
+        Rows of each group; a group left out has no quantiles.
+    bounds : dict of int to tuple of float
+        Smallest and largest value of each group.
+    qs : sequence of float
+        The quantiles, from 0 to 1.
+
+    Returns
+    -------
+    dict of int to list of float
+        The value of each quantile of each group, in the order of `qs`:
+        linear between ranks, as numpy's default.
+    """
+    ranks = {g: _ranks(n, qs) for g, n in sizes.items()}
+    wanted = {
+        g: {k for low, high, _ in rs for k in (low, high)} for g, rs in ranks.items()
+    }
+    values = _ranked_values(frame, wanted, bounds)
+    return {
+        g: [_lerp(values[(g, low)], values[(g, high)], w) for low, high, w in rs]
+        for g, rs in ranks.items()
+    }
+
+
 def fences(stats: dict[int, list[float]], n_groups: int) -> tuple[pl.Series, pl.Series]:
     """Return the bounds beyond which a row of each group is an outlier.
 
@@ -399,18 +445,8 @@ def box_stats(frame: pl.LazyFrame) -> dict[int, list[float]]:
         return {}
     sizes = dict(zip(groups[GROUP].to_list(), groups["n"].to_list(), strict=True))
     bounds = {g: (lo, hi) for g, lo, hi in groups.select(GROUP, "lo", "hi").iter_rows()}
-    ranks = {g: _ranks(n) for g, n in sizes.items()}
-    wanted = {
-        g: {k for low, high, _ in rs for k in (low, high)} for g, rs in ranks.items()
-    }
-    values = _ranked_values(frame, wanted, bounds)
-    stats = {}
-    for g, rs in ranks.items():
-        q = [
-            values[(g, low)] + w * (values[(g, high)] - values[(g, low)])
-            for low, high, w in rs
-        ]
-        stats[g] = [sizes[g], math.nan, *q, math.nan]
+    quartiles = group_quantiles(frame, sizes, bounds, QUARTILES)
+    stats = {g: [sizes[g], math.nan, *q, math.nan] for g, q in quartiles.items()}
     n_groups = max(stats) + 1
     lo, hi = fences(stats, n_groups)
     group, value = pl.col(GROUP), pl.col(VALUE)

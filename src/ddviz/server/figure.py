@@ -325,6 +325,24 @@ def _panel_smooths(manifest: PlotManifest) -> dict[tuple, list[list]]:
     return smooths
 
 
+def _panel_ref_stats(manifest: PlotManifest) -> dict[tuple, dict]:
+    """Return the statistics of the reference lines of each pair of axis columns, facet cell and role, as the page draws them.
+
+    Each is ``{"n", "mean", "std", "quantiles"}`` (`ddviz.shared.scatter.RefStats`),
+    keyed by ``(x, y, row, col, role)``.
+    """
+    found: dict[tuple, dict] = {}
+    for pair in manifest.ref_stats:
+        for row, col, n, mean, std, quantiles in pair.stats:
+            found[(pair.x, pair.y, int(row), int(col), pair.role)] = {
+                "n": int(n),
+                "mean": mean,
+                "std": std,
+                "quantiles": [[p, v] for p, v in quantiles],
+            }
+    return found
+
+
 class FigureMeta(TypedDict):
     """What the page needs to draw a plot task's images, beside its figure.
 
@@ -333,12 +351,15 @@ class FigureMeta(TypedDict):
     """
 
     # The panels in grid order, each ``{"xaxis", "yaxis", "x", "y", "facet",
-    # "points", "boxes", "smooths"}``: its axes, the indices of its axis
-    # columns, its facet levels (row and col as text, or None), whether the
-    # points of every row are drawn, and its box plots (``[level, series, n,
-    # low, q1, median, q3, high]`` each, `ddviz.shared.scatter.Boxes`) and
-    # smoothing lines (``[series, xs, ys]`` each,
-    # `ddviz.shared.scatter.Smooths`).
+    # "points", "boxes", "smooths", "ref_stats"}``: its axes, the indices of
+    # its axis columns, its facet levels (row and col as text, or None),
+    # whether the points of every row are drawn, its box plots (``[level,
+    # series, n, low, q1, median, q3, high]`` each,
+    # `ddviz.shared.scatter.Boxes`), smoothing lines (``[series, xs, ys]``
+    # each, `ddviz.shared.scatter.Smooths`) and the statistics of the
+    # reference lines of its x and y columns (``{"x", "y"}``, each ``{"n",
+    # "mean", "std", "quantiles": [[p, value], ...]}`` or None: not asked
+    # for, or no rows; `ddviz.shared.scatter.RefStats`).
     panels: list[dict]
     # The x and y axis columns.
     x_columns: list[str]
@@ -448,6 +469,11 @@ class FigureMeta(TypedDict):
     # The kind of each temporal column (`ddviz.shared.temporal.KINDS`): a
     # datetime, date or time axis is plotly's date axis over milliseconds.
     temporal: dict[str, str]
+    # The statistics of the reference lines the result was aggregated with,
+    # by column (`ddviz.shared.scatter.ScatterSpec.ref_stats`): ``{"moments",
+    # "quantiles"}``. The page aggregates the graph again when its lines
+    # need more (``static/js/refstats.js``).
+    ref_stats_asked: dict[str, dict]
 
 
 def _base_layout(manifest: PlotManifest) -> dict:
@@ -594,6 +620,7 @@ def _panel(
     panel: int,
     boxes: dict[tuple, list[list[float]]],
     smooths: dict[tuple, list[list]],
+    ref_stats: dict[tuple, dict],
 ) -> dict:
     """Return what the page needs of a panel (`FigureMeta.panels`).
 
@@ -607,12 +634,16 @@ def _panel(
         The box plots of each panel (`_panel_boxes`).
     smooths : dict
         The smoothing lines of each panel (`_panel_smooths`).
+    ref_stats : dict
+        The statistics of the reference lines of each panel and role
+        (`_panel_ref_stats`).
 
     Returns
     -------
     dict
         The axes, axis columns and facet levels of the panel, whether its
-        points are drawn, and its box plots and smoothing lines.
+        points are drawn, its box plots and smoothing lines, and the
+        statistics of its reference lines.
     """
     spec, axes, levels = manifest.spec, manifest.axes, manifest.levels
     xi, yj = axes.axes(panel)
@@ -631,6 +662,10 @@ def _panel(
         "points": spec.draws_points(spec.x[xi], spec.y[yj]),
         "boxes": boxes.get((spec.x[xi], spec.y[yj], row, col), []),
         "smooths": smooths.get((spec.x[xi], spec.y[yj], row, col), []),
+        "ref_stats": {
+            role: ref_stats.get((spec.x[xi], spec.y[yj], row, col, role))
+            for role in ("x", "y")
+        },
     }
 
 
@@ -713,6 +748,10 @@ def _meta(
         keep_unfiltered_axis_levels=list(spec.keep_unfiltered_axis_levels),
         one_band=spec.x == [ONE_BAND],
         temporal=spec.temporal,
+        ref_stats_asked={
+            r.column: {"moments": r.moments, "quantiles": list(r.quantiles)}
+            for r in spec.ref_stats
+        },
     )
 
 
@@ -739,13 +778,14 @@ def build_figure(manifest: PlotManifest) -> dict:
     fig_layout = _base_layout(manifest)
     boxes = _panel_boxes(manifest)
     smooths = _panel_smooths(manifest)
+    ref_stats = _panel_ref_stats(manifest)
     panels = []
     for panel in range(axes.panels):
         xi, yj = axes.axes(panel)
         suffix = _axis_suffix(panel)
         fig_layout[f"xaxis{suffix}"] = _x_axis(manifest, panel, xi, x_axes)
         fig_layout[f"yaxis{suffix}"] = _y_axis(manifest, panel, yj, y_axes)
-        panels.append(_panel(manifest, panel, boxes, smooths))
+        panels.append(_panel(manifest, panel, boxes, smooths, ref_stats))
     # A grid that scrolls has its tick labels and facet labels in strips
     # along the edges of the area (``static/js/sticky.js``), so that they
     # stay in sight: plotly draws neither.

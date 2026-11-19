@@ -131,15 +131,16 @@ def _view(
     axis_levels: dict[str, list[str]] | None = None,
     range_levels: dict[str, list[str]] | None = None,
 ) -> View:
-    """Return the view of the given ranges with the result's levels, cuts, color range, boxes and smoothing lines.
+    """Return the view of the given ranges with the result's levels, cuts, color range, boxes, smoothing lines and statistics of the reference lines.
 
     A range None is the column's automatic range: that of `auto`, a result
     of the view's filter, or else one the worker finds. The view carries
     the automatic ranges of `auto`, so that the worker does not find them
     again.
 
-    For another filter, the facet levels, the boxes and the smoothing lines
-    are left for the worker to find again over the rows it keeps, and so
+    For another filter, the facet levels, the boxes, the smoothing lines
+    and the statistics of the reference lines are left for the worker to
+    find again over the rows it keeps, and so
     are the levels of the roles that it finds over those rows
     (`ddviz.shared.scatter.ScatterSpec.levels_of_filter`), unless
     `filter_levels` gives them, from a result of that filter. The levels of
@@ -158,10 +159,11 @@ def _view(
     view's filter (`ddviz.shared.scatter.View.find_color_scale`). So do
     the numeric symbol, row and col columns with the cuts of `role_cuts`
     (`drawn_cuts`), the worker finding those of the roles left out
-    (`ddviz.shared.scatter.View.find_cuts`). The facet levels, the boxes
-    and the smoothing lines of the same filter are those of other panels
-    when the cuts or the axis levels differ from the result's: the worker
-    finds them again.
+    (`ddviz.shared.scatter.View.find_cuts`). The facet levels, the boxes,
+    the smoothing lines and the statistics of the reference lines of the
+    same filter are those of other panels when the cuts or the axis levels
+    differ from the result's: the worker finds them again. A zoom keeps the
+    statistics of the overview, so that the lines stay where they are.
     """
     levels = manifest.all_levels
     cuts, color_range = manifest.cuts, manifest.color_range
@@ -216,6 +218,7 @@ def _view(
         },
         boxes=manifest.boxes if same_panels else [],
         smooths=manifest.smooths if same_panels else [],
+        ref_stats=manifest.ref_stats if same_panels else [],
         find_levels=find_levels,
         find_axis_levels=find_axis_levels,
         find_color_scale=numeric and scale is None,

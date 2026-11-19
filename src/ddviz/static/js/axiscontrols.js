@@ -16,6 +16,7 @@ import { AxisLevels } from "./axislevels.js";
 import { openAxisMenu } from "./axismenu.js";
 import { AxisScales } from "./axisscale.js";
 import { sameOrder, sameRange } from "./ranges.js";
+import { coversStats, neededStats, numericColumns } from "./refstats.js";
 import { linearRange, plotlyRange } from "./temporal.js";
 
 // Returns the drawing settings of the axes (`AxisControls.settings`) of the
@@ -145,6 +146,20 @@ export class AxisControls {
     }
   }
 
+  // Returns `ref_stats` of a plot request of the graph `encoding`: the
+  // statistics the reference lines of its numeric x and y columns need
+  // (`refstats.js`), those of a column on a log axis or of a temporal one
+  // left out. `numeric` and `temporal` are the builder's Maps of its columns.
+  refStats(encoding, numeric, temporal) {
+    const columns = [];
+    for (const axis of ["x", "y"]) {
+      for (const column of encoding[axis]) {
+        if (numeric.get(column) && !temporal.get(column) && !this.scales.isLog(axis, column)) columns.push(column);
+      }
+    }
+    return neededStats(this.settingsOf, columns);
+  }
+
   // The angle drawn on the axis column `index` of `role` of `meta`, or null.
   angleOn(meta, role, index) {
     return hasAngle(meta, role, index) ? this.angleOf(role, meta[`${role}_columns`][index]) : null;
@@ -238,6 +253,9 @@ export class AxisControls {
   // again, as after a zoom. The drawn result may have changed since the
   // dialog opened: the range goes to the column's axis, if it still has a
   // dialog (`axisKind`), in linear units (milliseconds on a date axis).
+  // Lines that need statistics the drawn result was not aggregated with
+  // (`refstats.js`) plot the graph again, which draws every setting; the
+  // others are drawn on the result as it is.
   // The angle of the labels (null for plotly's own; undefined from a dialog
   // without one) is the column's in that role. A categorical axis has no
   // settings nor range (null): only its angle changes.
@@ -260,9 +278,15 @@ export class AxisControls {
     );
     const gd = this.gd;
     if (!this.current() || !gd._fullLayout) return;
-    const meta = this.current();
-    await this.relayoutOwn(decorationUpdate(meta, this.settingsOf, this.angleOf));
-    if (meta !== this.current()) return;
+    let meta = this.current();
+    if (this.plotted() && !coversStats(meta.ref_stats_asked, neededStats(this.settingsOf, numericColumns(meta)))) {
+      const drawn = await this.replot();
+      if (!drawn || drawn === "refused" || drawn !== this.current()) return;
+      meta = drawn;
+    } else {
+      await this.relayoutOwn(decorationUpdate(meta, this.settingsOf, this.angleOf));
+      if (meta !== this.current()) return;
+    }
     const index = meta[`${axis}_columns`].indexOf(column);
     const key = index < 0 || !axisKind(meta, axis, index) ? null : axisKey(meta[`${axis}_axes`][index]);
     const full = key && gd._fullLayout[key];
@@ -274,6 +298,17 @@ export class AxisControls {
     // A new range is a view (`onRelayout`), which measures the margin.
     const range = oriented(picked, this.directions.isReversed(axis, column));
     await Plotly.relayout(gd, { [`${key}.range`]: plotlyRange(full, range) });
+  }
+
+  // Draws the settings of the axis columns on the result drawn, at its
+  // ranges, without a plot (a step of undo and redo that changes the
+  // dialog's settings alone: `drawsWithoutPlot`), and measures the margin
+  // the labels need.
+  async redraw() {
+    const meta = this.current();
+    if (!meta || !this.gd._fullLayout) return;
+    await this.relayoutOwn(decorationUpdate(meta, this.settingsOf, this.angleOf));
+    if (meta === this.current()) this.followMargin(false);
   }
 
   // Reverses the axes of a column, or puts them back, on the result drawn: only

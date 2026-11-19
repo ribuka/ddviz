@@ -48,6 +48,7 @@ from ddviz.server.plotoptions import (
     parse_line_aggregation,
     parse_line_width,
     parse_range_levels,
+    parse_ref_stats,
     parse_shape_size,
     parse_shape_sizes,
     parse_smoothing,
@@ -288,6 +289,7 @@ def plot_router(
             line_aggregation = parse_line_aggregation(request.line_aggregation)
             shape_sizes = parse_shape_sizes(request.shape_sizes)
             level_shapes = parse_level_shapes(request.level_shapes)
+            ref_stats = parse_ref_stats(request.ref_stats)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         numeric = await source.numeric()
@@ -348,6 +350,7 @@ def plot_router(
                 keep_unfiltered_color_levels=request.keep_unfiltered_color_levels,
                 keep_unfiltered_symbol_levels=request.keep_unfiltered_symbol_levels,
                 keep_unfiltered_axis_levels=keep_axis_levels,
+                ref_stats=ref_stats,
             )
             spec = replace(spec, color_scale=color_scale, kept_cuts=cuts)
         except ValueError as error:

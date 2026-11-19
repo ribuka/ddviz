@@ -50,7 +50,7 @@ def test_apply_keeps_the_settings_and_the_angle(js_page: Page) -> None:
     """`apply` keeps the column's settings and angle; with nothing drawn it relayouts nothing."""
     result = _call(
         js_page,
-        """const settings = { ...emptySettings(), lines: [{ value: 1 }] };
+        """const settings = { ...emptySettings(), lines: [{ type: "value", value: 1, color: "#000000", dash: "dash" }] };
         await a.apply("x", "a", settings, null, 30);
         return {
           same: a.settingsOf("a") === settings,
@@ -66,7 +66,7 @@ def test_apply_drops_empty_settings_and_a_null_angle(js_page: Page) -> None:
     """Empty settings drop the column's; a null angle drops it, an undefined one keeps it."""
     result = _call(
         js_page,
-        """await a.apply("x", "a", { ...emptySettings(), lines: [{ value: 1 }] }, null, 30);
+        """await a.apply("x", "a", { ...emptySettings(), lines: [{ type: "value", value: 1, color: "#000000", dash: "dash" }] }, null, 30);
         await a.apply("x", "a", emptySettings(), null, undefined);
         const kept = { settings: a.settingsOf("a") ?? "undefined", angle: a.angleOf("x", "a") };
         await a.apply("x", "a", null, null, null);

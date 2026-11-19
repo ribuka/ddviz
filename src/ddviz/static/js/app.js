@@ -37,6 +37,7 @@ import {
   shownRanges,
   withRanges,
 } from "./ranges.js";
+import { drawsWithoutPlot } from "./refstats.js";
 import { markerSizeText, rowsText } from "./resulttext.js";
 import { Saves } from "./saves.js";
 import { openScaleMenu } from "./scalemenu.js";
@@ -129,6 +130,7 @@ const STAGES = {
   facets: "パネルの水準を調べ中…",
   boxes: "箱ひげを計算中…",
   smooth: "平滑化を計算中…",
+  ref_stats: "統計を計算中…",
   lines: "点を結ぶ線を計算中…",
   bins: "点を集約中…",
   rows: "ホバー用のデータを読み込み中…",
@@ -666,6 +668,8 @@ async function plot(encoding, { restoring = false, keep = null } = {}) {
     ...options.request(encoding),
     axis_scales: axes.scales.request(encoding),
     keep_unfiltered_axis_levels: axes.levels.request(encoding, builder.numeric),
+    // The statistics the reference lines of its numeric axes need.
+    ref_stats: axes.refStats(encoding, builder.numeric, builder.temporal),
     // Under the lock, the color scale shown (`shownScale`) stays while the color does.
     color_scale: axisRanges.carriedColorScale(shownScale(), encoding.color, options.colorBins),
     // So do the cuts of a numeric symbol, row or col column on its role.
@@ -1855,9 +1859,21 @@ function revertSettings() {
 // Applies the drawing settings of the step `index`, as an edit of them by
 // hand: the graph is plotted, and the history moves to the step once its
 // result is committed (`record`); a failure leaves it (`plotFailed`). A
-// graph without a figure is committed at once.
+// graph without a figure is committed at once. A step that changes the axis
+// dialog's settings alone, whose lines need no statistics the drawn result
+// lacks (`drawsWithoutPlot`), is drawn on that result at once instead, as
+// from the dialog, and the history moves to it.
 function applyStep({ index, settings }) {
   statusLine.release();
+  const shown = settingsHistory.steps[settingsHistory.index]?.settings;
+  if (current && gd._fullLayout && plotting === 0 && shown && drawsWithoutPlot(current, shown, settings)) {
+    axes.applySettings(settings.axes);
+    applying = null;
+    settingsHistory.moveTo(index);
+    showUndo();
+    axes.redraw();
+    return;
+  }
   const wrap = builder.encoding.wrap;
   applyOthers(settings);
   builder.load(settings.zones);

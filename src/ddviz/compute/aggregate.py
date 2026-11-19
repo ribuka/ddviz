@@ -27,6 +27,7 @@ from ddviz.compute.missing import (
     role_index,
 )
 from ddviz.compute.plotscan import plot_scan
+from ddviz.compute.refstats import group_stats
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.selection import selection_columns, selection_filter
 from ddviz.compute.smooth import bin_query, fit_lines
@@ -40,6 +41,7 @@ from ddviz.shared.layout import AxisGrid, GridLayout
 from ddviz.shared.scatter import (
     ONE_BAND,
     Boxes,
+    RefStats,
     ScatterSpec,
     Smooths,
 )
@@ -145,6 +147,11 @@ class Aggregation:
     smooths : list of Smooths
         Smoothing lines of each pair of
         `ddviz.shared.scatter.ScatterSpec.smooth_pairs`.
+    ref_stats : list of RefStats
+        Statistics of the reference lines of each pair and role whose
+        column is in `ddviz.shared.scatter.ScatterSpec.ref_stats`, over the
+        rows each panel draws (`ddviz.compute.refstats`); none when only
+        the selection was aggregated.
     lines : LinePixels
         The pixels the lines of each pair of
         `ddviz.shared.scatter.ScatterSpec.line_pairs` cover, one pixel wide
@@ -193,6 +200,7 @@ class Aggregation:
     selected_piles: pl.DataFrame | None = None
     boxes: list[Boxes] = field(default_factory=list)
     smooths: list[Smooths] = field(default_factory=list)
+    ref_stats: list[RefStats] = field(default_factory=list)
     nonpositive: list[tuple[str, str]] = field(default_factory=list)
     lines: LinePixels | None = None
     line_values: pl.Series | None = None
@@ -411,7 +419,9 @@ def aggregate(
     boxes_of = {(b.x, b.y): b for b in boxes}
     smooths = _all_smooths(drawn, progress)
     lines = line_values = None
+    ref_stats = []
     if not selection_only:
+        ref_stats = _all_ref_stats(drawn, progress)
         lines, line_values = _lines(drawn, progress)
     n_rows = _RowCount(spec)
 
@@ -492,6 +502,7 @@ def aggregate(
         pile_bins=pile_bins,
         boxes=boxes,
         smooths=smooths,
+        ref_stats=ref_stats,
         nonpositive=logs.nonpositive,
         lines=lines,
         line_values=line_values,
@@ -553,6 +564,65 @@ def _all_smooths(drawn: _Drawn, progress: Callable[[str], None]) -> list[Smooths
             bounds = values(drawn.found.x_auto[xi], x_col in spec.log_x)
             smooths.append(_smooths(drawn, x_col, y_col, bounds))
     return smooths
+
+
+def _all_ref_stats(drawn: _Drawn, progress: Callable[[str], None]) -> list[RefStats]:
+    """Return the statistics of the reference lines of each pair and role whose column asks for them: those the view knows, the others over the rows each panel draws (`ddviz.compute.refstats`).
+
+    A panel's rows are those it draws as points, whether the points are
+    drawn or not, as its smoothing lines': the rows that pass the local
+    filter with a drawn color, symbol, row and col, and an x and a y on
+    their axes (finite, and positive on a log axis; a categorical one not
+    null). A categorical axis column has none.
+    """
+    spec = drawn.spec
+    asked = {r.column: r for r in spec.ref_stats if r.column not in spec.categorical}
+    if not asked:
+        return []
+    known_of = {(k.x, k.y, k.role): k for k in drawn.found.known_ref_stats}
+    n_col = len(drawn.found.levels["col"])
+    cells = drawn.row_level * n_col + drawn.col_level
+    found = []
+    started = False
+    for y_col in spec.y:
+        for x_col in spec.x:
+            for role, column in (("x", x_col), ("y", y_col)):
+                if column not in asked:
+                    continue
+                if (x_col, y_col, role) in known_of:
+                    found.append(known_of[x_col, y_col, role])
+                    continue
+                if not started:
+                    progress("ref_stats")
+                    started = True
+                frame = (
+                    plot_scan(spec, _kept_columns(spec, [x_col, y_col, *drawn.used]))
+                    .filter(
+                        _on_its_axis(spec, x_col, spec.log_x),
+                        _on_its_axis(spec, y_col, spec.log_y),
+                        *_kept(spec),
+                    )
+                    .select(
+                        cells.alias(GROUP), pl.col(column).cast(pl.Float64).alias(VALUE)
+                    )
+                )
+                stats = group_stats(frame, asked[column])
+                found.append(
+                    RefStats(
+                        x=x_col,
+                        y=y_col,
+                        role=role,
+                        stats=[[c // n_col, c % n_col, *stats[c]] for c in sorted(stats)],
+                    )
+                )
+    return found
+
+
+def _on_its_axis(spec: ScatterSpec, column: str, logs: list[str]) -> pl.Expr:
+    """Return whether each row has a place on the axis of a column: a level of a categorical one, else `on_axis`."""
+    if column in spec.categorical:
+        return pl.col(column).is_not_null()
+    return on_axis(pl.col(column).cast(pl.Float64), column in logs)
 
 
 def _pair(
