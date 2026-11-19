@@ -522,8 +522,9 @@ let movedWhilePlotting = false;
 
 // Posts a plot request and returns its answer and text; while an earlier
 // plot converts its columns (409 "converting"), posts it again once the
-// conversion ends, unless a newer request (`mine !== generation`) came.
-// Throws what `fetch` throws.
+// conversion ends, and so it does when an earlier plot of this page killed
+// it (409 `{"cancelled": true}`), unless a newer request (`mine !==
+// generation`) came. Throws what `fetch` throws.
 async function postPlot(body, mine) {
   let response;
   for (;;) {
@@ -532,11 +533,17 @@ async function postPlot(body, mine) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    // An edit dropped while an earlier plot converts its columns is refused
-    // (it would kill the conversion); it waits for the conversion's end.
     if (response.status !== 409 || mine !== generation) break;
-    if ((await response.clone().json()).detail !== "converting") break;
+    // An edit dropped while an earlier plot converts its columns is refused
+    // (it would kill the conversion); it waits for the conversion's end. The
+    // server orders plots by their arrival, and a task kills the one started
+    // before it: an earlier plot of this page that came or started later
+    // kills the latest one's task (Issue #321), and its answer is dropped as
+    // superseded, so the latest is asked again; else it would fail.
+    const refused = await response.clone().json().catch(() => ({}));
+    if (refused.detail !== "converting" && !refused.cancelled) break;
     await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
+    if (mine !== generation) break;
   }
   return { response, text: await response.text() };
 }
