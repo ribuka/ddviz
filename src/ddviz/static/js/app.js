@@ -1986,8 +1986,9 @@ window.ddvizDrawFileSaved = (result) => {
 // Applies the drawing settings of the file opened with the input
 // (`/api/initial-draw`) once its columns are known: those of the settings
 // the data lacks, or holds with another kind, are taken out with a warning
-// (`reconcile`). Their result is the first step of undo and redo (`record`
-// after the plot, or `recordFirst` after a failure).
+// (`reconcile`), and the summaries of their filter cards are loaded
+// (`FilterPane.prepare`). Their result is the first step of undo and redo
+// (`record` after the plot, or `recordFirst` after a failure).
 // Settings the page cannot apply (the chooser checks their shape,
 // `ddviz.shared.drawfile.SETTINGS_SHAPE`) leave the empty graph as that step.
 async function applyInitialDraw(draw) {
@@ -2000,6 +2001,9 @@ async function applyInitialDraw(draw) {
     if (!response.ok) throw new Error(errorText(await response.text(), response.status));
     const checked = reconcile(draw.settings, draw.columns, await response.json());
     if (checked.dropped.length) toasts.show(droppedText(checked.dropped));
+    // The filter cards' summaries come first: without them, the conditions
+    // taken as the settings are applied would be none (Issue #342).
+    await filterPane.prepare(checked.settings.filters);
     applySettings(checked.settings);
   } catch (error) {
     console.error(error);

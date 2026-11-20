@@ -977,3 +977,136 @@ def test_snapshot_and_filters_key_hold_the_null_ticks(js_page: Page) -> None:
     assert result["back"] == {"conditions": [], "tick": True}
     assert result["again"] == {"conditions": result["changed"], "tick": True}
     assert result["keys"] == [True, False]
+
+
+# A filter pane without cards whose `fetch` is a stub: the summaries of n
+# (numeric), g (3 levels) and id (too many levels to list, its candidates
+# searched), each answered with `window.failing[column]` (200 by default).
+# Every request is kept in `window.requests` as its path and parameters.
+PREPARE = """async () => {
+  const summaries = {
+    n: { numeric: true, min: 0, max: 10, nulls: 0, integer: true, temporal: null },
+    g: { numeric: false, levels: [["a", 5], ["b", 3], ["c", 1]], n_levels: 3, nulls: 0 },
+    id: { numeric: false, levels: null, n_levels: 5000, nulls: 0 },
+  };
+  window.failing = {};
+  window.requests = [];
+  window.fetch = async (url) => {
+    const u = new URL(url, location.href);
+    const params = Object.fromEntries(u.searchParams);
+    window.requests.push([u.pathname, params]);
+    const status = window.failing[params.column] ?? 200;
+    if (status !== 200) return new Response(JSON.stringify({ detail: "broken" }), { status });
+    if (u.pathname === "/api/summary") return new Response(JSON.stringify(summaries[params.column]));
+    return new Response(JSON.stringify({ levels: [["v1", 2], ["v2", 1]], truncated: false, n_levels: 5000 }));
+  };
+  document.body.innerHTML = `
+    <div id="filters"><div class="filter-head"><span class="filter-summary"></span>
+    <button class="filter-up"></button><button class="filter-down"></button></div>
+    <div class="filter-resize"></div><div class="filter-list"></div></div>
+    <div id="drop-tip"></div>`;
+  const { FilterPane } = await import("/static/js/filters.js");
+  window.sent = [];
+  window.pane = new FilterPane(
+    document.getElementById("filters"),
+    (conditions) => window.sent.push(conditions),
+    () => {},
+  );
+  const nulls = { range: true, pick: false, contains: false, listed: false };
+  const entry = (name, numeric, more) =>
+    ({ name, numeric, range: null, levels: [], contains: "", nulls, mode: "pick", query: "", order: "name", ...more });
+  window.settings = [
+    entry("n", true, { range: [2, 5] }),
+    entry("g", false, { levels: ["a"] }),
+    entry("id", false, { levels: ["v1"], query: "v", order: "count" }),
+  ];
+}"""
+
+
+def test_prepared_settings_give_their_conditions_at_once(js_page: Page) -> None:
+    """After `prepare`, the conditions taken right after `applySettings` are those of the settings (Issue #342): nothing is sent, the candidates are those of the card's query and order, and nothing is fetched again."""
+    page = js_page
+    page.evaluate(PREPARE)
+    result = page.evaluate(
+        """async () => {
+          await window.pane.prepare(window.settings);
+          const fetched = window.requests.length;
+          window.pane.applySettings(window.settings);
+          const conditions = window.pane.conditions();
+          await new Promise((r) => setTimeout(r, 50));
+          return {
+            conditions,
+            sent: window.sent,
+            requests: window.requests,
+            fetchedAfter: window.requests.length - fetched,
+            summary: document.querySelector(".filter-summary").textContent,
+          };
+        }"""
+    )
+    assert result["conditions"] == [
+        {"column": "g", "levels": ["a"]},
+        {"column": "id", "levels": ["v1"]},
+        {"column": "n", "range": [2, 5]},
+    ]
+    assert result["sent"] == []
+    assert sorted(result["requests"], key=str) == sorted(
+        [
+            ["/api/summary", {"column": "n"}],
+            ["/api/summary", {"column": "g"}],
+            ["/api/summary", {"column": "id"}],
+            ["/api/filter-levels", {"column": "id", "q": "v", "order": "count"}],
+        ],
+        key=str,
+    )
+    assert result["fetchedAfter"] == 0
+    assert result["summary"] == "（3）n: 2〜5、g: 1/3、id: 1/5000"
+
+
+def test_prepare_skips_the_cards_the_pane_knows(js_page: Page) -> None:
+    """A column whose card was added before keeps that card: `prepare` fetches nothing for it."""
+    page = js_page
+    page.evaluate(PREPARE)
+    result = page.evaluate(
+        """async () => {
+          window.pane.add({ name: "g", numeric: false });
+          while (!window.pane.cards[0].summary) await new Promise((r) => setTimeout(r, 10));
+          const card = window.pane.cards[0];
+          window.requests.length = 0;
+          await window.pane.prepare(window.settings.slice(1, 2));
+          window.pane.applySettings(window.settings.slice(1, 2));
+          return {
+            requests: window.requests,
+            same: window.pane.cards[0] === card,
+            conditions: window.pane.conditions(),
+          };
+        }"""
+    )
+    assert result == {"requests": [], "same": True, "conditions": [{"column": "g", "levels": ["a"]}]}
+
+
+@pytest.mark.parametrize(
+    ("column", "message"),
+    [
+        ("g", "フィルタの列 g の要約を読めませんでした：broken"),
+        ("id", "フィルタの列 id の候補を読めませんでした：broken"),
+    ],
+)
+def test_prepare_fails_when_a_summary_or_candidates_fail(js_page: Page, column: str, message: str) -> None:
+    """A summary or a first search that fails rejects `prepare` with its reason: the settings would be drawn without that card's condition."""
+    page = js_page
+    page.evaluate(PREPARE)
+    result = page.evaluate(
+        """async (column) => {
+          if (column === "id") window.fetch = ((fetch) => (url) =>
+            url.includes("filter-levels") ? Promise.resolve(new Response(JSON.stringify({ detail: "broken" }), { status: 500 })) : fetch(url))(window.fetch);
+          else window.failing[column] = 500;
+          try {
+            await window.pane.prepare(window.settings);
+            return null;
+          } catch (error) {
+            return error.message;
+          }
+        }""",
+        column,
+    )
+    assert result == message

@@ -348,6 +348,9 @@ export class FilterPane {
     // The card of each column added while the page is open, removed or not:
     // the drawing settings (`applySettings`) bring it back with its summary.
     this.known = new Map();
+    // The cards of drawing settings whose summaries load before they are
+    // applied (`prepare`): not in the pane yet, their answers are kept.
+    this.preparing = new Set();
     this.timer = null;
     this.up.addEventListener("click", () => this.step(1));
     this.down.addEventListener("click", () => this.step(-1));
@@ -484,10 +487,18 @@ export class FilterPane {
     this.onCards((entries) => entries.filter((e) => e.name !== card.name || this.hasCondition(e)));
   }
 
+  // Whether the answers to a card's requests are kept: it is in the pane, or
+  // its drawing settings are being prepared (`prepare`).
+  holds(card) {
+    return this.cards.includes(card) || this.preparing.has(card);
+  }
+
+  // Loads a card's summary, then the first candidates of a card that searches
+  // them (`searches`).
   async loadSummary(card) {
     for (;;) {
       const response = await fetch(`/api/summary?${new URLSearchParams({ column: card.name })}`);
-      if (!this.cards.includes(card)) return;
+      if (!this.holds(card)) return;
       if (response.status === 409) {
         await new Promise((resolve) => setTimeout(resolve, SUMMARY_RETRY_MS));
         continue;
@@ -499,7 +510,7 @@ export class FilterPane {
         if (card.summary.numeric && card.summary.min !== null) card.range = [card.summary.min, card.summary.max];
       }
       this.render();
-      if (this.searches(card)) this.loadCandidates(card);
+      if (this.searches(card)) await this.loadCandidates(card);
       return;
     }
   }
@@ -534,7 +545,7 @@ export class FilterPane {
     } catch (error) {
       failure = String(error);
     }
-    if (!this.cards.includes(card) || seq !== card.seq) return;
+    if (!this.holds(card) || seq !== card.seq) return;
     card.loading = false;
     if (failure !== null) {
       card.failure = failure;
@@ -697,15 +708,41 @@ export class FilterPane {
   // loads its summary.
   applySettings(settings) {
     const snapshot = settings.map(({ name, numeric, range, levels, contains, nulls, mode, query, order }) => {
-      let card = this.known.get(name);
-      if (!card) {
-        card = newCard(name, numeric);
-        Object.assign(card, { mode, query, draft: query, order });
-        this.known.set(name, card);
-      }
+      const card = this.known.get(name) ?? this.knownCard({ name, numeric, mode, query, order });
       return { card, range, levels: new Set(levels), contains, nulls, mode, query, order };
     });
     this.restore(snapshot);
+  }
+
+  // Returns a new card of the drawing settings' card `entry`, known from now
+  // on (`known`), with its mode and the query and order of its candidates.
+  knownCard({ name, numeric, mode, query, order }) {
+    const card = newCard(name, numeric);
+    Object.assign(card, { mode, query, draft: query, order });
+    this.known.set(name, card);
+    return card;
+  }
+
+  // Loads what the cards of the drawing settings `settings` (`filterSettings`)
+  // need to set their conditions before they are applied (`applySettings`):
+  // the summary of each column without a card yet, and the first candidates
+  // of the query and order of a card that searches them. A card without its
+  // summary sets no condition (`cardKind`), nor one of candidates without
+  // them, so the conditions taken right after the settings are applied
+  // (`conditions`) would lack theirs (Issue #342). Throws when one of them
+  // cannot be loaded: the settings would be drawn without its condition.
+  async prepare(settings) {
+    const cards = settings.filter(({ name }) => !this.known.has(name)).map((entry) => this.knownCard(entry));
+    for (const card of cards) this.preparing.add(card);
+    try {
+      await Promise.all(cards.map((card) => this.loadSummary(card)));
+    } finally {
+      for (const card of cards) this.preparing.delete(card);
+    }
+    for (const card of cards) {
+      if (card.summary === null) throw new Error(`フィルタの列 ${card.name} の要約を読めませんでした：${errorText(card.error ?? "")}`);
+      if (card.failure !== null) throw new Error(`フィルタの列 ${card.name} の候補を読めませんでした：${card.failure}`);
+    }
   }
 
   // Returns whether the card of the drawing settings `entry` (`filterSettings`)

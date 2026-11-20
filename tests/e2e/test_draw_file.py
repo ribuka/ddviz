@@ -21,7 +21,7 @@ from tests.e2e.conftest import TOKEN, make_app, served
 from tests.e2e.test_app_menu import FAKE_API, GEOMETRY, open_item, popups
 from tests.e2e.test_favorites import menu, open_menu, set_line
 from tests.e2e.test_scatter import drop_on_filters, wait_idle, watch_errors
-from tests.e2e.test_undo import REDO, UNDO, chip_names, x_and_y
+from tests.e2e.test_undo import REDO, UNDO, chip_names, press, x_and_y
 
 pytestmark = pytest.mark.e2e
 
@@ -124,6 +124,57 @@ def test_a_saved_file_draws_the_same_graph_again(
         expect(page.get_by_role("button", name=UNDO)).to_be_disabled()
         expect(page.get_by_role("button", name=REDO)).to_be_disabled()
         expect(page.locator("#toasts .toast")).to_have_count(0)
+
+
+def test_the_first_plot_of_a_file_holds_its_filter_conditions(
+    page: Page, app_page: Page, tmp_path: Path, scatter_path: Path, settings_store: SettingsStore
+) -> None:
+    """The first plot of a file sends the conditions of its filter cards (Issue #342): a range, ticked levels and ticked candidates of a column searched; the pane shows them and nothing is plotted again."""
+    content = saved_file(app_page)
+    nulls = {"range": True, "pick": False, "contains": False, "listed": False}
+
+    def card(name: str, numeric: bool, **more: object) -> dict:
+        entry = {"name": name, "numeric": numeric, "range": None, "levels": [], "contains": ""}
+        return {**entry, "nulls": nulls, "mode": "pick", "query": "", "order": "name", **more}
+
+    content["settings"]["filters"] = [
+        card("x", True, range=[-1, 1]),
+        card("color", False, levels=["a", "b"]),
+        card("label", False, levels=["r1", "r2"], query="r", order="count"),
+    ]
+    content["columns"] |= {"color": "categorical", "label": "categorical"}
+    errors = watch_errors(page)
+    plots: list[dict] = []
+    page.on("request", lambda r: plots.append(r.post_data_json) if r.url.endswith("/api/plot") else None)
+
+    with opened_with(page, content, tmp_path, scatter_path, settings_store) as url:
+        page.goto(url)
+        expect(page.locator("#empty")).to_be_hidden()
+        wait_idle(page)
+        assert [body["filters"] for body in plots] == [
+            [
+                {"column": "color", "levels": ["a", "b"]},
+                {"column": "label", "levels": ["r1", "r2"]},
+                {"column": "x", "range": [-1, 1], "nulls": True},
+            ]
+        ]
+        expect(page.locator(".filter-card")).to_have_count(3)
+        expect(page.locator("#filters .filter-summary")).to_contain_text("（3）")
+        # The settings read are the first step: nothing to undo.
+        expect(page.get_by_role("button", name=UNDO)).to_be_disabled()
+        page.wait_for_timeout(600)
+        assert len(plots) == 1
+
+        # The first step holds them too: removing a card and undoing it plots them again.
+        color = page.locator(".filter-card").filter(has=page.locator(".filter-card-name", has_text="color"))
+        with page.expect_request("**/api/overview") as request:
+            color.locator(".filter-card-remove").click()
+        assert [f["column"] for f in request.value.post_data_json["filters"]] == ["label", "x"]
+        wait_idle(page)
+        assert press(page, "Control+z")["filters"] == plots[0]["filters"]
+        expect(page.locator(".filter-card")).to_have_count(3)
+        expect(page.get_by_role("button", name=UNDO)).to_be_disabled()
+        assert errors == []
 
 
 def test_a_column_the_data_lacks_is_left_out_with_a_warning(
