@@ -12,10 +12,10 @@ pytestmark = pytest.mark.js
 
 INDEX = Path(__file__).parents[2] / "src" / "ddviz" / "static" / "index.html"
 
-# Makes the table from the app's markup (read here: a test may leave
-# `window.fetch` stubbed in the shared page), shows each count of rows, and
-# returns whether the table is hidden and the save button disabled, and its
-# title, after each, with the presses that reached the app; then removes it.
+# Makes the table from the app's markup (read here from the file), shows each
+# count of rows, and returns whether the table is hidden and the save button
+# disabled, and its title, after each, with the presses that reached the app;
+# then removes it.
 SHOW = """async ([html, counts]) => {
   const { SelectionTable } = await import("/static/js/table.js");
   const markup = new DOMParser().parseFromString(html, "text/html");
