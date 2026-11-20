@@ -119,8 +119,11 @@ def parquet_files(paths: list[Path], recursive: bool = False) -> list[Path]:
     Raises
     ------
     ValueError
-        When several paths include a folder.
+        When a path does not exist, or several paths include a folder.
     """
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        raise ValueError(f"ファイルかフォルダがありません：{missing[0]}")
     if len(paths) > 1:
         folders = [p for p in paths if p.is_dir()]
         if folders:

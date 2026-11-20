@@ -85,3 +85,17 @@ def test_order_by_name_is_natural_over_all_matches_before_the_limit() -> None:
     assert [c["name"] for c in found["columns"]] == ["a", "lot", "temp1"]
     found = search_columns(columns, "temp", None, 10, order="name")
     assert [c["name"] for c in found["columns"]] == ["temp1", "Temp2", "temp10"]
+
+
+@pytest.mark.parametrize("order", ["file", "name"])
+def test_a_column_named_exactly_comes_first_past_the_limit(order: str) -> None:
+    """`exact` puts the column of that name first among the matches, so the limit keeps it (Issue #344)."""
+    columns = [
+        {"name": n, "dtype": "String", "numeric": False}
+        for n in ["label_1", "label_2", "label", "Label"]
+    ]
+    found = search_columns(columns, "label", None, 2, order=order, exact="label")
+    assert found["columns"][0]["name"] == "label"
+    assert found["matched"] == 4
+    assert search_columns(columns, "label", None, 2, exact="lab")["columns"][0]["name"] == "label_1"
+    assert search_columns(columns, "label", None, 2)["columns"][0]["name"] == "label_1"

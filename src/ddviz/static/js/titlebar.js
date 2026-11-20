@@ -14,7 +14,11 @@
 // or closing the data, "loading"). `描画設定を保存…` is enabled on "graph"
 // while the page can save its drawing settings (`window.ddvizCanSaveDrawFile`
 // of app.js: a figure drawn, no plot in flight), whose file the page gives
-// (`window.ddvizDrawFile`) and the window saves where the user picks. The commands go to the window through
+// (`window.ddvizDrawFile`) and the window saves where the user picks.
+// `Data → 結合…` (Ctrl+J, which the page takes) is enabled on "graph" while
+// the page can open its join dialog (`window.ddvizCanJoin` of app.js), which
+// it opens (`window.ddvizOpenJoin`); the dialog's OS dialogs come through
+// `window.ddvizChooseJoin`. The commands go to the window through
 // pywebview's JS API, called from `call` alone. `Preferences…` opens the
 // dialog of preferences.js, which the page loads before this script; on the
 // graph's page the dialog then calls `window.ddvizApplySettings` (app.js).
@@ -49,6 +53,7 @@
       ],
     },
     { label: "Edit", items: [{ command: "preferences", label: "Preferences…" }] },
+    { label: "Data", items: [{ command: "join", label: "結合…", shortcut: "Ctrl+J" }] },
     { label: "Help", items: [{ command: "version", label: "Version" }] },
   ];
   const NEW_CONFIRM =
@@ -70,10 +75,15 @@
     return (await api)[name](...args);
   }
 
+  // The join dialog's `ファイル…` and `フォルダ…` (joindialog.js): the paths
+  // chosen with the OS dialog, `kind` `"files"` or `"folder"`, or null.
+  window.ddvizChooseJoin = (kind) => call("choose_join", kind);
+
   function enabled(command) {
     const screen = root.dataset.screen;
     if (command === "new") return screen === "graph";
     if (command === "save-draw-file") return screen === "graph" && Boolean(window.ddvizCanSaveDrawFile?.());
+    if (command === "join") return screen === "graph" && Boolean(window.ddvizCanJoin?.());
     if (command === "preferences") return screen === "graph" || screen === "chooser";
     return true;
   }
@@ -149,6 +159,12 @@
     item.setAttribute("aria-expanded", "true");
     for (const entry of entries) {
       const sub = menuItem(entry.label, !enabled(entry.command));
+      if (entry.shortcut) {
+        const keys = document.createElement("span");
+        keys.className = "titlebar-shortcut";
+        keys.textContent = entry.shortcut;
+        sub.append(keys);
+      }
       sub.addEventListener("click", () => run(entry.command));
       submenu.append(sub);
     }
@@ -237,6 +253,9 @@
       if (choice === NEW_DISCARD) await call("new");
     } else if (command === "save-draw-file") {
       await saveDrawFile();
+    } else if (command === "join") {
+      window.ddvizOpenJoin();
+      return;
     } else if (command === "quit") {
       await call("quit");
     } else if (command === "version") {

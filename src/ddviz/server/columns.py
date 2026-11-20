@@ -49,6 +49,7 @@ def search_columns(
     nonnull: dict | None = None,
     min_share: float | None = None,
     order: str = "file",
+    exact: str | None = None,
 ) -> dict:
     """Return the columns whose names hold every word of a query.
 
@@ -80,6 +81,10 @@ def search_columns(
         ``"file"`` for file order, ``"name"`` for the natural order of the
         names (`ddviz.shared.natural`, as the levels of a categorical
         column), ``"count"`` for the most non-null values first.
+    exact : str, optional
+        A column named so (case-sensitive) among the matches comes first,
+        so that `limit` never leaves it out: the join dialog takes only a
+        name picked from the matches (`static/js/joindialog.js`).
 
     Returns
     -------
@@ -124,6 +129,8 @@ def search_columns(
         found.sort(key=ranks.__getitem__)
     elif order == "count":
         found.sort(key=lambda i: (shares[i] is None, -(shares[i] or 0.0)))
+    if exact is not None:
+        found.sort(key=lambda i: columns[i]["name"] != exact)
     return {
         "total": len(columns),
         "matched": len(found),

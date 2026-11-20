@@ -51,6 +51,7 @@ def test_a_folder_lists_its_parquet_files(tmp_path: Path) -> None:
 def test_a_file_is_its_own_list(tmp_path: Path) -> None:
     """A file input is read as is, whatever its name."""
     path = tmp_path / "data.bin"
+    path.write_bytes(b"")
     assert parquet_files([path]) == [path]
 
 
@@ -72,6 +73,17 @@ def test_a_folder_among_several_paths_is_refused(tmp_path: Path) -> None:
     (tmp_path / "folder").mkdir()
     with pytest.raises(ValueError, match="folder"):
         parquet_files([tmp_path / "data.parquet", tmp_path / "folder"])
+
+
+@pytest.mark.parametrize("several", [False, True], ids=["one", "several"])
+def test_a_missing_path_is_refused(tmp_path: Path, several: bool) -> None:
+    """A path that does not exist is named in the refusal (Issue #344)."""
+    (tmp_path / "data.parquet").write_bytes(b"")
+    missing = tmp_path / "missing.parquet"
+    paths = [tmp_path / "data.parquet", missing] if several else [missing]
+    with pytest.raises(ValueError, match="ファイルかフォルダがありません") as refused:
+        parquet_files(paths)
+    assert str(missing) in str(refused.value)
 
 
 def test_a_path_given_twice_counts_once(tmp_path: Path) -> None:

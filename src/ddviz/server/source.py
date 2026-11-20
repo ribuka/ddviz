@@ -31,7 +31,7 @@ from ddviz.server.plan import parse_filters
 from ddviz.server.settings import CacheSettings
 from ddviz.shared.cache import SCHEMA, ColumnCache, evict
 from ddviz.shared.generated import part_key
-from ddviz.shared.inputs import parquet_files, unique
+from ddviz.shared.inputs import input_label, parquet_files, unique
 from ddviz.shared.joined import (
     MAP_COLUMN,
     join_id,
@@ -104,6 +104,9 @@ class Source:
         self._cache_limits = cache_limits
         self._broker = broker
         self._schema: list[dict] | None = None
+        # The reads of a table to join started (`load_join_source`): only
+        # the latest keeps its table.
+        self._join_reads = 0
         self.files: list[Path] = []
         # Rows of each source file.
         self.rows: list[int] = []
@@ -484,11 +487,14 @@ class Source:
         Raises
         ------
         fastapi.HTTPException
-            409 ``already joined`` after a join; 400 as Load refuses an input.
+            409 ``already joined`` after a join, ``superseded`` when another
+            read started meanwhile; 400 as Load refuses an input.
         """
         await self.schema()
         if self.joined is not None:
             raise HTTPException(409, "already joined")
+        self._join_reads += 1
+        read = self._join_reads
         right = Source(
             paths,
             recursive,
@@ -503,6 +509,10 @@ class Source:
         columns = await right.schema()
         if self.joined is not None:
             raise HTTPException(409, "already joined")
+        # A read started later (the page read other paths meanwhile) wins,
+        # whichever ends first.
+        if read != self._join_reads:
+            raise HTTPException(409, "superseded")
         self.join_source = right
         return {
             "paths": right.paths,
@@ -633,12 +643,18 @@ class Source:
             self._count_joined(json.loads(path.read_text(encoding="utf-8")))
 
     def join_info(self) -> dict | None:
-        """Return the join for ``GET /api/source``, or None without one."""
+        """Return the join for ``GET /api/source``, or None without one.
+
+        ``"label"`` names the joined table as the window's title names an
+        input (`ddviz.shared.inputs.input_label`); the column list shows it
+        on the mark of the joined columns.
+        """
         join = self.joined
         if join is None:
             return None
         return {
             "paths": join.right.paths,
+            "label": input_label(join.right.paths),
             "recursive": join.right.recursive,
             "kind": join.kind,
             "keys": join.keys,

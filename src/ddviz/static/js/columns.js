@@ -28,8 +28,10 @@ const PENDING_RETRY_MS = 1000;
 // numeric, temporal, placed}`) at a right click on its row. It returns
 // `loaded`, the first search, and `refresh`, which searches again with the
 // keyword, kind, filters and order shown (after `columns.max_listed` was
-// saved) and rejects when the server refuses.
-export function attachColumnList(root, onMenu) {
+// saved, or after a join) and rejects when the server refuses. A column a
+// join added (`joined`) has a mark right of its name, whose title names the
+// joined table, `joinLabel()` (docs/spec.md, "横の結合").
+export function attachColumnList(root, onMenu, joinLabel = () => "") {
   const input = root.querySelector(".column-search");
   const kinds = root.querySelectorAll("[data-kind]");
   const hideEmpty = root.querySelector(".column-hide-empty");
@@ -72,7 +74,7 @@ export function attachColumnList(root, onMenu) {
     for (const control of [hideEmpty, minShare]) control.disabled = !sharesDone;
     const countItem = sortMenu.element?.querySelector('[data-order="count"]');
     if (countItem) countItem.disabled = !sharesDone;
-    showColumns(list, found, remember, onMenu);
+    showColumns(list, found, remember, onMenu, joinLabel());
     closeColumnMenuIfGone(found.columns.map((column) => column.name));
     if (found.shares === "pending") timer = setTimeout(search, PENDING_RETRY_MS);
     return true;
@@ -164,8 +166,9 @@ function compactCount(count, rows) {
 // Show the answer's columns, keeping the items when they are the same columns
 // in the same order (the answers while the shares are counted).
 // `placed` is called when one of them is placed (`beginDrag`); `onMenu`
-// opens the menu of one at a right click.
-function showColumns(list, found, placed, onMenu) {
+// opens the menu of one at a right click. The mark of a column a join added
+// names the joined table, `label`.
+function showColumns(list, found, placed, onMenu, label) {
   const items = [...list.children];
   const same =
     items.length === found.columns.length &&
@@ -173,6 +176,7 @@ function showColumns(list, found, placed, onMenu) {
   if (!same) {
     list.replaceChildren(...found.columns.map((column) => columnItem(column, placed, onMenu)));
   }
+  for (const mark of list.querySelectorAll(".joined")) mark.title = `結合：${label}`;
   found.columns.forEach((column, i) => showShare(list.children[i], column, found.shares, found.rows));
 }
 
@@ -190,7 +194,9 @@ function columnItem(column, placed, onMenu) {
   name.textContent = column.name;
   const share = document.createElement("span");
   share.className = "column-share";
-  item.append(type, name, share);
+  item.append(type, name);
+  if (column.joined) item.append(Object.assign(document.createElement("span"), { className: "joined", textContent: "J" }));
+  item.append(share);
   item.addEventListener("dragstart", (event) => {
     beginDrag({ name: column.name, numeric: column.numeric, temporal: column.temporal, placed });
     event.dataTransfer.setData("text/plain", column.name);

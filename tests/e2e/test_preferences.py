@@ -106,7 +106,7 @@ def test_preferences_open_from_the_menu_with_the_mouse(menu_page: Page) -> None:
     """Edit holds Preferences…, which opens the dialog with the values in effect; Escape closes it, saves nothing and gives the focus back to `…`."""
     page = menu_page
     open_item(page, "Edit")
-    assert popups(page) == [["File", "Edit", "Help"], ["Preferences…"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"], ["Preferences…"]]
     page.locator(".titlebar-popup .titlebar-item").filter(has_text="Preferences").click()
     dialog = page.locator(".prefs-dialog")
     expect(dialog.locator(".prefs-title")).to_have_text("設定")
