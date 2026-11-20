@@ -93,6 +93,7 @@ def join_id(
     files: dict,
     keys: list[dict[str, str]],
     rows: list[int],
+    paths: list[str],
 ) -> str:
     """Return what tells a join apart from another: it names the parts the join writes.
 
@@ -113,6 +114,12 @@ def join_id(
         The rows of each file of the input, for a join by rows: a part of a
         file holds the joined table's rows from those of the files before.
         Empty for a join by keys, whose parts depend on the file alone.
+    paths : list of str
+        The paths of the input and of the joined table as given, absolute
+        (`ddviz.shared.generated.part_key`): the cache knows an input by its
+        resolved paths, while the values of their added columns
+        (``source``), and so a key on them and the rows it matches, hold
+        the paths as given.
 
     Returns
     -------
@@ -120,7 +127,14 @@ def join_id(
         32 hexadecimal digits.
     """
     text = json.dumps(
-        {"kind": kind, "input": input_key, "files": files, "keys": keys, "rows": rows},
+        {
+            "kind": kind,
+            "input": input_key,
+            "files": files,
+            "keys": keys,
+            "rows": rows,
+            "paths": paths,
+        },
         sort_keys=True,
     )
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]

@@ -569,7 +569,8 @@ class Source:
             ]
             files = right.cache.identity["files"]
             rows = self.rows if kind == "rows" else []
-            id_ = join_id(kind, right.cache.key, files, typed, rows)
+            given = [str(Path(p).absolute()) for p in [*self.paths, *right.paths]]
+            id_ = join_id(kind, right.cache.key, files, typed, rows, given)
             maps: list[str] = []
             task = None
             matched = sum(self.rows)

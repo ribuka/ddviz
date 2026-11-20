@@ -55,13 +55,19 @@ def test_one_file_adds_no_file_columns() -> None:
 
 
 def test_a_join_id_changes_with_what_it_depends_on() -> None:
-    """The id of a join changes with its kind, the joined table, its files, its keys and their types."""
+    """The id of a join changes with its kind, the joined table, its files, its keys and their types, and the paths as given."""
     keys = [{"left": "a", "right": "b", "left_dtype": "Int64", "right_dtype": "Int32"}]
     files = {"x.parquet": {"size": 1, "mtime_ns": 2}}
-    base = join_id("key", "c:\\t", files, keys, [])
-    assert base == join_id("key", "c:\\t", files, keys, [])
-    assert base != join_id("rows", "c:\\t", files, [], [])
-    assert base != join_id("key", "c:\\u", files, keys, [])
-    assert base != join_id("key", "c:\\t", {"x.parquet": {"size": 1, "mtime_ns": 3}}, keys, [])
-    assert base != join_id("key", "c:\\t", files, [{**keys[0], "right_dtype": "Int64"}], [])
-    assert join_id("rows", "c:\\t", files, [], [1, 2]) != join_id("rows", "c:\\t", files, [], [2, 1])
+    paths = ["c:\\in", "c:\\t"]
+    base = join_id("key", "c:\\t", files, keys, [], paths)
+    assert base == join_id("key", "c:\\t", files, keys, [], paths)
+    assert base != join_id("rows", "c:\\t", files, [], [], paths)
+    assert base != join_id("key", "c:\\u", files, keys, [], paths)
+    changed = {"x.parquet": {"size": 1, "mtime_ns": 3}}
+    assert base != join_id("key", "c:\\t", changed, keys, [], paths)
+    retyped = [{**keys[0], "right_dtype": "Int64"}]
+    assert base != join_id("key", "c:\\t", files, retyped, [], paths)
+    spelled = ["c:\\x\\..\\in", "c:\\t"]
+    assert base != join_id("key", "c:\\t", files, keys, [], spelled)
+    by_rows = join_id("rows", "c:\\t", files, [], [1, 2], paths)
+    assert by_rows != join_id("rows", "c:\\t", files, [], [2, 1], paths)

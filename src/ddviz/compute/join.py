@@ -20,7 +20,6 @@ from pathlib import Path
 import polars as pl
 import polars_helpers as plh
 
-from ddviz.compute.aggregate import INDEX
 from ddviz.compute.progress import Emit
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.tasks.columns import supertype
@@ -33,13 +32,23 @@ from ddviz.shared.tasks import JoinConvertTask, JoinTask
 UINT32_ROWS = 2**32
 # Examples of duplicate keys a refusal shows.
 DUPLICATE_EXAMPLES = 5
-# The joined table's row index in the merge.
+# The row indices of the two tables in the merge, and the count of a key in
+# the check of duplicates, named apart from the keys (`_free`).
+_INDEX = "__ddviz_index"
 _ROW = "__ddviz_row"
+_COUNT = "__ddviz_count"
 
 
 def map_dtype(right_rows: int) -> pl.DataType:
     """Return the type of the map of a joined table of `right_rows` rows: UInt32, or UInt64 from 2^32 rows."""
     return pl.UInt32 if right_rows < UINT32_ROWS else pl.UInt64
+
+
+def _free(name: str, taken: set[str]) -> str:
+    """Return `name`, or it with underscores before, until no column of `taken` has it."""
+    while name in taken:
+        name = "_" + name
+    return name
 
 
 def _write(frame: pl.DataFrame, file: str) -> None:
@@ -76,12 +85,13 @@ def duplicate_keys(right: pl.LazyFrame, keys: list[str]) -> tuple[int, list[str]
     examples : list of str
         The first `DUPLICATE_EXAMPLES` of them, in ascending order (`_text`).
     """
+    count = _free(_COUNT, set(keys))
     found = (
         right.select(keys)
         .drop_nulls()
         .group_by(keys)
-        .agg(pl.len().alias("__n"))
-        .filter(pl.col("__n") > 1)
+        .agg(pl.len().alias(count))
+        .filter(pl.col(count) > 1)
         .select(keys)
         .sort(keys)
         .collect()
@@ -116,9 +126,13 @@ def run_join(task: JoinTask, out: Path, emit: Emit) -> None:
         Receives progress messages.
     """
     emit({"type": "progress", "stage": "join"})
-    left = scan_columns({k["left"]: task.left[k["left"]] for k in task.keys}, INDEX, False)
+    # The row indices are named apart from the keys, which then take names
+    # of their own (``l0``, ``r0``, ...), apart from the row indices.
+    index = _free(_INDEX, {k["left"] for k in task.keys})
+    row = _free(_ROW, {k["right"] for k in task.keys})
+    left = scan_columns({k["left"]: task.left[k["left"]] for k in task.keys}, index, False)
     right = scan_columns(
-        {k["right"]: task.right[k["right"]] for k in task.keys}, _ROW, False
+        {k["right"]: task.right[k["right"]] for k in task.keys}, row, False
     )
     left_types, right_types = left.collect_schema(), right.collect_schema()
     lefts, rights = [], []
@@ -136,11 +150,9 @@ def run_join(task: JoinTask, out: Path, emit: Emit) -> None:
         rights.append(pl.col(pair["right"]).cast(common, strict=False).alias(f"r{i}"))
     left_on = [f"l{i}" for i in range(len(lefts))]
     right_on = [f"r{i}" for i in range(len(rights))]
-    right = right.select(pl.col(_ROW).cast(map_dtype(task.right_rows)), *rights)
-    count, examples = duplicate_keys(
-        right.select(pl.col(c).alias(task.keys[i]["right"]) for i, c in enumerate(right_on)),
-        [k["right"] for k in task.keys],
-    )
+    right = right.select(pl.col(row).cast(map_dtype(task.right_rows)).alias(_ROW), *rights)
+    left = left.select(pl.col(index).alias(_INDEX), *lefts)
+    count, examples = duplicate_keys(right, right_on)
     if count:
         _refuse(
             out,
@@ -149,18 +161,18 @@ def run_join(task: JoinTask, out: Path, emit: Emit) -> None:
         return
     merged = (
         plh.merge(
-            left.select(INDEX, *lefts),
+            left,
             right,
             left_on=left_on,
             right_on=right_on,
             how="left",
             indicator=INDICATOR,
         )
-        .select(INDEX, _ROW, INDICATOR)
+        .select(_INDEX, _ROW, INDICATOR)
         .collect()
     )
-    if not merged[INDEX].is_sorted():
-        merged = merged.sort(INDEX)
+    if not merged[_INDEX].is_sorted():
+        merged = merged.sort(_INDEX)
     matched = int((merged[INDICATOR] == BOTH).sum())
     start = 0
     for rows, map_part, indicator in zip(task.rows, task.maps, task.indicators, strict=True):

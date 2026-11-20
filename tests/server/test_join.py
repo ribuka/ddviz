@@ -568,3 +568,82 @@ def test_converting_is_off_after_a_failed_join(tmp_path: Path) -> None:
     assert broker.seen == [True]
     assert source.converting is False
     assert source.joined is None
+
+
+def test_another_spelling_of_the_paths_joins_its_own_values(tmp_path: Path, left: Path) -> None:
+    """A key on ``source``, and ``source_joined``, follow the paths as given in each session, not parts made with another spelling."""
+    root = tmp_path / "bysource"
+    first = str((left / "a.parquet").absolute())
+    _write(root / "s1.parquet", pl.DataFrame({"src": [first], "v": [99.0]}))
+    _write(root / "s2.parquet", pl.DataFrame({"src": ["elsewhere"], "v": [1.0]}))
+    keys = [{"left": "source", "right": "src"}]
+    with _serve(tmp_path, [left]) as client:
+        assert _join(client, root, "key", keys)["matched"] == 4
+        assert client.get("/api/summary", params={"column": "v"}).status_code == 200
+        values = _values(_table(client, _plot(client, XY)["meta"]["task"]))
+        assert values["v"] == [99.0] * 4 + [None] * 8
+    spelled = tmp_path / "left" / ".." / "left"
+    other = tmp_path / "bysource" / ".." / "bysource"
+    with _serve(tmp_path, [spelled]) as client:
+        assert _join(client, other, "key", keys)["matched"] == 0
+        table = _table(client, _plot(client, XY)["meta"]["task"])
+        assert _values(table)["v"] == [None] * 12
+        assert _values(table)["_joined"] == ["left_only"] * 12
+        for column in ("v", "source_joined"):
+            assert client.get("/api/summary", params={"column": column}).status_code == 200
+        assert _values(_table(client, _plot(client, XY)["meta"]["task"])) == _values(table)
+    with _serve(tmp_path, [left]) as client:
+        _join(client, other, "key", keys)
+        for column in ("v", "source_joined"):
+            assert client.get("/api/summary", params={"column": column}).status_code == 200
+        values = _values(_table(client, _plot(client, XY)["meta"]["task"]))
+        assert values["v"] == [99.0] * 4 + [None] * 8
+        assert values["source_joined"] == [str((other / "s1.parquet").absolute())] * 4 + [None] * 8
+
+
+def test_columns_named_as_the_internal_ones_keep_their_values(tmp_path: Path, left: Path) -> None:
+    """Columns and keys named as the names a join uses inside are joined, read and saved as any others."""
+    root = tmp_path / "named"
+    _write(
+        root / "n.parquet",
+        pl.DataFrame(
+            {
+                "__ddviz_row": [1, 2],
+                "__ddviz_count": [1, 2],
+                "__ddviz_left": [10, 20],
+                "__ddviz_map": [30, 40],
+                "__ddviz_value_0": [50, 60],
+            }
+        ),
+    )
+    keys = [{"left": "lot", "right": "__ddviz_row"}]
+    lots = _read_folder(left)["lot"].to_list()
+    expected = {
+        c: [{1: a, 2: b}.get(lot) for lot in lots]
+        for c, (a, b) in (
+            ("__ddviz_left", (10, 20)),
+            ("__ddviz_map", (30, 40)),
+            ("__ddviz_value_0", (50, 60)),
+        )
+    }
+    with _serve(tmp_path, [left]) as client:
+        answer = _join(client, root, "key", keys)
+        assert answer["matched"] == 4
+        task = _plot(client, XY)["meta"]["task"]
+        values = _values(_table(client, task))
+        for column, found in expected.items():
+            assert values[column] == found, column
+        unconverted = _save(client, task, "parquet")
+        for column in expected:
+            assert client.get("/api/summary", params={"column": column}).status_code == 200
+        task = _plot(client, XY)["meta"]["task"]
+        assert _values(_table(client, task)) == values
+        assert _save(client, task, "parquet").equals(unconverted)
+    dup = tmp_path / "dupnamed"
+    _write(dup / "d.parquet", pl.DataFrame({"__ddviz_count": [1, 1, 2], "__ddviz_row": [5, 5, 6]}))
+    with _serve(tmp_path, [left]) as client:
+        client.post("/api/join/source", json={"paths": [str(dup)]})
+        pair = [{"left": "lot", "right": "__ddviz_count"}, {"left": "sub", "right": "__ddviz_row"}]
+        refused = client.post("/api/join", json={"kind": "key", "keys": pair})
+        assert refused.status_code == 400
+        assert refused.json()["detail"] == "結合する表でキーが重複しています：1 組（例：(1, 5)）"

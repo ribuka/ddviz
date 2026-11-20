@@ -31,6 +31,11 @@ _LEFT = "__ddviz_left"
 _MAP = "__ddviz_map"
 
 
+def _value(i: int) -> str:
+    """Return the name of the `i`-th column of the joined table while it is joined to the rows."""
+    return f"__ddviz_value_{i}"
+
+
 def right_rows(
     joined: JoinedFiles, index: pl.Series, spans: list[tuple[int, int]]
 ) -> pl.DataFrame:
@@ -105,16 +110,19 @@ def joined_rows(
     if held:
         wanted = found[_MAP].drop_nulls().unique().sort()
         values = read_right(held, wanted.cast(index.dtype))
+        # Under names of their own: a column of the joined table may have
+        # the name of one of the row indices.
         found = found.join(
             values.select(
                 pl.col(INDEX).cast(pl.UInt64).alias(_MAP),
-                *(c for c in held if c in values.columns),
+                *(pl.col(c).alias(_value(i)) for i, c in enumerate(held) if c in values.columns),
             ),
             on=_MAP,
             how="left",
             maintain_order="left",
         )
     present = set(found.columns)
+    named = {c: _value(i) for i, c in enumerate(held)}
     out = [pl.col(_LEFT).alias(INDEX)]
     for column in columns:
         source = joined.columns[column]
@@ -127,6 +135,6 @@ def joined_rows(
             if measure is not None:
                 value = measure(value, pl.String)
             out.append(value.alias(column))
-        elif source in present:
-            out.append(pl.col(source).alias(column))
+        elif named[source] in present:
+            out.append(pl.col(named[source]).alias(column))
     return found.select(out)
