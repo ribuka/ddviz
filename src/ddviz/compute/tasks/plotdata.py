@@ -474,9 +474,12 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
                 frames.append(
                     _source(task.source, others, target, chunk, lo, hi).drop(INDEX)
                 )
-            table = pl.concat(frames, how="horizontal").select(
-                pl.col(INDEX).alias(name), *task.columns
-            )
+            # Columns picked by name keep their chunks; a `select` of
+            # expressions would copy the chunk's values into one chunk a
+            # column, as its columns are chunked apart.
+            table = pl.concat(frames, how="horizontal").rename({INDEX: name})[
+                [name, *task.columns]
+            ]
             # Only the chunk handed on is held while the next is made.
             del chunk, frames
             yield table
