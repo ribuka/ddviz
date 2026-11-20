@@ -29,4 +29,4 @@ def test_missing_values_are_null_and_nan_in_a_float_column(tmp_path: Path) -> No
     assert summarize_column(files, "d")["nulls"] == 1
     s = summarize_column(files, "s")
     assert s["nulls"] == 3
-    assert {level: n for level, n in s["levels"]} == {"a": 2, "b": 1, "NaN": 1}
+    assert dict(s["levels"]) == {"a": 2, "b": 1, "NaN": 1}

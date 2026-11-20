@@ -61,4 +61,4 @@ def test_padded_log_ranges_stay_within_finite_powers(lo: float, hi: float) -> No
     a, b = padded_log_range(lo, hi)
     assert a < b
     assert a <= math.log10(lo) and math.log10(hi) <= b
-    assert 0 < 10.0**a and 10.0**b < math.inf
+    assert 10.0**a > 0 and 10.0**b < math.inf

@@ -11,6 +11,7 @@ to a pool kills the task running in it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -128,11 +129,9 @@ class TaskBroker:
         """Return the handler of a pool's worker messages (called from reader threads)."""
 
         def handle(task_id: int, message: dict) -> None:
-            try:
+            # The loop closed: the server stopped and killed the worker.
+            with contextlib.suppress(RuntimeError):
                 self._loop.call_soon_threadsafe(self._deliver, pool, task_id, message)
-            except RuntimeError:
-                # The loop closed: the server stopped and killed the worker.
-                pass
 
         return handle
 

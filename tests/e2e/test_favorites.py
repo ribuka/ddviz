@@ -263,7 +263,7 @@ def test_the_pull_down_stays_in_a_small_window(app_page: Page, height: int) -> N
     remove = rows(page).nth(2).get_by_role("button", name="削除")
     remove.scroll_into_view_if_needed()
     target = remove.bounding_box()
-    assert 0 <= target["y"] and target["y"] + target["height"] <= height
+    assert target["y"] >= 0 and target["y"] + target["height"] <= height
     remove.click()
     expect(rows(page)).to_have_count(2)
     box = pulled.bounding_box()

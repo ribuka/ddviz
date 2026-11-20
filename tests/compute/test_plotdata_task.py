@@ -165,10 +165,7 @@ def test_selected_rows_are_those_the_selection_table_lists(
     )
     run_plot_data(task, out, lambda _: None)
     file = out / read_manifest(out)["file"]
-    if file_format == "csv":
-        saved = pl.read_csv(file)
-    else:
-        saved = pl.read_parquet(file)
+    saved = pl.read_csv(file) if file_format == "csv" else pl.read_parquet(file)
     assert saved.columns == ["index", *columns]
     assert saved["index"].to_list() == table
     assert_frame_equal(

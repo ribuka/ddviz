@@ -52,7 +52,11 @@ markers = [
 ]
 
 [tool.ruff.lint]
-extend-select = ["I", "UP", "B", "D", "ANN", "C901", "PLR0912", "PLR0915", "RUF100"]
+extend-select = ["I", "UP", "B", "D", "ANN", "C901", "PLR0912", "PLR0915", "RUF100", "ARG", "SIM", "C4", "RET", "PIE"]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest injects fixtures as arguments, used or not.
+"tests/**" = ["ARG"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

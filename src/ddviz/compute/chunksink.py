@@ -97,7 +97,7 @@ def chunk_frame(
         with_columns: list[str] | None,
         predicate: pl.Expr | None,
         n_rows: int | None,
-        batch_size: int | None,
+        batch_size: int | None,  # noqa: ARG001 - polars passes it
     ) -> Iterator[pl.DataFrame]:
         """Yield the frames, filtered, projected and cut to `n_rows`; `batch_size` is a hint left unused."""
         handed = taken = 0
