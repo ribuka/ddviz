@@ -7,6 +7,7 @@
   - For investigation, questions, or review requests, do NOT edit `docs/spec.md`. Report findings in your reply (or an Issue comment) instead.
 - This repository is in development (0.x); backward compatibility is NOT required.
   - NEVER add or keep compatibility layers, deprecated aliases, or re-exports for old import paths.
+- Coding rules for every language (keeping the code easy to change): [.agents/docs/coding.md](.agents/docs/coding.md)
 
 ## Working tree
 
@@ -28,6 +29,11 @@
 - Run tests: `uv run -m pytest --tb=short -q`
 - Run E2E tests (needs Chrome): `uv run -m pytest -m e2e --tb=short -q`
 - CI runs all three on every pull request to main.
+
+## JavaScript
+
+- Coding rules: [.agents/docs/js.md](.agents/docs/js.md)
+- Run JS unit tests (needs Chrome): `uv run -m pytest -m js --tb=short -q`
 
 ## Github
 
