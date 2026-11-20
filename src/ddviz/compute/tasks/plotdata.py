@@ -32,6 +32,7 @@ from ddviz.compute.aggregate import INDEX
 from ddviz.compute.axisposition import on_axis
 from ddviz.compute.chunksink import PARQUET_ROW_GROUP_ROWS, sink_chunks, write_chunks
 from ddviz.compute.convert import column_expr, input_dtypes
+from ddviz.compute.joinread import joined_rows
 from ddviz.compute.missing import drawn_conditions
 from ddviz.compute.progress import Emit
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
@@ -280,6 +281,42 @@ def _source(
     return pl.DataFrame(schema={INDEX: index.dtype, **schema})
 
 
+def _joined(
+    source: SourceFiles,
+    columns: list[str],
+    target: dict[str, pl.DataType],
+    index: pl.Series,
+    lo: int,
+    hi: int,
+    measure: bool = False,
+) -> pl.DataFrame:
+    """Return the rows `index` (between `lo` and `hi`) of columns a join added, not converted (`ddviz.compute.joinread`).
+
+    The joined table's rows are read as those of the input are (`_cached`,
+    `_source`), with `target`, the joined table's types. With `measure`, the
+    bytes of the values of variable size instead, as `_cached` gives them.
+    """
+    joined = source.joined
+
+    def read_right(held: list[str], rows: pl.Series) -> pl.DataFrame:
+        """Return the joined table's rows `rows` of the columns `held`."""
+        first, last = (rows.min(), rows.max()) if len(rows) else (0, -1)
+        cached = {c: joined.parts[c] for c in held if c in joined.parts}
+        others = [c for c in held if c not in joined.parts]
+        frames = []
+        if cached:
+            frames.append(_cached(cached, rows, first, last, measure))
+        if others:
+            found = _source(joined.source, others, target, rows, first, last, measure)
+            frames.append(found.drop(INDEX) if frames else found)
+        return pl.concat(frames, how="horizontal")
+
+    spans = [(lo, hi - lo + 1)]
+    return joined_rows(
+        joined, columns, index, spans, read_right, _length if measure else None
+    )
+
+
 def _cut(
     index: pl.Series,
     bytes_of: Callable[[pl.Series], pl.Series | None],
@@ -414,10 +451,18 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
     emit({**progress, "done": 0, "total": total})
 
     cached = {c: task.parts[c] for c in task.columns if c in task.parts}
-    others = [c for c in task.columns if c not in task.parts]
+    joined_files = task.source.joined
+    added = joined_files.columns if joined_files is not None else {}
+    others = [c for c in task.columns if c not in task.parts and c not in added]
+    joined = [c for c in task.columns if c not in task.parts and c in added]
     generated = task.source.generated
     dtypes = {c: d for c, d in task.source.dtypes.items() if c not in generated}
     target = input_dtypes(task.source.schema, dtypes) if dtypes else {}
+    right_target: dict[str, pl.DataType] = {}
+    if joined:
+        right = joined_files.source
+        right_dtypes = {c: d for c, d in right.dtypes.items() if c not in right.generated}
+        right_target = input_dtypes(right.schema, right_dtypes) if right_dtypes else {}
     name = index_name(task.columns)
     # Every value counts VALUE_BYTES, the row index too; texts, binaries and
     # nested values count their bytes besides (`_length`).
@@ -437,6 +482,10 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
         if others:
             frames.append(
                 _source(task.source, others, target, index, lo, hi, True).drop(INDEX)
+            )
+        if joined:
+            frames.append(
+                _joined(task.source, joined, right_target, index, lo, hi, True).drop(INDEX)
             )
         lengths = pl.concat(frames, how="horizontal")
         if lengths.width == 0:
@@ -473,6 +522,10 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
             if others:
                 frames.append(
                     _source(task.source, others, target, chunk, lo, hi).drop(INDEX)
+                )
+            if joined:
+                frames.append(
+                    _joined(task.source, joined, right_target, chunk, lo, hi).drop(INDEX)
                 )
             # Columns picked by name keep their chunks; a `select` of
             # expressions would copy the chunk's values into one chunk a

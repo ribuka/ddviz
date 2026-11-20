@@ -7,7 +7,8 @@ SDK are next to the exe and that no WebView2 Runtime is. It then writes a small 
 ``ddviz.exe --worker`` and has it count the non-null values (polars and
 pyarrow, inside the exe), then checks the counts. It also has workers write
 the index of a column's levels and search it (the filter card's candidates,
-`ddviz.compute.levelindex`), and checks what they found. Last, it copies the
+`ddviz.compute.levelindex`), and checks what they found, and has one join
+two tables by keys (polars-helpers, `ddviz.compute.join`). Last, it copies the
 folder under ``tmp\exe-smoke\``, marks the copy's DLLs as from the internet
 and checks that its ``ddviz.exe --check-desktop-runtime`` unblocks them and
 loads pythonnet and the WebView2 SDK (`desktop_check`). The window is not
@@ -112,6 +113,42 @@ def check_levels(exe: Path, tmp: Path) -> None:
         raise RuntimeError(f"unexpected search: {found}")
 
 
+def check_join(exe: Path, tmp: Path) -> None:
+    """Fail unless a worker joins two tables by keys and writes the map of the rows and ``_joined``.
+
+    Parameters
+    ----------
+    exe : pathlib.Path
+        The ddviz exe.
+    tmp : pathlib.Path
+        An empty directory to write into.
+    """
+    left, right = tmp / "left.parquet", tmp / "right.parquet"
+    pq.write_table(pa.table({"k": pa.array([1, 2, 3, None], pa.int64())}), left)
+    pq.write_table(pa.table({"lot": pa.array([3, 2, 9], pa.int32())}), right)
+    maps, joined = tmp / "map.parquet", tmp / "joined.parquet"
+    task = {
+        "kind": "join",
+        "keys": [{"left": "k", "right": "lot"}],
+        "left": {"k": [str(left)]},
+        "right": {"lot": [str(right)]},
+        "rows": [4],
+        "right_rows": 3,
+        "maps": [str(maps)],
+        "indicator": "_joined",
+        "indicators": [str(joined)],
+    }
+    found = run_task(exe, task, tmp / "join")
+    rows = pq.read_table(maps).column("row").to_pylist()
+    indicator = pq.read_table(joined).column("_joined").to_pylist()
+    if (found["matched"], rows, indicator) != (
+        2,
+        [None, 1, 0, None],
+        ["left_only", "both", "both", "left_only"],
+    ):
+        raise RuntimeError(f"unexpected join: {found}, {rows}, {indicator}")
+
+
 def check_layout(folder: Path) -> None:
     """Fail unless the folder has the notices and no bundled WebView2 Runtime.
 
@@ -156,9 +193,10 @@ def main(argv: list[str]) -> int:
         if manifest["rows"] != 3 or manifest["counts"] != [2, 2]:
             raise RuntimeError(f"unexpected result: {manifest}")
         check_levels(exe, Path(tmp))
+        check_join(exe, Path(tmp))
     n_dlls = desktop_check.check_marked_copy(exe.parent, WORK)
     print(
-        f"ok: {exe} ran a nonnull task and the tasks of the levels; a copy with"
+        f"ok: {exe} ran a nonnull task, the tasks of the levels and a join; a copy with"
         f" {n_dlls} marked DLLs unblocked them and loaded the window's DLLs",
         flush=True,
     )

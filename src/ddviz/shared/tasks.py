@@ -28,6 +28,10 @@ class SourceFiles:
         The input's type of each column to read, as text.
     generated : dict of str to str
         The kind of each added column to read (`ddviz.shared.generated`).
+    joined : JoinedFiles or None
+        Where to read the columns a join added (`ddviz.shared.joined`),
+        which are in none of `dtypes` and `generated`; None without such
+        columns.
     """
 
     paths: list[str]
@@ -35,6 +39,41 @@ class SourceFiles:
     schema: str
     dtypes: dict[str, str]
     generated: dict[str, str]
+    joined: JoinedFiles | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SourceFiles:
+        """Return the files from their JSON (`dataclasses.asdict`)."""
+        joined = data.get("joined")
+        if joined is not None:
+            joined = JoinedFiles(**{**joined, "source": cls.from_dict(joined["source"])})
+        return cls(**{**data, "joined": joined})
+
+
+@dataclass(frozen=True)
+class JoinedFiles:
+    """Where to read columns a join added to an input, not converted yet (`ddviz.compute.joinread`).
+
+    Parameters
+    ----------
+    columns : dict of str to str or None
+        Per column to read, the column of the joined table it holds; None
+        for ``_joined``.
+    maps : list of str
+        For a join by keys, the parts of the map, one per file of the
+        input: each row's row of the joined table, or null
+        (`ddviz.shared.joined.MAP_COLUMN`); empty for a join by rows, where
+        a row of the input is the same row of the joined table.
+    parts : dict of str to list of str
+        The parts of columns of the joined table in its column cache.
+    source : SourceFiles
+        The joined table's files, for its other columns.
+    """
+
+    columns: dict[str, str | None]
+    maps: list[str]
+    parts: dict[str, list[str]]
+    source: SourceFiles
 
 
 @dataclass(frozen=True)
@@ -97,6 +136,74 @@ class ConvertTask:
     sources: list[str]
     parts: list[dict[str, str]]
     generated: dict[str, str]
+
+
+@dataclass(frozen=True)
+class JoinTask:
+    """Find each row's row of the joined table by keys, and write the map and ``_joined`` (`ddviz.compute.join`).
+
+    Parameters
+    ----------
+    keys : list of dict of str to str
+        The pairs of keys, ``{"left", "right"}``: a column of the input and
+        one of the joined table.
+    left : dict of str to list of str
+        The parts of the input's keys in its column cache.
+    right : dict of str to list of str
+        The parts of the joined table's keys in its column cache.
+    rows : list of int
+        The rows of each file of the input.
+    right_rows : int
+        The rows of the joined table.
+    maps : list of str
+        Per file of the input, the part of the map to write
+        (`ddviz.shared.joined.MAP_COLUMN`).
+    indicator : str
+        The name of ``_joined`` in the input (`ddviz.shared.joined.joined_names`).
+    indicators : list of str
+        Per file of the input, the part of ``_joined`` to write.
+    """
+
+    KIND: ClassVar[str] = "join"
+    keys: list[dict[str, str]]
+    left: dict[str, list[str]]
+    right: dict[str, list[str]]
+    rows: list[int]
+    right_rows: int
+    maps: list[str]
+    indicator: str
+    indicators: list[str]
+
+
+@dataclass(frozen=True)
+class JoinConvertTask:
+    """Write the parts of columns a join added, from the joined table's parts (`ddviz.compute.join`).
+
+    Parameters
+    ----------
+    columns : dict of str to str
+        Per column to write, the column of the joined table it holds.
+    right : dict of str to list of str
+        The parts of those columns of the joined table in its column cache.
+    rows : list of int
+        The rows of each file of the input.
+    files : list of int
+        The files of the input with parts to write, by position.
+    maps : list of str
+        For a join by keys, the part of the map of each of `files`; empty
+        for a join by rows, where a file's part holds the joined table's
+        rows from the rows of the files before.
+    parts : list of dict of str to str
+        Per file of `files`, the part to write for each column.
+    """
+
+    KIND: ClassVar[str] = "join_convert"
+    columns: dict[str, str]
+    right: dict[str, list[str]]
+    rows: list[int]
+    files: list[int]
+    maps: list[str]
+    parts: list[dict[str, str]]
 
 
 @dataclass(frozen=True)
@@ -256,6 +363,8 @@ Task = (
     SchemaTask
     | NonnullTask
     | ConvertTask
+    | JoinTask
+    | JoinConvertTask
     | PlotTask
     | SelectionTask
     | TableTask
@@ -270,6 +379,8 @@ TASKS: dict[str, type[Task]] = {
         SchemaTask,
         NonnullTask,
         ConvertTask,
+        JoinTask,
+        JoinConvertTask,
         PlotTask,
         SelectionTask,
         TableTask,
@@ -323,5 +434,5 @@ def task_from_dict(data: dict) -> Task:
         if values.get(key) is not None:
             values[key] = ScatterSpec.from_dict(values[key])
     if "source" in values:
-        values["source"] = SourceFiles(**values["source"])
+        values["source"] = SourceFiles.from_dict(values["source"])
     return cls(**values)

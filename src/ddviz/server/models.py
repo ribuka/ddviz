@@ -156,3 +156,30 @@ class ColumnKindsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     names: list[str]
+
+
+class JoinSourceRequest(BaseModel):
+    """Body of ``POST /api/join/source``: the joined table's input, as Load takes one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    paths: list[str]
+    recursive: StrictBool = False
+
+
+class JoinKey(BaseModel):
+    """A pair of keys of a join: a column of the input and one of the joined table."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    left: str
+    right: str
+
+
+class JoinRequest(BaseModel):
+    """Body of ``POST /api/join``: ``"key"`` with the pairs of keys, or ``"rows"`` without keys (`ddviz.server.source.Source.join`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    keys: list[JoinKey] = []

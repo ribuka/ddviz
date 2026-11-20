@@ -12,8 +12,9 @@ a = Analysis(
     pathex=[str(src)],
     # The package's metadata: the app menu's Version reads it.
     datas=[(str(src / "ddviz" / "static"), "ddviz/static"), *copy_metadata("ddviz")],
-    # The worker imports these inside functions, after the protocol starts.
-    hiddenimports=["ddviz.workers.worker", "ddviz.compute.tasks.run"],
+    # The worker imports these inside functions, after the protocol starts;
+    # polars_helpers is the join's (ddviz.compute.join).
+    hiddenimports=["ddviz.workers.worker", "ddviz.compute.tasks.run", "polars_helpers"],
 )
 pyz = PYZ(a.pure)
 # Shown by the bootloader before Python loads, until the window shows
