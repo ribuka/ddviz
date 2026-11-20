@@ -3,6 +3,7 @@
 A test calls a module's functions with
 `page.evaluate("async (args) => { const m = await import('/static/js/<file>.js'); ... }", args)`.
 A test that makes elements makes them itself and removes them at its end.
+After each test that uses `js_page`, `window.fetch` goes back to the page's own.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Browser, Page, Route
+from playwright.sync_api import Browser, JSHandle, Page, Route
 
 ORIGIN = "http://ddviz.test"
 STATIC = Path(__file__).parents[2] / "src" / "ddviz" / "static"
@@ -44,11 +45,33 @@ def open_blank(page: Page) -> Page:
 
 
 @pytest.fixture(scope="session")
-def js_page(browser: Browser) -> Iterator[Page]:
-    """Return the blank page the tests of a session share."""
+def _js_page_and_fetch(browser: Browser) -> Iterator[tuple[Page, JSHandle]]:
+    """Open the shared page and hold its own `window.fetch` outside the page, where no test reaches it."""
     page = open_blank(browser.new_page())
-    yield page
+    fetch = page.evaluate_handle("() => window.fetch")
+    yield page, fetch
     page.close()
+
+
+@pytest.fixture(scope="session")
+def js_page(_js_page_and_fetch: tuple[Page, JSHandle]) -> Page:
+    """Return the blank page the tests of a session share."""
+    return _js_page_and_fetch[0]
+
+
+@pytest.fixture(autouse=True)
+def _restore_fetch(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Put back the shared page's own `window.fetch` after a test that uses `js_page`.
+
+    A test may stub `window.fetch` and leave it; the next test on the shared page
+    would run on the stub (Issue #341). Tests without `js_page` do not open it.
+    """
+    if "js_page" not in request.fixturenames:
+        yield
+        return
+    page, fetch = request.getfixturevalue("_js_page_and_fetch")
+    yield
+    page.evaluate("(f) => { window.fetch = f; }", fetch)
 
 
 @pytest.fixture
