@@ -8,6 +8,7 @@ content (`create_app(initial_draw=...)`) as the window starts it.
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -244,17 +245,28 @@ def test_a_file_that_fails_to_plot_leaves_the_empty_graph_as_the_first_step(
 
 
 # The texts of the status bar and of the overlay of a conversion shown, each
-# time they change: a message replaced soon after is still seen.
+# time they change: a message replaced soon after is still seen. The overlay
+# shown or hidden, and the answer of `/api/join`, are logged in their order.
 WATCH_STATUS = """
 window.statusTexts = [];
 window.overlayTexts = [];
+window.overlayLog = [];
 new MutationObserver(() => {
   const status = document.getElementById("status");
   if (status && window.statusTexts.at(-1) !== status.textContent) window.statusTexts.push(status.textContent);
   const overlay = document.getElementById("converting");
   const text = overlay && !overlay.hidden ? overlay.textContent.trim() : null;
   if (text && window.overlayTexts.at(-1) !== text) window.overlayTexts.push(text);
+  const state = overlay === null ? null : overlay.hidden ? "hidden" : "shown";
+  const last = window.overlayLog.findLast((entry) => entry !== "joined");
+  if (state !== null && state !== (last ?? "hidden")) window.overlayLog.push(state);
 }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+const fetched = window.fetch;
+window.fetch = async (...args) => {
+  const response = await fetched(...args);
+  if (String(args[0]) === "/api/join") window.overlayLog.push("joined");
+  return response;
+};
 """
 DROPPED_SCORE = "描画設定のうち、データに無い列か種類の違う列を外しました：score"
 
@@ -293,6 +305,13 @@ def test_a_file_joined_joins_again_and_draws_its_joined_columns(
     # A range of the card, which the first plot must hold.
     (card,) = content["settings"]["filters"]
     card["range"] = [0, 50]
+    # The table joined, as the chooser hands it once picked elsewhere: its
+    # columns are not read yet, whose progress comes while it is joined.
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    for path in join_paths:
+        shutil.copy(path, moved / path.name)
+    content["source"]["join"]["paths"] = [str(moved / p.name) for p in join_paths]
     page.add_init_script(WATCH_STATUS)
 
     with opened_with(page, content, tmp_path, scatter_path, settings_store) as url:
@@ -310,8 +329,11 @@ def test_a_file_joined_joins_again_and_draws_its_joined_columns(
         expect(page.get_by_role("button", name=UNDO)).to_be_disabled()
         expect(page.locator("#toasts .toast")).to_have_count(0)
         assert page.evaluate("window.ddvizCanJoin()") is False
-        # The overlay told of the join while it ran.
-        assert "結合しています…" in page.evaluate("window.overlayTexts")
+        # The overlay told of the join and stayed until it was answered,
+        # through the progress of reading the table's columns.
+        assert page.evaluate("window.overlayTexts")[0] == "結合しています…"
+        log = page.evaluate("window.overlayLog")
+        assert log[: log.index("joined") + 1] == ["shown", "joined"], log
         assert errors == []
 
 

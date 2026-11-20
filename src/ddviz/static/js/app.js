@@ -109,6 +109,9 @@ function setInfo(extra = {}) {
 }
 
 const converting = document.getElementById("converting");
+// Whether the join of a file of the drawing settings runs, under the overlay
+// (`joinInitialDraw`): a progress of another stage leaves it shown.
+let joiningInitialDraw = false;
 const convertingText = document.getElementById("converting-text");
 const convertingBar = document.getElementById("converting-bar");
 
@@ -158,7 +161,9 @@ events.onmessage = (event) => {
   // or one that comes late) must not put its stage over the status of the
   // result drawn; the columns' schema is read with no request to await.
   if (message.stage !== "schema" && !waiting && plotting === 0) return;
-  converting.hidden = true;
+  // The join of a file of the drawing settings keeps its overlay up while
+  // the joined table's columns are read (`joinInitialDraw`).
+  if (!joiningInitialDraw) converting.hidden = true;
   statusLine.show(STAGES[message.stage] ?? "処理中…");
 };
 
@@ -2074,6 +2079,7 @@ async function joinInitialDraw(join) {
   convertingText.textContent = "結合しています…";
   convertingBar.removeAttribute("value");
   converting.hidden = false;
+  joiningInitialDraw = true;
   try {
     for (const [url, body] of [
       ["/api/join/source", { paths: join.paths, recursive: join.recursive }],
@@ -2091,6 +2097,7 @@ async function joinInitialDraw(join) {
     statusLine.error(`描画設定の結合ができませんでした（${error.message}）`);
     return;
   } finally {
+    joiningInitialDraw = false;
     converting.hidden = true;
   }
   await readSource();
