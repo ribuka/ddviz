@@ -30,6 +30,8 @@ dev = [
     "pytest-playwright==0.9.0",
     "pytest-xdist==3.8.0",
     "ruff==0.16.7",
+    "tree-sitter==0.26.1",
+    "tree-sitter-javascript==0.25.0",
 ]
 
 [tool.hatch.version]
@@ -50,7 +52,14 @@ markers = [
 ]
 
 [tool.ruff.lint]
-extend-select = ["I", "UP", "B", "D", "ANN"]
+extend-select = ["I", "UP", "B", "D", "ANN", "C901", "PLR0912", "PLR0915"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-branches = 12
+max-statements = 50
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

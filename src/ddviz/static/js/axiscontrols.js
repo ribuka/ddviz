@@ -259,7 +259,7 @@ export class AxisControls {
   // The angle of the labels (null for plotly's own; undefined from a dialog
   // without one) is the column's in that role. A categorical axis has no
   // settings nor range (null): only its angle changes.
-  async apply(axis, column, settings, picked, angle) {
+  async apply(axis, column, settings, picked, angle) { // noqa: C901
     if (settings) {
       if (isEmpty(settings)) this.#settings.delete(column);
       else this.#settings.set(column, settings);

@@ -133,7 +133,7 @@ def _varint(b: bytes, i: int) -> tuple[int, int]:
             return value, i
 
 
-def _skip(b: bytes, i: int, kind: int) -> int:
+def _skip(b: bytes, i: int, kind: int) -> int:  # noqa: C901, PLR0912
     """Return the index after the thrift compact value of type `kind` at `i` of `b`."""
     if kind in (1, 2):
         return i

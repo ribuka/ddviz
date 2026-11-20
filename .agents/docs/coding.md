@@ -31,6 +31,8 @@ These rules apply to Python ([python.md](python.md)) and JavaScript ([js.md](js.
 - For a variant of existing behavior, pass the difference as a value or a callable instead of copying the function.
 - Prefer a separate function over a boolean parameter that switches what a function does.
 - Do not grow a function by adding another mode branch; split it into stages first (as a `refactor:` commit).
+- Functions are held to complexity limits (cyclomatic complexity, branches, statements; the values are ruff's in `pyproject.toml`, checked as python.md and js.md say). NEVER raise the limits or add a `noqa` for them; split the function instead.
+- Existing `noqa` marks for these limits are debt from before the limits. Do not make such a function longer or more complex; when a change brings it under the limits, remove the mark (a stale mark fails the check).
 
 ## Tests
 

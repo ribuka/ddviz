@@ -322,7 +322,7 @@ SETTINGS_SHAPE = {
 }
 
 
-def _check(value: object, shape: object, path: str) -> None:
+def _check(value: object, shape: object, path: str) -> None:  # noqa: C901, PLR0912
     """Raise the chooser's `ValueError` unless `value` (at the key `path`) has the shape `shape`.
 
     A shape is `_ANY`, a type or a tuple of types, a dict of the shapes of
@@ -398,7 +398,7 @@ def _join_shaped(join: object) -> bool:
     return pairs and bool(keys) == (join["kind"] == "key")
 
 
-def parse(text: str) -> DrawFile:
+def parse(text: str) -> DrawFile:  # noqa: C901, PLR0912
     """Read the content of a file of the drawing settings.
 
     Parameters

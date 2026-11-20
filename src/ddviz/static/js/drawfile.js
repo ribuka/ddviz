@@ -19,7 +19,7 @@ function angleColumn(key) {
 // the filter cards', the axes' (the dialog's, the angles', the log and
 // reversed ones and those keeping their levels) and the legend's (the sizes
 // and the shapes of the symbol levels).
-export function referencedColumns(settings) {
+export function referencedColumns(settings) { // noqa: C901
   const { zones, filters, axes, options } = settings;
   const names = new Set([...zones.encoding.x, ...zones.encoding.y]);
   for (const role of STASHABLE) if (zones.encoding[role] !== null) names.add(zones.encoding[role]);

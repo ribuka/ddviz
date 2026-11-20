@@ -13,3 +13,7 @@ Follow [coding.md](coding.md) first; this file adds what is specific to Python.
 - Choose the package for new code from "パッケージ構成" in `docs/spec.md` (the packages, what each may import, and the modules inside `server` and `compute`). `tests/test_layers.py` checks the import boundaries.
 - When adding a module to `server` or `compute`, add it to its module table in `docs/spec.md`.
 - Keep `__init__.py` files to a docstring. NEVER re-export names from them (importing `ddviz.compute` would then load polars).
+
+## Complexity limits
+
+- ruff checks the limits of coding.md (C901, PLR0912, PLR0915). Existing debt is marked `# noqa: <codes>` on the `def` line.

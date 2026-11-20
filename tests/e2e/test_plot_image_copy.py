@@ -296,7 +296,7 @@ def test_box_plots_and_a_color_bar_are_copied(page: Page) -> None:
     assert dark_in(page, scale, legend) > 100
 
 
-def test_a_scrolled_grid_and_legend_are_copied_whole_as_shown(page: Page) -> None:
+def test_a_scrolled_grid_and_legend_are_copied_whole_as_shown(page: Page) -> None:  # noqa: PLR0915
     """A grid that scrolls both ways, of two x and two y columns, zoomed, with an inactive level and a selection: every panel and every legend item is in the PNG, the labels at the grid's edges only, and the page is left as it was."""
     page.set_viewport_size({"width": 1000, "height": 640})
     place(page, "x", "x")

@@ -183,7 +183,7 @@ def drawn_columns(encoding: Encoding) -> list[str]:
     return list(dict.fromkeys(c for c in columns if c is not None))
 
 
-def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:
+def parse_filters(raw: list[dict], numeric: dict[str, bool]) -> list[Filter]:  # noqa: C901, PLR0912
     """Return the conditions of the local filter the page sent, checked.
 
     Parameters

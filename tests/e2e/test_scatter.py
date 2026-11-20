@@ -188,7 +188,7 @@ def wait_top_row(page: Page, n: int) -> None:
     page.wait_for_function(f"() => ({TOP_ROW_PANELS})() === {n}")
 
 
-def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:
+def test_the_wrap_form_sets_the_panels_to_a_row(app_page: Page) -> None:  # noqa: PLR0915
     """A column on Wrap removes Group X's and draws a panel per level, labeled by the level; a right click on Wrap opens the form of the panels to a row: a draft until applied, checked, and replotted only for a new number."""
     page = app_page
     plots: list[str] = []
@@ -617,7 +617,7 @@ def test_a_column_with_too_many_levels_filters_by_contained_text(
 AGGREGATING = ("/api/plot", "/api/overview", "/api/view")
 
 
-def test_the_levels_of_a_card_sort_by_name_or_count(app_page: Page) -> None:
+def test_the_levels_of_a_card_sort_by_name_or_count(app_page: Page) -> None:  # noqa: PLR0915
     """"Sort by" puts the levels in the order of their counts and back, keeping the ticks and aggregating nothing; Escape and a click outside close it; a numeric card has no button."""
     page = app_page
     columns = page.locator("#columns .column")
@@ -770,7 +770,7 @@ def test_inactive_series_at_opacity_0_vanish_and_do_not_hover(app_page: Page) ->
     page.wait_for_function(PAINTED_PIXEL)
 
 
-def test_symbol_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
+def test_symbol_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:  # noqa: PLR0915
     """Symbol without a color column draws its levels in shapes of 7 px and one color, with the shape legend alone, whose markers change a level's shape; beside color, a legend of shapes toggled on its own, a marker's menu changes its level's size, the points' icon every level's."""
     page = app_page
     columns = page.locator("#columns .column")
@@ -852,7 +852,7 @@ def test_symbol_draws_shapes_with_a_legend_of_their_own(app_page: Page) -> None:
 
 
 
-def test_a_symbol_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> None:
+def test_a_symbol_level_takes_a_shape_picked_on_its_marker(app_page: Page) -> None:  # noqa: PLR0915
     """A symbol item's marker opens a menu whose shape panel redraws the level in another shape; another symbol column drops it."""
     page = app_page
     columns = page.locator("#columns .column")
@@ -950,7 +950,7 @@ HAS_COLOR = """([r, g, b]) => {
 }"""
 
 
-def test_a_color_level_takes_a_color_picked_on_its_marker(app_page: Page) -> None:
+def test_a_color_level_takes_a_color_picked_on_its_marker(app_page: Page) -> None:  # noqa: PLR0915
     """A color item's marker opens a menu whose color panel recolors the level without aggregating; another color column drops it, and an interval's marker opens the scale's menu."""
     page = app_page
     plots: list[str] = []
@@ -1053,7 +1053,7 @@ def watch_color_bins(page: Page) -> list[object]:
     return asked
 
 
-def test_the_number_of_intervals_is_typed_applied_and_dropped(app_page: Page) -> None:
+def test_the_number_of_intervals_is_typed_applied_and_dropped(app_page: Page) -> None:  # noqa: PLR0915
     """The scale's menu has a field for the number of intervals in place of fixed counts: blank on a gradient, the number applied on intervals; apply or Enter cuts into a new number, the same number plots nothing, Escape, a click outside or another right click drop the draft, and a wrong number shows the error without a request. The color bar, the title and the markers of the intervals open it; the way to cut picked on a gradient is kept."""
     page = app_page
     errors = watch_errors(page)
@@ -1741,7 +1741,7 @@ def test_the_pending_mark_shows_only_on_a_slow_result(app_page: Page) -> None:
     expect(plot).not_to_have_class(re.compile(r"\bpending\b"))
 
 
-def test_a_right_click_on_the_plot_picks_the_drag_mode_and_resets_the_axes(
+def test_a_right_click_on_the_plot_picks_the_drag_mode_and_resets_the_axes(  # noqa: PLR0915
     app_page: Page,
 ) -> None:
     """The plot's right-click menu checks the drag mode, switches it as the mode bar does, resets the axes to the overview without aggregating, and keeps a box selection."""
@@ -1871,7 +1871,7 @@ def test_sort_by_picks_name_or_count_and_picking_it_again_restores_the_file_orde
     expect(names).to_have_text(["color", "facet", "label", "x", "y"])
 
 
-def test_a_double_click_on_a_numeric_axis_sets_its_range_ticks_and_lines(
+def test_a_double_click_on_a_numeric_axis_sets_its_range_ticks_and_lines(  # noqa: PLR0915
     app_page: Page,
 ) -> None:
     """The axis dialog checks its fields, aggregates the range it sets, and draws ticks and lines on every panel of the column; going back to the overview keeps them."""
@@ -2103,7 +2103,7 @@ def test_a_chip_dragged_to_the_filters_adds_a_card_and_stays_placed(
     assert errors == []
 
 
-def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(
+def test_chips_dragged_to_the_filters_make_the_cards_the_column_list_makes(  # noqa: PLR0915
     app_page: Page,
 ) -> None:
     """A numeric chip gets a range card and a categorical one a card of levels whose conditions filter the plot; a column already carded is refused and keeps its condition; a folded pane takes a drop on its head and opens; the builder still moves and removes chips afterwards."""
@@ -2436,7 +2436,7 @@ def pane_height(locator: Locator) -> float:
     return locator.evaluate("e => e.getBoundingClientRect().height")
 
 
-def test_the_filter_pane_steps_and_drags_its_height_keeping_the_conditions(
+def test_the_filter_pane_steps_and_drags_its_height_keeping_the_conditions(  # noqa: PLR0915
     app_page: Page,
 ) -> None:
     """▲ and ▼ step the filter pane through folded, open and maximized, as a double click on its head does; its top edge drags its height within bounds, which open comes back to; none of it changes the conditions, the plot area or sends a request."""

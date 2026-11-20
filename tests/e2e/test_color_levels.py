@@ -364,7 +364,7 @@ def expect_lo(page: Page) -> None:
     expect(page.locator(".filter-summary")).to_have_text("（1）half: 1/2")
 
 
-def test_a_filter_past_the_limit_goes_back_to_the_last_drawn(app_page: Page) -> None:
+def test_a_filter_past_the_limit_goes_back_to_the_last_drawn(app_page: Page) -> None:  # noqa: PLR0915
     """A tick or a removed card that lets past 100 levels tells so and puts the figure and the filter pane back as last drawn, asking nothing; another condition then draws, zoomed too."""
     page = app_page
     errors = watch_errors(page)

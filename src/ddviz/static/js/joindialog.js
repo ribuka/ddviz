@@ -265,7 +265,7 @@ export class JoinDialog {
     this.paths.focus();
   }
 
-  build() {
+  build() { // noqa: PLR0915
     const dialog = this.dialog;
     dialog.classList.add("join-dialog");
     dialog.setAttribute("aria-label", "結合");

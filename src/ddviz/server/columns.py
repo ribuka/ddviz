@@ -41,7 +41,7 @@ def _ranks_by_name(columns: list[dict]) -> list[int]:
     return _name_ranks[1]
 
 
-def search_columns(
+def search_columns(  # noqa: C901
     columns: list[dict],
     query: str,
     kind: str | None,

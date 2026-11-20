@@ -211,7 +211,7 @@
 
   document.addEventListener(
     "keydown",
-    (event) => {
+    (event) => { // noqa: C901, PLR0912
       if (menu === null) return;
       const inSubmenu = submenu !== null && submenu.contains(document.activeElement);
       const current = inSubmenu ? submenu : menu;
@@ -246,7 +246,7 @@
     true,
   );
 
-  async function run(command) {
+  async function run(command) { // noqa: PLR0912
     closeAll(false);
     if (command === "new") {
       const choice = await ask(NEW_CONFIRM, [NEW_DISCARD, NEW_CANCEL], NEW_CANCEL, NEW_DISCARD);

@@ -74,7 +74,7 @@ export class BoxSelection {
   }
 
   // Asks for the selected rows' layer over the drawn result, unless asked already.
-  async follow() {
+  async follow() { // noqa: C901, PLR0912, PLR0915
     const meta = this.current();
     const selection = this.#state;
     if (!selection || !meta || this.busy().plotting || selection.base === meta.task) return;

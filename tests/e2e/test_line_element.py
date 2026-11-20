@@ -148,7 +148,7 @@ def select_box(
     expect(page.locator("#table")).to_have_class("collapsed")
 
 
-def test_lines_join_the_points_alone_or_under_them_and_hover_their_rows(
+def test_lines_join_the_points_alone_or_under_them_and_hover_their_rows(  # noqa: PLR0915
     app_page: Page,
 ) -> None:
     """Points alone, points and lines, lines alone: the lines follow x; without points the rows still hover and are selected at their points, not along the lines; a categorical X keeps them."""
@@ -440,7 +440,7 @@ def checked_in_line_menu(page: Page) -> list[str]:
 
 
 @pytest.mark.parametrize("scatter_path", [BANDS], indirect=True)
-def test_lines_of_a_categorical_x_join_its_bands_and_aggregate_the_rows_of_one(
+def test_lines_of_a_categorical_x_join_its_bands_and_aggregate_the_rows_of_one(  # noqa: PLR0915
     app_page: Page,
 ) -> None:
     """A categorical X takes the lines: alone they draw no pile but keep the rows' hover and selection; Mean and Median beside the width make one point of each X, kept over a zoom and the lines off and on."""
