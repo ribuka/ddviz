@@ -29,6 +29,19 @@ async def _kinds(source: Source, names: list[str]) -> dict[str, str | None]:
     return {name: column_kind(schema[name]) if name in schema else None for name in names}
 
 
+def _join(source: Source) -> dict | None:
+    """Return the join the input took, as the file of the drawing settings keeps it (`build`), or None without one."""
+    join = source.joined
+    if join is None:
+        return None
+    return {
+        "paths": [str(Path(p).absolute()) for p in join.right.paths],
+        "recursive": join.right.recursive,
+        "kind": join.kind,
+        "keys": join.keys,
+    }
+
+
 def drawfile_router(source: Source, initial_draw: dict | None) -> APIRouter:
     """Return the routes of the file of the drawing settings.
 
@@ -61,8 +74,10 @@ def drawfile_router(source: Source, initial_draw: dict | None) -> APIRouter:
     async def draw_file(request: DrawFileRequest) -> JSONResponse:
         """Return the file of the drawing settings sent, with the input and the kinds of the columns.
 
-        ``source.relative`` is null: the server does not know where it is
-        saved. ``Content-Disposition`` names its default file.
+        ``source.relative`` is null, and so is ``source.join.relative``: the
+        server does not know where it is saved. ``source.join`` is the join
+        the input took, null without one. ``Content-Disposition`` names its
+        default file.
         """
         kinds = await _kinds(source, request.columns)
         unknown = [name for name, kind in kinds.items() if kind is None]
@@ -76,6 +91,7 @@ def drawfile_router(source: Source, initial_draw: dict | None) -> APIRouter:
             source.recursive,
             None,
             importlib.metadata.version("ddviz"),
+            join=_join(source),
         )
         name = default_name(Path(paths[0]), Path(paths[0]).is_dir())
         return JSONResponse(

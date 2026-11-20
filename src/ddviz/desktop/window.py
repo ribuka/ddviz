@@ -101,7 +101,8 @@ _CLOSING = _page("loading", _MESSAGE_STYLE, "<main>前のデータを閉じて�
 # the drawing settings (`ddviz.shared.drawfile`), picked or dropped alone,
 # opens its data with them; when the data is not found, `#pending` tells it
 # until other data is picked for the settings or they are dropped
-# ("描画設定を使わない").
+# ("描画設定を使わない"). When the table joined to it is not found, it tells
+# that too, with "結合を使わない" to open the data without the join.
 _CHOOSER = _page(
     "chooser",
     """html,body{height:100%}body{margin:0;display:flex;flex-direction:column;
@@ -124,6 +125,7 @@ h1{font-size:16px;margin:0 0 4px}main button{font-size:14px;padding:8px 14px}
 <label><input type="checkbox" id="recursive"> フォルダのサブフォルダの Parquet も読む</label>
 <p id="error" role="alert"></p>
 <p id="pending" role="status" hidden><span id="pending-text"></span>
+<a href="#" id="forget-join" hidden>結合を使わない</a>
 <a href="#" id="forget">描画設定を使わない</a></p>
 <div class="row"><button type="button" id="cancel">キャンセル</button></div></main></div>
 <script>
@@ -142,14 +144,21 @@ document.getElementById("folder").onclick = () => call("choose", "folder", recur
 document.getElementById("cancel").onclick = () => call("cancel");
 window.ddvizDropError = (text) => { error.textContent = text; };
 const pending = document.getElementById("pending");
-window.ddvizPendingDraw = (text) => {
+const forgetJoin = document.getElementById("forget-join");
+window.ddvizPendingDraw = (text, join = false) => {
   pending.hidden = text === null;
+  forgetJoin.hidden = !join;
   document.getElementById("pending-text").textContent = text ?? "";
 };
 document.getElementById("forget").onclick = (e) => {
   e.preventDefault();
   window.ddvizPendingDraw(null);
   call("forget_draw");
+};
+forgetJoin.onclick = (e) => {
+  e.preventDefault();
+  window.ddvizPendingDraw(null);
+  call("forget_join");
 };
 // Entering a child fires dragenter before the parent's dragleave, so a
 // count of the elements entered stays above 0 until the drag leaves the
@@ -270,6 +279,17 @@ def fixed_runtime() -> Path | None:
     return Path(sys.executable).parent / "webview2"
 
 
+def _with_join(content: dict, paths: list[str], recursive: bool) -> dict:
+    """Return the content of a file of the drawing settings with the table joined at `paths`.
+
+    The page joins the table it is handed (``source.join``), found or
+    picked on the chooser, in place of the one the file names.
+    """
+    source = content["source"]
+    join = {**source["join"], "paths": list(paths), "recursive": recursive}
+    return {**content, "source": {**source, "join": join}}
+
+
 class OpenedDrawFile(Protocol):
     """A file of the drawing settings opened (`ddviz.shared.drawfile.Opened`)."""
 
@@ -277,6 +297,8 @@ class OpenedDrawFile(Protocol):
     recursive: bool
     found: list[str]
     missing: list[str]
+    join_found: list[str]
+    join_missing: list[str]
 
 
 class DrawFiles(Protocol):
@@ -333,7 +355,16 @@ class _App:
         self._watched = 0
         # The drawing settings of a file opened on the chooser, until the
         # input opened next takes them: kept while its data is not found.
+        # Their `source.join` holds the paths of the table joined as found
+        # or picked (`_with_join`).
         self._pending: dict | None = None
+        # The file's name, which the chooser's messages name, and the paths
+        # of its table joined found at none of their paths.
+        self._pending_name = ""
+        self._join_missing: list[str] = []
+        # The input of the settings, picked or found, while the table joined
+        # to it is not found: the data picked next is that table.
+        self._waiting: tuple[list[str], bool] | None = None
         self.failed = False
 
     def start(self) -> None:
@@ -369,14 +400,14 @@ class _App:
             if not chosen:
                 return
             if kind == "folder":
-                self._open([chosen[0]], recursive)
+                self._picked([chosen[0]], recursive)
             elif any(is_draw_file(p) for p in chosen):
                 if len(chosen) > 1:
                     self._show_error(CHOOSE_ONE_DRAW_FILE)
                 else:
                     self._read_draw_file(Path(chosen[0]))
             else:
-                self._open(list(chosen), False)
+                self._picked(list(chosen), False)
         finally:
             self._choosing.release()
 
@@ -401,7 +432,7 @@ class _App:
             elif len(paths) == 1 and is_draw_file(paths[0]):
                 self._read_draw_file(Path(paths[0]))
             elif paths:
-                self._open(paths, False)
+                self._picked(paths, False)
         finally:
             self._choosing.release()
 
@@ -412,12 +443,14 @@ class _App:
     def _read_draw_file(self, json_path: Path) -> None:
         """Open the data of the file of the drawing settings `json_path` with them.
 
-        Each input is looked for at its absolute path, then at its path from
-        the file (`DrawFiles.read`). When one is found at
-        neither, the chooser says so and keeps the settings for the data
-        picked next, until another file of them replaces them or
-        `forget_draw` drops them. A file that cannot be read tells why and
-        leaves the chooser as it was.
+        Each input, and each of the table joined to it, is looked for at its
+        absolute path, then at its path from the file (`DrawFiles.read`).
+        When an input is found at neither, the chooser says so and keeps the
+        settings for the data picked next, until another file of them
+        replaces them or `forget_draw` drops them. When the input is known
+        but the table joined is not found, the chooser asks for that table
+        (`_picked`). A file that cannot be read tells why and leaves the
+        chooser as it was.
 
         Parameters
         ----------
@@ -429,7 +462,14 @@ class _App:
         except ValueError as error:
             self._show_error(str(error))
             return
-        self._pending = draw.content
+        content = draw.content
+        if draw.join_found:
+            join = content["source"]["join"]
+            content = _with_join(content, draw.join_found, join["recursive"])
+        self._pending = content
+        self._pending_name = json_path.name
+        self._join_missing = list(draw.join_missing)
+        self._waiting = None
         if draw.missing:
             text = (
                 f"描画設定「{json_path.name}」のデータが見つかりません："
@@ -437,7 +477,37 @@ class _App:
             )
             self._window.run_js(f"window.ddvizPendingDraw({json.dumps(text)})")
             return
-        self._open(draw.found, draw.recursive)
+        self._picked(draw.found, draw.recursive)
+
+    def _picked(self, paths: list[str], recursive: bool) -> None:
+        """Open the data picked or dropped on the chooser, or found for a file of the drawing settings.
+
+        While the table joined to the settings' input is not found, the
+        input waits: the chooser asks for that table, and the data picked
+        next is that table, which the input then opens with.
+
+        Parameters
+        ----------
+        paths : list of str
+            The data's paths.
+        recursive : bool
+            For a folder, also read the files in its subfolders.
+        """
+        if self._waiting is not None:
+            (opened, opened_recursive), self._waiting = self._waiting, None
+            self._pending = _with_join(self._pending, paths, recursive)
+            self._join_missing = []
+            self._open(opened, opened_recursive)
+            return
+        if self._pending is not None and self._join_missing:
+            self._waiting = (paths, recursive)
+            text = (
+                f"描画設定「{self._pending_name}」の結合するデータが見つかりません："
+                f"{'、'.join(self._join_missing)}。結合するデータを選んでください。"
+            )
+            self._window.run_js(f"window.ddvizPendingDraw({json.dumps(text)}, true)")
+            return
+        self._open(paths, recursive)
 
     def choose_join(self, kind: str) -> list[str] | None:
         """Ask for the table to join with the OS dialog: Parquet files or a folder.
@@ -472,8 +542,28 @@ class _App:
         return [chosen[0]] if kind == "folder" else list(chosen)
 
     def forget_draw(self) -> None:
-        """Drop the drawing settings kept for the next input (the chooser's 描画設定を使わない)."""
+        """Drop the drawing settings kept for the next input (the chooser's 描画設定を使わない), and the input waiting for its table joined."""
         self._pending = None
+        self._join_missing = []
+        self._waiting = None
+
+    def forget_join(self) -> None:
+        """Open the input waiting for its table joined without the join (the chooser's 結合を使わない).
+
+        The settings' ``source.join`` becomes null: the page applies them to
+        the input alone, leaving out the joined columns.
+        """
+        if not self._choosing.acquire(blocking=False):
+            return
+        try:
+            if self._waiting is None:
+                return
+            (paths, recursive), self._waiting = self._waiting, None
+            self._pending = {**self._pending, "source": {**self._pending["source"], "join": None}}
+            self._join_missing = []
+            self._open(paths, recursive)
+        finally:
+            self._choosing.release()
 
     def save_draw_file(self, text: str) -> dict | None:
         """Save a file of the drawing settings where the user picks with the OS dialog.
@@ -579,6 +669,7 @@ class _App:
         if not self._opened.acquire(blocking=False):
             return
         initial_draw, self._pending = self._pending, None
+        self._join_missing, self._waiting = [], None
         try:
             paths = list(dict.fromkeys(str(Path(p).resolve()) for p in paths))
             self._window.title = f"ddviz - {self._label(paths)}"
@@ -764,7 +855,7 @@ def _record(window: webview.Window) -> None:
 class _Api:
     """What the window's pages may call through pywebview's JS API, and nothing else of `_App`.
 
-    The chooser calls `choose`, `cancel` and `forget_draw`; the title bar's
+    The chooser calls `choose`, `cancel`, `forget_draw` and `forget_join`; the title bar's
     app menu (`static/js/titlebar.js`) calls `new`, `quit`, `version`,
     `settings` and `save_settings` on every page, and `save_draw_file` and
     `choose_join` (for the join dialog, `static/js/joindialog.js`) on the
@@ -791,6 +882,10 @@ class _Api:
     def forget_draw(self) -> None:
         """Drop the drawing settings kept for the next input (`_App.forget_draw`)."""
         self.app.forget_draw()
+
+    def forget_join(self) -> None:
+        """Open the input waiting for its table joined without the join (`_App.forget_join`)."""
+        self.app.forget_join()
 
     def save_draw_file(self, text: str) -> dict | None:
         """Save a file of the drawing settings with the OS dialog (`_App.save_draw_file`)."""

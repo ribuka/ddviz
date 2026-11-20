@@ -1,8 +1,9 @@
 """The file of the drawing settings: the settings of a graph and where its data was (Issue #287).
 
 The graph's page saves its drawing settings (`captureSettings()` of
-``static/js/app.js``) with the input it loaded as JSON; the window's chooser
-opens such a file, finds the data and loads it with the settings
+``static/js/app.js``) with the input it loaded and the table joined to it
+(Issue #345) as JSON; the window's chooser opens such a file, finds the data
+and loads it with the settings, which the page joins again first
 (``docs/spec.md``, "描画設定のファイル"). This module builds the file
 (`build`), reads it (`parse`) and finds its data (`resolve`); it touches the
 file system only in `resolve`.
@@ -19,7 +20,7 @@ from pathlib import Path, PurePath
 #: The value of the file's ``format``.
 FORMAT = "ddviz-draw-settings"
 #: The version of the format this ddviz writes and reads; raised with every change of the format.
-VERSION = 1
+VERSION = 2
 #: The suffix of the file's default name, after the first input's name.
 SUFFIX = ".ddviz.json"
 
@@ -40,12 +41,16 @@ class DrawFile:
     content : dict
         The whole file, which the page reads its ``settings`` and
         ``columns`` from.
+    join : dict or None
+        The table joined to the input (``source.join``): ``{"paths",
+        "recursive", "relative", "kind", "keys"}``; None when not joined.
     """
 
     paths: list[str]
     relative: list[str] | None
     recursive: bool
     content: dict
+    join: dict | None
 
 
 @dataclass(frozen=True)
@@ -144,6 +149,7 @@ def build(
     json_path: PurePath | None,
     app_version: str,
     saved_at: dt.datetime | None = None,
+    join: dict | None = None,
 ) -> dict:
     """Return the content of the file of the drawing settings.
 
@@ -164,6 +170,13 @@ def build(
         ddviz's version.
     saved_at : datetime.datetime, optional
         When it was saved; now, in the local zone, by default.
+    join : dict, optional
+        The table joined to the input as it was joined, ``{"paths",
+        "recursive", "kind", "keys"}``: the absolute paths and the
+        subfolders' choice given to ``POST /api/join/source``, and the kind
+        and the pairs of keys (``{"left", "right"}``) given to ``POST
+        /api/join``. None, by default, when not joined. Its ``relative`` is
+        made as ``source.relative`` is.
 
     Returns
     -------
@@ -174,12 +187,24 @@ def build(
     relative = None
     if json_path is not None:
         relative = relative_paths([type(json_path)(p) for p in paths], json_path)
+    joined = None
+    if join is not None:
+        joined_relative = None
+        if json_path is not None:
+            joined_relative = relative_paths([type(json_path)(p) for p in join["paths"]], json_path)
+        joined = {
+            "paths": list(join["paths"]),
+            "recursive": join["recursive"],
+            "relative": joined_relative,
+            "kind": join["kind"],
+            "keys": [{"left": k["left"], "right": k["right"]} for k in join["keys"]],
+        }
     return {
         "format": FORMAT,
         "version": VERSION,
         "app_version": app_version,
         "saved_at": when.isoformat(timespec="seconds"),
-        "source": {"paths": list(paths), "relative": relative, "recursive": recursive},
+        "source": {"paths": list(paths), "relative": relative, "recursive": recursive, "join": joined},
         "columns": dict(columns),
         "settings": settings,
     }
@@ -344,6 +369,35 @@ def _strings(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(v, str) for v in value)
 
 
+#: The keys of a ``source.join`` that is not null.
+_JOIN_KEYS = ("paths", "recursive", "relative", "kind", "keys")
+
+
+def _join_shaped(join: object) -> bool:
+    """Return whether `join` has the shape of a ``source.join`` that is not null.
+
+    An object of the keys `_JOIN_KEYS`: ``paths`` a list of strings, not
+    empty; ``recursive`` a bool; ``relative`` null or a list of strings as
+    long as ``paths``; ``kind`` ``"key"`` or ``"rows"``; ``keys`` a list of
+    ``{"left", "right"}`` of strings, at least one for ``"key"`` and none
+    for ``"rows"``.
+    """
+    if not isinstance(join, dict) or any(key not in join for key in _JOIN_KEYS):
+        return False
+    paths, relative, keys = join["paths"], join["relative"], join["keys"]
+    if not _strings(paths) or not paths or not isinstance(join["recursive"], bool):
+        return False
+    if relative is not None and (not _strings(relative) or len(relative) != len(paths)):
+        return False
+    if join["kind"] not in ("key", "rows") or not isinstance(keys, list):
+        return False
+    pairs = all(
+        isinstance(k, dict) and isinstance(k.get("left"), str) and isinstance(k.get("right"), str)
+        for k in keys
+    )
+    return pairs and bool(keys) == (join["kind"] == "key")
+
+
 def parse(text: str) -> DrawFile:
     """Read the content of a file of the drawing settings.
 
@@ -362,7 +416,7 @@ def parse(text: str) -> DrawFile:
     ValueError
         With the message the chooser shows: ``描画設定のファイルを読めませんでした：<理由>``
         for text that is not JSON, another ``format`` or a key missing or of
-        the wrong type, and ``この描画設定は読めません（版 <N>。この ddviz は版 1 を読みます）``
+        the wrong type, and ``この描画設定は読めません（版 <N>。この ddviz は版 2 を読みます）``
         for another ``version``.
     """
     try:
@@ -384,7 +438,7 @@ def parse(text: str) -> DrawFile:
         if not isinstance(content[key], kind):
             raise _unreadable(f"キー {key} の値の形が違います")
     source = content["source"]
-    for key in ("paths", "relative", "recursive"):
+    for key in ("paths", "relative", "recursive", "join"):
         if key not in source:
             raise _unreadable(f"キー source.{key} がありません")
     paths, relative, recursive = source["paths"], source["relative"], source["recursive"]
@@ -394,40 +448,48 @@ def parse(text: str) -> DrawFile:
         raise _unreadable("キー source.relative の値の形が違います")
     if not isinstance(recursive, bool):
         raise _unreadable("キー source.recursive の値の形が違います")
+    join = source["join"]
+    if join is not None and not _join_shaped(join):
+        raise _unreadable("キー source.join の値の形が違います")
     if not all(isinstance(v, str) for v in content["columns"].values()):
         raise _unreadable("キー columns の値の形が違います")
     _check(content["settings"], SETTINGS_SHAPE, "settings")
-    return DrawFile(paths=paths, relative=relative, recursive=recursive, content=content)
+    return DrawFile(paths=paths, relative=relative, recursive=recursive, content=content, join=join)
 
 
 def _exists(path: Path) -> bool:
     return path.is_file() or path.is_dir()
 
 
-def resolve(draw_file: DrawFile, json_path: Path) -> list[Path] | Missing:
-    """Find the input of a file of the drawing settings: at its absolute path, else at its path from the file.
+def resolve(paths: list[str], relative: list[str] | None, json_path: Path) -> list[Path] | Missing:
+    """Find data of a file of the drawing settings: at its absolute path, else at its path from the file.
+
+    The input (``source.paths``, ``source.relative``) and the table joined
+    to it (``source.join.paths``, ``source.join.relative``) are found alike.
 
     Parameters
     ----------
-    draw_file : DrawFile
-        The file read.
+    paths : list of str
+        The data's absolute paths.
+    relative : list of str or None
+        The same paths from the file's folder, or None.
     json_path : pathlib.Path
         Where the file is, which its relative paths start from.
 
     Returns
     -------
     list of pathlib.Path or Missing
-        The path found for each input, in order; or the absolute paths of
-        those found at neither.
+        The path found for each of `paths`, in order; or the absolute paths
+        of those found at neither.
     """
     found: list[Path] = []
     missing: list[str] = []
-    for index, absolute in enumerate(draw_file.paths):
+    for index, absolute in enumerate(paths):
         candidates = [Path(absolute)]
-        if draw_file.relative is not None:
+        if relative is not None:
             # Taken apart lexically, as Windows does: the folders that `..`
             # goes up from need not exist.
-            candidates.append(Path(os.path.normpath(json_path.parent / draw_file.relative[index])))
+            candidates.append(Path(os.path.normpath(json_path.parent / relative[index])))
         path = next((c for c in candidates if _exists(c)), None)
         if path is None:
             missing.append(absolute)
@@ -450,12 +512,27 @@ class Opened:
         The path found for each input, in order; empty when any is missing.
     missing : list of str
         The absolute paths of the inputs found at neither of their paths.
+    join_found : list of str
+        The path found for each of the table joined (``source.join.paths``),
+        in order; empty when any is missing or the input was not joined.
+    join_missing : list of str
+        The absolute paths of the table joined found at neither of their
+        paths.
     """
 
     content: dict
     recursive: bool
     found: list[str]
     missing: list[str]
+    join_found: list[str]
+    join_missing: list[str]
+
+
+def _found(resolved: list[Path] | Missing) -> tuple[list[str], list[str]]:
+    """Return the paths `resolve` found and those it did not; one of the two is empty."""
+    if isinstance(resolved, Missing):
+        return [], resolved.paths
+    return [str(p) for p in resolved], []
 
 
 class DrawFileIO:
@@ -489,17 +566,19 @@ class DrawFileIO:
         except (OSError, UnicodeDecodeError) as error:
             raise _unreadable(str(error)) from error
         draw = parse(text)
-        found = resolve(draw, json_path)
-        if isinstance(found, Missing):
-            return Opened(draw.content, draw.recursive, [], found.paths)
-        return Opened(draw.content, draw.recursive, [str(p) for p in found], [])
+        found, missing = _found(resolve(draw.paths, draw.relative, json_path))
+        join_found: list[str] = []
+        join_missing: list[str] = []
+        if draw.join is not None:
+            join_found, join_missing = _found(resolve(draw.join["paths"], draw.join["relative"], json_path))
+        return Opened(draw.content, draw.recursive, found, missing, join_found, join_missing)
 
     def default_name(self, first: Path) -> str:
         """Return the default name of the file for an input whose first item is `first` (`default_name`)."""
         return default_name(first, first.is_dir())
 
     def write(self, content: dict, target: Path) -> None:
-        """Write the file's `content` at `target`, with the input's paths from there (`relative_paths`).
+        """Write the file's `content` at `target`, with the paths of the input and of the table joined from there (`relative_paths`).
 
         Raises
         ------
@@ -508,5 +587,9 @@ class DrawFileIO:
         """
         paths = [Path(p) for p in content["source"]["paths"]]
         source = {**content["source"], "relative": relative_paths(paths, target)}
+        join = source["join"]
+        if join is not None:
+            joined = [Path(p) for p in join["paths"]]
+            source["join"] = {**join, "relative": relative_paths(joined, target)}
         text = json.dumps({**content, "source": source}, ensure_ascii=False, indent=2)
         target.write_text(text + "\n", encoding="utf-8")
