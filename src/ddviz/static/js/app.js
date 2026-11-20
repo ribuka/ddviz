@@ -109,6 +109,9 @@ function setInfo(extra = {}) {
 }
 
 const converting = document.getElementById("converting");
+// Whether the join of a file of the drawing settings runs, under the overlay
+// (`joinInitialDraw`): a progress of another stage leaves it shown.
+let joiningInitialDraw = false;
 const convertingText = document.getElementById("converting-text");
 const convertingBar = document.getElementById("converting-bar");
 
@@ -158,7 +161,9 @@ events.onmessage = (event) => {
   // or one that comes late) must not put its stage over the status of the
   // result drawn; the columns' schema is read with no request to await.
   if (message.stage !== "schema" && !waiting && plotting === 0) return;
-  converting.hidden = true;
+  // The join of a file of the drawing settings keeps its overlay up while
+  // the joined table's columns are read (`joinInitialDraw`).
+  if (!joiningInitialDraw) converting.hidden = true;
   statusLine.show(STAGES[message.stage] ?? "処理中…");
 };
 
@@ -2061,16 +2066,56 @@ function attachJoinKey() {
 window.ddvizCanJoin = canJoin;
 window.ddvizOpenJoin = openJoin;
 
+// Joins the table of the file of the drawing settings (`source.join`, #345)
+// before its columns are checked, under the overlay of a conversion: reads
+// the table, joins it, then lists the columns again. A join that fails is
+// told in the status bar (and its toast), and the settings are applied
+// without it: the joined columns are taken out as any the data lacks. No
+// toast of the join done (`joinedText`).
+async function joinInitialDraw(join) {
+  await sourceRead;
+  // Joined already (the page loaded again): its columns are listed.
+  if (joined === true) return;
+  convertingText.textContent = "結合しています…";
+  convertingBar.removeAttribute("value");
+  converting.hidden = false;
+  joiningInitialDraw = true;
+  try {
+    for (const [url, body] of [
+      ["/api/join/source", { paths: join.paths, recursive: join.recursive }],
+      ["/api/join", { kind: join.kind, keys: join.keys }],
+    ]) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(errorText(await response.text(), response.status));
+    }
+  } catch (error) {
+    console.error(error);
+    statusLine.error(`描画設定の結合ができませんでした（${error.message}）`);
+    return;
+  } finally {
+    joiningInitialDraw = false;
+    converting.hidden = true;
+  }
+  await readSource();
+  await columnList.refresh();
+}
+
 // Applies the drawing settings of the file opened with the input
-// (`/api/initial-draw`) once its columns are known: those of the settings
-// the data lacks, or holds with another kind, are taken out with a warning
-// (`reconcile`), and the summaries of their filter cards are loaded
-// (`FilterPane.prepare`). Their result is the first step of undo and redo
-// (`record` after the plot, or `recordFirst` after a failure).
+// (`/api/initial-draw`) once its columns are known: its table joined first
+// (`joinInitialDraw`), then those of the settings the data lacks, or holds
+// with another kind, are taken out with a warning (`reconcile`), and the
+// summaries of their filter cards are loaded (`FilterPane.prepare`). Their
+// result is the first step of undo and redo (`record` after the plot, or
+// `recordFirst` after a failure).
 // Settings the page cannot apply (the chooser checks their shape,
 // `ddviz.shared.drawfile.SETTINGS_SHAPE`) leave the empty graph as that step.
 async function applyInitialDraw(draw) {
   try {
+    if (draw.source.join) await joinInitialDraw(draw.source.join);
     const response = await fetch("/api/column-kinds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2344,10 +2389,12 @@ window.ddvizApplySettings = async (values, changed) => {
 };
 await columnList.loaded;
 attachJoinKey();
-readSource().then((found) => {
+// The join of a file of the drawing settings waits for it
+// (`joinInitialDraw`): its answer, read before the join, must not come after.
+const sourceRead = readSource().then((found) => {
   if (found === null) return;
   showCasts(document.getElementById("casts"), found);
-  // Opened joined (a file of the drawing settings, #345): mark the columns.
+  // Already joined (the page loaded again): mark the columns.
   if (found.join !== null) columnList.refresh().catch((error) => statusLine.error(error.message));
 });
 if (initialDraw) await applyInitialDraw(initialDraw);

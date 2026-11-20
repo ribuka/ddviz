@@ -1,4 +1,4 @@
-"""E2E: the file of the drawing settings, saved from the graph's page and applied by a server opened with it (Issue #287).
+"""E2E: the file of the drawing settings, saved from the graph's page and applied by a server opened with it (Issue #287, #345).
 
 The window's chooser, which opens the file and the data, is checked in
 `tests/desktop/test_window.py`; here a server is started with the file's
@@ -8,10 +8,12 @@ content (`create_app(initial_draw=...)`) as the window starts it.
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import polars as pl
 import pytest
 from playwright.sync_api import Page, Route, expect
 
@@ -20,7 +22,8 @@ from ddviz.shared.drawfile import parse
 from tests.e2e.conftest import TOKEN, make_app, served
 from tests.e2e.test_app_menu import FAKE_API, GEOMETRY, open_item, popups
 from tests.e2e.test_favorites import menu, open_menu, set_line
-from tests.e2e.test_scatter import drop_on_filters, wait_idle, watch_errors
+from tests.e2e.test_join_dialog import pick, read_source, run_join
+from tests.e2e.test_scatter import drop_on_filters, place, wait_idle, watch_errors
 from tests.e2e.test_undo import REDO, UNDO, chip_names, press, x_and_y
 
 pytestmark = pytest.mark.e2e
@@ -96,8 +99,13 @@ def test_a_saved_file_draws_the_same_graph_again(
     name, content = download(page)
     assert name == "scatter.ddviz.json"
     assert content["format"] == "ddviz-draw-settings"
-    assert content["version"] == 1
-    assert content["source"] == {"paths": [str(scatter_path)], "relative": None, "recursive": False}
+    assert content["version"] == 2
+    assert content["source"] == {
+        "paths": [str(scatter_path)],
+        "relative": None,
+        "recursive": False,
+        "join": None,
+    }
     assert content["columns"] == {"label": "categorical", "x": "numeric", "y": "numeric"}
     settings = content["settings"]
     assert settings["zones"]["encoding"]["x"] == ["x"]
@@ -234,6 +242,143 @@ def test_a_file_that_fails_to_plot_leaves_the_empty_graph_as_the_first_step(
         page.keyboard.press("Control+z")
         expect(page.locator('.zone[data-role="x"] .chip')).to_have_count(0)
         expect(undo).to_be_disabled()
+
+
+# The texts of the status bar and of the overlay of a conversion shown, each
+# time they change: a message replaced soon after is still seen. The overlay
+# shown or hidden, and the answer of `/api/join`, are logged in their order.
+WATCH_STATUS = """
+window.statusTexts = [];
+window.overlayTexts = [];
+window.overlayLog = [];
+new MutationObserver(() => {
+  const status = document.getElementById("status");
+  if (status && window.statusTexts.at(-1) !== status.textContent) window.statusTexts.push(status.textContent);
+  const overlay = document.getElementById("converting");
+  const text = overlay && !overlay.hidden ? overlay.textContent.trim() : null;
+  if (text && window.overlayTexts.at(-1) !== text) window.overlayTexts.push(text);
+  const state = overlay === null ? null : overlay.hidden ? "hidden" : "shown";
+  const last = window.overlayLog.findLast((entry) => entry !== "joined");
+  if (state !== null && state !== (last ?? "hidden")) window.overlayLog.push(state);
+}).observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+const fetched = window.fetch;
+window.fetch = async (...args) => {
+  const response = await fetched(...args);
+  if (String(args[0]) === "/api/join") window.overlayLog.push("joined");
+  return response;
+};
+"""
+DROPPED_SCORE = "描画設定のうち、データに無い列か種類の違う列を外しました：score"
+
+
+def test_a_file_joined_joins_again_and_draws_its_joined_columns(
+    page: Page,
+    app_page: Page,
+    tmp_path: Path,
+    scatter_path: Path,
+    settings_store: SettingsStore,
+    join_paths: list[Path],
+) -> None:
+    """A graph of a joined column on X and in a filter saves its join (#345); a server opened with the file joins again, lists the joined columns and draws the same graph, with no toast."""
+    errors = watch_errors(page)
+    expect(page.locator("#columns .column").first).to_be_visible()
+    page.wait_for_function("window.ddvizCanJoin()")
+    page.evaluate("document.activeElement?.blur()")
+    page.keyboard.press("Control+j")
+    read_source(page, join_paths)
+    pick(page, 0, 0, "lab", "label")
+    run_join(page)
+    place(page, "score", "x")
+    place(page, "y", "y")
+    drop_on_filters(page, page.locator("#columns .column").filter(has=page.get_by_text("score", exact=True)), 1)
+    wait_idle(page)
+    content = download(page)[1]
+    assert content["source"]["join"] == {
+        "paths": [str(p) for p in join_paths],
+        "recursive": False,
+        "relative": None,
+        "kind": "key",
+        "keys": [{"left": "label", "right": "label"}],
+    }
+    assert content["columns"] == {"score": "numeric", "y": "numeric"}
+    assert parse(json.dumps(content)).content == content
+    # A range of the card, which the first plot must hold.
+    (card,) = content["settings"]["filters"]
+    card["range"] = [0, 50]
+    # The table joined, as the chooser hands it once picked elsewhere: its
+    # columns are not read yet, whose progress comes while it is joined.
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    for path in join_paths:
+        shutil.copy(path, moved / path.name)
+    content["source"]["join"]["paths"] = [str(moved / p.name) for p in join_paths]
+    page.add_init_script(WATCH_STATUS)
+
+    with opened_with(page, content, tmp_path, scatter_path, settings_store) as url:
+        with page.expect_request("**/api/plot") as request:
+            page.goto(url)
+        body = request.value.post_data_json
+        assert body["encoding"]["x"] == ["score"]
+        assert [(f["column"], f["range"]) for f in body["filters"]] == [("score", [0, 50])]
+        wait_idle(page)
+        assert chip_names(page, "x") == ["score"]
+        assert chip_names(page, "y") == ["y"]
+        expect(page.locator(".filter-card .filter-card-name")).to_have_text(["score"])
+        expect(page.locator("#columns .column .joined")).to_have_count(5)
+        expect(page.locator("#empty")).to_be_hidden()
+        expect(page.get_by_role("button", name=UNDO)).to_be_disabled()
+        expect(page.locator("#toasts .toast")).to_have_count(0)
+        assert page.evaluate("window.ddvizCanJoin()") is False
+        # The overlay told of the join and stayed until it was answered,
+        # through the progress of reading the table's columns.
+        assert page.evaluate("window.overlayTexts")[0] == "結合しています…"
+        log = page.evaluate("window.overlayLog")
+        assert log[: log.index("joined") + 1] == ["shown", "joined"], log
+        assert errors == []
+
+
+def test_a_join_that_fails_opens_the_file_without_it(
+    page: Page,
+    app_page: Page,
+    tmp_path: Path,
+    scatter_path: Path,
+    settings_store: SettingsStore,
+    join_paths: list[Path],
+) -> None:
+    """With its keys repeated in the table joined, the join fails: the status bar tells why, and the graph draws without the joined column, which the toast names."""
+    content = saved_file(app_page)
+    content["source"]["join"] = {
+        "paths": [str(p) for p in join_paths],
+        "recursive": False,
+        "relative": None,
+        "kind": "key",
+        "keys": [{"left": "label", "right": "label"}],
+    }
+    nulls = {"range": True, "pick": False, "contains": False, "listed": False}
+    content["settings"]["filters"] = [
+        {"name": "score", "numeric": True, "range": [0, 50], "levels": [], "contains": "", "nulls": nulls,
+         "mode": "pick", "query": "", "order": "name"},
+    ]
+    content["columns"]["score"] = "numeric"
+    # r0 to r499 again: the labels repeat in the table joined.
+    pl.DataFrame(
+        {"label": [f"r{i}" for i in range(500)], "color": ["a"] * 500, "score": [0.0] * 500}
+    ).write_parquet(join_paths[1])
+    page.add_init_script(WATCH_STATUS)
+
+    with opened_with(page, content, tmp_path, scatter_path, settings_store) as url:
+        with page.expect_request("**/api/plot") as request:
+            page.goto(url)
+        assert request.value.post_data_json["filters"] == []
+        wait_idle(page)
+        texts = page.evaluate("window.statusTexts")
+        prefix = "エラー: 描画設定の結合ができませんでした（結合する表でキーが重複しています："
+        assert any(text.startswith(prefix) for text in texts), texts
+        expect(page.locator("#toasts .toast-text").filter(has_text=DROPPED_SCORE)).to_be_visible()
+        expect(page.locator(".filter-card")).to_have_count(0)
+        assert chip_names(page, "x") == ["x"]
+        expect(page.locator("#columns .column .joined")).to_have_count(0)
+        expect(page.locator("#empty")).to_be_hidden()
 
 
 @pytest.mark.parametrize("desktop", [True])

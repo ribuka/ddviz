@@ -603,10 +603,26 @@ def test_preferences_saved_on_the_chooser_last_across_loads_and_new(
 
 
 
-def _draw_file(json_path: Path, paths: list[Path], recursive: bool = False) -> dict:
-    """Write a file of the drawing settings for `paths` at `json_path`; return its content."""
+def _draw_file(
+    json_path: Path, paths: list[Path], recursive: bool = False, join: list[Path] | None = None
+) -> dict:
+    """Write a file of the drawing settings for `paths` at `json_path`, joined by ``id`` to `join` if given; return its content."""
+    joined = None
+    if join is not None:
+        joined = {
+            "paths": [str(p) for p in join],
+            "recursive": False,
+            "kind": "key",
+            "keys": [{"left": "id", "right": "id"}],
+        }
     content = build(
-        copy.deepcopy(SETTINGS), {"a": "numeric"}, [str(p) for p in paths], recursive, json_path, "0.0.0"
+        copy.deepcopy(SETTINGS),
+        {"a": "numeric"},
+        [str(p) for p in paths],
+        recursive,
+        json_path,
+        "0.0.0",
+        join=joined,
     )
     json_path.write_text(json.dumps(content), encoding="utf-8")
     return content
@@ -699,6 +715,142 @@ def test_data_not_found_waits_for_other_data_or_is_dropped(tmp_path: Path) -> No
         app.stop()
 
 
+# ---- the table joined, in the file of the drawing settings (Issue #345) ----
+
+
+def _join_text(name: str, missing: list[Path]) -> str:
+    """Return the chooser's script that asks for the table joined to the settings of `name`."""
+    text = (
+        f"描画設定「{name}」の結合するデータが見つかりません："
+        f"{'、'.join(str(p) for p in missing)}。結合するデータを選んでください。"
+    )
+    return f"window.ddvizPendingDraw({json.dumps(text)}, true)"
+
+
+def _joined_from(content: dict, paths: list[Path], recursive: bool) -> dict:
+    """Return `content` with its table joined at `paths`, as the server is handed it."""
+    join = {**content["source"]["join"], "paths": [str(p) for p in paths], "recursive": recursive}
+    return {**content, "source": {**content["source"], "join": join}}
+
+
+def test_a_moved_draw_file_finds_its_table_joined_from_where_it_is(tmp_path: Path) -> None:
+    """Moved with its data, the file finds the table joined at its path from the file; the server gets that path."""
+    old, new = tmp_path / "old", tmp_path / "new"
+    _files(old, "a.parquet", "lots/b.parquet")
+    content = _draw_file(old / "graph.json", [old / "a.parquet"], join=[old / "lots" / "b.parquet"])
+    old.rename(new)
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(new / "graph.json"))
+    try:
+        assert _get(window.url)[0] == [str(new / "a.parquet")]
+        assert _initial_draw(window)["source"]["join"] == {
+            **content["source"]["join"],
+            "paths": [str(new / "lots" / "b.parquet")],
+        }
+    finally:
+        app.stop()
+    assert window.scripts == []
+
+
+def test_a_table_joined_not_found_waits_for_the_one_picked(tmp_path: Path) -> None:
+    """With its input found and its table joined not, nothing opens until a table is picked: a folder with its subfolders' choice joins in its place."""
+    (data, gone) = _files(tmp_path, "data.parquet", "gone.parquet")
+    content = _draw_file(tmp_path / "graph.json", [data], join=[gone])
+    gone.unlink()
+    lots = tmp_path / "lots"
+    lots.mkdir()
+    window = _FakeWindow(chosen=[str(lots)])
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "graph.json"))
+    assert window.url is None
+    assert window.scripts == [_join_text("graph.json", [gone])]
+    app.choose("folder", True)
+    try:
+        assert _get(window.url)[:2] == [[str(data)], False]
+        assert _initial_draw(window) == _joined_from(content, [lots], True)
+    finally:
+        app.stop()
+
+
+def test_an_input_and_its_table_joined_not_found_are_asked_for_in_turn(tmp_path: Path) -> None:
+    """Without either, the chooser asks for the input; once it is picked, for the table joined; a file picked joins with recursive false."""
+    (gone, gone_join, other, picked) = _files(
+        tmp_path, "gone.parquet", "gone_join.parquet", "other.parquet", "picked.parquet"
+    )
+    content = _draw_file(tmp_path / "graph.json", [gone], join=[gone_join])
+    gone.unlink()
+    gone_join.unlink()
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "graph.json"))
+    text = f"描画設定「graph.json」のデータが見つかりません：{gone}。データを選んでください。"
+    assert window.scripts == [f"window.ddvizPendingDraw({json.dumps(text)})"]
+    app.drop(_drop(other))
+    assert window.url is None
+    assert window.scripts[1:] == [_join_text("graph.json", [gone_join])]
+    app.drop(_drop(picked))
+    try:
+        assert _get(window.url)[0] == [str(other)]
+        assert _initial_draw(window) == _joined_from(content, [picked], False)
+    finally:
+        app.stop()
+
+
+def test_without_the_join_the_input_opens_with_no_join(tmp_path: Path) -> None:
+    """結合を使わない opens the input waiting, with the settings' join null."""
+    (data, gone) = _files(tmp_path, "data.parquet", "gone.parquet")
+    content = _draw_file(tmp_path / "graph.json", [data], join=[gone])
+    gone.unlink()
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "graph.json"))
+    assert window.url is None
+    app.forget_join()
+    try:
+        assert _get(window.url)[0] == [str(data)]
+        assert _initial_draw(window) == {**content, "source": {**content["source"], "join": None}}
+    finally:
+        app.stop()
+
+
+def test_forgetting_the_settings_drops_the_input_waiting_for_its_join(tmp_path: Path) -> None:
+    """描画設定を使わない drops the settings and the input waiting: the data picked next opens alone, without them."""
+    (data, gone, other) = _files(tmp_path, "data.parquet", "gone.parquet", "other.parquet")
+    _draw_file(tmp_path / "graph.json", [data], join=[gone])
+    gone.unlink()
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "graph.json"))
+    app.forget_draw()
+    app.forget_join()
+    assert window.url is None
+    app.drop(_drop(other))
+    try:
+        assert _get(window.url)[0] == [str(other)]
+        assert _initial_draw(window) is None
+    finally:
+        app.stop()
+
+
+def test_another_draw_file_replaces_the_one_waiting_for_its_join(tmp_path: Path) -> None:
+    """A file of the drawing settings opened while the table joined is asked for replaces the settings and the input waiting."""
+    (data, gone, second_data) = _files(tmp_path, "data.parquet", "gone.parquet", "second.parquet")
+    _draw_file(tmp_path / "graph.json", [data], join=[gone])
+    gone.unlink()
+    second = _draw_file(tmp_path / "second.json", [second_data])
+    window = _FakeWindow()
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    app.drop(_drop(tmp_path / "graph.json"))
+    assert window.url is None
+    app.drop(_drop(tmp_path / "second.json"))
+    try:
+        assert _get(window.url)[0] == [str(second_data)]
+        assert _initial_draw(window) == second
+    finally:
+        app.stop()
+
+
 @pytest.mark.parametrize(
     ("text", "error"),
     [
@@ -708,8 +860,8 @@ def test_data_not_found_waits_for_other_data_or_is_dropped(tmp_path: Path) -> No
             "描画設定のファイルを読めませんでした：format が ddviz-draw-settings ではありません",
         ),
         (
-            '{"format": "ddviz-draw-settings", "version": 2}',
-            "この描画設定は読めません（版 2。この ddviz は版 1 を読みます）",
+            '{"format": "ddviz-draw-settings", "version": 3}',
+            "この描画設定は読めません（版 3。この ddviz は版 2 を読みます）",
         ),
     ],
     ids=["json", "format", "version"],

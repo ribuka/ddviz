@@ -1,16 +1,18 @@
-"""The file of the drawing settings: build, read and find its data (`ddviz.shared.drawfile`, Issue #287)."""
+"""The file of the drawing settings: build, read and find its data (`ddviz.shared.drawfile`, Issue #287, #345)."""
 
 from __future__ import annotations
 
 import copy
 import datetime as dt
 import json
+import sys
 from pathlib import Path, PureWindowsPath
 
 import pytest
 
 from ddviz.shared.drawfile import (
     DrawFile,
+    DrawFileIO,
     Missing,
     build,
     column_kind,
@@ -126,13 +128,14 @@ def test_build_writes_the_format_and_the_paths_from_the_file() -> None:
     )
     assert content == {
         "format": "ddviz-draw-settings",
-        "version": 1,
+        "version": 2,
         "app_version": "0.1.6",
         "saved_at": "2026-11-18T14:30:00+09:00",
         "source": {
             "paths": [r"D:\data\sales\2026.parquet", r"d:\DATA\other"],
             "relative": [r"sales\2026.parquet", "other"],
             "recursive": True,
+            "join": None,
         },
         "columns": COLUMNS,
         "settings": SETTINGS,
@@ -162,7 +165,11 @@ def test_parse_reads_what_build_wrote() -> None:
     """A file built reads back with its input and content."""
     draw = parse(_text())
     assert draw == DrawFile(
-        paths=[r"D:\data\a.parquet"], relative=None, recursive=False, content=json.loads(_text())
+        paths=[r"D:\data\a.parquet"],
+        relative=None,
+        recursive=False,
+        content=json.loads(_text()),
+        join=None,
     )
 
 
@@ -179,16 +186,16 @@ def test_parse_reads_what_build_wrote() -> None:
         (_text(settings=None), "描画設定のファイルを読めませんでした：キー settings がありません"),
         (_text(columns=None), "描画設定のファイルを読めませんでした：キー columns がありません"),
         (
-            _text(source={"paths": ["a"], "recursive": False}),
+            _text(source={"paths": ["a"], "recursive": False, "join": None}),
             "描画設定のファイルを読めませんでした：キー source.relative がありません",
         ),
         (
-            _text(source={"paths": [], "relative": None, "recursive": False}),
+            _text(source={"paths": [], "relative": None, "recursive": False, "join": None}),
             "描画設定のファイルを読めませんでした：キー source.paths の値の形が違います",
         ),
-        (_text(version=2), "この描画設定は読めません（版 2。この ddviz は版 1 を読みます）"),
+        (_text(version=1), "この描画設定は読めません（版 1。この ddviz は版 2 を読みます）"),
     ],
-    ids=["broken", "not-object", "format", "version-key", "settings", "columns", "relative", "paths", "version-2"],
+    ids=["broken", "not-object", "format", "version-key", "settings", "columns", "relative", "paths", "version-1"],
 )
 def test_parse_refuses_with_the_message_shown(text: str, message: str) -> None:
     """Broken JSON, another format, a key missing or of the wrong form and another version are refused with the chooser's message."""
@@ -249,13 +256,9 @@ def test_resolve_takes_the_absolute_path_then_the_relative_one(tmp_path: Path) -
     (tmp_path / "moved").mkdir()
     (tmp_path / "moved" / "b.parquet").touch()
     json_path = tmp_path / "graphs" / "g.json"
-    draw = DrawFile(
-        paths=[str(tmp_path / "data" / "a.parquet"), str(tmp_path / "gone" / "b.parquet"), str(tmp_path / "data")],
-        relative=["../data/x.parquet", "../moved/b.parquet", "../nothing"],
-        recursive=False,
-        content={},
-    )
-    assert resolve(draw, json_path) == [
+    paths = [str(tmp_path / "data" / "a.parquet"), str(tmp_path / "gone" / "b.parquet"), str(tmp_path / "data")]
+    relative = ["../data/x.parquet", "../moved/b.parquet", "../nothing"]
+    assert resolve(paths, relative, json_path) == [
         tmp_path / "data" / "a.parquet",
         tmp_path / "moved" / "b.parquet",
         tmp_path / "data",
@@ -266,12 +269,8 @@ def test_resolve_returns_the_absolute_paths_found_nowhere(tmp_path: Path) -> Non
     """An input at neither path is missing, by its absolute path; so is any without relative paths."""
     (tmp_path / "a.parquet").touch()
     gone = str(tmp_path / "gone.parquet")
-    draw = DrawFile(paths=[str(tmp_path / "a.parquet"), gone], relative=None, recursive=False, content={})
-    assert resolve(draw, tmp_path / "g.json") == Missing([gone])
-    draw = DrawFile(
-        paths=[gone], relative=["also-gone.parquet"], recursive=False, content={}
-    )
-    assert resolve(draw, tmp_path / "g.json") == Missing([gone])
+    assert resolve([str(tmp_path / "a.parquet"), gone], None, tmp_path / "g.json") == Missing([gone])
+    assert resolve([gone], ["also-gone.parquet"], tmp_path / "g.json") == Missing([gone])
 
 
 def test_column_kind_and_default_name() -> None:
@@ -281,3 +280,119 @@ def test_column_kind_and_default_name() -> None:
     assert column_kind({"numeric": False, "temporal": None}) == "categorical"
     assert default_name(PureWindowsPath(r"D:\data\2026.parquet"), False) == "2026.ddviz.json"
     assert default_name(PureWindowsPath(r"D:\data\v1.2"), True) == "v1.2.ddviz.json"
+
+
+# ---- the table joined to the input (Issue #345) ----
+
+#: A join by keys, as the file's `build` is given it.
+JOIN = {
+    "paths": [r"D:\data\lots\a.parquet", r"D:\data\lots\b.parquet"],
+    "recursive": False,
+    "kind": "key",
+    "keys": [{"left": "lot", "right": "lot_id"}],
+}
+
+
+def _joined(**changes: object) -> dict:
+    """Return the ``source.join`` of a valid file, with `changes` to its keys (``...`` removes one)."""
+    join = {**JOIN, "relative": None}
+    for key, value in changes.items():
+        if value is ...:
+            del join[key]
+        else:
+            join[key] = value
+    return join
+
+
+def _source(join: object) -> dict:
+    return {"paths": [r"D:\data\a.parquet"], "relative": None, "recursive": False, "join": join}
+
+
+def test_build_writes_the_join_with_its_paths_from_the_file() -> None:
+    """The join is kept as it was given, with its paths from the file's folder; null on another drive or without where the file goes."""
+    json_path = PureWindowsPath(r"D:\data\graph.ddviz.json")
+    content = build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, json_path, "0", join=JOIN)
+    assert content["source"]["join"] == {**JOIN, "relative": [r"lots\a.parquet", r"lots\b.parquet"]}
+    other = {**JOIN, "paths": [r"D:\data\lots\a.parquet", r"E:\b.parquet"]}
+    content = build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, json_path, "0", join=other)
+    assert content["source"]["join"]["relative"] is None
+    content = build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, None, "0", join=JOIN)
+    assert content["source"]["join"] == {**JOIN, "relative": None}
+    assert build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, json_path, "0")["source"]["join"] is None
+
+
+@pytest.mark.parametrize(
+    "join",
+    [None, _joined(), _joined(kind="rows", keys=[]), _joined(relative=["a", "b"], recursive=True)],
+    ids=["null", "key", "rows", "relative"],
+)
+def test_parse_reads_a_join(join: dict | None) -> None:
+    """A null join, or one of either kind with or without relative paths, reads back."""
+    assert parse(_text(source=_source(join))).join == join
+
+
+@pytest.mark.parametrize(
+    ("join", "reason"),
+    [
+        ("absent", "キー source.join がありません"),
+        (_joined(keys=...), "キー source.join の値の形が違います"),
+        (_joined(relative=...), "キー source.join の値の形が違います"),
+        (_joined(kind="outer"), "キー source.join の値の形が違います"),
+        (_joined(keys=[]), "キー source.join の値の形が違います"),
+        (_joined(kind="rows"), "キー source.join の値の形が違います"),
+        (_joined(relative=["a"]), "キー source.join の値の形が違います"),
+        (_joined(paths=[]), "キー source.join の値の形が違います"),
+        (_joined(recursive=None), "キー source.join の値の形が違います"),
+        (_joined(keys=[{"left": "lot"}]), "キー source.join の値の形が違います"),
+        ([], "キー source.join の値の形が違います"),
+    ],
+    ids=[
+        "absent", "keys-missing", "relative-missing", "kind", "key-without-keys", "rows-with-keys",
+        "relative-length", "paths-empty", "recursive", "pair", "not-object",
+    ],
+)
+def test_parse_refuses_a_join_of_the_wrong_form(join: object, reason: str) -> None:
+    """A join missing a key, of another kind, with keys that do not fit its kind or relative paths of another length is refused."""
+    source = _source(join)
+    if join == "absent":
+        del source["join"]
+    with pytest.raises(ValueError) as caught:
+        parse(_text(source=source))
+    assert str(caught.value) == f"描画設定のファイルを読めませんでした：{reason}"
+
+
+def test_draw_file_io_finds_the_join_and_writes_its_paths_from_the_file(tmp_path: Path) -> None:
+    """`write` fills the join's relative paths from where it is saved; `read` finds the table joined there once moved, or tells the paths missing."""
+    old = tmp_path / "old"
+    (old / "lots").mkdir(parents=True)
+    (old / "a.parquet").touch()
+    (old / "lots" / "b.parquet").touch()
+    join = {**JOIN, "paths": [str(old / "lots" / "b.parquet")]}
+    content = build(SETTINGS, COLUMNS, [str(old / "a.parquet")], False, None, "0", join=join)
+    io = DrawFileIO()
+    io.write(content, old / "graph.json")
+    written = json.loads((old / "graph.json").read_text(encoding="utf-8"))
+    assert written["source"]["join"] == {**join, "relative": [str(Path("lots") / "b.parquet")]}
+
+    new = tmp_path / "new"
+    old.rename(new)
+    opened = io.read(new / "graph.json")
+    assert (opened.found, opened.missing) == ([str(new / "a.parquet")], [])
+    assert (opened.join_found, opened.join_missing) == ([str(new / "lots" / "b.parquet")], [])
+    (new / "lots" / "b.parquet").unlink()
+    opened = io.read(new / "graph.json")
+    assert (opened.join_found, opened.join_missing) == ([], [str(old / "lots" / "b.parquet")])
+    io.write(build(SETTINGS, COLUMNS, [str(new / "a.parquet")], False, None, "0"), new / "plain.json")
+    assert io.read(new / "plain.json").join_missing == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="drives are Windows'")
+def test_draw_file_io_writes_no_relative_join_on_another_drive(tmp_path: Path) -> None:
+    """A table joined on another drive than where the file is saved has no relative paths."""
+    drive = "Z:" if tmp_path.drive.upper() != "Z:" else "Y:"
+    join = {**JOIN, "paths": [rf"{drive}\lots\b.parquet"]}
+    content = build(SETTINGS, COLUMNS, [str(tmp_path / "a.parquet")], False, None, "0", join=join)
+    DrawFileIO().write(content, tmp_path / "graph.json")
+    written = json.loads((tmp_path / "graph.json").read_text(encoding="utf-8"))
+    assert written["source"]["join"]["relative"] is None
+    assert written["source"]["relative"] == ["a.parquet"]
