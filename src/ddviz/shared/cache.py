@@ -91,6 +91,8 @@ class ColumnCache:
         else:
             path = [str(f) for f in files]
             key = "\0".join(os.path.normcase(p) for p in path)
+        # What names the input: its directory is named by a hash of it.
+        self.key = key
         self.dir = root / _key(key)
         base = input_base(source)
         names = [relative_name(f, base) for f in files]
@@ -99,6 +101,8 @@ class ColumnCache:
             "path": path,
             "files": {n: _identity(f) for n, f in zip(names, files, strict=True)},
         }
+        # The input's paths and the size and modification time of each file.
+        self.identity = identity
         marker = self.dir / SOURCE
         recorded = (
             json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else None

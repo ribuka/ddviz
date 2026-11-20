@@ -39,7 +39,8 @@ def source_router(source: Source, max_listed: Callable[[], int]) -> APIRouter:
 
         ``"casts"`` lists the columns whose type differs between the files,
         with their types and the type they are read as; the page tells them
-        once after Load.
+        once after Load. ``"join"`` is the join the input took
+        (`ddviz.server.source.Source.join_info`), or null.
         """
         await source.schema()
         return {
@@ -47,6 +48,7 @@ def source_router(source: Source, max_listed: Callable[[], int]) -> APIRouter:
             "files": len(source.files),
             "rows": sum(source.rows),
             "casts": source.casts,
+            "join": source.join_info(),
         }
 
     @router.get("/api/columns")
@@ -67,7 +69,7 @@ def source_router(source: Source, max_listed: Callable[[], int]) -> APIRouter:
                 q,
                 kind,
                 max_listed(),
-                source.nonnull,
+                source.nonnull_counts(),
                 min_share,
                 order,
             )

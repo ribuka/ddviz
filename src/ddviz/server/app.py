@@ -2,6 +2,7 @@
 
 This process never imports polars; it only reads the files the workers
 write. The routes live in `ddviz.server.api_source` (the columns),
+`ddviz.server.api_join` (the join of another table),
 `ddviz.server.api_plot` (drawing and hovers), `ddviz.server.api_export` (the
 plot's data), `ddviz.server.api_events` (the progress events),
 `ddviz.server.api_selection` (the selection and its table),
@@ -26,6 +27,7 @@ from ddviz.server.api_drawfile import drawfile_router
 from ddviz.server.api_events import events_router
 from ddviz.server.api_export import export_router
 from ddviz.server.api_history import history_router
+from ddviz.server.api_join import join_router
 from ddviz.server.api_memory import memory_router
 from ddviz.server.api_plot import plot_router
 from ddviz.server.api_saves import SaveActions, saves_router
@@ -156,6 +158,7 @@ def create_app(
         }
 
     app.include_router(source_router(source, lambda: settings.current.columns.max_listed))
+    app.include_router(join_router(source, lambda: settings.current.columns.max_listed))
     app.include_router(history_router(history))
     app.include_router(drawfile_router(source, initial_draw))
     app.include_router(memory_router(meter))

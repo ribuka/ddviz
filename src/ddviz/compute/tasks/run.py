@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ddviz.compute.convert import convert_columns
+from ddviz.compute.join import run_join, run_join_convert
 from ddviz.compute.progress import Emit
 from ddviz.compute.tasks.columns import run_nonnull, run_schema, run_summary
 from ddviz.compute.tasks.levels import run_level_index, run_level_search
@@ -13,6 +14,8 @@ from ddviz.compute.tasks.plotdata import run_plot_data
 from ddviz.compute.tasks.table import run_table
 from ddviz.shared.tasks import (
     ConvertTask,
+    JoinConvertTask,
+    JoinTask,
     LevelIndexTask,
     LevelSearchTask,
     NonnullTask,
@@ -52,6 +55,10 @@ def run_task(data: dict, emit: Emit) -> None:
             run_nonnull(paths, names, generated, out, emit)
         case ConvertTask():
             convert_columns(task, emit)
+        case JoinTask():
+            run_join(task, out, emit)
+        case JoinConvertTask():
+            run_join_convert(task, out, emit)
         case PlotTask(spec=spec):
             run_plot(spec, out, emit)
         case SelectionTask(spec=spec):

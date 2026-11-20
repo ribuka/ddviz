@@ -17,6 +17,7 @@ NOT_IN_STAGES = {
     "summary": "the summary pool's progress is not streamed",
     "level_index": "the levels pool's progress is not streamed",
     "level_search": "the levels pool's progress is not streamed",
+    "join": "the page does not join yet (the join's dialog is Issue #344)",
 }
 
 

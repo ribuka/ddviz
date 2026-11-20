@@ -11,6 +11,7 @@ import polars as pl
 
 from ddviz.compute.aggregate import INDEX
 from ddviz.compute.convert import column_expr, input_dtypes
+from ddviz.compute.joinread import joined_rows
 from ddviz.compute.progress import Emit
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.selection import selection_columns, selection_filter
@@ -103,6 +104,33 @@ def _source_rows(
     return pl.DataFrame(schema={INDEX: pl.UInt32, **empty})
 
 
+def _joined_rows(
+    source: SourceFiles, columns: list[str], index: list[int]
+) -> pl.DataFrame:
+    """Return the rows `index` of columns a join added, not converted, with the row index (`ddviz.compute.joinread`).
+
+    The joined table's rows are read as those of the input are: from its
+    column cache, or else from its files.
+    """
+    joined = source.joined
+
+    def read_right(held: list[str], rows: pl.Series) -> pl.DataFrame:
+        """Return the joined table's rows `rows` of the columns `held`."""
+        wanted = rows.to_list()
+        cached = {c: joined.parts[c] for c in held if c in joined.parts}
+        others = [c for c in held if c not in joined.parts]
+        frames = []
+        if cached:
+            frames.append(_cached_rows(cached, wanted))
+        if others:
+            found = _source_rows(joined.source, others, wanted)
+            frames.append(found.drop(INDEX) if frames else found)
+        return pl.concat(frames, how="horizontal")
+
+    rows = pl.Series(INDEX, index, dtype=pl.get_index_type())
+    return joined_rows(joined, columns, rows, _spans(index), read_right)
+
+
 def run_table(task: TableTask, out: Path, emit: Emit) -> None:
     """Write a page of the selected rows: their indices and the values of some columns.
 
@@ -127,11 +155,16 @@ def run_table(task: TableTask, out: Path, emit: Emit) -> None:
     )
     emit({"type": "progress", "stage": "values"})
     others = [c for c in task.columns if c not in task.parts]
+    added = task.source.joined.columns if task.source.joined is not None else {}
+    joined = [c for c in others if c in added]
+    others = [c for c in others if c not in added]
     frames = []
     if task.parts:
         frames.append(_cached_rows(task.parts, index).drop(INDEX))
     if others:
         frames.append(_source_rows(task.source, others, index).drop(INDEX))
+    if joined:
+        frames.append(_joined_rows(task.source, joined, index).drop(INDEX))
     values = pl.concat(frames, how="horizontal") if frames else pl.DataFrame()
     columns = [
         {
