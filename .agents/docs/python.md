@@ -16,4 +16,4 @@ Follow [coding.md](coding.md) first; this file adds what is specific to Python.
 
 ## Complexity limits
 
-- ruff checks the limits of coding.md (C901, PLR0912, PLR0915). Existing debt is marked `# noqa: <codes>` on the `def` line.
+- ruff checks the limits of coding.md (C901, PLR0912, PLR0915) and fails on a stale `noqa` (RUF100). Existing debt is marked `# noqa: <codes>` on the `def` line.
