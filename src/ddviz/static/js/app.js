@@ -19,6 +19,7 @@ import { FilterPane, filterSettings, filtersKey, RestorePoint } from "./filters.
 import { drawable, drawnRoles, hasBoxPair, hasLinePair, hasSmoothPair } from "./graph.js";
 import { SettingsHistory } from "./history.js";
 import { attachHover } from "./hover.js";
+import { JOIN_ONCE, JoinDialog, joinedText } from "./joindialog.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { fitBottom, fitMargin, MARGIN_BOTTOM, MARGIN_LEFT, neededBottom, neededMargin } from "./leftmargin.js";
 import { LeftPane } from "./leftpane.js";
@@ -57,7 +58,7 @@ import { openSmoothMenu, smoothingText } from "./smoothmenu.js";
 import { StickyLabels } from "./sticky.js";
 import { SelectionTable } from "./table.js";
 import { forPlotly } from "./temporal.js";
-import { attachUndoKeys, undoButtons } from "./undo.js";
+import { attachUndoKeys, keyTaken, undoButtons } from "./undo.js";
 import { closeWrapMenu, openWrapMenu, setWrapAuto, setWrapNullRows } from "./wrapmenu.js";
 import { attachZoneMenu } from "./zonemenu.js";
 
@@ -1983,6 +1984,83 @@ window.ddvizDrawFileSaved = (result) => {
   else toasts.show(`描画設定を保存できませんでした：${result.error}`);
 };
 
+// ---- the join (docs/spec.md, "横の結合") ----
+
+// Whether the input is joined (`GET /api/source`), null until known, and
+// the joined table's name, which the column list shows on the joined columns.
+let joined = null;
+let joinLabel = "";
+const joinDialog = new JoinDialog(document.getElementById("join"), {
+  // The window's OS dialog, through the title bar (`titlebar.js`): the page
+  // never calls pywebview itself.
+  choose: document.documentElement.classList.contains("desktop") ? (kind) => window.ddvizChooseJoin(kind) : null,
+  joined: joinDone,
+  // The join converts its keys first, which shows the overlay of a
+  // conversion; no plot result follows to take it away.
+  answered: () => {
+    converting.hidden = true;
+  },
+});
+
+// Reads the input's files and its join (`GET /api/source`); null when the
+// server does not answer.
+async function readSource() {
+  try {
+    const response = await fetch("/api/source");
+    if (!response.ok) return null;
+    const found = await response.json();
+    joined = found.join !== null;
+    joinLabel = found.join?.label ?? "";
+    return found;
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
+// Whether the join dialog may open: not joined yet, no conversion's overlay,
+// the dialog not open.
+function canJoin() {
+  return joined === false && converting.hidden && !joinDialog.isOpen;
+}
+
+function openJoin() {
+  if (canJoin()) joinDialog.open();
+}
+
+// After a join: tells what was added and searches the column list again as
+// it is, with the joined columns marked. The graph, filters, favorites and
+// undo's steps stay; the join is not a step.
+async function joinDone(answer, kind) {
+  joined = true;
+  toasts.show(joinedText(answer, kind), "success");
+  await readSource();
+  try {
+    await columnList.refresh();
+  } catch (error) {
+    statusLine.error(error.message);
+  }
+}
+
+// Ctrl+J, in the window and in a browser, unless `keyTaken` (as undo's
+// keys) or with Shift, Alt or Meta: opens the dialog, or after the join
+// tells it is done once; nothing while it cannot open otherwise. The
+// browser's own Ctrl+J (its downloads) never opens.
+function attachJoinKey() {
+  document.addEventListener("keydown", (event) => {
+    if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey || event.isComposing) return;
+    if (event.key.toLowerCase() !== "j" || keyTaken(event)) return;
+    event.preventDefault();
+    if (canJoin()) joinDialog.open();
+    else if (joined === true) toasts.show(JOIN_ONCE);
+  });
+}
+
+// The window's `Data → 結合…` (`titlebar.js`): whether it is enabled, and
+// opening the dialog.
+window.ddvizCanJoin = canJoin;
+window.ddvizOpenJoin = openJoin;
+
 // Applies the drawing settings of the file opened with the input
 // (`/api/initial-draw`) once its columns are known: those of the settings
 // the data lacks, or holds with another kind, are taken out with a warning
@@ -2234,9 +2312,12 @@ const axisZones = builderRoot.querySelectorAll(':scope > .zone[data-role="x"], :
 const zoneObserver = new ResizeObserver(() => builder.layout());
 for (const zone of axisZones) zoneObserver.observe(zone);
 // A right click on a listed column opens its menu of the roles and the
-// filter pane to place it on.
-const columnList = attachColumnList(document.getElementById("columns"), (event, column) =>
-  openColumnMenu(event, column, builder, filterPane),
+// filter pane to place it on. The joined columns are marked with the joined
+// table's name.
+const columnList = attachColumnList(
+  document.getElementById("columns"),
+  (event, column) => openColumnMenu(event, column, builder, filterPane),
+  () => joinLabel,
 );
 // The Preferences dialog of the title bar (`titlebar.js`) calls this after a
 // save, with the values now in effect and the keys changed: the opacity of
@@ -2262,5 +2343,11 @@ window.ddvizApplySettings = async (values, changed) => {
   if (changed.includes("columns.max_listed")) await columnList.refresh();
 };
 await columnList.loaded;
-showCasts(document.getElementById("casts"));
+attachJoinKey();
+readSource().then((found) => {
+  if (found === null) return;
+  showCasts(document.getElementById("casts"), found);
+  // Opened joined (a file of the drawing settings, #345): mark the columns.
+  if (found.join !== null) columnList.refresh().catch((error) => statusLine.error(error.message));
+});
 if (initialDraw) await applyInitialDraw(initialDraw);

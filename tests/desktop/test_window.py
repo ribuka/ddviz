@@ -803,3 +803,43 @@ def test_saving_a_draw_file_writes_it_with_the_paths_from_it(tmp_path: Path) -> 
     assert app.save_draw_file(json.dumps(content)) is None
     window._chosen = [str(tmp_path / "missing" / "x.json")]
     assert "error" in app.save_draw_file(json.dumps(content))
+
+
+@pytest.mark.parametrize(
+    ("kind", "chosen", "dialog", "paths"),
+    [
+        ("files", ["a.parquet", "b.parquet"], (webview.FileDialog.OPEN, True), ["a.parquet", "b.parquet"]),
+        ("folder", ["data"], (webview.FileDialog.FOLDER, False), ["data"]),
+        ("files", None, (webview.FileDialog.OPEN, True), None),
+        ("folder", None, (webview.FileDialog.FOLDER, False), None),
+    ],
+    ids=["files", "folder", "files-cancelled", "folder-cancelled"],
+)
+def test_the_table_to_join_is_chosen_with_the_os_dialog(
+    kind: str, chosen: list[str] | None, dialog: tuple, paths: list[str] | None
+) -> None:
+    """`choose_join` asks for Parquet files (several, of Parquet only) or a folder, and returns the paths, or None when cancelled (Issue #344)."""
+    asked: list[dict] = []
+
+    class _Joining(_FakeWindow):
+        def create_file_dialog(self, *args: object, **kwargs: object) -> list[str] | None:
+            asked.append(kwargs)
+            return super().create_file_dialog(*args, **kwargs)
+
+    window = _Joining(chosen=chosen)
+    api = _Api(None)
+    api.app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    assert api.choose_join(kind) == paths
+    assert window.dialogs == [dialog]
+    if kind == "files":
+        assert asked[0]["file_types"] == ("Parquet (*.parquet)",)
+    assert window.url is None
+
+
+def test_another_kind_of_join_dialog_is_refused() -> None:
+    """`choose_join` opens no dialog for a kind it does not know."""
+    window = _FakeWindow(chosen=["a.parquet"])
+    app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    with pytest.raises(ValueError, match="unknown kind"):
+        app.choose_join("file")
+    assert window.dialogs == []

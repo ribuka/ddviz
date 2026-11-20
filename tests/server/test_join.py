@@ -238,6 +238,7 @@ def test_a_join_by_keys_adds_the_matching_rows(
         source = client.get("/api/source").json()
         assert source["join"] == {
             "paths": [str(right)],
+            "label": "right",
             "recursive": False,
             "kind": "key",
             "keys": keys,
@@ -451,6 +452,11 @@ def test_a_joined_table_without_parquet_is_refused_as_load_refuses(
         )
         assert mixed.status_code == 400
         assert mixed.json()["detail"].startswith("複数を選ぶときはファイルだけにしてください")
+        # A path that does not exist (typed in the join dialog, Issue #344).
+        missing = tmp_path / "missing.parquet"
+        gone = client.post("/api/join/source", json={"paths": [str(missing)]})
+        assert gone.status_code == 400
+        assert gone.json()["detail"] == f"ファイルかフォルダがありません：{missing}"
 
 
 def test_changed_files_are_read_again(tmp_path: Path, left: Path, right: Path) -> None:

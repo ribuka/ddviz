@@ -39,8 +39,10 @@ export function undoButtons(onUndo, onRedo) {
 }
 
 // Whether a key goes to what has the focus or is open: a text field, a
-// select or an editable element, an open dialog, or a popup menu.
-function keyTaken(event) {
+// select or an editable element, an open dialog, or a popup menu. The
+// page's other shortcuts (Ctrl+J of the join, app.js) leave those keys to
+// the browser too.
+export function keyTaken(event) {
   const target = event.target;
   if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {
     return true;

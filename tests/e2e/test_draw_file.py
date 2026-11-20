@@ -248,7 +248,7 @@ def test_the_window_saves_the_file_from_its_menu(page: Page, app_page: Page) -> 
     expect(open_menu(page).get_by_role("menuitem", name=SAVE_FILE)).to_have_count(0)
     page.keyboard.press("Escape")
     open_item(page, "File")
-    assert popups(page) == [["File", "Edit", "Help"], ["New", SAVE_FILE, "Quit"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"], ["New", SAVE_FILE, "Quit"]]
     expect(page.locator(".titlebar-popup .titlebar-item").filter(has_text=SAVE_FILE)).to_be_disabled()
     page.keyboard.press("Escape")
     page.keyboard.press("Escape")

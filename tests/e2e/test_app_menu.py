@@ -10,13 +10,15 @@ the OS draws its caption buttons beside the row.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
+from tests.e2e.test_join_dialog import join_dialog, pick, run_join
 from tests.e2e.test_kept_ranges import X_ZOOM, Y_ZOOM, shown, zoom
 from tests.e2e.test_scatter import place, placed_names
 
@@ -33,6 +35,11 @@ for (const name of ["new", "quit", "version"]) {
     return name === "version" ? "9.9.9" : null;
   };
 }
+// The join dialog's OS dialog answers `window.joinChosen`.
+window.pywebview.api.choose_join = async (kind) => {
+  window.desktopCalls.push(`choose_join:${kind}`);
+  return window.joinChosen ?? null;
+};
 """
 # The caption's geometry in physical pixels, as the window measured it at
 # 150 % (Issue #172); Chromium here has a devicePixelRatio of 1.
@@ -152,19 +159,19 @@ def test_without_the_geometry_the_page_shows_with_the_defaults(page: Page, app_p
 
 
 def test_the_menu_works_with_the_mouse(menu_page: Page) -> None:
-    """`…` opens File, Edit and Help; one submenu at a time; commands call the window."""
+    """`…` opens File, Edit, Data and Help; one submenu at a time; commands call the window."""
     page = menu_page
     button = page.locator("#titlebar .titlebar-menu")
     button.click()
-    assert popups(page) == [["File", "Edit", "Help"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"]]
     assert focused(page) == "File"
     page.locator(".titlebar-item").filter(has_text="Edit").click()
-    assert popups(page) == [["File", "Edit", "Help"], ["Preferences…"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"], ["Preferences…"]]
     page.locator(".titlebar-item").filter(has_text="Help").click()
-    assert popups(page) == [["File", "Edit", "Help"], ["Version"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"], ["Version"]]
     page.locator(".titlebar-item").filter(has_text="File").click()
     # 描画設定を保存… (Issue #287) is there, disabled without a figure.
-    assert popups(page) == [["File", "Edit", "Help"], ["New", "描画設定を保存…", "Quit"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"], ["New", "描画設定を保存…", "Quit"]]
     # The submenu opens on the right of the menu.
     menu, submenu = (p.bounding_box() for p in page.locator(".titlebar-popup").all())
     assert submenu["x"] >= menu["x"] + menu["width"] - 1
@@ -197,17 +204,20 @@ def test_the_menu_works_with_the_keyboard(menu_page: Page) -> None:
     keys.press("ArrowDown")
     assert focused(page) == "Edit"
     keys.press("ArrowDown")
+    assert focused(page) == "Data"
+    keys.press("ArrowDown")
     assert focused(page) == "Help"
     keys.press("ArrowRight")
-    assert popups(page) == [["File", "Edit", "Help"], ["Version"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"], ["Version"]]
     assert focused(page) == "Version"
     keys.press("ArrowLeft")
-    assert popups(page) == [["File", "Edit", "Help"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"]]
     assert focused(page) == "Help"
+    keys.press("ArrowUp")
     keys.press("ArrowUp")
     keys.press("ArrowUp")
     keys.press("Space")
-    assert popups(page) == [["File", "Edit", "Help"], ["New", "描画設定を保存…", "Quit"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"], ["New", "描画設定を保存…", "Quit"]]
     assert focused(page) == "New"
     # 描画設定を保存… is disabled without a figure: the arrows skip it.
     keys.press("ArrowDown")
@@ -215,7 +225,7 @@ def test_the_menu_works_with_the_keyboard(menu_page: Page) -> None:
     keys.press("ArrowDown")
     assert focused(page) == "New"
     keys.press("Escape")
-    assert popups(page) == [["File", "Edit", "Help"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"]]
     assert focused(page) == "File"
     keys.press("Escape")
     assert popups(page) == []
@@ -284,3 +294,90 @@ def test_new_asks_first_and_keeps_the_graph_when_cancelled(menu_page: Page) -> N
     expect(dialog).to_have_count(0)
     page.wait_for_function("window.desktopCalls.length === 1")
     assert calls(page) == ["new"]
+
+
+def data_item(page: Page) -> Locator:
+    """Open `…` → `Data` and return its one item, `結合…`."""
+    page.locator("#titlebar .titlebar-menu").click()
+    page.locator(".titlebar-popup .titlebar-item").filter(has_text="Data").click()
+    items = page.locator(".titlebar-popup").nth(1).locator(".titlebar-item")
+    expect(items).to_have_count(1)
+    return items
+
+
+def test_data_join_opens_the_dialog_until_the_join(menu_page: Page, join_paths: list[Path]) -> None:
+    """`Data → 結合…` (Ctrl+J beside it) opens the dialog before the join and is disabled after (Issue #344)."""
+    page = menu_page
+    page.wait_for_function("window.ddvizCanJoin()")
+    item = data_item(page)
+    expect(item).to_contain_text("結合…")
+    expect(item.locator(".titlebar-shortcut")).to_have_text("Ctrl+J")
+    expect(item).to_be_enabled()
+    item.click()
+    dialog = join_dialog(page)
+    expect(dialog).to_be_visible()
+    assert popups(page) == []
+
+    dialog.locator(".join-paths").fill(str(join_paths[0].parent))
+    dialog.get_by_role("button", name="読む").click()
+    expect(dialog.locator(".join-source-result")).to_have_text("2 ファイル・1,500 行・5 列")
+    pick(page, 0, 0, "lab", "label")
+    run_join(page)
+
+    item = data_item(page)
+    expect(item).to_be_disabled()
+    page.keyboard.press("Escape")
+    page.keyboard.press("Escape")
+    assert popups(page) == []
+    assert calls(page) == []
+
+
+def test_the_join_dialogs_buttons_read_what_the_os_dialog_chose(
+    menu_page: Page, join_paths: list[Path]
+) -> None:
+    """`ファイル…` and `フォルダ…` call the window's `choose_join` and read the paths it returns; a closed dialog changes nothing (Issue #344)."""
+    page = menu_page
+    page.wait_for_function("window.ddvizCanJoin()")
+    page.keyboard.press("Control+j")
+    dialog = join_dialog(page)
+    paths = dialog.locator(".join-paths")
+    result = dialog.locator(".join-source-result")
+    files = dialog.get_by_role("button", name="ファイル…")
+    folder = dialog.get_by_role("button", name="フォルダ…")
+    reads: list[str] = []
+    page.on("request", lambda r: reads.append(r.post_data) if r.url.endswith("/api/join/source") else None)
+
+    files.click()
+    page.wait_for_function("window.desktopCalls.length === 1")
+    folder.click()
+    page.wait_for_function("window.desktopCalls.length === 2")
+    expect(paths).to_have_value("")
+    expect(result).to_have_text("")
+
+    page.evaluate("(chosen) => { window.joinChosen = chosen; }", [str(p) for p in join_paths])
+    files.click()
+    expect(paths).to_have_value("\n".join(str(p) for p in join_paths))
+    expect(result).to_have_text("2 ファイル・1,500 行・5 列")
+
+    page.evaluate("(chosen) => { window.joinChosen = chosen; }", [str(join_paths[0].parent)])
+    dialog.locator(".join-recursive").check()
+    folder.click()
+    expect(paths).to_have_value(str(join_paths[0].parent))
+    expect(result).to_have_text("2 ファイル・1,500 行・5 列")
+
+    page.evaluate("window.joinChosen = null")
+    files.click()
+    page.wait_for_function("window.desktopCalls.length === 5")
+    expect(paths).to_have_value(str(join_paths[0].parent))
+    expect(result).to_have_text("2 ファイル・1,500 行・5 列")
+    assert calls(page) == [
+        "choose_join:files",
+        "choose_join:folder",
+        "choose_join:files",
+        "choose_join:folder",
+        "choose_join:files",
+    ]
+    assert [json.loads(r) for r in reads] == [
+        {"paths": [str(p) for p in join_paths], "recursive": False},
+        {"paths": [str(join_paths[0].parent)], "recursive": True},
+    ]

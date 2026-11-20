@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import polars as pl
 import pytest
 import uvicorn
 from fastapi import FastAPI
@@ -134,3 +135,23 @@ def app_page(page: Page, app_url: str) -> Iterator[Page]:
     page.goto(f"{app_url}/?token={TOKEN}")
     yield page
     page.close()
+
+
+@pytest.fixture
+def join_paths(tmp_path: Path) -> list[Path]:
+    """Write a table to join to `scatter_path` (Issue #344): two files of 1,500 rows, labels r0 to r1499, a color repeated and a score."""
+    folder = tmp_path / "join"
+    folder.mkdir()
+    paths = []
+    for name, start, stop in [("a.parquet", 0, 1000), ("b.parquet", 1000, 1500)]:
+        n = range(start, stop)
+        frame = pl.DataFrame(
+            {
+                "label": [f"r{i}" for i in n],
+                "color": [["a", "b", "c"][i % 3] for i in n],
+                "score": [i / 10 for i in n],
+            }
+        )
+        paths.append(folder / name)
+        frame.write_parquet(paths[-1])
+    return paths

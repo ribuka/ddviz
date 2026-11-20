@@ -184,6 +184,8 @@ DROP_ONE_DRAW_FILE = "描画設定は 1 つだけドロップしてください�
 CHOOSE_ONE_DRAW_FILE = "描画設定は 1 つだけ選んでください。"
 #: The kinds of files of the chooser's dialog.
 OPEN_FILE_TYPES = ("Parquet (*.parquet)", "描画設定 (*.json)", "すべてのファイル (*.*)")
+#: The kinds of files of the join dialog's OS dialog: Parquet only.
+JOIN_FILE_TYPES = ("Parquet (*.parquet)",)
 
 
 def is_draw_file(name: str) -> bool:
@@ -436,6 +438,38 @@ class _App:
             self._window.run_js(f"window.ddvizPendingDraw({json.dumps(text)})")
             return
         self._open(draw.found, draw.recursive)
+
+    def choose_join(self, kind: str) -> list[str] | None:
+        """Ask for the table to join with the OS dialog: Parquet files or a folder.
+
+        Parameters
+        ----------
+        kind : str
+            ``"files"`` (one or several Parquet files) or ``"folder"``.
+
+        Returns
+        -------
+        list of str or None
+            The paths chosen, or None when the dialog was closed.
+
+        Raises
+        ------
+        ValueError
+            For another `kind`.
+        """
+        if kind == "folder":
+            chosen = self._window.create_file_dialog(webview.FileDialog.FOLDER)
+        elif kind == "files":
+            chosen = self._window.create_file_dialog(
+                webview.FileDialog.OPEN,
+                allow_multiple=True,
+                file_types=JOIN_FILE_TYPES,
+            )
+        else:
+            raise ValueError(f"unknown kind: {kind}")
+        if not chosen:
+            return None
+        return [chosen[0]] if kind == "folder" else list(chosen)
 
     def forget_draw(self) -> None:
         """Drop the drawing settings kept for the next input (the chooser's 描画設定を使わない)."""
@@ -732,7 +766,8 @@ class _Api:
 
     The chooser calls `choose`, `cancel` and `forget_draw`; the title bar's
     app menu (`static/js/titlebar.js`) calls `new`, `quit`, `version`,
-    `settings` and `save_settings` on every page, and `save_draw_file` on the
+    `settings` and `save_settings` on every page, and `save_draw_file` and
+    `choose_join` (for the join dialog, `static/js/joindialog.js`) on the
     graph's.
 
     Parameters
@@ -760,6 +795,10 @@ class _Api:
     def save_draw_file(self, text: str) -> dict | None:
         """Save a file of the drawing settings with the OS dialog (`_App.save_draw_file`)."""
         return self.app.save_draw_file(text)
+
+    def choose_join(self, kind: str) -> list[str] | None:
+        """Open the OS dialog for the table to join (`_App.choose_join`)."""
+        return self.app.choose_join(kind)
 
     def new(self) -> None:
         """Go back to the chooser for another input (`_App.new`), once this call is answered.

@@ -244,6 +244,17 @@ html.desktop:not(.caption-known) body {
   right: 10px;
 }
 
+/* The shortcut of an item, on its right (`Data → 結合…`). */
+.titlebar-shortcut {
+  float: right;
+  margin-left: 24px;
+  color: #888;
+}
+
+.titlebar-item:disabled .titlebar-shortcut {
+  color: inherit;
+}
+
 .titlebar-backdrop {
   position: fixed;
   inset: 0;

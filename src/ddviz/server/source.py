@@ -31,7 +31,7 @@ from ddviz.server.plan import parse_filters
 from ddviz.server.settings import CacheSettings
 from ddviz.shared.cache import SCHEMA, ColumnCache, evict
 from ddviz.shared.generated import part_key
-from ddviz.shared.inputs import parquet_files, unique
+from ddviz.shared.inputs import input_label, parquet_files, unique
 from ddviz.shared.joined import (
     MAP_COLUMN,
     join_id,
@@ -633,12 +633,18 @@ class Source:
             self._count_joined(json.loads(path.read_text(encoding="utf-8")))
 
     def join_info(self) -> dict | None:
-        """Return the join for ``GET /api/source``, or None without one."""
+        """Return the join for ``GET /api/source``, or None without one.
+
+        ``"label"`` names the joined table as the window's title names an
+        input (`ddviz.shared.inputs.input_label`); the column list shows it
+        on the mark of the joined columns.
+        """
         join = self.joined
         if join is None:
             return None
         return {
             "paths": join.right.paths,
+            "label": input_label(join.right.paths),
             "recursive": join.right.recursive,
             "kind": join.kind,
             "keys": join.keys,
