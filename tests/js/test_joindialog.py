@@ -9,23 +9,38 @@ from playwright.sync_api import Page, expect
 
 pytestmark = pytest.mark.js
 
-# Opens the dialog, with the page's stylesheet, on a stub of the server: the input has `label`, `color`
-# and `x`, the table to join `label`, `score` and `color`; `/api/join`
-# answers 400 for the key `color` and records each body.
+# Opens the dialog, with the page's stylesheet, on a stub of the server: the
+# input has `label`, `color` and `x`, the table to join `label_1`, `label_2`,
+# `label`, `score` and `color`. The searches list 2 columns at most, the one
+# named `exact` first, as the server does; a read waits for
+# `window.readGate` when set; `/api/join` answers 400 for the key `color`
+# and records each body.
 OPEN = """async () => {
   const { JoinDialog } = await import("/static/js/joindialog.js");
-  const columns = { "/api/columns": ["label", "color", "x"], "/api/join/columns": ["label", "score", "color"] };
+  const columns = {
+    "/api/columns": ["label", "color", "x"],
+    "/api/join/columns": ["label_1", "label_2", "label", "score", "color"],
+  };
   window.joinBodies = [];
+  window.reads = [];
+  window.readGate = null;
   window.fetch = async (url, init) => {
     const answer = (body, status = 200) => new Response(JSON.stringify(body), { status });
     const [path, query] = String(url).split("?");
     if (path in columns) {
-      const q = new URLSearchParams(query).get("q").toLowerCase();
+      const params = new URLSearchParams(query);
+      const q = params.get("q").toLowerCase();
       const found = columns[path].filter((name) => name.includes(q));
-      return answer({ total: 3, matched: found.length, columns: found.map((name) => ({ name, dtype: "String", numeric: false, temporal: false })) });
+      found.sort((a, b) => (a !== params.get("exact")) - (b !== params.get("exact")));
+      const listed = found.slice(0, 2).map((name) => ({ name, dtype: "String", numeric: false, temporal: false }));
+      return answer({ total: columns[path].length, matched: found.length, columns: listed });
     }
     const body = JSON.parse(init.body);
-    if (path === "/api/join/source") return answer({ paths: body.paths, files: 2, rows: 1500, columns: 5, casts: [] });
+    if (path === "/api/join/source") {
+      window.reads.push(body);
+      if (window.readGate) await window.readGate;
+      return answer({ paths: body.paths, files: 2, rows: 1500, columns: 5, casts: [] });
+    }
     window.joinBodies.push(body);
     if (body.keys.some((key) => key.left === "color")) return answer({ detail: "結合する表でキーが重複しています" }, 400);
     return answer({ added: ["_joined", "score"], rows: 2000, matched: 1500 });
@@ -61,7 +76,7 @@ def _pick(page: Page, row: int, side: int, typed: str, name: str) -> None:
     """Type `typed` in a key's field and pick `name` among the candidates."""
     field = page.locator("#join-under-test .join-key").nth(row).locator(".join-key-input").nth(side)
     field.fill(typed)
-    page.locator("#join-under-test .join-candidate").filter(has_text=name).first.click()
+    page.locator(f'#join-under-test .join-candidate[data-name="{name}"]').click()
     expect(field).to_have_value(name)
 
 
@@ -193,7 +208,7 @@ def test_a_refused_join_tells_why_and_a_new_key_joins(dialog: Page) -> None:
     assert page.evaluate("document.getElementById('join-under-test').open")
     assert _state(page)["join"] is False
     _pick(page, 0, 0, "lab", "label")
-    _pick(page, 0, 1, "lab", "label")
+    _pick(page, 0, 1, "label", "label")
     page.locator("#join-under-test .join-run").click()
     page.wait_for_function("window.joinDone !== null")
     assert page.evaluate("document.getElementById('join-under-test').open") is False
@@ -205,3 +220,89 @@ def test_a_refused_join_tells_why_and_a_new_key_joins(dialog: Page) -> None:
         {"added": ["_joined", "score"], "rows": 2000, "matched": 1500},
         "key",
     ]
+
+
+def _candidates(page: Page) -> list[str]:
+    """Return the candidates listed under the focused field."""
+    return page.locator("#join-under-test .join-candidate").all_inner_texts()
+
+
+def test_a_column_of_the_name_typed_is_listed_past_the_limit(dialog: Page) -> None:
+    """The fields ask for the column of the name typed first: past the limit of the list it is still picked, and filled by its same name (review of #350)."""
+    page = dialog
+    _read(page)
+    right = page.locator("#join-under-test .join-key-input").nth(1)
+    right.fill("lab")
+    expect(page.locator("#join-under-test .join-candidate")).to_have_text(["label_1", "label_2"])
+    right.fill("label")
+    expect(page.locator("#join-under-test .join-candidate")).to_have_text(["label", "label_1"])
+    right.fill("")
+    page.locator("#join-under-test .join-paths").focus()
+    _pick(page, 0, 0, "label", "label")
+    expect(right).to_have_value("label")
+    assert _state(page)["fields"] == [["label", False, True], ["label", False, True]]
+
+
+def test_editing_what_was_read_waits_for_another_read(dialog: Page) -> None:
+    """Paths or the subfolders' check changed after `読む` take back the table read and its keys until another `読む`; spaces and blank lines do not (review of #350)."""
+    page = dialog
+    paths = page.locator("#join-under-test .join-paths")
+    result = page.locator("#join-under-test .join-source-result")
+    _read(page)
+    _pick(page, 0, 0, "label", "label")
+    expect(page.locator("#join-under-test .join-run")).to_be_enabled()
+
+    paths.fill("a.parquet\n  b.parquet  \n\n")
+    expect(result).to_have_text("2 ファイル・1,500 行・5 列")
+    assert _state(page)["join"] is False
+
+    paths.fill("a.parquet\nc.parquet")
+    expect(result).to_have_text("")
+    assert _state(page) == {
+        "fields": [["", True, False], ["", True, False]],
+        "remove": [True],
+        "add": True,
+        "join": True,
+        "keysHidden": False,
+    }
+    page.locator("#join-under-test .join-read").click()
+    expect(result).to_have_text("2 ファイル・1,500 行・5 列")
+    _pick(page, 0, 0, "label", "label")
+    expect(page.locator("#join-under-test .join-run")).to_be_enabled()
+
+    page.locator("#join-under-test .join-recursive").check()
+    expect(result).to_have_text("")
+    assert _state(page)["join"] is True
+    page.locator("#join-under-test input[value=rows]").check()
+    assert _state(page)["join"] is True
+    page.locator("#join-under-test .join-read").click()
+    expect(result).to_have_text("2 ファイル・1,500 行・5 列")
+    expect(page.locator("#join-under-test .join-run")).to_be_enabled()
+    assert page.evaluate("window.reads") == [
+        {"paths": ["a.parquet", "b.parquet"], "recursive": False},
+        {"paths": ["a.parquet", "c.parquet"], "recursive": False},
+        {"paths": ["a.parquet", "c.parquet"], "recursive": True},
+    ]
+
+
+def test_a_read_answered_after_an_edit_is_dropped(dialog: Page) -> None:
+    """Paths changed while a read is in flight drop its answer: `結合` stays off until the new paths are read (review of #350)."""
+    page = dialog
+    page.evaluate("() => { window.readGate = new Promise((resolve) => { window.openGate = resolve; }); }")
+    paths = page.locator("#join-under-test .join-paths")
+    result = page.locator("#join-under-test .join-source-result")
+    paths.fill("a.parquet")
+    page.locator("#join-under-test .join-read").click()
+    expect(result).to_have_text("読んでいます…")
+    page.locator("#join-under-test input[value=rows]").check()
+    paths.fill("b.parquet")
+    expect(result).to_have_text("")
+    page.evaluate("window.openGate()")
+    page.wait_for_timeout(100)
+    expect(result).to_have_text("")
+    assert _state(page)["join"] is True
+    page.evaluate("window.readGate = null")
+    page.locator("#join-under-test .join-read").click()
+    expect(result).to_have_text("2 ファイル・1,500 行・5 列")
+    expect(page.locator("#join-under-test .join-run")).to_be_enabled()
+    assert [r["paths"] for r in page.evaluate("window.reads")] == [["a.parquet"], ["b.parquet"]]

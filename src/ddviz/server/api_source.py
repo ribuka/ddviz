@@ -57,8 +57,11 @@ def source_router(source: Source, max_listed: Callable[[], int]) -> APIRouter:
         kind: str | None = None,
         min_share: float | None = None,
         order: str = "file",
+        exact: str | None = None,
     ) -> dict:
         """Return the first `max_listed` columns whose names hold every word of `q` (`ddviz.server.columns`).
+
+        A column named `exact` comes first (the join dialog's key fields).
 
         ``"shares"`` tells whether the non-null values are counted
         yet: ``"pending"``, ``"done"`` or ``"failed"``.
@@ -72,6 +75,7 @@ def source_router(source: Source, max_listed: Callable[[], int]) -> APIRouter:
                 source.nonnull_counts(),
                 min_share,
                 order,
+                exact,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error

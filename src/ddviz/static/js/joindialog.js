@@ -139,7 +139,10 @@ export class ColumnField {
     const mine = ++this.generation;
     let columns = null;
     try {
-      const response = await fetch(`${this.url}?${new URLSearchParams({ q: this.input.value })}`);
+      // The column of the name typed comes first: the limit of the list
+      // never leaves it out.
+      const query = new URLSearchParams({ q: this.input.value, exact: this.input.value });
+      const response = await fetch(`${this.url}?${query}`);
       if (response.ok) columns = (await response.json()).columns;
     } catch (error) {
       console.error(error);
@@ -233,6 +236,8 @@ export class JoinDialog {
     this.busy = false;
     // Raised at each open, close and read: an older answer is dropped.
     this.generation = 0;
+    // The paths and `recursive` read or being read (`sourceKey`).
+    this.readKey = null;
     this.build();
     dialog.addEventListener("cancel", (event) => {
       if (this.busy) event.preventDefault();
@@ -269,7 +274,7 @@ export class JoinDialog {
     const source = element("section", "join-section join-source");
     this.paths = element("textarea", "join-paths");
     Object.assign(this.paths, { rows: 3, spellcheck: false, placeholder: "Parquet のファイルかフォルダのパス（1 行に 1 つ）" });
-    this.paths.addEventListener("input", () => this.update());
+    this.paths.addEventListener("input", () => this.sourceEdited());
     const controls = element("div", "join-source-controls");
     this.chooseButtons = [];
     if (this.choose !== null) {
@@ -285,6 +290,7 @@ export class JoinDialog {
     const recursiveLabel = element("label", "join-recursive-label");
     this.recursive = element("input", "join-recursive");
     this.recursive.type = "checkbox";
+    this.recursive.addEventListener("change", () => this.sourceEdited());
     recursiveLabel.append(this.recursive, " フォルダのサブフォルダの Parquet も読む");
     this.readButton = button("join-read", "読む", () => this.readSource());
     controls.append(recursiveLabel, this.readButton);
@@ -354,6 +360,7 @@ export class JoinDialog {
     this.recursive.checked = false;
     this.read = false;
     this.reading = false;
+    this.readKey = null;
     this.busy = false;
     this.showSource("", false);
     this.casts.hidden = true;
@@ -361,6 +368,27 @@ export class JoinDialog {
     for (const radio of this.kindInputs) radio.checked = radio.value === "key";
     this.resetKeys();
     this.error.textContent = "";
+    this.update();
+  }
+
+  // The paths and `recursive` in the fields, as a read sends them.
+  sourceKey() {
+    return JSON.stringify([parsePaths(this.paths.value), this.recursive.checked]);
+  }
+
+  // The paths or `recursive` edited: once they differ from those read or
+  // being read, the table read is not theirs. Its keys go and `結合` waits
+  // for another `読む`; the answer of a read in flight is dropped.
+  sourceEdited() {
+    if ((this.read || this.reading) && this.sourceKey() !== this.readKey) {
+      this.generation++;
+      this.read = false;
+      this.reading = false;
+      this.readKey = null;
+      this.resetKeys();
+      this.showSource("", false);
+      this.casts.hidden = true;
+    }
     this.update();
   }
 
@@ -411,7 +439,7 @@ export class JoinDialog {
     const mine = this.generation;
     let columns = [];
     try {
-      const response = await fetch(`/api/join/columns?${new URLSearchParams({ q: name })}`);
+      const response = await fetch(`/api/join/columns?${new URLSearchParams({ q: name, exact: name })}`);
       if (response.ok) columns = (await response.json()).columns;
     } catch (error) {
       console.error(error);
@@ -473,6 +501,7 @@ export class JoinDialog {
     const paths = parsePaths(this.paths.value);
     if (!paths.length || this.busy || this.reading) return;
     const mine = ++this.generation;
+    this.readKey = this.sourceKey();
     this.reading = true;
     this.read = false;
     this.resetKeys();

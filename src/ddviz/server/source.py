@@ -104,6 +104,9 @@ class Source:
         self._cache_limits = cache_limits
         self._broker = broker
         self._schema: list[dict] | None = None
+        # The reads of a table to join started (`load_join_source`): only
+        # the latest keeps its table.
+        self._join_reads = 0
         self.files: list[Path] = []
         # Rows of each source file.
         self.rows: list[int] = []
@@ -484,11 +487,14 @@ class Source:
         Raises
         ------
         fastapi.HTTPException
-            409 ``already joined`` after a join; 400 as Load refuses an input.
+            409 ``already joined`` after a join, ``superseded`` when another
+            read started meanwhile; 400 as Load refuses an input.
         """
         await self.schema()
         if self.joined is not None:
             raise HTTPException(409, "already joined")
+        self._join_reads += 1
+        read = self._join_reads
         right = Source(
             paths,
             recursive,
@@ -503,6 +509,10 @@ class Source:
         columns = await right.schema()
         if self.joined is not None:
             raise HTTPException(409, "already joined")
+        # A read started later (the page read other paths meanwhile) wins,
+        # whichever ends first.
+        if read != self._join_reads:
+            raise HTTPException(409, "superseded")
         self.join_source = right
         return {
             "paths": right.paths,

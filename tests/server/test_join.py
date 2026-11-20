@@ -229,6 +229,14 @@ def test_a_join_by_keys_adds_the_matching_rows(
             "columns": 7,
             "casts": [],
         }
+        # The join dialog's fields ask for a column of the name typed first (Issue #344).
+        for path in ("/api/join/columns", "/api/columns"):
+            found = client.get(path, params={"q": "o", "exact": "lot"}).json()
+            assert found["columns"][0]["name"] == "lot", path
+            plain = client.get(path, params={"q": "o", "exact": "vendor"}).json()
+            assert [c["name"] for c in plain["columns"]][:1] == (
+                ["vendor"] if path == "/api/join/columns" else ["lot"]
+            ), path
         answer = client.post("/api/join", json={"kind": "key", "keys": keys}).json()
         matched = (expected["_joined"] == "both").sum()
         assert answer == {"added": added, "rows": 12, "matched": matched}
@@ -653,3 +661,35 @@ def test_columns_named_as_the_internal_ones_keep_their_values(tmp_path: Path, le
         refused = client.post("/api/join", json={"kind": "key", "keys": pair})
         assert refused.status_code == 400
         assert refused.json()["detail"] == "結合する表でキーが重複しています：1 組（例：(1, 5)）"
+
+
+def test_a_later_read_of_the_table_to_join_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A read that ends after a later one is refused and keeps nothing: the page read other paths meanwhile (Issue #344)."""
+    source, _ = _joining_source(tmp_path, "done")
+    source.join_source = None
+    read_schema = Source.schema
+    gate = asyncio.Event()
+
+    async def schema(self: Source) -> list[dict]:
+        if self is source:
+            return await read_schema(self)
+        if self.paths == ["first"]:
+            await gate.wait()
+        self.files, self.rows, self.casts = [Path(self.paths[0])], [2], []
+        return [{"name": "k"}]
+
+    monkeypatch.setattr(Source, "schema", schema)
+
+    async def reads() -> tuple[HTTPException, dict]:
+        first = asyncio.create_task(source.load_join_source(["first"], False))
+        await asyncio.sleep(0)
+        second = await source.load_join_source(["second"], False)
+        gate.set()
+        with pytest.raises(HTTPException) as raised:
+            await first
+        return raised.value, second
+
+    refused, second = asyncio.run(reads())
+    assert (refused.status_code, refused.detail) == (409, "superseded")
+    assert second["paths"] == ["second"]
+    assert source.join_source.paths == ["second"]

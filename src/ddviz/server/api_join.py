@@ -38,12 +38,12 @@ def join_router(source: Source, max_listed: Callable[[], int]) -> APIRouter:
         return await source.load_join_source(request.paths, request.recursive)
 
     @router.get("/api/join/columns")
-    async def join_columns(q: str = "") -> dict:
-        """Return the first `max_listed` columns of the table to join whose names hold every word of `q`, as ``/api/columns`` matches them."""
+    async def join_columns(q: str = "", exact: str | None = None) -> dict:
+        """Return the first `max_listed` columns of the table to join whose names hold every word of `q`, as ``/api/columns`` matches them, a column named `exact` first."""
         right = source.join_source
         if right is None:
             raise HTTPException(409, "no join source")
-        found = search_columns(await right.schema(), q, None, max_listed())
+        found = search_columns(await right.schema(), q, None, max_listed(), exact=exact)
         return {
             "total": found["total"],
             "matched": found["matched"],
