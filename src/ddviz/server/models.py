@@ -181,7 +181,8 @@ class JoinRequest(BaseModel):
 
     ``columns`` null adds all the columns of the joined table but its keys,
     with ``same_names`` deciding on those named like the input's
-    (``"rename"`` or ``"skip"``); a list adds those columns alone.
+    (``"rename"``, ``"skip_equal"`` or ``"skip"``); a list adds those
+    columns alone.
     """
 
     model_config = ConfigDict(extra="forbid")

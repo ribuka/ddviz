@@ -1,4 +1,4 @@
-"""E2E: the join dialog, opened with Ctrl+J, joins another table to the input (Issue #344), all its columns or some (Issue #358).
+"""E2E: the join dialog, opened with Ctrl+J, joins another table to the input (Issue #344), all its columns or some (Issue #358), maybe but those of the same values (Issue #359).
 
 The input is `scatter_path` (2,003 rows, ``label`` unique); the table to
 join is `join_paths` (conftest.py).
@@ -62,12 +62,12 @@ def pick_added(page: Page, row: int, typed: str, name: str) -> None:
     expect(field).to_have_value(name)
 
 
-def read_source(page: Page, paths: list[Path]) -> None:
-    """Enter `paths` in the dialog and read them."""
+def read_source(page: Page, paths: list[Path], found: str = "2 ファイル・1,500 行・5 列") -> None:
+    """Enter `paths` in the dialog, read them and wait for the table read, `found`."""
     dialog = join_dialog(page)
     dialog.locator(".join-paths").fill("\n".join(str(p) for p in paths))
     dialog.get_by_role("button", name="読む").click()
-    expect(dialog.locator(".join-source-result")).to_have_text("2 ファイル・1,500 行・5 列")
+    expect(dialog.locator(".join-source-result")).to_have_text(found)
 
 
 def run_join(page: Page, toast: str = JOINED_TOAST) -> None:
@@ -205,14 +205,34 @@ def test_only_the_columns_picked_are_added(join_page: Page, join_paths: list[Pat
 
 
 def test_columns_named_like_the_input_s_are_left_out(join_page: Page, join_paths: list[Path]) -> None:
-    """`元の表と同じ名前の列は足さない` leaves `color` out, not as `color_joined`, and the toast tells it (Issue #358)."""
+    """`足さない` for the same names leaves `color` out, not as `color_joined`, and the toast tells it (Issue #358)."""
     page = join_page
     page.keyboard.press("Control+j")
     read_source(page, join_paths)
     pick(page, 0, 0, "lab", "label")
-    join_dialog(page).get_by_label("元の表と同じ名前の列は足さない").check()
+    join_dialog(page).get_by_label("足さない", exact=True).check()
     run_join(
         page,
         "4 列を結合しました。元の表の 74.9% の行が結合できました。元の表と同じ名前の 1 列は足しませんでした。",
     )
     assert [name for name, _, _ in joined_marks(page)] == ["_joined", "score", "source_joined", "filename_joined"]
+
+
+def test_columns_of_the_same_values_are_left_out(join_page: Page, equal_paths: list[Path]) -> None:
+    """`中身も同じなら足さない` leaves out `color`, of the input's values, adds `facet`, of others, as `facet_joined`, and the toast tells it (Issue #359)."""
+    page = join_page
+    page.keyboard.press("Control+j")
+    read_source(page, equal_paths, "2 ファイル・1,500 行・6 列")
+    pick(page, 0, 0, "lab", "label")
+    join_dialog(page).get_by_label("中身も同じなら足さない").check()
+    run_join(
+        page,
+        "5 列を結合しました。元の表の 74.9% の行が結合できました。元の表と名前も中身も同じ 1 列は足しませんでした。",
+    )
+    assert [name for name, _, _ in joined_marks(page)] == [
+        "_joined",
+        "facet_joined",
+        "score",
+        "source_joined",
+        "filename_joined",
+    ]

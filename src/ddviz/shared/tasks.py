@@ -207,6 +207,36 @@ class JoinConvertTask:
 
 
 @dataclass(frozen=True)
+class JoinEqualTask:
+    """Find the columns of the joined table named like the input's that hold the same values in the rows joined (`ddviz.compute.join`).
+
+    Parameters
+    ----------
+    pairs : list of dict of str to str
+        The columns to compare, ``{"left", "right"}``: a column of the input
+        and the one of the joined table named alike.
+    left : dict of str to list of str
+        The parts of the input's columns in its column cache, one per file.
+    right : dict of str to list of str
+        The parts of the joined table's columns in its column cache.
+    rows : list of int
+        The rows of each file of the input.
+    maps : list of str
+        For a join by keys, the part of the map of each file of the input
+        (`ddviz.shared.joined.MAP_COLUMN`); empty for a join by rows, where
+        a file holds the joined table's rows from the rows of the files
+        before.
+    """
+
+    KIND: ClassVar[str] = "join_equal"
+    pairs: list[dict[str, str]]
+    left: dict[str, list[str]]
+    right: dict[str, list[str]]
+    rows: list[int]
+    maps: list[str]
+
+
+@dataclass(frozen=True)
 class PlotTask:
     """Aggregate a plot and write its images and hover files.
 
@@ -365,6 +395,7 @@ Task = (
     | ConvertTask
     | JoinTask
     | JoinConvertTask
+    | JoinEqualTask
     | PlotTask
     | SelectionTask
     | TableTask
@@ -381,6 +412,7 @@ TASKS: dict[str, type[Task]] = {
         ConvertTask,
         JoinTask,
         JoinConvertTask,
+        JoinEqualTask,
         PlotTask,
         SelectionTask,
         TableTask,

@@ -128,7 +128,7 @@ def test_build_writes_the_format_and_the_paths_from_the_file() -> None:
     )
     assert content == {
         "format": "ddviz-draw-settings",
-        "version": 3,
+        "version": 4,
         "app_version": "0.1.6",
         "saved_at": "2026-11-18T14:30:00+09:00",
         "source": {
@@ -193,12 +193,13 @@ def test_parse_reads_what_build_wrote() -> None:
             _text(source={"paths": [], "relative": None, "recursive": False, "join": None}),
             "描画設定のファイルを読めませんでした：キー source.paths の値の形が違います",
         ),
-        (_text(version=1), "この描画設定は読めません（版 1。この ddviz は版 3 を読みます）"),
-        (_text(version=2), "この描画設定は読めません（版 2。この ddviz は版 3 を読みます）"),
+        (_text(version=1), "この描画設定は読めません（版 1。この ddviz は版 4 を読みます）"),
+        (_text(version=2), "この描画設定は読めません（版 2。この ddviz は版 4 を読みます）"),
+        (_text(version=3), "この描画設定は読めません（版 3。この ddviz は版 4 を読みます）"),
     ],
     ids=[
         "broken", "not-object", "format", "version-key", "settings", "columns", "relative", "paths", "version-1",
-        "version-2",
+        "version-2", "version-3",
     ],
 )
 def test_parse_refuses_with_the_message_shown(text: str, message: str) -> None:
@@ -325,7 +326,11 @@ def test_build_writes_the_join_with_its_paths_from_the_file() -> None:
     content = build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, None, "0", join=JOIN)
     assert content["source"]["join"] == {**JOIN, "relative": None}
     assert build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, json_path, "0")["source"]["join"] is None
-    for added in ({"columns": ["yield", "line"], "same_names": "rename"}, {"columns": None, "same_names": "skip"}):
+    for added in (
+        {"columns": ["yield", "line"], "same_names": "rename"},
+        {"columns": None, "same_names": "skip"},
+        {"columns": None, "same_names": "skip_equal"},
+    ):
         content = build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, None, "0", join={**JOIN, **added})
         assert content["source"]["join"] == {**JOIN, **added, "relative": None}
 
@@ -339,8 +344,9 @@ def test_build_writes_the_join_with_its_paths_from_the_file() -> None:
         _joined(relative=["a", "b"], recursive=True),
         _joined(columns=["yield", "line"]),
         _joined(same_names="skip"),
+        _joined(same_names="skip_equal"),
     ],
-    ids=["null", "key", "rows", "relative", "columns", "skip"],
+    ids=["null", "key", "rows", "relative", "columns", "skip", "skip-equal"],
 )
 def test_parse_reads_a_join(join: dict | None) -> None:
     """A null join, or one of either kind with or without relative paths, all its columns or some, reads back."""

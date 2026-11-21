@@ -1,4 +1,4 @@
-"""The join of another table to the input, by keys or by rows (Issue #343), with all its columns or some (Issue #358)."""
+"""The join of another table to the input, by keys or by rows (Issue #343), with all its columns or some (Issue #358), maybe but those of the same values (Issue #359)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from ddviz.server.settings import CacheSettings
 from ddviz.server.source import Source
 from ddviz.shared.cache import ColumnCache
 from ddviz.shared.manifest import write_manifest
-from ddviz.shared.tasks import JoinTask
+from ddviz.shared.tasks import JoinEqualTask, JoinTask
 from tests.server.test_source_columns import (
     first_table_page,
     plot_body,
@@ -506,32 +506,42 @@ def test_a_join_by_rows_counts_the_joined_table(
 
 
 class _JoinBroker:
-    """A broker recording `Source.converting` when it gets the join task, which ends as told."""
+    """A broker recording the kind of each task it gets with `Source.converting`; the task of the kind `fails` fails.
 
-    def __init__(self, end: str, out: Path) -> None:
-        self.end = end
+    The join task matches 1 row; the comparison finds ``v`` of the same values.
+    """
+
+    def __init__(self, fails: str | None, out: Path) -> None:
+        self.fails = fails
         self.out = out
-        self.seen: list[bool] = []
+        self.seen: list[tuple[str, bool]] = []
         self.source: Source | None = None
 
     async def run(self, task: object, pool: str = "plot") -> TaskEnd:
-        assert isinstance(task, JoinTask)
-        self.seen.append(self.source.converting)
+        assert isinstance(task, JoinTask | JoinEqualTask)
+        self.seen.append((task.KIND, self.source.converting))
         await asyncio.sleep(0)
         self.out.mkdir(parents=True, exist_ok=True)
-        write_manifest(self.out, {"kind": "join", "matched": 1})
-        return TaskEnd(0, self.out, {"type": self.end, "message": "the join failed"})
+        if isinstance(task, JoinTask):
+            write_manifest(self.out, {"kind": "join", "matched": 1})
+        else:
+            write_manifest(self.out, {"kind": "join_equal", "equal": ["v"]})
+        end = "error" if self.fails == task.KIND else "done"
+        return TaskEnd(0, self.out, {"type": end, "message": f"the {task.KIND} task failed"})
 
 
-def _joining_source(tmp_path: Path, end: str) -> tuple[Source, _JoinBroker]:
-    """Return a source with a joined table read, whose keys are converted, and its broker."""
-    broker = _JoinBroker(end, tmp_path / "task")
+def _joining_source(tmp_path: Path, fails: str | None = None) -> tuple[Source, _JoinBroker]:
+    """Return a source of ``k`` and ``v`` with a joined table of the same columns read, whose columns are converted, and its broker."""
+    broker = _JoinBroker(fails, tmp_path / "task")
     sources = []
     for name in ("a", "b"):
-        file = write_parquet_file(tmp_path / f"{name}.parquet", pl.DataFrame({"k": [1, 2]}))
+        file = write_parquet_file(tmp_path / f"{name}.parquet", pl.DataFrame({"k": [1, 2], "v": [1.0, 2.0]}))
         source = Source([str(file)], False, tmp_path / "cache", tmp_path / "index", CacheSettings, broker)
-        source._schema = [{"name": "k", "dtype": "Int64", "numeric": True, "temporal": None, "joined": False}]
-        source._dtypes = {"k": "Int64"}
+        source._schema = [
+            {"name": "k", "dtype": "Int64", "numeric": True, "temporal": None, "joined": False},
+            {"name": "v", "dtype": "Float64", "numeric": True, "temporal": None, "joined": False},
+        ]
+        source._dtypes = {"k": "Int64", "v": "Float64"}
         source.rows = [2]
         source.files = [file]
         source.cache = ColumnCache(tmp_path / "cache", [file], [file])
@@ -544,21 +554,56 @@ def _joining_source(tmp_path: Path, end: str) -> tuple[Source, _JoinBroker]:
 
 def test_converting_is_on_while_the_join_task_runs(tmp_path: Path) -> None:
     """The join task runs with plots refused, and lets them again once done."""
-    source, broker = _joining_source(tmp_path, "done")
+    source, broker = _joining_source(tmp_path)
     asyncio.run(source.join("key", [{"left": "k", "right": "k"}]))
-    assert broker.seen == [True]
+    assert broker.seen == [("join", True)]
     assert source.converting is False
 
 
 def test_converting_is_off_after_a_failed_join(tmp_path: Path) -> None:
     """A join task that fails leaves the source not converting and not joined."""
-    source, broker = _joining_source(tmp_path, "error")
+    source, broker = _joining_source(tmp_path, "join")
     with pytest.raises(HTTPException) as raised:
         asyncio.run(source.join("key", [{"left": "k", "right": "k"}]))
-    assert (raised.value.status_code, raised.value.detail) == (500, "the join failed")
-    assert broker.seen == [True]
+    assert (raised.value.status_code, raised.value.detail) == (500, "the join task failed")
+    assert broker.seen == [("join", True)]
     assert source.converting is False
     assert source.joined is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "keys", "seen", "added"),
+    [
+        ("key", [{"left": "k", "right": "k"}], [("join", True), ("join_equal", True)], ["_joined"]),
+        ("rows", [], [("join_equal", True)], ["k_joined"]),
+    ],
+    ids=["key", "rows"],
+)
+def test_converting_is_on_while_the_comparison_runs(
+    tmp_path: Path, kind: str, keys: list[dict], seen: list[tuple[str, bool]], added: list[str]
+) -> None:
+    """On ``"skip_equal"``, the comparison runs with plots refused, after the join task by keys, and lets them again once done."""
+    source, broker = _joining_source(tmp_path)
+    answer = asyncio.run(source.join(kind, keys, same_names="skip_equal"))
+    assert (answer["added"], answer["skipped"]) == (added, ["v"])
+    assert broker.seen == seen
+    assert source.converting is False
+
+
+@pytest.mark.parametrize(
+    ("kind", "keys"), [("key", [{"left": "k", "right": "k"}]), ("rows", [])], ids=["key", "rows"]
+)
+def test_converting_is_off_after_a_failed_comparison(tmp_path: Path, kind: str, keys: list[dict]) -> None:
+    """A comparison that fails is a 500 with the worker's reason, leaving the source not converting, not joined, and its columns as before."""
+    source, broker = _joining_source(tmp_path, "join_equal")
+    schema = asyncio.run(source.schema())
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(source.join(kind, keys, same_names="skip_equal"))
+    assert (raised.value.status_code, raised.value.detail) == (500, "the join_equal task failed")
+    assert broker.seen[-1] == ("join_equal", True)
+    assert source.converting is False
+    assert source.joined is None
+    assert asyncio.run(source.schema()) == schema
 
 
 def test_another_spelling_of_the_paths_joins_its_own_values(
@@ -646,7 +691,7 @@ def test_columns_named_as_the_internal_ones_keep_their_values(
 
 def test_a_later_read_of_the_table_to_join_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A read that ends after a later one is refused and keeps nothing: the page read other paths meanwhile (Issue #344)."""
-    source, _ = _joining_source(tmp_path, "done")
+    source, _ = _joining_source(tmp_path)
     source.join_source = None
     read_schema = Source.schema
     gate = asyncio.Event()
@@ -818,3 +863,105 @@ def test_columns_to_add_given_wrong_are_refused(
         again = client.post("/api/join", json={"kind": "key", "keys": KEYS_ONE, "columns": ["score"]})
         assert again.status_code == 200, again.text
         assert again.json()["added"] == ["_joined", "score"]
+
+
+# ---- the columns of the same values (Issue #359) ----
+
+
+@pytest.fixture
+def equal_left(tmp_path: Path) -> Path:
+    """Return an input of 3 files, 8 rows of ``id`` 1 to 8, with the columns `equal_right` has named alike."""
+    root = tmp_path / "eq_left"
+    for name, ids in (("e1", [1, 2, 3]), ("e2", [4, 5]), ("e3", [6, 7, 8])):
+        xs = [float(i) for i in ids]
+        frame = pl.DataFrame(
+            {
+                "id": ids,
+                "x": xs,
+                "y": xs,
+                "same": xs,
+                "differ": xs,
+                "nulls": [None if i in (2, 5) else x for i, x in zip(ids, xs, strict=True)],
+                "half": xs,
+                "wide": ids,
+                "day": [date(2026, 1, i) for i in ids],
+                "tags": [[i] for i in ids],
+            },
+            schema_overrides={"wide": pl.Int32},
+        )
+        write_parquet_file(root / f"{name}.parquet", frame)
+    return root
+
+
+@pytest.fixture
+def equal_right(tmp_path: Path) -> Path:
+    """Return a joined table of 1 file matching ``id`` 1, 2, 4, 5, 6 and 7 of `equal_left`, of columns named like the input's.
+
+    ``same`` holds the input's values in the rows joined, ``differ`` too but
+    in the last row joined of the last file (``id`` 7), ``nulls`` the same
+    nulls, ``half`` a null where the input has a value (``id`` 4), ``wide``
+    the same values in Int64 (Int32 in the input), ``day`` Boolean (Date in
+    the input), and ``tags`` the same lists.
+    """
+    ids = [1, 2, 4, 5, 6, 7]
+    xs = [float(i) for i in ids]
+    frame = pl.DataFrame(
+        {
+            "id": ids,
+            "same": xs,
+            "differ": [70.0 if i == 7 else x for i, x in zip(ids, xs, strict=True)],
+            "nulls": [None if i in (2, 5) else x for i, x in zip(ids, xs, strict=True)],
+            "half": [None if i == 4 else x for i, x in zip(ids, xs, strict=True)],
+            "wide": ids,
+            "day": [i % 2 == 0 for i in ids],
+            "tags": [[i] for i in ids],
+        }
+    )
+    root = tmp_path / "eq_right"
+    write_parquet_file(root / "r.parquet", frame)
+    return root
+
+
+def test_columns_of_the_same_values_in_the_rows_joined_are_left_out_on_skip_equal(
+    serve: Callable[..., AbstractContextManager[TestClient]], equal_left: Path, equal_right: Path
+) -> None:
+    """``"skip_equal"`` leaves out the columns of the same values in the rows joined, nulls and types cast alike, and adds the others renamed."""
+    keys = [{"left": "id", "right": "id"}]
+    answer, listed, values = _joined_values(
+        serve, equal_left, equal_right, {"kind": "key", "keys": keys, "same_names": "skip_equal"}
+    )
+    added = ["_joined", "differ_joined", "half_joined", "day_joined", "tags_joined"]
+    assert (answer["added"], answer["skipped"], listed) == (added, ["same", "nulls", "wide"], added)
+    assert values["differ_joined"] == [1.0, 2.0, None, 4.0, 5.0, 6.0, 70.0, None]
+
+
+def test_columns_are_compared_in_every_row_by_rows(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], equal_left: Path
+) -> None:
+    """By rows, ``"skip_equal"`` compares every row: a column different in the last row is added renamed; none left is refused."""
+    xs = [float(i) for i in range(1, 9)]
+    root = tmp_path / "eq_rows"
+    write_parquet_file(root / "p.parquet", pl.DataFrame({"same": xs, "differ": [*xs[:-1], 80.5]}))
+    answer, listed, _ = _joined_values(serve, equal_left, root, {"kind": "rows", "same_names": "skip_equal"})
+    assert (answer["added"], answer["skipped"], listed) == (["differ_joined"], ["same"], ["differ_joined"])
+
+    alone = tmp_path / "eq_alone"
+    write_parquet_file(alone / "p.parquet", pl.DataFrame({"same": xs}))
+    with serve([equal_left]) as client:
+        schema = client.get("/api/schema").json()
+        client.post("/api/join/source", json={"paths": [str(alone)]})
+        refused = client.post("/api/join", json={"kind": "rows", "same_names": "skip_equal"})
+        assert refused.status_code == 400
+        assert refused.json()["detail"] == "足す列がありません：結合する表の列はすべて元の表と同じ名前です"
+        assert client.get("/api/schema").json() == schema
+
+
+def test_no_row_joined_leaves_out_no_column(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], equal_left: Path
+) -> None:
+    """By keys matching no row, nothing is compared alike: the columns named like the input's are added renamed."""
+    root = tmp_path / "eq_none"
+    write_parquet_file(root / "r.parquet", pl.DataFrame({"id": [100, 101], "same": [1.0, 2.0]}))
+    keys = [{"left": "id", "right": "id"}]
+    answer, _, _ = _joined_values(serve, equal_left, root, {"kind": "key", "keys": keys, "same_names": "skip_equal"})
+    assert (answer["added"], answer["skipped"], answer["matched"]) == (["_joined", "same_joined"], [], 0)

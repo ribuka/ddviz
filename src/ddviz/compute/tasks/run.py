@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ddviz.compute.convert import convert_columns
-from ddviz.compute.join import run_join, run_join_convert
+from ddviz.compute.join import run_join, run_join_convert, run_join_equal
 from ddviz.compute.progress import Emit
 from ddviz.compute.tasks.columns import run_nonnull, run_schema, run_summary
 from ddviz.compute.tasks.levels import run_level_index, run_level_search
@@ -16,6 +16,7 @@ from ddviz.compute.tasks.table import run_table
 from ddviz.shared.tasks import (
     ConvertTask,
     JoinConvertTask,
+    JoinEqualTask,
     JoinTask,
     LevelIndexTask,
     LevelSearchTask,
@@ -38,6 +39,7 @@ RUNNERS: dict[type, Callable[[Task, Path, Emit], None]] = {
     ConvertTask: lambda t, _out, emit: convert_columns(t, emit),
     JoinTask: run_join,
     JoinConvertTask: run_join_convert,
+    JoinEqualTask: run_join_equal,
     PlotTask: lambda t, out, emit: run_plot(t.spec, out, emit),
     SelectionTask: lambda t, out, emit: run_selection(t.spec, out, emit),
     TableTask: run_table,

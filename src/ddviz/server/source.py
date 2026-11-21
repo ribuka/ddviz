@@ -33,6 +33,7 @@ from ddviz.server.join import (
     check_keys,
     check_rows,
     chosen,
+    compared,
 )
 from ddviz.server.plan import parse_filters
 from ddviz.server.settings import CacheSettings
@@ -51,6 +52,7 @@ from ddviz.shared.tasks import (
     ConvertTask,
     JoinConvertTask,
     JoinedFiles,
+    JoinEqualTask,
     JoinTask,
     LevelIndexTask,
     LevelSearchTask,
@@ -540,7 +542,9 @@ class Source:
 
         A join by keys runs the join task in the plot pool (plots are
         refused meanwhile, as while converting), after converting the keys
-        of both tables. Its columns then follow the input's
+        of both tables. On ``"skip_equal"``, the columns named like the
+        input's are then compared (`_run_equal`), still with plots refused.
+        Its columns then follow the input's
         (`ddviz.shared.joined.joined_names`). A refused join adds nothing,
         and the table read stays for another try.
 
@@ -555,15 +559,18 @@ class Source:
             by default, for all but its keys.
         same_names : str, optional
             For all the columns, what to do with one named like a column of
-            the input: ``"rename"``, by default, adds it renamed, ``"skip"``
-            leaves it out (`ddviz.server.join.chosen`).
+            the input: ``"rename"``, by default, adds it renamed,
+            ``"skip_equal"`` leaves it out when the rows joined hold the
+            same values in both, ``"skip"`` leaves it out
+            (`ddviz.server.join.chosen`).
 
         Returns
         -------
         dict
             ``{"added", "rows", "matched", "skipped"}``: the columns added,
             the rows of the input, those a row of the joined table matched,
-            and the columns of the joined table left out by name.
+            and the columns of the joined table left out by name (on
+            ``"skip_equal"``, those of the same values).
 
         Raises
         ------
@@ -587,8 +594,7 @@ class Source:
             plain, generated, skipped = chosen(
                 [c["name"] for c in right._schema], right._generated, keys, columns, same_names, self._dtypes
             )
-            names = joined_names(self._dtypes, plain, generated, kind == "key")
-            check_added(kind, names)
+            pairs = compared(plain, self._dtypes, right._dtypes) if same_names == "skip_equal" else []
             typed = [
                 {**k, "left_dtype": self._dtypes[k["left"]], "right_dtype": right._dtypes[k["right"]]}
                 for k in keys
@@ -597,12 +603,52 @@ class Source:
             rows = self.rows if kind == "rows" else []
             given = [str(Path(p).absolute()) for p in [*self.paths, *right.paths]]
             id_ = join_id(kind, right.cache.key, files, typed, rows, given)
-            maps: list[str] = []
-            task = None
-            matched = sum(self.rows)
+            maps, task, matched, equal = await self._run_tasks(kind, keys, right, id_, pairs)
+            if pairs:
+                skipped = [c for c in pairs if c in equal]
+                plain = [c for c in plain if c not in equal]
+            names = joined_names(self._dtypes, plain, generated, kind == "key")
+            check_added(kind, names)
+            join = Join(right, kind, keys, columns, same_names, names, id_, matched, maps, task)
+            self._add_join(join)
+        return {"added": list(names), "rows": sum(self.rows), "matched": matched, "skipped": skipped}
+
+    async def _run_tasks(
+        self, kind: str, keys: list[dict[str, str]], right: Source, id_: str, pairs: list[str]
+    ) -> tuple[list[str], JoinTask | None, int, set[str]]:
+        """Run the tasks of a join, with plots refused meanwhile: the join task by keys, then the comparison of `pairs`.
+
+        Parameters
+        ----------
+        kind : str
+            ``"key"`` or ``"rows"``.
+        keys : list of dict of str to str
+            The pairs of keys; empty for ``"rows"``.
+        right : Source
+            The joined table.
+        id_ : str
+            The join (`ddviz.shared.joined.join_id`).
+        pairs : list of str
+            The columns named alike in both tables to compare; empty for none.
+
+        Returns
+        -------
+        tuple of (list of str, JoinTask or None, int, set of str)
+            The parts of the map and the join task (by keys; else empty and
+            None), the rows of the input matched, and the columns of
+            `pairs` holding the same values.
+        """
+        maps: list[str] = []
+        task = None
+        matched = sum(self.rows)
+        equal: set[str] = set()
+        if kind == "rows" and not pairs:
+            return maps, task, matched, equal
+        self.converting = True
+        try:
             if kind == "key":
                 maps = [str(p) for p in self.cache.parts(MAP_COLUMN, map_part_key(id_))]
-                indicator = next(iter(names))
+                indicator = next(iter(joined_names(self._dtypes, [], {}, True)))
                 task = JoinTask(
                     keys,
                     {k["left"]: self.parts(k["left"]) for k in keys},
@@ -613,14 +659,31 @@ class Source:
                     indicator,
                     [str(p) for p in self.cache.parts(indicator, joined_part_key("String", id_, None))],
                 )
-                self.converting = True
-                try:
-                    matched = await self._run_join(task, keys, right)
-                finally:
-                    self.converting = False
-            join = Join(right, kind, keys, columns, same_names, names, id_, matched, maps, task)
-            self._add_join(join)
-        return {"added": list(names), "rows": sum(self.rows), "matched": matched, "skipped": skipped}
+                matched = await self._run_join(task, keys, right)
+            if pairs:
+                equal = await self._run_equal(pairs, right, maps)
+        finally:
+            self.converting = False
+        return maps, task, matched, equal
+
+    async def _run_equal(self, pairs: list[str], right: Source, maps: list[str]) -> set[str]:
+        """Convert the columns of `pairs` in both tables, compare them in the rows joined and return those of the same values (`ddviz.compute.join.run_join_equal`)."""
+        gaps = await asyncio.to_thread(self.missing, pairs)
+        if gaps:
+            await self._convert_files(gaps, "plot")
+        gaps = await asyncio.to_thread(right.missing, pairs)
+        if gaps:
+            await right._convert(gaps, "plot")
+        task = JoinEqualTask(
+            [{"left": c, "right": c} for c in pairs],
+            {c: self.parts(c) for c in pairs},
+            {c: right.parts(c) for c in pairs},
+            self.rows,
+            maps,
+        )
+        end = await self._broker.run(task, "plot")
+        ensure_done(end)
+        return set(end.take()["equal"])
 
     async def _run_join(
         self, task: JoinTask, keys: list[dict[str, str]], right: Source

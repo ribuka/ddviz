@@ -52,7 +52,7 @@ OPEN = """async () => {
   dialog.id = "join-under-test";
   document.body.append(dialog);
   window.joinDone = null;
-  const join = new JoinDialog(dialog, { joined: (answer, kind) => { window.joinDone = [answer, kind]; } });
+  const join = new JoinDialog(dialog, { joined: (answer, kind, sameNames) => { window.joinDone = [answer, kind, sameNames]; } });
   window.joinDialog = join;
   join.open();
 }"""
@@ -109,9 +109,17 @@ def test_the_texts_and_when_it_may_join(js_page: Page) -> None:
             byKey: m.joinedText({ added: ["a", "b", "c"], rows: 2003, matched: 1500 }, "key"),
             none: m.joinedText({ added: ["a"], rows: 0, matched: 0 }, "key"),
             byRows: m.joinedText({ added: ["a", "b"], rows: 10, matched: 10 }, "rows"),
-            skippedByKey: m.joinedText({ added: ["a", "b", "c"], rows: 2003, matched: 1500, skipped: ["d", "e"] }, "key"),
-            skippedByRows: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: Array(1200).fill("d") }, "rows"),
-            noneSkipped: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: [] }, "rows"),
+            skippedByKey: m.joinedText({ added: ["a", "b", "c"], rows: 2003, matched: 1500, skipped: ["d", "e"] }, "key", "skip"),
+            skippedByRows: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: Array(1200).fill("d") }, "rows", "skip"),
+            noneSkipped: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: [] }, "rows", "skip"),
+            equalByKey: m.joinedText({ added: ["a", "b"], rows: 4, matched: 2, skipped: ["d"] }, "key", "skip_equal"),
+            equalByRows: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: Array(1200).fill("d") }, "rows", "skip_equal"),
+            noneEqual: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: [] }, "rows", "skip_equal"),
+            renamed: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: [] }, "rows", "rename"),
+            comparing: [
+              m.comparingText({ type: "progress", stage: "compare", done: 0, total: 10, column: "temp" }),
+              m.comparingText({ type: "progress", stage: "compare", done: 1199, total: 1200, column: "lot id" }),
+            ],
             picked: [
               m.joinReady(true, "rows", [], []),
               m.joinReady(true, "rows", [], ["a", null]),
@@ -140,6 +148,14 @@ def test_the_texts_and_when_it_may_join(js_page: Page) -> None:
         "skippedByKey": "3 列を結合しました。元の表の 74.9% の行が結合できました。元の表と同じ名前の 2 列は足しませんでした。",
         "skippedByRows": "1 列を結合しました。元の表と同じ名前の 1,200 列は足しませんでした。",
         "noneSkipped": "1 列を結合しました。",
+        "equalByKey": "2 列を結合しました。元の表の 50.0% の行が結合できました。元の表と名前も中身も同じ 1 列は足しませんでした。",
+        "equalByRows": "1 列を結合しました。元の表と名前も中身も同じ 1,200 列は足しませんでした。",
+        "noneEqual": "1 列を結合しました。",
+        "renamed": "1 列を結合しました。",
+        "comparing": [
+            "同じ名前の列を比べています（1 / 10）：temp",
+            "同じ名前の列を比べています（1200 / 1200）：lot id",
+        ],
         "picked": [False, False, True, False, True, False, False],
         "ready": [False, True, True, False, False],
     }
@@ -236,6 +252,7 @@ def test_a_refused_join_tells_why_and_a_new_key_joins(dialog: Page) -> None:
     assert page.evaluate("window.joinDone") == [
         {"added": ["_joined", "score"], "rows": 2000, "matched": 1500},
         "key",
+        "rename",
     ]
 
 
@@ -326,18 +343,25 @@ def test_a_read_answered_after_an_edit_is_dropped(dialog: Page) -> None:
 
 
 def _added(page: Page) -> dict:
-    """Return the section `足す列`: the radios and the check (checked, disabled), what is hidden, and the lines of the columns."""
+    """Return the section `足す列`: the radios of the mode and of the same names (checked, disabled, the label and the texts of the latter), what is hidden, and the lines of the columns."""
     return page.evaluate(
         """() => {
           const section = document.querySelector("#join-under-test .join-added");
-          const radios = [...section.querySelectorAll("input[type=radio]")];
-          const skip = section.querySelector(".join-skip");
+          const radios = [...section.querySelectorAll(".join-added-mode input")];
+          const same = section.querySelector(".join-same-names");
+          const sames = [...same.querySelectorAll("input[type=radio]")];
           const add = section.querySelector(".join-add-column");
           return {
             hidden: section.hidden,
             mode: radios.filter((e) => e.checked).map((e) => e.value),
             radiosOff: radios.map((e) => e.disabled),
-            skip: [skip.checked, skip.disabled, skip.closest("label").hidden],
+            same: {
+              label: same.querySelector(".join-same-names-label").textContent,
+              texts: sames.map((e) => [e.value, e.closest("label").textContent.trim()]),
+              checked: sames.filter((e) => e.checked).map((e) => e.value),
+              off: sames.map((e) => e.disabled),
+              hidden: same.hidden,
+            },
             listHidden: section.querySelector(".join-added-columns").hidden,
             fields: [...section.querySelectorAll(".join-added-column .join-key-input")].map((e) => [e.value, e.disabled, e.placeholder]),
             remove: [...section.querySelectorAll(".join-remove-column")].map((e) => e.disabled),
@@ -356,19 +380,21 @@ def _pick_added(page: Page, row: int, typed: str, name: str) -> None:
 
 
 def _choose_added(page: Page) -> None:
-    """Check `元の表と同じ名前の列は足さない`, then pick `score` and add an empty line under `選んだ列だけ`."""
-    page.locator("#join-under-test .join-skip").check()
+    """Choose `足さない` for the same names, then pick `score` and add an empty line under `選んだ列だけ`."""
+    page.locator("#join-under-test .join-same-names input[value=skip]").check()
     page.locator("#join-under-test .join-added input[value=picked]").check()
     _pick_added(page, 0, "sco", "score")
     page.locator("#join-under-test .join-add-column").click()
 
 
+# The radios of the same names, in order, with their texts.
+SAME_TEXTS = [["rename", "名前を変えて足す"], ["skip_equal", "中身も同じなら足さない"], ["skip", "足さない"]]
 # The section as each open and read starts it, once the table is read.
 DEFAULT_ADDED = {
     "hidden": False,
     "mode": ["all"],
     "radiosOff": [False, False],
-    "skip": [False, False, False],
+    "same": {"label": "元の表と同じ名前の列：", "texts": SAME_TEXTS, "checked": ["rename"], "off": [False] * 3, "hidden": False},
     "listHidden": True,
     "fields": [["", False, "結合する表の列"]],
     "remove": [True],
@@ -378,14 +404,14 @@ DEFAULT_ADDED = {
 UNREAD_ADDED = {
     **DEFAULT_ADDED,
     "radiosOff": [True, True],
-    "skip": [False, True, False],
+    "same": {**DEFAULT_ADDED["same"], "off": [True] * 3},
     "fields": [["", True, "結合する表の列"]],
     "add": [True, True],
 }
 
 
 def test_the_columns_to_add_wait_for_the_read_and_switch_by_the_radio(dialog: Page) -> None:
-    """`足す列` is disabled before `読む`, shown for both kinds; `選んだ列だけ` hides the check and lists the lines, added and removed, never the last."""
+    """`足す列` is disabled before `読む`, shown for both kinds; `選んだ列だけ` hides the radios of the same names and lists the lines, added and removed, never the last."""
     page = dialog
     assert _added(page) == UNREAD_ADDED
     _read(page)
@@ -394,7 +420,7 @@ def test_the_columns_to_add_wait_for_the_read_and_switch_by_the_radio(dialog: Pa
     assert _added(page) == DEFAULT_ADDED
     page.locator("#join-under-test .join-added input[value=picked]").check()
     state = _added(page)
-    assert (state["mode"], state["skip"][2], state["listHidden"], state["add"]) == (["picked"], True, False, [False, False])
+    assert (state["mode"], state["same"]["hidden"], state["listHidden"], state["add"]) == (["picked"], True, False, [False, False])
     assert _state(page)["join"] is True
     _pick_added(page, 0, "sco", "score")
     assert _state(page)["join"] is False
@@ -410,11 +436,11 @@ def test_the_columns_to_add_wait_for_the_read_and_switch_by_the_radio(dialog: Pa
     assert _state(page)["join"] is False
     page.locator("#join-under-test .join-added input[value=all]").check()
     state = _added(page)
-    assert (state["skip"][2], state["listHidden"], state["add"][1]) == (False, True, True)
+    assert (state["same"]["hidden"], state["listHidden"], state["add"][1]) == (False, True, True)
 
 
 def test_the_join_sends_the_columns_to_add(dialog: Page) -> None:
-    """`すべての列` sends null with the check as `same_names`; `選んだ列だけ` sends the lines in their order with `"rename"`; each open starts again."""
+    """`すべての列` sends null with the radio of the same names as `same_names`; `選んだ列だけ` sends the lines in their order with `"rename"`; each open starts again."""
     page = dialog
 
     def join() -> dict:
@@ -431,8 +457,17 @@ def test_the_join_sends_the_columns_to_add(dialog: Page) -> None:
     assert _added(page) == UNREAD_ADDED
     page.locator("#join-under-test input[value=rows]").check()
     _read(page)
-    page.locator("#join-under-test .join-skip").check()
+    page.locator("#join-under-test .join-same-names input[value=skip]").check()
     assert join() == {"kind": "rows", "keys": [], "columns": None, "same_names": "skip"}
+
+    page.evaluate("window.joinDialog.open()")
+    assert _added(page) == UNREAD_ADDED
+    page.locator("#join-under-test input[value=rows]").check()
+    _read(page)
+    page.locator("#join-under-test .join-same-names input[value=skip_equal]").check()
+    assert _added(page)["same"]["checked"] == ["skip_equal"]
+    assert join() == {"kind": "rows", "keys": [], "columns": None, "same_names": "skip_equal"}
+    assert page.evaluate("window.joinDone")[1:] == ["rows", "skip_equal"]
 
     page.evaluate("window.joinDialog.open()")
     assert _added(page) == UNREAD_ADDED

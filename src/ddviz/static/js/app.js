@@ -19,7 +19,7 @@ import { FilterPane, filterSettings, filtersKey, RestorePoint } from "./filters.
 import { drawable, drawnRoles, hasBoxPair, hasLinePair, hasSmoothPair } from "./graph.js";
 import { SettingsHistory } from "./history.js";
 import { attachHover } from "./hover.js";
-import { JOIN_ONCE, JoinDialog, joinedText } from "./joindialog.js";
+import { JOIN_ONCE, JoinDialog, comparingText, joinedText } from "./joindialog.js";
 import { ImageLayers, closeImages, loadImages } from "./layers.js";
 import { fitBottom, fitMargin, MARGIN_BOTTOM, MARGIN_LEFT, neededBottom, neededMargin } from "./leftmargin.js";
 import { LeftPane } from "./leftpane.js";
@@ -115,11 +115,15 @@ let joiningInitialDraw = false;
 const convertingText = document.getElementById("converting-text");
 const convertingBar = document.getElementById("converting-bar");
 
-// While a worker converts columns into the cache, only its progress shows;
-// the cover takes every click, so the plot cannot be edited.
-function showConverting(message) {
+// While a worker converts columns into the cache, or compares the columns a
+// join may leave out, only its progress (`text`) shows; the cover takes every
+// click, so the plot cannot be edited.
+function showConverting(
+  message,
+  text = `列を初めて使うため変換しています（${message.done + 1} / ${message.total}）：${message.column}`,
+) {
   converting.hidden = false;
-  convertingText.textContent = `列を初めて使うため変換しています（${message.done + 1} / ${message.total}）：${message.column}`;
+  convertingText.textContent = text;
   convertingBar.max = message.total;
   convertingBar.value = message.done;
 }
@@ -155,6 +159,10 @@ events.onmessage = (event) => {
   }
   if (message.stage === "convert") {
     showConverting(message);
+    return;
+  }
+  if (message.stage === "compare") {
+    showConverting(message, comparingText(message));
     return;
   }
   // The progress of an aggregation no longer awaited (a superseded request's,
@@ -2032,9 +2040,9 @@ function openJoin() {
 // After a join: tells what was added and searches the column list again as
 // it is, with the joined columns marked. The graph, filters, favorites and
 // undo's steps stay; the join is not a step.
-async function joinDone(answer, kind) {
+async function joinDone(answer, kind, sameNames) {
   joined = true;
-  toasts.show(joinedText(answer, kind), "success");
+  toasts.show(joinedText(answer, kind, sameNames), "success");
   await readSource();
   try {
     await columnList.refresh();

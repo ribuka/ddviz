@@ -1,7 +1,8 @@
 // The dialog of the join (docs/spec.md, "横の結合"): it reads the table to
 // join (`POST /api/join/source`), takes the kind and, for a join by keys,
 // the pairs of keys picked from the columns of both tables, the columns to
-// add (all, maybe but those named like the input's, or those picked), and
+// add (all, maybe but those named like the input's, or but those of the
+// same values too, or those picked), and
 // joins (`POST /api/join`). The page (app.js) opens it from the window's
 // `Data → 結合…` or Ctrl+J, and takes the answer of a join.
 // A refused read or join tells the server's reason in the dialog, which
@@ -32,18 +33,27 @@ export function sourceText(found) {
   return `${found.files.toLocaleString()} ファイル・${found.rows.toLocaleString()} 行・${found.columns.toLocaleString()} 列`;
 }
 
-// The toast of a join of `kind` that answered `answer` (`{added, rows,
-// matched, skipped}`): the columns added, by keys the share of the input's
-// rows that matched, to one decimal, and the columns left out by name.
-export function joinedText(answer, kind) {
+// The toast of a join of `kind` sent with `sameNames` (its `same_names`)
+// that answered `answer` (`{added, rows, matched, skipped}`): the columns
+// added, by keys the share of the input's rows that matched, to one decimal,
+// and the columns left out by name, or by name and values.
+export function joinedText(answer, kind, sameNames) {
   let text = `${answer.added.length.toLocaleString()} 列を結合しました。`;
   if (kind === "key") {
     const share = answer.rows > 0 ? (answer.matched / answer.rows) * 100 : 0;
     text += `元の表の ${share.toFixed(1)}% の行が結合できました。`;
   }
   const skipped = answer.skipped?.length ?? 0;
-  if (skipped > 0) text += `元の表と同じ名前の ${skipped.toLocaleString()} 列は足しませんでした。`;
-  return text;
+  if (skipped === 0) return text;
+  const count = skipped.toLocaleString();
+  if (sameNames === "skip_equal") return `${text}元の表と名前も中身も同じ ${count} 列は足しませんでした。`;
+  return `${text}元の表と同じ名前の ${count} 列は足しませんでした。`;
+}
+
+// The overlay's text of a progress of the comparison of the columns named
+// like the input's (`{done, total, column}`, stage `"compare"`).
+export function comparingText(message) {
+  return `同じ名前の列を比べています（${message.done + 1} / ${message.total}）：${message.column}`;
 }
 
 // Whether `結合` may be pressed: a table read; by keys, both columns of
@@ -225,8 +235,10 @@ export class ColumnField {
 }
 
 // The section `足す列` of the dialog (`element`): all the columns of the
-// joined table, but those named like the input's when checked, or those
-// picked, one a line. `onChange()` is called at every change of the choice.
+// joined table, with those named like the input's added renamed, left out
+// when of the same values, or left out (the radios of `元の表と同じ名前の
+// 列：`), or those picked, one a line. `onChange()` is called at every
+// change of the choice.
 export class AddedColumns {
   constructor(onChange) {
     this.onChange = onChange;
@@ -251,27 +263,39 @@ export class AddedColumns {
       label.append(radio, ` ${text}`);
       modes.append(label);
     }
-    this.skipLabel = element("label", "join-skip-label");
-    this.skip = element("input", "join-skip");
-    this.skip.type = "checkbox";
-    this.skip.addEventListener("change", () => this.onChange());
-    this.skipLabel.append(this.skip, " 元の表と同じ名前の列は足さない");
+    this.sameNames = element("div", "join-same-names");
+    this.sameNames.append(element("span", "join-same-names-label", "元の表と同じ名前の列："));
+    this.sameInputs = [];
+    for (const [value, text] of [
+      ["rename", "名前を変えて足す"],
+      ["skip_equal", "中身も同じなら足さない"],
+      ["skip", "足さない"],
+    ]) {
+      const label = element("label", "join-same-name");
+      const radio = element("input");
+      Object.assign(radio, { type: "radio", name: "join-same-names", value });
+      radio.addEventListener("change", () => this.onChange());
+      this.sameInputs.push(radio);
+      label.append(radio, ` ${text}`);
+      this.sameNames.append(label);
+    }
     this.list = element("div", "join-added-columns");
     this.addButton = button("join-add-column", "+ 列を足す", () => {
       const row = this.addRow();
       this.onChange();
       row.field.input.focus();
     });
-    this.element.append(element("h3", "", "足す列"), modes, this.skipLabel, this.list, this.addButton);
+    this.element.append(element("h3", "", "足す列"), modes, this.sameNames, this.list, this.addButton);
     this.reset();
   }
 
-  // Back to all the columns, unchecked, with one empty line of a column.
+  // Back to all the columns, renamed when named like the input's, with one
+  // empty line of a column.
   reset() {
     this.close();
     this.picked = false;
     for (const radio of this.modeInputs) radio.checked = radio.value === "all";
-    this.skip.checked = false;
+    for (const radio of this.sameInputs) radio.checked = radio.value === "rename";
     this.rows = [];
     this.list.replaceChildren();
     this.addRow();
@@ -304,12 +328,11 @@ export class AddedColumns {
     for (const row of this.rows) row.field.close();
   }
 
-  // Shows the check for all the columns, the lines for those picked, and
-  // disables them all while `off`.
+  // Shows the radios of the same names for all the columns, the lines for
+  // those picked, and disables them all while `off`.
   show(off) {
-    for (const radio of this.modeInputs) radio.disabled = off;
-    this.skip.disabled = off;
-    this.skipLabel.hidden = this.picked;
+    for (const radio of [...this.modeInputs, ...this.sameInputs]) radio.disabled = off;
+    this.sameNames.hidden = this.picked;
     this.list.hidden = !this.picked;
     this.addButton.hidden = !this.picked;
     for (const row of this.rows) {
@@ -328,14 +351,16 @@ export class AddedColumns {
   // What `POST /api/join` takes of the choice: `{columns, same_names}`.
   body() {
     const columns = this.columns();
-    return { columns, same_names: columns === null && this.skip.checked ? "skip" : "rename" };
+    const same = this.sameInputs.find((radio) => radio.checked).value;
+    return { columns, same_names: columns === null ? same : "rename" };
   }
 }
 
 // The join dialog in `dialog` (an empty `<dialog>`). `choose(kind)`, given
 // in the window only, asks for the table with the OS dialog (`"files"` or
-// `"folder"`) and resolves to its paths or null; `joined(answer, kind)` takes
-// the answer of a join, once the dialog is closed; `answered()` is called at
+// `"folder"`) and resolves to its paths or null; `joined(answer, kind,
+// sameNames)` takes the answer of a join and the `same_names` sent, once the
+// dialog is closed; `answered()` is called at
 // every answer of `POST /api/join`, joined or refused: the conversions of
 // the keys it ran are over.
 export class JoinDialog {
@@ -679,12 +704,13 @@ export class JoinDialog {
     this.busy = true;
     this.error.textContent = "";
     this.update();
-    const answer = await post("/api/join", { kind, keys, ...this.added.body() });
+    const added = this.added.body();
+    const answer = await post("/api/join", { kind, keys, ...added });
     this.busy = false;
     this.answered();
     if (answer.ok) {
       this.dialog.close();
-      this.joined(JSON.parse(answer.text), kind);
+      this.joined(JSON.parse(answer.text), kind, added.same_names);
       return;
     }
     this.error.textContent = errorText(answer.text, answer.status);

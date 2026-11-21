@@ -155,3 +155,18 @@ def join_paths(tmp_path: Path) -> list[Path]:
         paths.append(folder / name)
         frame.write_parquet(paths[-1])
     return paths
+
+
+@pytest.fixture
+def equal_paths(tmp_path: Path, scatter_frame: pl.DataFrame) -> list[Path]:
+    """Write a table to join to `scatter_path` by ``label``: two files of its first 1,500 rows, ``color`` the same, ``facet`` another, and a score."""
+    folder = tmp_path / "equal"
+    folder.mkdir()
+    paths = []
+    for name, start, stop in [("a.parquet", 0, 1000), ("b.parquet", 1000, 1500)]:
+        frame = scatter_frame.slice(start, stop - start).select(
+            "label", "color", facet=pl.lit("z"), score=pl.col("x") * 10
+        )
+        paths.append(folder / name)
+        frame.write_parquet(paths[-1])
+    return paths

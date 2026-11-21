@@ -9,7 +9,9 @@ no row matches), with the parts of ``_joined``, the merge's indicator. A
 column of the joined table is converted when first used, as any column
 (`run_join_convert`): per file of the input, its values gathered through the
 map. A join by rows needs no map: the part of a file holds the joined
-table's rows from the rows of the files before.
+table's rows from the rows of the files before. A join may leave out the
+columns named like the input's that hold the same values in the rows joined,
+found through the same map (`run_join_equal`).
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from ddviz.compute.tasks.columns import supertype
 from ddviz.shared.cache import PARTIAL
 from ddviz.shared.joined import BOTH, INDICATOR, MAP_COLUMN
 from ddviz.shared.manifest import write_manifest
-from ddviz.shared.tasks import JoinConvertTask, JoinTask
+from ddviz.shared.tasks import JoinConvertTask, JoinEqualTask, JoinTask
 
 # The rows of the joined table a map holds fit 32 bits below this.
 UINT32_ROWS = 2**32
@@ -232,3 +234,70 @@ def run_join_convert(task: JoinConvertTask, out: Path, emit: Emit) -> None:
             del part
         del values
     write_manifest(out, {"kind": "join_convert", "nonnull": nonnull})
+
+
+def _same_values(task: JoinEqualTask, pair: dict[str, str]) -> bool:
+    """Return whether the rows joined, at least one, hold the same values in both columns of `pair`.
+
+    The two columns are cast to the type both cast to
+    (`ddviz.compute.tasks.columns.supertype`) and compared with
+    `polars.Series.eq_missing`: two nulls are equal. Columns of no such
+    type differ. A row of the input no row of the joined table matched is
+    not compared. The input is read file by file, and the files after the
+    first one that differs are not read.
+    """
+    left, right = pair["left"], pair["right"]
+    values = pl.scan_parquet(task.right[right]).select(right).collect()[right]
+    parts = task.left[left]
+    try:
+        common = supertype(pl.scan_parquet(parts[0]).collect_schema()[left], values.dtype)
+    except ValueError:
+        return False
+    values = values.cast(common, strict=False)
+    start, joined = 0, 0
+    for i, (rows, part) in enumerate(zip(task.rows, parts, strict=True)):
+        mine = pl.read_parquet(part, columns=[left])[left].cast(common, strict=False)
+        if task.maps:
+            found = pl.read_parquet(task.maps[i], columns=[MAP_COLUMN])[MAP_COLUMN]
+            kept = found.is_not_null()
+            theirs = values.gather(found.filter(kept))
+            mine = mine.filter(kept)
+            del found, kept
+        else:
+            theirs = values.slice(start, rows)
+        start += rows
+        if not mine.eq_missing(theirs).all():
+            return False
+        joined += len(mine)
+    return joined > 0
+
+
+def run_join_equal(task: JoinEqualTask, out: Path, emit: Emit) -> None:
+    """Find which columns of the input hold, in the rows joined, the same values as the joined table's named alike.
+
+    Parameters
+    ----------
+    task : JoinEqualTask
+        The pairs of columns, their parts, and the map of a join by keys.
+    out : pathlib.Path
+        Directory to write the result into: the manifest, with ``equal``,
+        the columns of the input of the pairs whose values are the same
+        (`_same_values`), in the order of the pairs.
+    emit : callable
+        Receives a ``progress`` message before each pair, with ``done`` and
+        ``total`` counts and the input's column.
+    """
+    equal = []
+    for done, pair in enumerate(task.pairs):
+        emit(
+            {
+                "type": "progress",
+                "stage": "compare",
+                "done": done,
+                "total": len(task.pairs),
+                "column": pair["left"],
+            }
+        )
+        if _same_values(task, pair):
+            equal.append(pair["left"])
+    write_manifest(out, {"kind": "join_equal", "equal": equal})

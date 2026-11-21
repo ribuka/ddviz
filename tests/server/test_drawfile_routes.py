@@ -41,7 +41,7 @@ def test_the_draw_file_holds_the_input_and_the_kinds_of_the_columns(
     assert response.status_code == 200
     content = response.json()
     assert content["format"] == "ddviz-draw-settings"
-    assert content["version"] == 3
+    assert content["version"] == 4
     assert content["app_version"] == importlib.metadata.version("ddviz")
     assert content["source"] == {
         "paths": [str(scatter_path)],
@@ -62,8 +62,9 @@ def test_the_draw_file_holds_the_input_and_the_kinds_of_the_columns(
     [
         ("key", [{"left": "label", "right": "name"}], True, {"columns": ["score"], "same_names": "rename"}),
         ("rows", [], False, {"columns": None, "same_names": "skip"}),
+        ("key", [{"left": "label", "right": "name"}], False, {"columns": None, "same_names": "skip_equal"}),
     ],
-    ids=["key", "rows"],
+    ids=["key", "rows", "skip-equal"],
 )
 def test_the_draw_file_holds_the_join_given(
     serve_with_draw: ServeWithDraw,

@@ -7,7 +7,8 @@ numbers stay those of the input. The columns added and their names are
 `ddviz.shared.joined`'s; the map of the rows and the parts of the columns are
 written by workers (`ddviz.compute.join`). The join may add only some of the
 joined table's columns, or leave out those named like the input's
-(`check_columns`, `chosen`).
+(`check_columns`, `chosen`), maybe only when their values are the same
+(`compared`, `ddviz.compute.join.run_join_equal`).
 """
 
 from __future__ import annotations
@@ -216,7 +217,8 @@ def chosen(
     same_names : str
         What to do with a column named like one of the input, for all the
         columns (`SAME_NAMES`): ``"skip"`` leaves it out, unless it is an
-        added column.
+        added column; ``"skip_equal"`` keeps it here, to compare
+        (`compared`).
     left : iterable of str
         The columns of the input, its added columns included.
 
@@ -240,6 +242,30 @@ def chosen(
         skipped = [c for c in plain if c in names]
         plain = [c for c in plain if c not in names]
     return plain, added, skipped
+
+
+def compared(plain: list[str], left: dict[str, str], right: dict[str, str]) -> list[str]:
+    """Return the columns a join on ``"skip_equal"`` compares: those of `plain` named like a column of the input, neither of the two nested.
+
+    Parameters
+    ----------
+    plain : list of str
+        The columns of the joined table to add but its added ones, in its
+        order (`chosen`).
+    left, right : dict of str to str
+        The type of each column of the input, its added columns included,
+        and of the joined table.
+
+    Returns
+    -------
+    list of str
+        The columns, in the joined table's order.
+    """
+    return [
+        c
+        for c in plain
+        if c in left and not left[c].startswith(NESTED) and not right[c].startswith(NESTED)
+    ]
 
 
 def check_added(kind: str, names: dict[str, str | None]) -> None:
