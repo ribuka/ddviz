@@ -31,14 +31,14 @@ import polars as pl
 from ddviz.compute.aggregate import INDEX
 from ddviz.compute.axisposition import on_axis
 from ddviz.compute.chunksink import PARQUET_ROW_GROUP_ROWS, sink_chunks, write_chunks
-from ddviz.compute.convert import column_expr, input_dtypes
+from ddviz.compute.convert import input_dtypes
 from ddviz.compute.joinread import joined_rows
 from ddviz.compute.missing import drawn_conditions
 from ddviz.compute.progress import Emit
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.selection import selection_columns, selection_filter
-from ddviz.shared.generated import generated_value
+from ddviz.compute.sourceread import file_values
 from ddviz.shared.manifest import PlotManifest, write_manifest
 from ddviz.shared.scatter import ONE_BAND, ScatterSpec
 from ddviz.shared.tasks import PlotDataTask, SourceFiles
@@ -222,7 +222,7 @@ def _cached(
     )
 
 
-def _source(  # noqa: C901
+def _source(
     source: SourceFiles,
     columns: list[str],
     target: dict[str, pl.DataType],
@@ -233,10 +233,8 @@ def _source(  # noqa: C901
 ) -> pl.DataFrame:
     """Return the rows `index` (between `lo` and `hi`) of columns read from the source files.
 
-    Only the files holding rows between `lo` and `hi` are scanned. Values
-    are cast to the input's types, a file lacking a column gives nulls, and
-    an added column (`ddviz.shared.generated`) gives the file's value, as
-    the selection table reads them (`ddviz.compute.tasks.table`). With
+    Only the files holding rows between `lo` and `hi` are scanned, each
+    file's values given by `ddviz.compute.sourceread.file_values`. With
     `measure`, the bytes of the values of variable size instead, as
     `_cached` gives them.
     """
@@ -252,23 +250,19 @@ def _source(  # noqa: C901
         scan = pl.scan_parquet(
             source.paths[i], row_index_name=INDEX, row_index_offset=start
         )
-        present = scan.collect_schema()
-        values = []
-        for c in columns:
-            if c in source.generated:
-                value = generated_value(source.generated[c], source.paths[i])
-                expr, dtype = pl.lit(value, dtype=pl.String), pl.String
-            else:
-                expr, dtype = column_expr(c, source.dtypes[c], present, target), target[c]
-                if expr is None:
-                    expr = pl.lit(None, dtype=dtype)
-            if measure:
-                expr = _length(expr, dtype)
-            if expr is not None:
-                values.append(expr.alias(c))
+        values = file_values(
+            source, source.paths[i], columns, scan.collect_schema(), target
+        )
+        if measure:
+            dtypes = {c: pl.String if c in source.generated else target[c] for c in values}
+            values = {
+                c: size.alias(c)
+                for c, expr in values.items()
+                if (size := _length(expr, dtypes[c])) is not None
+            }
         begin = max(lo, start)
         found.append(
-            scan.select(INDEX, *values)
+            scan.select(INDEX, *values.values())
             .slice(begin - start, min(hi + 1, end) - begin)
             .filter(pl.col(INDEX).is_in(index.implode()))
             .collect(engine="streaming" if measure else "auto")
