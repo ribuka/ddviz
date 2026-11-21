@@ -569,6 +569,7 @@ def test_converting_is_off_after_a_failed_join(tmp_path: Path) -> None:
     assert broker.seen == [("join", True)]
     assert source.converting is False
     assert source.joined is None
+    assert not broker.out.exists()
 
 
 @pytest.mark.parametrize(

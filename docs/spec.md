@@ -322,16 +322,18 @@ Load した入力（以下「元の表」）に、別の Parquet（以下「結�
 | 比べるタスク（2026-11-21。Issue #359） | `JoinEqualTask`（`kind` は `"join_equal"`）と `ddviz.compute.join.run_join_equal`。比べる列の組 `[{left, right}]`、元の表の列の部品（元のファイルごと）、結合する表の列の部品、元の表のファイルごとの行数、キーなら対応表の部品（行の順なら空）を受け取る。1 列ずつ、結合する表の列を 1 回読み、元のファイルごとに、元の表の部品と対応表の部品を読み、結合する表の値を対応表で `gather`（行の順なら行の範囲を切り出し）して比べる。違う行が見つかったら、その列の残りのファイルは読まない。1 列を比べる前に `{"type": "progress", "stage": "compare", "done", "total", "column": 元の表の列名}` を出す。結果はマニフェストの `{"kind": "join_equal", "equal": [元の表の列名]}`。`Source.join` は、キーの変換と `JoinTask`（キーのとき）の後に、比べる列を両方の表で列キャッシュに変換し（キーと同じ）、plot のプールで動かす（`Source._run_tasks`、`_run_equal`）。失敗したとき（メモリの上限を含む）は `JoinTask` と同じく 500 で worker の文を返し、列は足さない。対応表と `_joined` の部品は残り、次の結合で使う | 結合した列の変換と同じ読み方で、範囲選択の表と同じ部品を使える。外した列の結合する表の部品は使われないまま残るが、今の期限と容量の規則で消えるので受け入れる |
 | 足す列の名前 | 使用済みは、まず元の表の全列。順に 1 つずつ決め、決めた名前を使用済みに加える（大文字小文字を区別）。`_joined` は空いていなければ `_joined_2`、`_joined_3` …。列 `n` は空いていればそのまま、空いていなければ `n_joined`、`n_joined_2` …。結合する表の `source` / `filename` は空いていても `source_joined` / `filename_joined`、使用済みなら `source_joined_2` …（`ddviz.shared.joined.joined_names`）（ユーザー判断）。名前は足す列が決まった後に付け、外した列（`columns` で選ばなかった列、`"skip"` で外した列、`"skip_equal"` で中身も同じとして外した列（Issue #359））は使用済みに入れない（Issue #358。例：元の表に `label`、結合する表に `label` と `label_joined` があり `"skip"` なら、`label` は足さず、`label_joined` はそのまま `label_joined`） | どちらの表の列かが名前でわかる |
 | 型と種類 | 結合する表の列は、その表での型（上位型に揃えた後）。`_joined` と `source_joined` / `filename_joined` は String。数値、日時、カテゴリの種類は Load と同じく型から決まり、`_joined` はカテゴリ | 元の表の列と同じ扱いにする |
-| 対応表（`key`） | 結合のタスク（`JoinTask`、`ddviz.compute.join.run_join`）が、結合する表のキーの重複を数え、元の表のキーと通し行番号を左、結合する表のキーと行番号を右にして `polars_helpers.merge(..., how="left", indicator="_joined")` で結合し、元の表の行ごとの結合する表の行番号（一致しなければ null）を、元のファイルごとの「対応表」の部品に書く。`_joined` の部品も同じタスクで書く。行番号の型は UInt32、結合する表が 2^32 行以上なら UInt64。結合の前に、両側のキーの列を列キャッシュに変換する（ユーザーの要望で polars-helpers の `merge` を使う。polars 2.1.0 の `join` に indicator は無い） | 対応表を 1 回作れば、結合した列は今の遅延変換と同じ扱いになる |
+| 対応表（`key`） | 結合のタスク（`JoinTask`、`ddviz.compute.join.run_join`）が、結合する表のキーの重複を数え（「重複の確かめ」）、元の表のキーを左、結合する表のキーと行番号を右にして `polars_helpers.merge_on_disk(..., how="left", indicator="_joined", directory=<タスクの出力フォルダ>/merge, delete_on_exit=False, buckets=<分ける数>)` で結合し（2026-11-21 変更。Issue #365）、返った LazyFrame を元のファイルごとに `slice` して、元の表の行ごとの結合する表の行番号（一致しなければ null）を「対応表」の部品に、`_joined` を `_joined` の部品に、streaming で一時の名前に sink してから改名して書く（`_sink`）。`merge_on_disk` は `merge` と同じく元の表の行の順を保つので、通し行番号も並べ直しも使わない。部品をすべて書いたら `merge` のフォルダを消してから manifest を書く。行番号の型は UInt32、結合する表が 2^32 行以上なら UInt64。結合の前に、両側のキーの列を列キャッシュに変換する（ユーザーの要望で polars-helpers の `merge` を使う。polars 2.1.0 の `join` に indicator は無い） | 対応表を 1 回作れば、結合した列は今の遅延変換と同じ扱いになる |
 | `rows` | 対応表もタスクも無い。元のファイル i の部品は、結合する表の列の、それまでの元のファイルの行数の和から、ファイル i の行数ぶんを切り出したもの | 行の順が対応そのもの |
 | 結合のタスクの間 | plot のプールで動かし、その間は `Source.converting` を True にして、`/api/plot` などを変換中と同じく 409 `"converting"` で断る（失敗しても False に戻す）。`"skip_equal"` では、キーの変換から比べるタスク（`JoinEqualTask`）の終わりまで True にする（行の順でも、比べる間は True。Issue #359） | 変換中と同じく、グラフの編集を受けない |
-| メモリ | 元の表を区切らずに 1 回で merge する。子プロセスのメモリの上限（物理メモリの半分）を超えたら、今の `ddviz.workers.runner.exit_message` の文で失敗する（ユーザー判断） | 区切って merge する仕組みは polars-helpers 側で検討する |
+| メモリ（2026-11-21 変更。Issue #365。計測は「キーの結合のメモリ」） | merge の途中の計算と結果をディスクに置く（`merge_on_disk`）。結果を 1 回で `collect()` せず、部品は結果のファイルから元のファイルごとに sink する。ディスクの空きは先に調べず、書けなければ worker の例外の文で 500 になる。結合のタスクが `done` で終わらなければ（`error` / `cancelled`）、`Source._run_join` が失敗を返す前にタスクの出力フォルダを消す（`TaskEnd.discard`） | 1 億行どうしの String のキーでは、今までの 1 回の `merge` と重複の `group_by` が 8 GiB の上限を超えた。1 ファイルに 1 億行あってもピークが増えない。途中のファイルは 1 億行で最大約 4 GiB になり、消さないとアプリの終了まで残る。worker は 1 タスクで終わり、取り消しでは kill されるので `atexit` には頼れない |
+| 分ける数（2026-11-21。Issue #365） | 結合する表の行数（`JoinTask.right_rows`）が `ONE_BUCKET_ROWS`（1,000 万）以下なら `buckets=1`、超えれば `BUCKETS`（16）。重複の確かめと merge で同じ数を使う（`ddviz.compute.join`）。PC のメモリやキーの型では選ばない | 1,000 万行以下では `buckets=1` が `buckets=16` より速く、メモリも少なかった（Issue の試作で 1,000 万行の String が 8.31 s・3.18 GiB 対 20.43 s・3.52 GiB）。1 億行では `buckets=1` は使えない（polars-helpers#22 で merge だけで 5.76〜13.46 GB）。境目は、測った中で `buckets=1` が 8 GiB に余裕をもって収まった最大の行数で、間の行数は測っていない |
+| 重複の確かめ（2026-11-21。Issue #365） | `buckets=1` はメモリの `group_by` で数える。`buckets>=2` は、キーの列から null を含む組を除き、`pl.struct(keys).hash(seed=0) % buckets` で streaming の 1 回の `sink_parquet(pl.PartitionBy(...))` でタスクの出力フォルダの `duplicates` に部品を書き、部品ごとに（1 つの部品が `PartitionBy` で複数のファイルに分かれても、そのフォルダのファイルをまとめて。PR #372 のレビュー）`group_by` で 2 行以上の組を数えて足す。例は、部品ごとの値の昇順の最初の 5 組をまとめて並べ直した最初の 5 組（1 つの組は 1 つの部品にしか無いので、全体の昇順と同じ）。`duplicates` は返す前に消す。返す数と文は分ける数によらない（`duplicate_keys`） | 1 回の `group_by` は 1 億行の Int64 で 6.28 GiB、String で 9 GiB を超えた（streaming でも同じ）。16 に分けると 1.12 GiB と 1.69 GiB だった（Issue の試作） |
 | 結合した列の部品 | `_joined` を除き、今の列と同じく、初めて使ったときに `Source.convert` の中で変換する（`JoinConvertTask`、`ddviz.compute.join.run_join_convert`）。結合する表の列を先にその表の列キャッシュに変換し、1 列を 1 回だけ読んでから、元のファイルごとに、`key` は対応表で `gather`、`rows` は行の範囲を切り出して書く。元のファイルごとに 1 部品で、元の表の部品と同じ行に揃う（ユーザーが了承） | 集約、フィルタ、表がそのまま動く |
 | 部品の置き場所と名前 | 元の表の列キャッシュの、元のファイルごとのフォルダ（今の部品と同じ）。部品の名前（対応表と `_joined` も）に結合の識別子を混ぜる（`ddviz.shared.joined.joined_part_key`、`map_part_key`）。結合の識別子は、種類、結合する表の入力のキー（`ColumnCache.key`）、結合する表の元ファイルごとのサイズと更新日時（`source.json` の `files`）、キーの組と両側の型（上位型は 2 つの型から決まる）、`rows` では元の表のファイルごとの行数、元の表と結合する表の渡されたパス（絶対パスにしただけで解決しない）から作る（`join_id`）。足す列の指定（`columns`、`same_names`）は混ぜず、対応表と部品は足す列によらず同じ結合として共有する（Issue #358）。結合のタスクが使う内部の列（行番号、重複の数）は、キーの名前と重ならない名前にし、変換していない列を読むときは結合する表の列を内部の名前に付け替えてから元の表の行に戻す（PR #349 のレビュー） | 元のファイルが変われば、今の規則どおりそのフォルダごと消える。結合する表のファイルが変われば識別子が変わり、古い部品は読まず、今の期限と容量の規則で消える。`rows` の部品はそれまでのファイルの行数で中身が変わるので、元の表の行数も混ぜる。`source` の値は渡されたパスなので（`part_key` と同じ）、別の表記（`..` やジャンクション）で開くとキーの一致も `source_joined` の値も変わる。パスを混ぜないと、前の表記で作った部品を読んでしまう |
 | 容量で消すとき | `Source.evict` は、今の結合の対応表と `_joined` の部品を、今のグラフの列と同じく残す | 消えると結合のタスクをやり直すことになる（消えていたら、変換の前にやり直す） |
 | 変換していない結合した列を読むとき | 範囲選択の表（`TableTask`）とデータの保存（`PlotDataTask`）は、変換していない結合した列を変換せずに読む。要る行の対応表の値を引いてから（`rows` では同じ行番号）、結合する表の値を、その表の列キャッシュにあればそこから、無ければその表の元のファイルから読み、元の表の行に戻す（`ddviz.compute.joinread`。`SourceFiles.joined` に、対応表の部品と結合する表の部品とファイルを渡す）。読んだ値は、変換した部品から読んだ値と同じ（ユーザー判断） | 今、変換していない元の列を元のファイルから読むのと同じ。50 列の 1 億行を変換すると約 20 秒かかる |
 | 非 null の数 | `/api/columns` の非 null の数は、結合した列では、`key` の変換の前は `round(結合する表での非 null の数 ÷ 結合する表の行数 × 結合できた行数)` の見込み。結合する表での数は、その表の元のファイルのフッタから `NonnullTask`（summary のプール。元の表と同じロックの下）で数え、数え終わるまでは不明（`None`）。`rows` は結合する表での数そのもの。`_joined` は元の表の行数。`source_joined` / `filename_joined` は結合する表の行数を非 null の数として同じ式に当てる。変換した後は、変換のタスクが返した部品ごとの非 null の数の和に差し替え、元の表の列キャッシュのフォルダの `joined-<識別子>.json` に部品ごとに残す（次のセッションでは、部品がすべてあり数が残っていれば正確な値を使う）（ユーザー判断） | 軽く、変換した列は正確になる。キーの当たり方が偏ると変換の前は見込みがずれるが、受け入れる |
-| 依存 | `polars-helpers`（`git+https://github.com/ribuka/polars-helpers.git` のタグ `v0.2.0`。`merge` の行の順の修正と polars 2 への対応を含む）。exe には `packaging/ddviz.spec` の `hiddenimports` で入れ、`packaging/smoke.py` が exe の worker で結合のタスクを 1 つ動かして確かめる | polars 2.1.0 の `join` に indicator が無い |
+| 依存 | `polars-helpers`（`git+https://github.com/ribuka/polars-helpers.git` のタグ `v0.3.1`。`merge` の行の順の修正、polars 2 への対応、`merge_on_disk`（ribuka/polars-helpers#23）を含む。2026-11-21 に v0.2.0 から上げた。Issue #365）。exe には `packaging/ddviz.spec` の `hiddenimports` で入れ、`packaging/smoke.py` が exe の worker で結合のタスクを 1 つ動かして確かめる | polars 2.1.0 の `join` に indicator が無い |
 
 API（#344 と #345 が使う）：
 
@@ -2428,8 +2430,28 @@ ddviz の処理（`run_schema`、`nonnull_shares`、`convert_columns`、`run_plo
 | 1 億行 | 1 列の変換 | 3.06 / 2.97 / 2.96 | 2.97（2.96〜3.06） | 3,294 / 3,303 / 3,302 | 3,302（3,294〜3,303） |
 
 - どの組み合わせも上限を超えずに終わった。
-- 1 億行どうしの `JoinTask` はピークが約 8GB で、子プロセスのメモリの上限（物理メモリの半分）が 8GB の PC（物理メモリ 16GB）では上限を超えて失敗しうる。区切らずに 1 回で merge する決定どおり、この上限は受け入れる（区切って merge する仕組みは polars-helpers 側で検討する）。
+- 1 億行どうしの `JoinTask` はピークが約 8GB で、子プロセスのメモリの上限（物理メモリの半分）が 8GB の PC（物理メモリ 16GB）では上限を超えて失敗しうる。区切らずに 1 回で merge する決定どおり、この上限はいったん受け入れた。2026-11-21 に `merge_on_disk` に替えた（下の「キーの結合のメモリ」）。
 - 結合した 1 列の変換は、結合する表の列を 1 回読み（1 億行の Float64 で 800MB）、対応表で `gather` して書く。1 億行の元の表の 1 列で 1〜3 秒。
+
+#### キーの結合のメモリ（2026-11-21。Issue #365）
+
+`run_join` を `polars_helpers.merge_on_disk`（v0.3.1）にした後の `JoinTask` を測った（「横の結合」の「メモリ」「分ける数」「重複の確かめ」）。元の表は 1 億行、結合する表は 100 万・1,000 万・1 億行で、キーは Int64 か String の 1 列。どちらも 1 ファイルに 1 列（列キャッシュの部品と同じ形）、行グループは 100 万行。乱数は `numpy.random.default_rng(12345)` で、行数 n の小さい順に、結合する表の id を `rng.permutation(n)`、元の表の id を `rng.integers(0, 2 * n, 10_000_000)` の 10 回で引いた（約半分の行が一致する）。Int64 は id そのもの、String は `"LOT-"` と id を 12 桁に 0 埋めした 16 文字。結合する表が 1,000 万行以下は `buckets=1`、1 億行は `buckets=16` の経路を通る。
+
+1 回ごとに `ddviz.workers.jobs.WorkerJob(8 * 2**30)` を作り、worker（`ddviz.workers.worker`）を venv の python で `creationflags=job.creationflags` を付けて起こし、`job.adopt(pid)` で Job に入れて再開した。時間は `ready` の後に `JoinTask` を送ってから `done` までの `time.perf_counter()`、ピークは終わった後の `QueryInformationJobObject`（`JobObjectExtendedLimitInformation`）の `PeakJobMemoryUsed`、ディスクはタスクの出力フォルダの中のファイルの大きさの和を 0.2 秒ごとに見た最大。6 通りを 1 周として 3 周測り、値は中央値 [最小〜最大]。PC は Windows 11 Pro、AMD64、12 論理 CPU、物理メモリ 31.1 GiB、Python 3.13.13、polars 2.1.0。計測の前の空きの物理メモリは 15.7 GiB。スクリプトは `tmp/issue-365/`（作業後に削除）。
+
+| 結合する表 | `buckets` | 時間 (s) | Job のピーク (GiB) | ディスクの最大 (GiB) |
+| --- | --- | --- | --- | --- |
+| 100 万行 Int64 | 1 | 4.01 [3.97〜4.05] | 1.87 [1.60〜2.42] | 0.58 |
+| 100 万行 String | 1 | 5.31 [5.29〜5.58] | 2.51 [2.48〜2.53] | 0.67 |
+| 1,000 万行 Int64 | 1 | 5.00 [4.94〜5.03] | 2.51 [2.10〜2.55] | 0.62 |
+| 1,000 万行 String | 1 | 7.34 [7.27〜7.34] | 3.22 [3.21〜3.23] | 0.74 |
+| 1 億行 Int64 | 16 | 17.17 [17.17〜17.20] | 2.85 [2.84〜2.89] | 3.51 |
+| 1 億行 String | 16 | 27.11 [27.05〜27.13] | 3.16 [3.12〜3.20] | 3.92 |
+
+- 18 回すべて `done` で、ピークは最大 3.23 GiB（上限 8 GiB）。今までの 1 回の `merge` は、同じ形の 1 億行どうしで Int64 が 8.20 GiB、String が上限を超えて失敗した（Issue の計測）。
+- 1,000 万行以下は今までより約 0.8〜1.8 秒遅いが（Issue の計測で 2.77〜5.57 秒）、ピークは 1.4〜1.8 GiB 少ない。
+- 終わった後のタスクの出力フォルダには manifest だけが残る（`merge` と `duplicates` は消える）。
+- 計測とは別に、6 通りの 1 回ずつの対応表と `_joined` を 1,000 万行ずつ確かめ、すべて正しかった（1 億行、型は UInt32 と String。元の表の id < n の行だけが一致し、対応表の行の結合する表の id が元の表の id と等しく `_joined` が `"both"`。ほかの行は対応表が null で `"left_only"`）。
 
 ### 中身も同じ列を比べるタスク（2026-11-21。Issue #359）
 
