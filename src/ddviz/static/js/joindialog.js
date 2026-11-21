@@ -265,12 +265,18 @@ export class JoinDialog {
     this.paths.focus();
   }
 
-  build() { // noqa: PLR0915
+  // Fills the dialog with its sections, in order.
+  build() {
     const dialog = this.dialog;
     dialog.classList.add("join-dialog");
     dialog.setAttribute("aria-label", "結合");
     const title = element("h2", "join-title", "結合");
+    dialog.replaceChildren(title, this.buildSource(), this.buildKinds(), this.buildKeys(), ...this.buildEnd());
+  }
 
+  // The section of the table to join: its paths, the choice of its
+  // subfolders, `読む`, and what was read. Returns the section.
+  buildSource() {
     const source = element("section", "join-section join-source");
     this.paths = element("textarea", "join-paths");
     Object.assign(this.paths, { rows: 3, spellcheck: false, placeholder: "Parquet のファイルかフォルダのパス（1 行に 1 つ）" });
@@ -310,7 +316,11 @@ export class JoinDialog {
     castsList.append(table);
     this.casts.append(this.castsText, castsList);
     source.append(element("h3", "", "結合するデータ"), this.paths, controls, this.sourceResult, this.casts);
+    return source;
+  }
 
+  // The section of the kind of the join. Returns the section.
+  buildKinds() {
     const kinds = element("section", "join-section join-kinds");
     kinds.append(element("h3", "", "種類"));
     this.kindInputs = [];
@@ -330,7 +340,11 @@ export class JoinDialog {
       label.append(radio, ` ${text}`);
       kinds.append(label);
     }
+    return kinds;
+  }
 
+  // The section of the pairs of keys. Returns the section.
+  buildKeys() {
     this.keysSection = element("section", "join-section join-keys-section");
     this.keyList = element("div", "join-keys");
     this.addButton = button("join-add-key", "+ キーを足す", () => {
@@ -341,16 +355,19 @@ export class JoinDialog {
     const keysHead = element("div", "join-keys-head");
     keysHead.append(element("span", "", "元の表の列"), element("span", ""), element("span", "", "結合する表の列"));
     this.keysSection.append(element("h3", "", "キー"), keysHead, this.keyList, this.addButton);
+    return this.keysSection;
+  }
 
+  // The field of the error and the buttons. Returns both.
+  buildEnd() {
     this.error = element("div", "join-error");
     this.error.setAttribute("role", "alert");
     const buttons = element("div", "join-buttons");
     this.busyText = element("span", "join-busy", "結合しています…");
-    this.cancelButton = button("join-cancel", "キャンセル", () => dialog.close());
+    this.cancelButton = button("join-cancel", "キャンセル", () => this.dialog.close());
     this.joinButton = button("join-run primary", "結合", () => this.join());
     buttons.append(this.busyText, this.cancelButton, this.joinButton);
-
-    dialog.replaceChildren(title, source, kinds, this.keysSection, this.error, buttons);
+    return [this.error, buttons];
   }
 
   // Empties every field, as each open starts.
