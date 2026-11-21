@@ -127,21 +127,33 @@ def _name(node: Node) -> str:
     return named.text.decode() if named is not None and named.text else "<anonymous>"
 
 
+def _branch(node: Node) -> bool:
+    """Return whether `node` is a branch as ruff counts them: an `else if` is one, not two."""
+    if node.type == "else_clause":
+        return not any(child.type == "if_statement" for child in node.named_children)
+    return node.type in BRANCHES
+
+
 def _codes(node: Node, limits: dict[str, int]) -> frozenset[str]:
     """Return the ruff codes of the limits the function `node` is over."""
     own = _own(node)
     types = [n.type for n in own]
     size = {
         "C901": 1 + sum(t in DECISIONS for t in types),
-        "PLR0912": sum(t in BRANCHES for t in types),
+        "PLR0912": sum(_branch(n) for n in own),
         "PLR0915": sum(t in STATEMENTS for t in types),
     }
     return frozenset(code for code, value in size.items() if value > limits[code])
 
 
+def _parser() -> Parser:
+    """Return a parser of JavaScript."""
+    return Parser(Language(tree_sitter_javascript.language()))
+
+
 def _measure() -> tuple[list[Measured], dict[tuple[str, int], frozenset[str]]]:
     """Return every JS function over a limit, and the `noqa` marks by file and line."""
-    parser = Parser(Language(tree_sitter_javascript.language()))
+    parser = _parser()
     limits = _limits()
     over, marks = [], {}
     for path in sorted(JS.glob("*.js")):
@@ -196,3 +208,17 @@ def test_no_stale_marks(
         if codes - needed.get((file, line), set())
     ]
     assert not stale, "remove these noqa codes:\n" + "\n".join(stale)
+
+
+@pytest.mark.parametrize(("last_else", "codes"), [(False, set()), (True, {"PLR0912"})])
+def test_else_if_is_one_branch(last_else: bool, codes: set[str]) -> None:
+    """A chain of 12 `if` and `else if` is 12 branches, as ruff counts `elif`; a last `else` makes 13.
+
+    The complexity of the chain is over its limit either way, so only the
+    other codes are compared.
+    """
+    chain = "".join(f"  {'else ' if i else ''}if (x === {i}) y = {i};\n" for i in range(12))
+    tail = "  else y = -1;\n" if last_else else ""
+    source = f"function f(x) {{\n  let y;\n{chain}{tail}  return y;\n}}\n"
+    function = _parser().parse(source.encode()).root_node.children[0]
+    assert _codes(function, _limits()) - {"C901"} == codes
