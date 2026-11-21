@@ -26,7 +26,14 @@ from fastapi import HTTPException
 
 from ddviz.server.broker import Pool, TaskBroker
 from ddviz.server.errors import ensure_done
-from ddviz.server.join import Join, check_keys, check_rows
+from ddviz.server.join import (
+    Join,
+    check_added,
+    check_columns,
+    check_keys,
+    check_rows,
+    chosen,
+)
 from ddviz.server.plan import parse_filters
 from ddviz.server.settings import CacheSettings
 from ddviz.shared.cache import SCHEMA, ColumnCache, evict
@@ -522,7 +529,13 @@ class Source:
             "casts": right.casts,
         }
 
-    async def join(self, kind: str, keys: list[dict[str, str]]) -> dict:
+    async def join(
+        self,
+        kind: str,
+        keys: list[dict[str, str]],
+        columns: list[str] | None = None,
+        same_names: str = "rename",
+    ) -> dict:
         """Join the table read (`load_join_source`) to the input, once.
 
         A join by keys runs the join task in the plot pool (plots are
@@ -537,19 +550,27 @@ class Source:
             ``"key"`` or ``"rows"``.
         keys : list of dict of str to str
             The pairs of keys, ``{"left", "right"}``; empty for ``"rows"``.
+        columns : list of str, optional
+            The columns of the joined table to add, added in its order; None,
+            by default, for all but its keys.
+        same_names : str, optional
+            For all the columns, what to do with one named like a column of
+            the input: ``"rename"``, by default, adds it renamed, ``"skip"``
+            leaves it out (`ddviz.server.join.chosen`).
 
         Returns
         -------
         dict
-            ``{"added", "rows", "matched"}``: the columns added, the rows of
-            the input and those a row of the joined table matched.
+            ``{"added", "rows", "matched", "skipped"}``: the columns added,
+            the rows of the input, those a row of the joined table matched,
+            and the columns of the joined table left out by name.
 
         Raises
         ------
         fastapi.HTTPException
             409 ``no join source`` before a table is read, ``already joined``
             after a join; 400 for keys given wrong, tables of different rows,
-            keys of no common type or duplicated in the joined table; 500
+            columns to add given wrong or none left, keys of no common type or duplicated in the joined table; 500
             when the task fails.
         """
         await self.schema()
@@ -562,17 +583,12 @@ class Source:
             check_keys(kind, keys, self._dtypes, right._dtypes)
             if kind == "rows":
                 check_rows(sum(self.rows), sum(right.rows))
-            taken = [k["right"] for k in keys]
-            names = joined_names(
-                self._dtypes,
-                [
-                    c["name"]
-                    for c in right._schema
-                    if c["name"] not in right._generated and c["name"] not in taken
-                ],
-                {c: k for c, k in right._generated.items() if c not in taken},
-                kind == "key",
+            check_columns(columns, same_names, right._dtypes, keys)
+            plain, generated, skipped = chosen(
+                [c["name"] for c in right._schema], right._generated, keys, columns, same_names, self._dtypes
             )
+            names = joined_names(self._dtypes, plain, generated, kind == "key")
+            check_added(kind, names)
             typed = [
                 {**k, "left_dtype": self._dtypes[k["left"]], "right_dtype": right._dtypes[k["right"]]}
                 for k in keys
@@ -602,9 +618,9 @@ class Source:
                     matched = await self._run_join(task, keys, right)
                 finally:
                     self.converting = False
-            join = Join(right, kind, keys, names, id_, matched, maps, task)
+            join = Join(right, kind, keys, columns, same_names, names, id_, matched, maps, task)
             self._add_join(join)
-        return {"added": list(names), "rows": sum(self.rows), "matched": matched}
+        return {"added": list(names), "rows": sum(self.rows), "matched": matched, "skipped": skipped}
 
     async def _run_join(
         self, task: JoinTask, keys: list[dict[str, str]], right: Source
@@ -658,6 +674,8 @@ class Source:
             "recursive": join.right.recursive,
             "kind": join.kind,
             "keys": join.keys,
+            "columns": join.columns,
+            "same_names": join.same_names,
             "rows": sum(self.rows),
             "matched": join.matched,
             "added": list(join.names),

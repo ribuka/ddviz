@@ -1,4 +1,4 @@
-"""E2E: the join dialog, opened with Ctrl+J, joins another table to the input (Issue #344).
+"""E2E: the join dialog, opened with Ctrl+J, joins another table to the input (Issue #344), all its columns or some (Issue #358).
 
 The input is `scatter_path` (2,003 rows, ``label`` unique); the table to
 join is `join_paths` (conftest.py).
@@ -54,6 +54,14 @@ def pick(page: Page, row: int, side: int, typed: str, name: str) -> None:
     expect(field).to_have_value(name)
 
 
+def pick_added(page: Page, row: int, typed: str, name: str) -> None:
+    """Type `typed` in a line of `選んだ列だけ` and pick `name` among the candidates."""
+    field = join_dialog(page).locator(".join-added-column").nth(row).locator(".join-key-input")
+    field.fill(typed)
+    join_dialog(page).locator(".join-candidate").filter(has_text=name).first.click()
+    expect(field).to_have_value(name)
+
+
 def read_source(page: Page, paths: list[Path]) -> None:
     """Enter `paths` in the dialog and read them."""
     dialog = join_dialog(page)
@@ -62,11 +70,11 @@ def read_source(page: Page, paths: list[Path]) -> None:
     expect(dialog.locator(".join-source-result")).to_have_text("2 ファイル・1,500 行・5 列")
 
 
-def run_join(page: Page) -> None:
-    """Press `結合` and wait for the dialog to close and the toast."""
+def run_join(page: Page, toast: str = JOINED_TOAST) -> None:
+    """Press `結合` and wait for the dialog to close and the toast `toast`."""
     join_dialog(page).get_by_role("button", name="結合", exact=True).click()
     expect(join_dialog(page)).not_to_be_visible()
-    expect(page.locator("#toasts .toast-text").filter(has_text=JOINED_TOAST)).to_be_visible()
+    expect(page.locator("#toasts .toast-text").filter(has_text=toast)).to_be_visible()
 
 
 def joined_marks(page: Page) -> list[list[str]]:
@@ -182,3 +190,29 @@ def test_a_refused_read_or_join_tells_why_and_the_join_is_done_once(
     expect(page.locator("#toasts .toast-text").filter(has_text=ONCE_TOAST)).to_be_visible()
     expect(dialog).not_to_be_visible()
     assert page.evaluate("window.ddvizCanJoin()") is False
+
+
+def test_only_the_columns_picked_are_added(join_page: Page, join_paths: list[Path]) -> None:
+    """`選んだ列だけ` with `score` adds `_joined` and `score` alone (Issue #358)."""
+    page = join_page
+    page.keyboard.press("Control+j")
+    read_source(page, join_paths)
+    pick(page, 0, 0, "lab", "label")
+    join_dialog(page).get_by_label("選んだ列だけ").check()
+    pick_added(page, 0, "sco", "score")
+    run_join(page, "2 列を結合しました。元の表の 74.9% の行が結合できました。")
+    assert [name for name, _, _ in joined_marks(page)] == ["_joined", "score"]
+
+
+def test_columns_named_like_the_input_s_are_left_out(join_page: Page, join_paths: list[Path]) -> None:
+    """`元の表と同じ名前の列は足さない` leaves `color` out, not as `color_joined`, and the toast tells it (Issue #358)."""
+    page = join_page
+    page.keyboard.press("Control+j")
+    read_source(page, join_paths)
+    pick(page, 0, 0, "lab", "label")
+    join_dialog(page).get_by_label("元の表と同じ名前の列は足さない").check()
+    run_join(
+        page,
+        "4 列を結合しました。元の表の 74.9% の行が結合できました。元の表と同じ名前の 1 列は足しませんでした。",
+    )
+    assert [name for name, _, _ in joined_marks(page)] == ["_joined", "score", "source_joined", "filename_joined"]

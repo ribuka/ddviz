@@ -17,10 +17,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
+from ddviz.shared.joined import SAME_NAMES
+
 #: The value of the file's ``format``.
 FORMAT = "ddviz-draw-settings"
 #: The version of the format this ddviz writes and reads; raised with every change of the format.
-VERSION = 2
+VERSION = 3
 #: The suffix of the file's default name, after the first input's name.
 SUFFIX = ".ddviz.json"
 
@@ -43,7 +45,8 @@ class DrawFile:
         ``columns`` from.
     join : dict or None
         The table joined to the input (``source.join``): ``{"paths",
-        "recursive", "relative", "kind", "keys"}``; None when not joined.
+        "recursive", "relative", "kind", "keys", "columns", "same_names"}``;
+        None when not joined.
     """
 
     paths: list[str]
@@ -172,10 +175,10 @@ def build(
         When it was saved; now, in the local zone, by default.
     join : dict, optional
         The table joined to the input as it was joined, ``{"paths",
-        "recursive", "kind", "keys"}``: the absolute paths and the
-        subfolders' choice given to ``POST /api/join/source``, and the kind
-        and the pairs of keys (``{"left", "right"}``) given to ``POST
-        /api/join``. None, by default, when not joined. Its ``relative`` is
+        "recursive", "kind", "keys", "columns", "same_names"}``: the
+        absolute paths and the subfolders' choice given to ``POST
+        /api/join/source``, and the kind, the pairs of keys (``{"left",
+        "right"}``) and the columns to add given to ``POST /api/join``. None, by default, when not joined. Its ``relative`` is
         made as ``source.relative`` is.
 
     Returns
@@ -198,6 +201,8 @@ def build(
             "relative": joined_relative,
             "kind": join["kind"],
             "keys": [{"left": k["left"], "right": k["right"]} for k in join["keys"]],
+            "columns": None if join["columns"] is None else list(join["columns"]),
+            "same_names": join["same_names"],
         }
     return {
         "format": FORMAT,
@@ -370,13 +375,28 @@ def _strings(value: object) -> bool:
 
 
 #: The keys of a ``source.join`` that is not null.
-_JOIN_KEYS = ("paths", "recursive", "relative", "kind", "keys")
+_JOIN_KEYS = ("paths", "recursive", "relative", "kind", "keys", "columns", "same_names")
+
+
+def _added_shaped(join: dict) -> bool:
+    """Return whether the columns to add of a ``source.join`` have their shape.
+
+    ``columns`` null or a list of strings, not empty; ``same_names`` one of
+    `ddviz.shared.joined.SAME_NAMES`, ``"rename"`` when ``columns`` is a list.
+    """
+    columns, same_names = join["columns"], join["same_names"]
+    if not isinstance(same_names, str) or same_names not in SAME_NAMES:
+        return False
+    if columns is None:
+        return True
+    return _strings(columns) and bool(columns) and same_names == "rename"
 
 
 def _join_shaped(join: object) -> bool:
     """Return whether `join` has the shape of a ``source.join`` that is not null.
 
-    An object of the keys `_JOIN_KEYS`: ``paths`` a list of strings, not
+    An object of the keys `_JOIN_KEYS`, its columns to add shaped
+    (`_added_shaped`): ``paths`` a list of strings, not
     empty; ``recursive`` a bool; ``relative`` null or a list of strings as
     long as ``paths``; ``kind`` ``"key"`` or ``"rows"``; ``keys`` a list of
     ``{"left", "right"}`` of strings, at least one for ``"key"`` and none
@@ -389,7 +409,7 @@ def _join_shaped(join: object) -> bool:
         return False
     if relative is not None and (not _strings(relative) or len(relative) != len(paths)):
         return False
-    if join["kind"] not in ("key", "rows") or not isinstance(keys, list):
+    if join["kind"] not in ("key", "rows") or not isinstance(keys, list) or not _added_shaped(join):
         return False
     pairs = all(
         isinstance(k, dict) and isinstance(k.get("left"), str) and isinstance(k.get("right"), str)
@@ -416,7 +436,7 @@ def parse(text: str) -> DrawFile:  # noqa: C901, PLR0912
     ValueError
         With the message the chooser shows: ``描画設定のファイルを読めませんでした：<理由>``
         for text that is not JSON, another ``format`` or a key missing or of
-        the wrong type, and ``この描画設定は読めません（版 <N>。この ddviz は版 2 を読みます）``
+        the wrong type, and ``この描画設定は読めません（版 <N>。この ddviz は版 3 を読みます）``
         for another ``version``.
     """
     try:

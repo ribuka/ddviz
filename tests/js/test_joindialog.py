@@ -1,4 +1,4 @@
-"""JS: joindialog.js, the join dialog's parts: the pairs of keys, `結合` enabled, the column of the same name (Issue #344)."""
+"""JS: joindialog.js, the join dialog's parts: the pairs of keys, `結合` enabled, the column of the same name (Issue #344), the columns to add (Issue #358)."""
 
 from __future__ import annotations
 
@@ -53,6 +53,7 @@ OPEN = """async () => {
   document.body.append(dialog);
   window.joinDone = null;
   const join = new JoinDialog(dialog, { joined: (answer, kind) => { window.joinDone = [answer, kind]; } });
+  window.joinDialog = join;
   join.open();
 }"""
 
@@ -87,7 +88,7 @@ def _state(page: Page) -> dict:
           const dialog = document.getElementById("join-under-test");
           const disabled = (s) => [...dialog.querySelectorAll(s)].map((e) => e.disabled);
           return {
-            fields: [...dialog.querySelectorAll(".join-key-input")].map((e) => [e.value, e.disabled, e.classList.contains("confirmed")]),
+            fields: [...dialog.querySelectorAll(".join-keys .join-key-input")].map((e) => [e.value, e.disabled, e.classList.contains("confirmed")]),
             remove: disabled(".join-remove-key"),
             add: dialog.querySelector(".join-add-key").disabled,
             join: dialog.querySelector(".join-run").disabled,
@@ -108,6 +109,18 @@ def test_the_texts_and_when_it_may_join(js_page: Page) -> None:
             byKey: m.joinedText({ added: ["a", "b", "c"], rows: 2003, matched: 1500 }, "key"),
             none: m.joinedText({ added: ["a"], rows: 0, matched: 0 }, "key"),
             byRows: m.joinedText({ added: ["a", "b"], rows: 10, matched: 10 }, "rows"),
+            skippedByKey: m.joinedText({ added: ["a", "b", "c"], rows: 2003, matched: 1500, skipped: ["d", "e"] }, "key"),
+            skippedByRows: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: Array(1200).fill("d") }, "rows"),
+            noneSkipped: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: [] }, "rows"),
+            picked: [
+              m.joinReady(true, "rows", [], []),
+              m.joinReady(true, "rows", [], ["a", null]),
+              m.joinReady(true, "rows", [], ["a", "b"]),
+              m.joinReady(true, "key", [{ left: "a", right: "a" }], [null]),
+              m.joinReady(true, "key", [{ left: "a", right: "a" }], ["b"]),
+              m.joinReady(true, "key", [{ left: "a", right: null }], ["b"]),
+              m.joinReady(false, "rows", [], ["b"]),
+            ],
             ready: [
               m.joinReady(false, "rows", []),
               m.joinReady(true, "rows", [{ left: null, right: null }]),
@@ -124,6 +137,10 @@ def test_the_texts_and_when_it_may_join(js_page: Page) -> None:
         "byKey": "3 列を結合しました。元の表の 74.9% の行が結合できました。",
         "none": "1 列を結合しました。元の表の 0.0% の行が結合できました。",
         "byRows": "2 列を結合しました。",
+        "skippedByKey": "3 列を結合しました。元の表の 74.9% の行が結合できました。元の表と同じ名前の 2 列は足しませんでした。",
+        "skippedByRows": "1 列を結合しました。元の表と同じ名前の 1,200 列は足しませんでした。",
+        "noneSkipped": "1 列を結合しました。",
+        "picked": [False, False, True, False, True, False, False],
         "ready": [False, True, True, False, False],
     }
 
@@ -213,8 +230,8 @@ def test_a_refused_join_tells_why_and_a_new_key_joins(dialog: Page) -> None:
     page.wait_for_function("window.joinDone !== null")
     assert page.evaluate("document.getElementById('join-under-test').open") is False
     assert page.evaluate("window.joinBodies") == [
-        {"kind": "key", "keys": [{"left": "color", "right": "color"}]},
-        {"kind": "key", "keys": [{"left": "label", "right": "label"}]},
+        {"kind": "key", "keys": [{"left": "color", "right": "color"}], "columns": None, "same_names": "rename"},
+        {"kind": "key", "keys": [{"left": "label", "right": "label"}], "columns": None, "same_names": "rename"},
     ]
     assert page.evaluate("window.joinDone") == [
         {"added": ["_joined", "score"], "rows": 2000, "matched": 1500},
@@ -306,3 +323,136 @@ def test_a_read_answered_after_an_edit_is_dropped(dialog: Page) -> None:
     expect(result).to_have_text("2 ファイル・1,500 行・5 列")
     expect(page.locator("#join-under-test .join-run")).to_be_enabled()
     assert [r["paths"] for r in page.evaluate("window.reads")] == [["a.parquet"], ["b.parquet"]]
+
+
+def _added(page: Page) -> dict:
+    """Return the section `足す列`: the radios and the check (checked, disabled), what is hidden, and the lines of the columns."""
+    return page.evaluate(
+        """() => {
+          const section = document.querySelector("#join-under-test .join-added");
+          const radios = [...section.querySelectorAll("input[type=radio]")];
+          const skip = section.querySelector(".join-skip");
+          const add = section.querySelector(".join-add-column");
+          return {
+            hidden: section.hidden,
+            mode: radios.filter((e) => e.checked).map((e) => e.value),
+            radiosOff: radios.map((e) => e.disabled),
+            skip: [skip.checked, skip.disabled, skip.closest("label").hidden],
+            listHidden: section.querySelector(".join-added-columns").hidden,
+            fields: [...section.querySelectorAll(".join-added-column .join-key-input")].map((e) => [e.value, e.disabled, e.placeholder]),
+            remove: [...section.querySelectorAll(".join-remove-column")].map((e) => e.disabled),
+            add: [add.disabled, add.hidden],
+          };
+        }"""
+    )
+
+
+def _pick_added(page: Page, row: int, typed: str, name: str) -> None:
+    """Type `typed` in a line of a column to add and pick `name` among the candidates."""
+    field = page.locator("#join-under-test .join-added-column").nth(row).locator(".join-key-input")
+    field.fill(typed)
+    page.locator(f'#join-under-test .join-candidate[data-name="{name}"]').click()
+    expect(field).to_have_value(name)
+
+
+def _choose_added(page: Page) -> None:
+    """Check `元の表と同じ名前の列は足さない`, then pick `score` and add an empty line under `選んだ列だけ`."""
+    page.locator("#join-under-test .join-skip").check()
+    page.locator("#join-under-test .join-added input[value=picked]").check()
+    _pick_added(page, 0, "sco", "score")
+    page.locator("#join-under-test .join-add-column").click()
+
+
+# The section as each open and read starts it, once the table is read.
+DEFAULT_ADDED = {
+    "hidden": False,
+    "mode": ["all"],
+    "radiosOff": [False, False],
+    "skip": [False, False, False],
+    "listHidden": True,
+    "fields": [["", False, "結合する表の列"]],
+    "remove": [True],
+    "add": [False, True],
+}
+# The same before the table is read: everything disabled.
+UNREAD_ADDED = {
+    **DEFAULT_ADDED,
+    "radiosOff": [True, True],
+    "skip": [False, True, False],
+    "fields": [["", True, "結合する表の列"]],
+    "add": [True, True],
+}
+
+
+def test_the_columns_to_add_wait_for_the_read_and_switch_by_the_radio(dialog: Page) -> None:
+    """`足す列` is disabled before `読む`, shown for both kinds; `選んだ列だけ` hides the check and lists the lines, added and removed, never the last."""
+    page = dialog
+    assert _added(page) == UNREAD_ADDED
+    _read(page)
+    assert _added(page) == DEFAULT_ADDED
+    page.locator("#join-under-test input[value=rows]").check()
+    assert _added(page) == DEFAULT_ADDED
+    page.locator("#join-under-test .join-added input[value=picked]").check()
+    state = _added(page)
+    assert (state["mode"], state["skip"][2], state["listHidden"], state["add"]) == (["picked"], True, False, [False, False])
+    assert _state(page)["join"] is True
+    _pick_added(page, 0, "sco", "score")
+    assert _state(page)["join"] is False
+    page.locator("#join-under-test .join-add-column").click()
+    assert page.locator("#join-under-test .join-added-column .join-key-input").nth(1).evaluate(
+        "(e) => e === document.activeElement"
+    )
+    assert _added(page)["remove"] == [False, False]
+    assert _state(page)["join"] is True
+    page.locator("#join-under-test .join-remove-column").nth(1).click()
+    assert _added(page)["fields"] == [["score", False, "結合する表の列"]]
+    assert _added(page)["remove"] == [True]
+    assert _state(page)["join"] is False
+    page.locator("#join-under-test .join-added input[value=all]").check()
+    state = _added(page)
+    assert (state["skip"][2], state["listHidden"], state["add"][1]) == (False, True, True)
+
+
+def test_the_join_sends_the_columns_to_add(dialog: Page) -> None:
+    """`すべての列` sends null with the check as `same_names`; `選んだ列だけ` sends the lines in their order with `"rename"`; each open starts again."""
+    page = dialog
+
+    def join() -> dict:
+        page.evaluate("window.joinDone = null")
+        page.locator("#join-under-test .join-run").click()
+        page.wait_for_function("window.joinDone !== null")
+        return page.evaluate("window.joinBodies.at(-1)")
+
+    page.locator("#join-under-test input[value=rows]").check()
+    _read(page)
+    assert join() == {"kind": "rows", "keys": [], "columns": None, "same_names": "rename"}
+
+    page.evaluate("window.joinDialog.open()")
+    assert _added(page) == UNREAD_ADDED
+    page.locator("#join-under-test input[value=rows]").check()
+    _read(page)
+    page.locator("#join-under-test .join-skip").check()
+    assert join() == {"kind": "rows", "keys": [], "columns": None, "same_names": "skip"}
+
+    page.evaluate("window.joinDialog.open()")
+    assert _added(page) == UNREAD_ADDED
+    page.locator("#join-under-test input[value=rows]").check()
+    _read(page)
+    _choose_added(page)
+    _pick_added(page, 1, "label_1", "label_1")
+    assert join() == {"kind": "rows", "keys": [], "columns": ["score", "label_1"], "same_names": "rename"}
+
+
+def test_reading_again_or_editing_the_paths_resets_the_columns_to_add(dialog: Page) -> None:
+    """`読む` again, and paths changed after the read, bring `足す列` back to its default."""
+    page = dialog
+    _read(page)
+    _choose_added(page)
+    page.locator("#join-under-test .join-read").click()
+    expect(page.locator("#join-under-test .join-source-result")).to_have_text("2 ファイル・1,500 行・5 列")
+    assert _added(page) == DEFAULT_ADDED
+
+    _choose_added(page)
+    page.locator("#join-under-test .join-paths").fill("c.parquet")
+    expect(page.locator("#join-under-test .join-source-result")).to_have_text("")
+    assert _added(page) == UNREAD_ADDED

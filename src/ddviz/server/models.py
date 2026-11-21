@@ -177,9 +177,16 @@ class JoinKey(BaseModel):
 
 
 class JoinRequest(BaseModel):
-    """Body of ``POST /api/join``: ``"key"`` with the pairs of keys, or ``"rows"`` without keys (`ddviz.server.source.Source.join`)."""
+    """Body of ``POST /api/join``: ``"key"`` with the pairs of keys, or ``"rows"`` without keys, and the columns to add (`ddviz.server.source.Source.join`).
+
+    ``columns`` null adds all the columns of the joined table but its keys,
+    with ``same_names`` deciding on those named like the input's
+    (``"rename"`` or ``"skip"``); a list adds those columns alone.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     kind: str
     keys: list[JoinKey] = []
+    columns: list[str] | None = None
+    same_names: str = "rename"

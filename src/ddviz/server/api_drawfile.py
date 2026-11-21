@@ -39,6 +39,8 @@ def _join(source: Source) -> dict | None:
         "recursive": join.right.recursive,
         "kind": join.kind,
         "keys": join.keys,
+        "columns": join.columns,
+        "same_names": join.same_names,
     }
 
 
