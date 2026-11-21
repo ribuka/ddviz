@@ -528,6 +528,34 @@ function followMargin(grow) {
 
 const CONVERT_RETRY_MS = 300;
 
+// Posts `makeBody()` as JSON to `path` and returns the answer; while the
+// server refuses it for an earlier request (409 "converting") or killed it
+// (409 `{"cancelled": true}`), waits the delay above and posts a new
+// `makeBody()` again, unless a newer request (`mine !== generation`) came.
+// Throws what `fetch` throws.
+//
+// An edit dropped while an earlier request converts its columns is refused
+// (it would kill the conversion); it waits for the conversion's end. The
+// server orders requests by their arrival, and a task kills the one started
+// before it: an earlier request of this page that came or started later
+// kills the latest one's task, and its answer is dropped as superseded, so
+// the latest is asked again; else it would fail, and nothing would end the
+// wait.
+async function postRetried(path, makeBody, mine) {
+  for (;;) {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(makeBody()),
+    });
+    if (response.status !== 409 || mine !== generation) return response;
+    const refused = await response.clone().json().catch(() => ({}));
+    if (refused.detail !== "converting" && !refused.cancelled) return response;
+    await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
+    if (mine !== generation) return response;
+  }
+}
+
 // Whether the server may hold a result that the page did not draw: a plot
 // whose answer was lost, or that failed after the server replaced its
 // results (its images did not come, or it could not be drawn). A failure
@@ -538,31 +566,12 @@ let serverAhead = false;
 // is asked for meanwhile, so a failed plot asks for it (`resumeShown`).
 let movedWhilePlotting = false;
 
-// Posts a plot request and returns its answer and text; while an earlier
-// plot converts its columns (409 "converting"), posts it again once the
-// conversion ends, and so it does when an earlier plot of this page killed
-// it (409 `{"cancelled": true}`), unless a newer request (`mine !==
-// generation`) came. Throws what `fetch` throws.
+// Posts a plot request and returns its answer and text, posting it again
+// on a 409 as `postRetried` does: an earlier plot of this page that came or
+// started later kills the latest one's task (Issue #321). Throws what
+// `fetch` throws.
 async function postPlot(body, mine) {
-  let response;
-  for (;;) {
-    response = await fetch("/api/plot", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (response.status !== 409 || mine !== generation) break;
-    // An edit dropped while an earlier plot converts its columns is refused
-    // (it would kill the conversion); it waits for the conversion's end. The
-    // server orders plots by their arrival, and a task kills the one started
-    // before it: an earlier plot of this page that came or started later
-    // kills the latest one's task (Issue #321), and its answer is dropped as
-    // superseded, so the latest is asked again; else it would fail.
-    const refused = await response.clone().json().catch(() => ({}));
-    if (refused.detail !== "converting" && !refused.cancelled) break;
-    await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
-    if (mine !== generation) break;
-  }
+  const response = await postRetried("/api/plot", () => body, mine);
   return { response, text: await response.text() };
 }
 
@@ -1049,7 +1058,7 @@ function isDrawn(meta, layout) {
 // `path` is the endpoint, `body` what it takes besides the size and the
 // filters, `status` the text shown meanwhile, `onFailed` what to put back
 // when the request fails.
-async function requestAgain({ path, body, ranges, whole, status, onFailed = null }) { // noqa: C901, PLR0912, PLR0915
+async function requestAgain({ path, body, ranges, whole, status, onFailed = null }) { // noqa: C901, PLR0915
   const mine = ++generation;
   const size = stageSize();
   requestedSize = size;
@@ -1060,42 +1069,29 @@ async function requestAgain({ path, body, ranges, whole, status, onFailed = null
   setPending(true);
   const filterCandidate = restorePoint.propose(filterPane.sent);
   const started = performance.now();
+  // Under the lock, the color scale and the cuts shown stay
+  // (`AxisRanges.colorScale`, `AxisRanges.cuts`); each post takes the
+  // filters and the scale of its time.
+  const makeBody = () => ({
+    ...body,
+    ...size,
+    filters,
+    color_scale: axisRanges.colorScale(shownScale()),
+    cuts: axisRanges.cuts(shownScale()),
+  });
   let response;
-  for (;;) {
-    try {
-      response = await fetch(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Under the lock, the color scale and the cuts shown stay
-        // (`AxisRanges.colorScale`, `AxisRanges.cuts`).
-        body: JSON.stringify({
-          ...body,
-          ...size,
-          filters,
-          color_scale: axisRanges.colorScale(shownScale()),
-          cuts: axisRanges.cuts(shownScale()),
-        }),
-      });
-    } catch (error) {
-      console.error(error);
-      if (mine === generation) {
-        setPending(false);
-        statusLine.error(`集約の要求に失敗した（${error.message}）`);
-        onFailed?.();
-      }
-      return;
+  try {
+    response = await postRetried(path, makeBody, mine);
+  } catch (error) {
+    console.error(error);
+    if (mine === generation) {
+      setPending(false);
+      statusLine.error(`集約の要求に失敗した（${error.message}）`);
+      onFailed?.();
     }
-    if (mine !== generation) return; // superseded
-    if (response.status !== 409) break;
-    // The server refused or killed the latest request, for an older one of
-    // this page: it checked that one's columns (409 "converting") or started
-    // that one's task later. The older answer is dropped as superseded, so
-    // this one is asked again; else nothing would end the wait.
-    const refused = await response.clone().json().catch(() => ({}));
-    if (refused.detail !== "converting" && !refused.cancelled) break;
-    await new Promise((resolve) => setTimeout(resolve, CONVERT_RETRY_MS));
-    if (mine !== generation) return;
+    return;
   }
+  if (mine !== generation) return; // superseded
   if (!response.ok) {
     const text = await response.text();
     // A newer request may have come while the answer was read.
