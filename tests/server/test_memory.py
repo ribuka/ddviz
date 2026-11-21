@@ -5,23 +5,20 @@ from __future__ import annotations
 import os
 import queue
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from ddviz.server import memory
-from ddviz.server.app import create_app
 from ddviz.server.auth import COOKIE
 from ddviz.server.memory import MemoryMeter
-from ddviz.server.settings import Settings
-from ddviz.server.settings_store import SettingsStore
 from ddviz.workers.jobs import WorkerJob
 from ddviz.workers.runner import WorkerPool
 
 windows = pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
-TOKEN = "secret-of-the-run"
 
 # A worker that says it is ready, then holds its task until killed.
 _HOLDING_WORKER = (
@@ -108,25 +105,19 @@ def test_each_side_is_unknown_on_its_own(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 @pytest.fixture
-def server(tmp_path: Path, scatter_path: Path) -> Iterator[TestClient]:
+def server(
+    serve: Callable[..., AbstractContextManager[TestClient]], scatter_path: Path
+) -> Iterator[TestClient]:
     """Serve `scatter_path` as in a browser (``--port``): no WebView2 processes."""
-    (tmp_path / "run").mkdir()
-    app = create_app(
-        [str(scatter_path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(Settings()),
-        TOKEN,
-    )
-    with TestClient(app) as started:
+    with serve([scatter_path], visit=False) as started:
         yield started
 
 
-def test_in_a_browser_only_the_backend_is_measured(server: TestClient) -> None:
+def test_in_a_browser_only_the_backend_is_measured(
+    server: TestClient, token: str
+) -> None:
     """``--port`` has no frontend; the backend is known on Windows only; never cached."""
-    server.cookies.set(COOKIE, TOKEN)
+    server.cookies.set(COOKIE, token)
     response = server.get("/api/memory")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
@@ -142,22 +133,15 @@ def test_in_a_browser_only_the_backend_is_measured(server: TestClient) -> None:
 
 @windows
 def test_the_window_hands_over_its_frontend(
-    tmp_path: Path, scatter_path: Path
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    token: str,
+    scatter_path: Path,
 ) -> None:
     """The ids the window hands over are measured as the frontend."""
-    (tmp_path / "run").mkdir()
-    app = create_app(
-        [str(scatter_path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(Settings()),
-        TOKEN,
-        lambda: [os.getpid()],
-    )
-    with TestClient(app) as client:
-        client.cookies.set(COOKIE, TOKEN)
+    with serve(
+        [scatter_path], visit=False, frontend_pids=lambda: [os.getpid()]
+    ) as client:
+        client.cookies.set(COOKIE, token)
         body = client.get("/api/memory").json()
     assert body["frontend_bytes"] > 0
     assert body["backend_bytes"] >= body["frontend_bytes"]

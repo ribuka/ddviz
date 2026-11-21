@@ -7,7 +7,8 @@ import io
 import re
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,7 +16,6 @@ import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
-from ddviz.server.app import create_app
 from ddviz.server.auth import COOKIE
 from ddviz.server.broker import TaskBroker
 from ddviz.server.settings import (
@@ -26,7 +26,6 @@ from ddviz.server.settings import (
     PlotSettings,
     Settings,
 )
-from ddviz.server.settings_store import SettingsStore
 from ddviz.server.source import Source
 from ddviz.shared.missing import MISSING, MISSING_COLOR
 from ddviz.shared.scatter import POINT_SIZE, SHAPE_SIZE
@@ -38,30 +37,21 @@ if TYPE_CHECKING:
 
 ENCODING = {"x": ["x"], "y": ["y"], "color": "color", "col": "facet"}
 SIZE = {"width": 400, "height": 300}
-TOKEN = "secret-of-the-run"
 
 
 @pytest.fixture
-def server(tmp_path: Path, scatter_path: Path) -> Iterator[TestClient]:
+def server(
+    serve: Callable[..., AbstractContextManager[TestClient]], scatter_path: Path
+) -> Iterator[TestClient]:
     """Serve `scatter_path` with its task outputs and column cache under `tmp_path`; no token yet."""
-    app = create_app(
-        [str(scatter_path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(Settings()),
-        TOKEN,
-    )
-    (tmp_path / "run").mkdir()
-    with TestClient(app) as started:
+    with serve([scatter_path], visit=False) as started:
         yield started
 
 
 @pytest.fixture
-def client(server: TestClient) -> TestClient:
+def client(server: TestClient, token: str) -> TestClient:
     """Open the first URL on the server, which moves the token into a cookie."""
-    assert server.get("/", params={"token": TOKEN}).status_code == 200
+    assert server.get("/", params={"token": token}).status_code == 200
     return server
 
 
@@ -76,20 +66,22 @@ def test_requests_without_the_token_are_refused(server: TestClient, path: str) -
     assert server.post("/api/plot", json={}).status_code == 403
 
 
-def test_the_token_only_opens_the_first_page(server: TestClient) -> None:
+def test_the_token_only_opens_the_first_page(server: TestClient, token: str) -> None:
     """The token is accepted only on `/`, and only when it is right."""
-    assert server.get("/api/schema", params={"token": TOKEN}).status_code == 403
+    assert server.get("/api/schema", params={"token": token}).status_code == 403
     assert server.get("/", params={"token": "wrong"}).status_code == 403
     assert server.get("/", params={"token": "é"}).status_code == 403
 
 
-def test_the_token_moves_into_a_strict_httponly_cookie(server: TestClient) -> None:
+def test_the_token_moves_into_a_strict_httponly_cookie(
+    server: TestClient, token: str
+) -> None:
     """The first URL sets the cookie and redirects to `/` without the token."""
-    response = server.get("/", params={"token": TOKEN}, follow_redirects=False)
+    response = server.get("/", params={"token": token}, follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     cookie = response.headers["set-cookie"].lower()
-    assert f"{COOKIE}={TOKEN}" in cookie
+    assert f"{COOKIE}={token}" in cookie
     assert "httponly" in cookie
     assert "samesite=strict" in cookie
     assert server.get("/").status_code == 200
@@ -139,7 +131,9 @@ def test_columns_carry_their_non_null_rows(
 
 
 def test_the_page_reads_the_inactive_opacity(
-    tmp_path: Path, scatter_path: Path
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    token: str,
+    scatter_path: Path,
 ) -> None:
     """``GET /api/settings`` gives the page ``plot.legend.inactive_opacity``, ``plot.image_copy.dpi`` and ``plot.max_levels``."""
     settings = Settings(
@@ -149,19 +143,9 @@ def test_the_page_reads_the_inactive_opacity(
             max_levels=12,
         )
     )
-    app = create_app(
-        [str(scatter_path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(settings),
-        TOKEN,
-    )
-    (tmp_path / "run").mkdir()
-    with TestClient(app) as client:
+    with serve([scatter_path], settings=settings, visit=False) as client:
         assert client.get("/api/settings").status_code == 403
-        client.get("/", params={"token": TOKEN})
+        client.get("/", params={"token": token})
         assert client.get("/api/settings").json() == {
             "inactive_opacity": 0.0,
             "image_copy_dpi": 96,
@@ -178,24 +162,9 @@ def test_the_page_reads_the_default_limit_of_levels(client: TestClient) -> None:
 BINNED = {"x": ["x"], "y": ["y"], "color": "y"}
 
 
-def _bins_server(tmp_path: Path, scatter_path: Path, max_levels: int) -> TestClient:
-    """Return a server of `scatter_path` with ``plot.max_levels`` set, the token already used."""
-    app = create_app(
-        [str(scatter_path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(Settings(plot=PlotSettings(max_levels=max_levels))),
-        TOKEN,
-    )
-    (tmp_path / "run").mkdir()
-    return TestClient(app)
-
-
 @pytest.mark.parametrize(("limit", "good"), [(100, [2, 7, 100]), (12, [2, 4, 12])])
 def test_color_bins_take_integers_up_to_the_limit_and_refuse_the_rest(
-    tmp_path: Path,
+    serve: Callable[..., AbstractContextManager[TestClient]],
     scatter_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     limit: int,
@@ -211,8 +180,8 @@ def test_color_bins_take_integers_up_to_the_limit_and_refuse_the_rest(
         return await run(self, task, pool)
 
     monkeypatch.setattr(TaskBroker, "run", counted)
-    with _bins_server(tmp_path, scatter_path, limit) as client:
-        client.get("/", params={"token": TOKEN})
+    settings = Settings(plot=PlotSettings(max_levels=limit))
+    with serve([scatter_path], settings=settings) as client:
         for by in ("values", "rows"):
             for n in good:
                 response = client.post(
@@ -247,65 +216,37 @@ def test_color_bins_take_integers_up_to_the_limit_and_refuse_the_rest(
 
 
 def test_columns_list_as_many_as_the_settings_allow(
-    tmp_path: Path, scatter_path: Path
+    serve: Callable[..., AbstractContextManager[TestClient]], scatter_path: Path
 ) -> None:
     """The search returns ``columns.max_listed`` columns at most, whatever the page asks."""
     settings = Settings(columns=ColumnsSettings(max_listed=2))
-    app = create_app(
-        [str(scatter_path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(settings),
-        TOKEN,
-    )
-    (tmp_path / "run").mkdir()
-    with TestClient(app) as started:
-        started.get("/", params={"token": TOKEN})
+    with serve([scatter_path], settings=settings) as started:
         found = started.get("/api/columns", params={"limit": 200}).json()
     assert found["matched"] == 5
     assert [c["name"] for c in found["columns"]] == ["x", "y"]
 
 
 def test_search_history_is_kept_per_input_across_runs(
-    tmp_path: Path, scatter_path: Path, folder_path: Path
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    scatter_path: Path,
+    folder_path: Path,
 ) -> None:
     """The keywords outlive the server, and another input has its own."""
-    runs = iter(range(10))
-
-    def serve(path: Path) -> TestClient:
-        # Each server removes its own task directory when it stops.
-        root = tmp_path / f"run{next(runs)}"
-        root.mkdir()
-        app = create_app(
-            [str(path)],
-            False,
-            root,
-            tmp_path / "cache",
-            tmp_path / "history",
-            SettingsStore(Settings()),
-            TOKEN,
-        )
-        client = TestClient(app)
-        client.get("/", params={"token": TOKEN})
-        return client
-
-    with serve(scatter_path) as first:
+    with serve([scatter_path]) as first:
         assert first.get("/api/search-history").json() == {"words": []}
         first.post("/api/search-history", json={"word": "x"})
         added = first.post("/api/search-history", json={"word": " Color  g "})
         assert added.json() == {"words": ["Color g", "x"]}
-    with serve(scatter_path) as again:
+    with serve([scatter_path]) as again:
         assert again.get("/api/search-history").json() == {"words": ["Color g", "x"]}
         removed = again.delete("/api/search-history", params={"word": "x"})
         assert removed.json() == {"words": ["Color g"]}
-    with serve(folder_path) as other:
+    with serve([folder_path]) as other:
         assert other.get("/api/search-history").json() == {"words": []}
         other.post("/api/search-history", json={"word": "y"})
         assert other.delete("/api/search-history").json() == {"words": []}
         assert other.get("/api/search-history").json() == {"words": []}
-    with serve(scatter_path) as last:
+    with serve([scatter_path]) as last:
         assert last.get("/api/search-history").json() == {"words": ["Color g"]}
 
 
@@ -525,39 +466,21 @@ def test_summary(client: TestClient) -> None:
 
 
 @pytest.fixture
-def folder_client(tmp_path: Path, folder_path: Path) -> Iterator[TestClient]:
+def folder_client(
+    serve: Callable[..., AbstractContextManager[TestClient]], folder_path: Path
+) -> Iterator[TestClient]:
     """Serve the folder `folder_path` with the token in a cookie."""
-    app = create_app(
-        [str(folder_path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(Settings()),
-        TOKEN,
-    )
-    (tmp_path / "run").mkdir()
-    with TestClient(app) as started:
-        assert started.get("/", params={"token": TOKEN}).status_code == 200
+    with serve([folder_path]) as started:
         yield started
 
 
 @pytest.fixture
-def files_client(tmp_path: Path, folder_path: Path) -> Iterator[TestClient]:
+def files_client(
+    serve: Callable[..., AbstractContextManager[TestClient]], folder_path: Path
+) -> Iterator[TestClient]:
     """Serve the Parquet files of `folder_path`, given out of order, as one input."""
     files = ["part-10.parquet", "part-1.parquet", "part-2.parquet", "part-1.parquet"]
-    app = create_app(
-        [str(folder_path / f) for f in files],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(Settings()),
-        TOKEN,
-    )
-    (tmp_path / "run").mkdir()
-    with TestClient(app) as started:
-        assert started.get("/", params={"token": TOKEN}).status_code == 200
+    with serve([folder_path / f for f in files]) as started:
         yield started
 
 
@@ -601,28 +524,21 @@ def test_a_folder_plots_selects_and_lists_as_one_table(
 
 
 def test_several_paths_with_a_folder_are_refused(
-    tmp_path: Path, folder_path: Path, scatter_path: Path
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    folder_path: Path,
+    scatter_path: Path,
 ) -> None:
     """Several paths must all be files; a folder among them fails Load with 400."""
-    app = create_app(
-        [str(scatter_path), str(folder_path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(Settings()),
-        TOKEN,
-    )
-    (tmp_path / "run").mkdir()
-    with TestClient(app) as client:
-        client.get("/", params={"token": TOKEN})
+    with serve([scatter_path, folder_path]) as client:
         response = client.get("/api/schema")
     assert response.status_code == 400
     assert str(folder_path) in response.json()["detail"]
 
 
 def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
-    client: TestClient, tmp_path: Path, scatter_path: Path
+    client: TestClient,
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    scatter_path: Path,
 ) -> None:
     """A view gets the room the overview leaves; without room for x and y it has no hover.
 
@@ -632,18 +548,7 @@ def test_the_hover_limit_is_shared_by_the_overview_and_the_view(
     unlimited = _plot(client)["meta"]["hover"]
     assert unlimited["files"] and unlimited["dropped"] == []
     settings = Settings(hover=HoverSettings(max_temp_gb=(unlimited["bytes"] + 1000) / 2**30))
-    app = create_app(
-        [str(scatter_path)],
-        False,
-        tmp_path / "limited",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(settings),
-        TOKEN,
-    )
-    (tmp_path / "limited").mkdir()
-    with TestClient(app) as limited:
-        limited.get("/", params={"token": TOKEN})
+    with serve([scatter_path], settings=settings) as limited:
         meta = _plot(limited)["meta"]
         assert meta["hover"]["files"] and meta["hover"]["dropped"] == []
         assert meta["hover"]["kept"] == ["x", "y", "color", "facet"]
@@ -1261,24 +1166,15 @@ class _Saves:
         self._act("cancel", file)
 
 
-def test_the_windows_saves_open_show_and_cancel(tmp_path: Path, scatter_path: Path) -> None:
+def test_the_windows_saves_open_show_and_cancel(
+    serve: Callable[..., AbstractContextManager[TestClient]], scatter_path: Path
+) -> None:
     """With the window's saves, the page opens, shows or cancels them by id: a file gone is 404 ``missing``, an id not saved 404 ``unknown``, an OS failure 500; a browser has no such routes."""
     saves = _Saves()
     for given in (saves, None):
-        app = create_app(
-            [str(scatter_path)],
-            False,
-            tmp_path / "run",
-            tmp_path / "cache",
-            tmp_path / "history",
-            SettingsStore(Settings()),
-            TOKEN,
-            desktop=given is not None,
-            saves=given,
-        )
-        (tmp_path / "run").mkdir(exist_ok=True)
-        with TestClient(app) as window:
-            window.get("/", params={"token": TOKEN})
+        with serve(
+            [scatter_path], desktop=given is not None, saves=given
+        ) as window:
             if given is None:
                 assert window.post("/api/saves/a/open").status_code == 404
                 assert window.post("/api/saves/a/reveal").status_code == 404
@@ -1294,21 +1190,12 @@ def test_the_windows_saves_open_show_and_cancel(tmp_path: Path, scatter_path: Pa
     assert saves.calls[:3] == [("open", "a"), ("reveal", "a"), ("cancel", "a")]
 
 
-def test_plot_data_needs_no_hover_files(tmp_path: Path, scatter_path: Path) -> None:
+def test_plot_data_needs_no_hover_files(
+    serve: Callable[..., AbstractContextManager[TestClient]], scatter_path: Path
+) -> None:
     """A result without hover files still saves its rows: they are read from the columns."""
     settings = Settings(hover=HoverSettings(max_temp_gb=1 / 2**30))
-    app = create_app(
-        [str(scatter_path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(settings),
-        TOKEN,
-    )
-    (tmp_path / "run").mkdir()
-    with TestClient(app) as limited:
-        limited.get("/", params={"token": TOKEN})
+    with serve([scatter_path], settings=settings) as limited:
         meta = _plot(limited)["meta"]
         assert meta["hover"]["files"] is False
         response = _save(limited, meta["task"])
@@ -1684,25 +1571,14 @@ def test_the_automatic_ranges_follow_the_filter(
 
 
 def test_a_log_axis_without_positive_values_at_all_is_refused(
-    tmp_path: Path,
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]]
 ) -> None:
     """A log axis whose column has no positive value is refused, filtered or not; one whose filter leaves none draws no row."""
     path = tmp_path / "signs.parquet"
     pl.DataFrame(
         {"x": [-2.0, -1.0, 1.0, 10.0], "y": [1.0, 2.0, 3.0, 4.0], "n": [-1.0] * 4}
     ).write_parquet(path)
-    app = create_app(
-        [str(path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(Settings()),
-        TOKEN,
-    )
-    (tmp_path / "run").mkdir()
-    with TestClient(app) as signs:
-        signs.get("/", params={"token": TOKEN})
+    with serve([path]) as signs:
 
         def plot(scales: dict, filters: list) -> Response:
             return signs.post(

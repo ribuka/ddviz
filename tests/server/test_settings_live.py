@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from ddviz.server import source as source_module
-from ddviz.server.app import create_app
 from ddviz.server.settings import Settings
 from ddviz.server.settings_store import SettingsStore
 from ddviz.server.source import Source
-from tests.server.test_app import ENCODING, HIDE_NULLS, SIZE, TOKEN
+from tests.server.test_app import ENCODING, HIDE_NULLS, SIZE
 
 
 @pytest.fixture
@@ -25,28 +25,14 @@ def store(tmp_path: Path) -> SettingsStore:
     return SettingsStore.load(path)
 
 
-def _serve(tmp_path: Path, scatter_path: Path, store: SettingsStore) -> TestClient:
-    """Return a server of `scatter_path` reading `store`."""
-    app = create_app(
-        [str(scatter_path)],
-        False,
-        tmp_path / "run",
-        tmp_path / "cache",
-        tmp_path / "history",
-        store,
-        TOKEN,
-    )
-    (tmp_path / "run").mkdir()
-    return TestClient(app)
-
-
 @pytest.fixture
 def client(
-    tmp_path: Path, scatter_path: Path, store: SettingsStore
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    scatter_path: Path,
+    store: SettingsStore,
 ) -> Iterator[TestClient]:
     """Serve `scatter_path` with `store`, the token already used."""
-    with _serve(tmp_path, scatter_path, store) as started:
-        started.get("/", params={"token": TOKEN})
+    with serve([scatter_path], settings=store) as started:
         yield started
 
 
@@ -185,7 +171,7 @@ class _Switching(SettingsStore):
 
 
 def test_a_plot_uses_one_snapshot_from_its_start(
-    tmp_path: Path, scatter_path: Path
+    serve: Callable[..., AbstractContextManager[TestClient]], scatter_path: Path
 ) -> None:
     """A plot started before a save checks its levels and sizes its hover with the settings it started with; the next plot takes the new ones."""
     tiny = 1 / 2**30
@@ -195,8 +181,7 @@ def test_a_plot_uses_one_snapshot_from_its_start(
         hover=type(first.hover)(max_temp_gb=tiny),
     )
     switching = _Switching(first, then)
-    with _serve(tmp_path, scatter_path, switching) as client:
-        client.get("/", params={"token": TOKEN})
+    with serve([scatter_path], settings=switching) as client:
         # Load reads the cache's limits; the plot's read is the next one.
         client.get("/api/schema")
         switching.reads = 0

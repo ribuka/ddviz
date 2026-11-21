@@ -3,42 +3,22 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
-from ddviz.server.app import create_app
 from ddviz.server.broker import TaskBroker, TaskEnd
-from ddviz.server.settings import Settings
-from ddviz.server.settings_store import SettingsStore
 from ddviz.shared.tasks import LevelIndexTask, Task
-
-TOKEN = "secret-of-the-run"
-
-
-def _serve(tmp_path: Path, paths: list[Path]) -> Iterator[TestClient]:
-    """Serve an input with the token in a cookie."""
-    run = tmp_path / "run"
-    run.mkdir()
-    app = create_app(
-        [str(p) for p in paths],
-        False,
-        run,
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(Settings()),
-        TOKEN,
-    )
-    with TestClient(app) as client:
-        assert client.get("/", params={"token": TOKEN}).status_code == 200
-        yield client
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
+def client(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]]
+) -> Iterator[TestClient]:
     """Serve a file of a categorical column ``id`` of 150 levels, a number and a date."""
     ids = [f"ID{i}" for i in range(150)] + ["ID7"] * 3 + ["ABC", "abc", "ABC-123", None]
     frame = pl.DataFrame(
@@ -50,7 +30,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     )
     path = tmp_path / "levels.parquet"
     frame.write_parquet(path)
-    yield from _serve(tmp_path, [path])
+    with serve([path]) as served:
+        yield served
 
 
 @pytest.fixture
@@ -141,11 +122,13 @@ def test_a_failed_index_is_written_again(
 
 
 def test_the_added_columns_of_several_files_are_searched(
-    tmp_path: Path, folder_path: Path, folder_frame: pl.DataFrame
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    folder_path: Path,
+    folder_frame: pl.DataFrame,
 ) -> None:
     """The source and filename columns of several files list their files with their rows."""
     files = ["part-10.parquet", "part-1.parquet", "part-2.parquet"]
-    for client in _serve(tmp_path, [folder_path / f for f in files]):
+    with serve([folder_path / f for f in files]) as client:
         for column in ("source", "filename"):
             found = _levels(client, column=column, order="count")
             assert found["n_levels"] == 3
