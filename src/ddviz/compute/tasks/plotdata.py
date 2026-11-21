@@ -462,6 +462,22 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:  # noqa: C
     # nested values count their bytes besides (`_length`).
     fixed = VALUE_BYTES * (len(task.columns) + 1)
 
+    def read_columns(index: pl.Series, *, measure: bool) -> list[pl.DataFrame]:
+        """Read one chunk's values or variable sizes, without the internal row index."""
+        lo, hi = (index.min(), index.max()) if len(index) else (0, -1)
+        frames = []
+        if cached:
+            frames.append(_cached(cached, index, lo, hi, measure=measure).drop(INDEX))
+        if others:
+            frames.append(
+                _source(task.source, others, target, index, lo, hi, measure=measure).drop(INDEX)
+            )
+        if joined:
+            frames.append(
+                _joined(task.source, joined, right_target, index, lo, hi, measure=measure).drop(INDEX)
+            )
+        return frames
+
     # Whether no column has values of variable size, once a chunk found it.
     fixed_only: list[bool] = []
 
@@ -469,19 +485,7 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:  # noqa: C
         """Return the bytes of the values of variable size of the rows `index`, or None without such values."""
         if fixed_only:
             return None
-        lo, hi = index.min(), index.max()
-        frames = []
-        if cached:
-            frames.append(_cached(cached, index, lo, hi, measure=True).drop(INDEX))
-        if others:
-            frames.append(
-                _source(task.source, others, target, index, lo, hi, True).drop(INDEX)
-            )
-        if joined:
-            frames.append(
-                _joined(task.source, joined, right_target, index, lo, hi, True).drop(INDEX)
-            )
-        lengths = pl.concat(frames, how="horizontal")
+        lengths = pl.concat(read_columns(index, measure=True), how="horizontal")
         if lengths.width == 0:
             fixed_only.append(True)
             return None
@@ -509,26 +513,14 @@ def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:  # noqa: C
     def read(chunks: Iterable[pl.Series]) -> Iterator[pl.DataFrame]:
         """Yield the values of the rows of each chunk, the row index first."""
         for chunk in chunks:
-            lo, hi = (chunk.min(), chunk.max()) if len(chunk) else (0, -1)
-            frames = [chunk.to_frame()]
-            if cached:
-                frames.append(_cached(cached, chunk, lo, hi).drop(INDEX))
-            if others:
-                frames.append(
-                    _source(task.source, others, target, chunk, lo, hi).drop(INDEX)
-                )
-            if joined:
-                frames.append(
-                    _joined(task.source, joined, right_target, chunk, lo, hi).drop(INDEX)
-                )
             # Columns picked by name keep their chunks; a `select` of
             # expressions would copy the chunk's values into one chunk a
             # column, as its columns are chunked apart.
-            table = pl.concat(frames, how="horizontal").rename({INDEX: name})[
-                [name, *task.columns]
-            ]
+            table = pl.concat(
+                [chunk.to_frame(), *read_columns(chunk, measure=False)], how="horizontal"
+            ).rename({INDEX: name})[[name, *task.columns]]
             # Only the chunk handed on is held while the next is made.
-            del chunk, frames
+            del chunk
             yield table
             del table
 
