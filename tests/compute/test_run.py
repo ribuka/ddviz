@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from ddviz.compute.tasks.run import run_task
+from ddviz.compute.tasks.run import RUNNERS, run_task
 from ddviz.shared.manifest import read_manifest
-from ddviz.shared.tasks import SchemaTask, task_to_dict
+from ddviz.shared.tasks import TASKS, SchemaTask, task_to_dict
 
 
 def test_run_task_makes_the_directory_and_runs_the_task(
@@ -25,3 +25,8 @@ def test_run_task_refuses_an_unknown_kind(tmp_path: Path) -> None:
     """An unknown kind is an error."""
     with pytest.raises(ValueError, match="unknown task kind"):
         run_task({"kind": "nope", "out": str(tmp_path / "out")}, print)
+
+
+def test_every_task_type_has_a_runner() -> None:
+    """Each type of task the server can send has its function."""
+    assert set(RUNNERS) == set(TASKS.values())
