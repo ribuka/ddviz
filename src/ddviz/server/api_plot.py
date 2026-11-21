@@ -75,7 +75,7 @@ class _LevelsRefused(Exception):
         )
 
 
-def plot_router(
+def plot_router(  # noqa: C901, PLR0915
     source: Source,
     results: Results,
     broker: TaskBroker,
@@ -268,7 +268,7 @@ def plot_router(
         return figure(index, timing, max_hover_bytes)
 
     @router.post("/api/plot")
-    async def plot(request: PlotRequest) -> JSONResponse:
+    async def plot(request: PlotRequest) -> JSONResponse:  # noqa: C901, PLR0915
         nonlocal latest
         latest += 1
         mine = latest

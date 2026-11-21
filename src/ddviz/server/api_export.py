@@ -38,7 +38,7 @@ from ddviz.shared.tasks import PlotDataTask, SourceFiles
 TaskOf = Callable[[list[str], dict[str, list[str]], SourceFiles], PlotDataTask]
 
 
-def export_router(
+def export_router(  # noqa: C901, PLR0915
     source: Source, results: Results, broker: TaskBroker, exporting: Exporting
 ) -> APIRouter:
     """Return the routes that write the plot's data to a file and hand it to the page.

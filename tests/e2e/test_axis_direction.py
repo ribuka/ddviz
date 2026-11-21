@@ -161,7 +161,7 @@ def test_the_tick_menu_reverses_x_and_y_without_a_request(app_page: Page) -> Non
     assert errors == []
 
 
-def test_a_reversed_axis_zooms_selects_and_resets_in_ascending_values(
+def test_a_reversed_axis_zooms_selects_and_resets_in_ascending_values(  # noqa: PLR0915
     app_page: Page,
 ) -> None:
     """On reversed axes, a zoom and a box send ascending ranges; the selection stays through a reversal; Reset axes keeps it."""

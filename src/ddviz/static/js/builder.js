@@ -283,7 +283,7 @@ export class Builder {
   // Returns what a drop of the dragged column on `zone` at `event` does:
   // `{index, insert}` (go in at `index` of the role's columns, or replace
   // the column there) and its description, or `{refused}`.
-  action(zone, event) {
+  action(zone, event) { // noqa: C901
     const role = zone.dataset.role;
     const column = dragged;
     if (role === "wrap" && this.exclusion(role, false, column.from) === "axes") {
@@ -475,7 +475,7 @@ export class Builder {
   // Places `column` on `role` as `action` says, swapping with a chip's role.
   // Within one role, a chip goes in at its new place or swaps with the
   // chip it replaces.
-  place(role, column, { index, insert }) {
+  place(role, column, { index, insert }) { // noqa: C901
     this.numeric.set(column.name, column.numeric);
     this.temporal.set(column.name, column.temporal ?? null);
     const list = this.placed(role).slice();

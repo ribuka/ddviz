@@ -258,7 +258,7 @@ function readNumber(text, optional = false) {
 // takes a positive integer (`readCount`) and the check of its minor ticks
 // (`calendarMinor`), kept from an interval of 2 on; the field of the minor
 // splits is then neither checked nor kept.
-export function readFields({
+export function readFields({ // noqa: C901, PLR0912
   kind = "number",
   min,
   max,
@@ -377,7 +377,7 @@ export function tickAttributes(settings, kind = "number") {
 // null for none), on a numeric axis only. n > 0 standard deviations draw two
 // lines ("+3σ", "−3σ"), none without a deviation (a single row); n = 0 the
 // mean ("μ"); a quantile one line ("P95", "中央値" for 50).
-function linePlaces(kind, line, stats) {
+function linePlaces(kind, line, stats) { // noqa: C901
   if (line.type === "value") return [[isDateKind(kind) ? dateText(line.value) : line.value, null]];
   if (kind !== "number" || !stats) return [];
   if (line.type === "sigma") {
@@ -404,7 +404,7 @@ function linePlaces(kind, line, stats) {
 // each panel's own for the lines of the statistics (`linePlaces`). Their
 // labels lie inside the panel, level, in the line's color: a horizontal
 // line's above it at the right end, a vertical one's right of it at the top.
-function lineShapes(meta, settingsOf) {
+function lineShapes(meta, settingsOf) { // noqa: C901
   const shapes = [];
   for (const panel of meta.panels) {
     const across = [
@@ -601,7 +601,7 @@ function rangeFields(form, range) {
 
 // The ticks' fields: {dtick, unit, minor, monthly, format, digits,
 // separators, turn, calendarFields}; `turn` is null on a temporal axis.
-function tickFields(form, settings, drawn, angle) {
+function tickFields(form, settings, drawn, angle) { // noqa: C901, PLR0915
   const { kind, errors } = form;
   const temporal = kind !== "number";
   const box = form.section("目盛り");

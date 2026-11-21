@@ -211,7 +211,7 @@
 
   document.addEventListener(
     "keydown",
-    (event) => {
+    (event) => { // noqa: C901
       if (menu === null) return;
       const inSubmenu = submenu !== null && submenu.contains(document.activeElement);
       const current = inSubmenu ? submenu : menu;

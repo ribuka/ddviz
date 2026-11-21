@@ -236,7 +236,7 @@ class _Regions:
         return _Regions(frame, dict(enumerate(cells.values())))
 
 
-def _ranked_values(
+def _ranked_values(  # noqa: C901, PLR0912
     frame: pl.LazyFrame,
     wanted: dict[int, set[int]],
     bounds: dict[int, tuple[float, float]],

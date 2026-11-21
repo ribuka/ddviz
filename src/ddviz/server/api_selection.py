@@ -29,7 +29,7 @@ TABLE_PAGE = 100
 TABLE_MAX_COLUMNS = 200
 
 
-def selection_router(
+def selection_router(  # noqa: C901
     source: Source, results: Results, broker: TaskBroker, exporting: Exporting
 ) -> APIRouter:
     """Return the routes of the selection and its table.

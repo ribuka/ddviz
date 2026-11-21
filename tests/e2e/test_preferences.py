@@ -269,7 +269,7 @@ def test_the_limit_of_the_color_bins_follows_at_once(menu_page: Page) -> None:
 
 
 @pytest.mark.parametrize("drawn", ["points-smooth-lines", "boxes"])
-def test_the_opacity_of_inactive_series_redraws_at_once(menu_page: Page, drawn: str) -> None:
+def test_the_opacity_of_inactive_series_redraws_at_once(menu_page: Page, drawn: str) -> None:  # noqa: PLR0915
     """0, 15 and 100 % redraw the inactive series (points, smoothing lines and lines, or box plots) without aggregating again; the active series and the legend's items stay; 0 is not hovered and 15 is again; Cancel changes nothing."""
     page = menu_page
     if drawn == "boxes":

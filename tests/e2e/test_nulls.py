@@ -39,7 +39,7 @@ def open_zone_menu(page: Page, role: str) -> None:
     page.locator(f'.zone[data-role="{role}"]').click(button="right")
 
 
-def test_show_null_rows_toggles_per_zone_and_the_missing_level_is_colored(
+def test_show_null_rows_toggles_per_zone_and_the_missing_level_is_colored(  # noqa: PLR0915
     app_page: Page,
 ) -> None:
     """The zones' menu turns the null rows off and on, kept per zone across moves; the missing level is gray, apart from the "(null)" text, and takes a color."""
@@ -155,7 +155,7 @@ def expect_panels(page: Page, n: int) -> None:
     page.wait_for_function(SETTLED)
 
 
-def test_show_null_rows_of_the_facets_toggles_the_null_panel(app_page: Page) -> None:
+def test_show_null_rows_of_the_facets_toggles_the_null_panel(app_page: Page) -> None:  # noqa: PLR0915
     """Group X and Group Y's menu and the Wrap form's checkbox draw the null rows as a last "(null)" panel and take it away, each zone keeping its setting across moves."""
     page = app_page
     expect(page.locator("#columns .column").filter(has_text="k")).to_be_visible()

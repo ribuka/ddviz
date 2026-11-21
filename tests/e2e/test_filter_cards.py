@@ -128,7 +128,7 @@ def pane_state(page: Page) -> dict:
     )
 
 
-def test_the_bottom_edge_sets_the_height_of_a_list_alone(app_page: Page) -> None:
+def test_the_bottom_edge_sets_the_height_of_a_list_alone(app_page: Page) -> None:  # noqa: PLR0915
     """A drag of a card's bottom edge makes its list taller or lower as it moves, 40px at least, with no upper bound; the rest of the card, the ticked ones apart and other cards stay; the pane scrolls to what is below; the height stays over folding, maximizing, the left pane and the window, and is gone on a new page; nothing is sent."""
     page = app_page
     errors = watch_errors(page)
@@ -299,7 +299,7 @@ def move_card(
     expect(page.locator(".filter-card-preview")).to_have_count(0)
 
 
-def test_every_kind_of_card_moves_by_its_head(app_page: Page) -> None:
+def test_every_kind_of_card_moves_by_its_head(app_page: Page) -> None:  # noqa: PLR0915
     """The numeric, datetime, listed, candidates and 部分一致 cards move up and down to the top, the middle and the end by the name, the icon or the padding; the order only shows: nothing is sent, a commit of the same values sends nothing again, another value is applied; the buttons, the body and the edge keep their own work; the column drop, a list's edge and the pane's edge still work."""
     page = app_page
     errors = watch_errors(page)
@@ -395,7 +395,7 @@ def test_every_kind_of_card_moves_by_its_head(app_page: Page) -> None:
     assert errors == []
 
 
-def test_the_pane_scrolls_at_its_edges_to_a_card_out_of_view(app_page: Page) -> None:
+def test_the_pane_scrolls_at_its_edges_to_a_card_out_of_view(app_page: Page) -> None:  # noqa: PLR0915
     """With more cards than the pane shows, a card held at the bottom edge scrolls the pane to its end and goes last, one held at the top edge scrolls back and goes first; a list's own scroll stays; Escape and letting go outside leave the order, and nothing is sent."""
     page = app_page
     errors = watch_errors(page)

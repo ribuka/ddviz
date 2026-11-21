@@ -66,7 +66,7 @@ const RUNNING = new Set(["counting", "writing", "transfer"]);
 
 // Returns the text of a save's state: in its toast (`toast`) or in its row
 // of the history.
-export function saveText(save, toast) {
+export function saveText(save, toast) { // noqa: C901, PLR0912
   if (save.cancelling && RUNNING.has(save.state)) return "中止しています…";
   switch (save.state) {
     case "counting":

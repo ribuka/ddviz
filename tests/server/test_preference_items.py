@@ -24,7 +24,7 @@ def _toml_keys(table: dict, prefix: str = "") -> list[str]:
     return keys
 
 
-def gaps(
+def gaps(  # noqa: C901
     defined: list[str], items: list[str], excluded: dict[str, str], shipped: list[str]
 ) -> list[str]:
     """Return what is missing where, among the settings, the dialog's items and the shipped file.

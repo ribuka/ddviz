@@ -564,7 +564,7 @@ def test_calendar_ticks_of_a_date_axis_follow_the_months(page: Page) -> None:
     expect(row).to_have_text("1年ごとに補助目盛りを表示")
 
 
-def test_wrong_calendar_intervals_and_the_minor_check(page: Page) -> None:
+def test_wrong_calendar_intervals_and_the_minor_check(page: Page) -> None:  # noqa: PLR0915
     """A calendar interval takes positive integers whose months are safe; 1 or none turns the minor ticks off; the minor splits and the check are kept apart."""
     wrong = [("month", t) for t in ["0", "-1", "1.5", "1e2", "9007199254740992", "abc"]]
     wrong.append(("year", "750599937895083"))

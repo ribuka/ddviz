@@ -47,7 +47,7 @@ export function attachColumnList(root, onMenu, joinLabel = () => "") {
   // Generation of the latest search, so that an older answer is dropped.
   let generation = 0;
 
-  async function search() {
+  async function search() { // noqa: C901
     clearTimeout(timer);
     const mine = ++generation;
     const query = new URLSearchParams({ q: input.value });

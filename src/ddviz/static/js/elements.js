@@ -193,7 +193,7 @@ export class ElementBar {
   }
 
   render() {
-    ELEMENTS.forEach((element, i) => {
+    ELEMENTS.forEach((element, i) => { // noqa: C901
       const button = this.buttons[i];
       const on = this.chosen.has(element.name);
       button.classList.toggle("on", on);

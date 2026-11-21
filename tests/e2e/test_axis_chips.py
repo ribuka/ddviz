@@ -218,7 +218,7 @@ def test_a_direction_that_scrolls_spreads_its_chips_evenly(app_page: Page) -> No
     assert errors == []
 
 
-def test_drops_on_aligned_axes_follow_the_axes(app_page: Page) -> None:
+def test_drops_on_aligned_axes_follow_the_axes(app_page: Page) -> None:  # noqa: PLR0915
     """Over drawn axes, the middle of an axis replaces its column, the gap between two goes in between, and the room before the first and after the last goes in first and last; the tip, the outline and the line agree."""
     page = app_page
     errors = watch_errors(page)

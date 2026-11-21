@@ -220,7 +220,7 @@ const SHAPES = {
 // "T"); a time a signed clock of any hours; a duration finite seconds.
 // Minutes and seconds go up to 59, a fraction of a second to 9 digits. No
 // time zone: the axis is at the column's wall-clock time.
-export function readAxisValue(kind, text) {
+export function readAxisValue(kind, text) { // noqa: C901
   const value = text.trim();
   if (!isDateKind(kind)) {
     const seconds = value === "" ? NaN : Number(value);

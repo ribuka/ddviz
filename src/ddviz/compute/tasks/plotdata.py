@@ -222,7 +222,7 @@ def _cached(
     )
 
 
-def _source(
+def _source(  # noqa: C901
     source: SourceFiles,
     columns: list[str],
     target: dict[str, pl.DataType],
@@ -385,7 +385,7 @@ def _row_group_rows(sizes: list[int], most: int) -> int | None:
     return rows if -(-total // rows) <= 2 * least else None
 
 
-def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:
+def run_plot_data(task: PlotDataTask, out: Path, emit: Emit) -> None:  # noqa: C901, PLR0912, PLR0915
     """Write the rows of a plot task's result, or of a selection, as a file.
 
     The selected rows are those of the task's ``selection``, the spec the

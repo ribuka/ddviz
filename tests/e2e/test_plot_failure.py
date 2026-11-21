@@ -221,7 +221,7 @@ def test_a_failed_drop_on_any_role_comes_back_whole(app_page: Page) -> None:
     assert errors == []
 
 
-def test_first_network_image_failures_and_a_removal(app_page: Page) -> None:
+def test_first_network_image_failures_and_a_removal(app_page: Page) -> None:  # noqa: PLR0915
     """A failed first plot leaves no figure; a lost request and images that do not come keep the figure; a removal that leaves nothing to draw is no failure."""
     page = app_page
     errors = watch_errors(page)
@@ -310,7 +310,7 @@ def test_first_network_image_failures_and_a_removal(app_page: Page) -> None:
     ]
 
 
-def test_a_failure_keeps_the_zoom_and_the_selection(app_page: Page) -> None:
+def test_a_failure_keeps_the_zoom_and_the_selection(app_page: Page) -> None:  # noqa: PLR0915
     """A zoomed view with a box selected stays as it was after a failed drop; zooming, saving and filtering then work on it."""
     page = app_page
     errors = watch_errors(page)

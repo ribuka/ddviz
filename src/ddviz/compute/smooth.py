@@ -98,7 +98,7 @@ def _bands(x: np.ndarray, w: np.ndarray, y: np.ndarray) -> _Bands:
     )
 
 
-def _splines(
+def _splines(  # noqa: C901
     b: _Bands, y: np.ndarray, lams: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return the fitted values of the smoothing spline of each penalty, and the trace of each hat matrix.

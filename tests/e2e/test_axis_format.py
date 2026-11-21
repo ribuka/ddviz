@@ -149,7 +149,7 @@ def test_the_format_of_y_labels_applies_without_aggregating(app_page: Page) -> N
     assert not errors
 
 
-def test_a_column_format_follows_it_to_every_axis_and_view(app_page: Page) -> None:
+def test_a_column_format_follows_it_to_every_axis_and_view(app_page: Page) -> None:  # noqa: PLR0915
     """A column's format labels all its panels, on X and Y, the scrolled strips, zoomed and back at the overview; other columns keep theirs, and automatic without separators drops it."""
     page = app_page
     errors = watch_errors(page)

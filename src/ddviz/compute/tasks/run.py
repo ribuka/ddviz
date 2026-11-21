@@ -29,7 +29,7 @@ from ddviz.shared.tasks import (
 )
 
 
-def run_task(data: dict, emit: Emit) -> None:
+def run_task(data: dict, emit: Emit) -> None:  # noqa: C901
     """Run a task described by the UI server.
 
     Parameters

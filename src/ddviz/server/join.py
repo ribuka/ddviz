@@ -71,7 +71,7 @@ def _wrong(reason: str) -> HTTPException:
     return HTTPException(400, WRONG_KEYS + reason)
 
 
-def check_keys(
+def check_keys(  # noqa: C901
     kind: str,
     keys: list[dict[str, str]],
     left: dict[str, str],

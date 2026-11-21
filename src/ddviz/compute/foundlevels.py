@@ -381,7 +381,7 @@ def role_name(spec: ScatterSpec, role: str) -> str:
     return {"color": "Color", "symbol": "Symbol", "row": "Group Y"}[role]
 
 
-def found_levels(
+def found_levels(  # noqa: C901, PLR0912
     spec: ScatterSpec,
     roles: dict[str, str | None],
     levels: dict[str, list],

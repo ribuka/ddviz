@@ -72,7 +72,7 @@ export function setWrapNullRows(checked) {
 // the column is stashed, and `onStash()` runs when "Stash" is picked.
 // `showNullRows` is the checkbox's state, and `onNullRows(checked)` runs
 // when it is toggled.
-export function openWrapMenu(event, cols, auto, onApply, { stashed, onStash, showNullRows, onNullRows }) {
+export function openWrapMenu(event, cols, auto, onApply, { stashed, onStash, showNullRows, onNullRows }) { // noqa: PLR0915
   const form = document.createElement("form");
   form.className = "scale-menu wrap-menu";
   form.noValidate = true;

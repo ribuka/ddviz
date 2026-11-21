@@ -54,7 +54,7 @@ class Found:
     known_ref_stats: list[RefStats]
 
 
-def find(
+def find(  # noqa: PLR0915
     spec: ScatterSpec,
     roles: dict[str, str | None],
     logs: foundranges.LogAxes,

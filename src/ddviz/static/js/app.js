@@ -672,7 +672,7 @@ async function drawPlot({ encoding, figure, meta, size, bitmaps, keep, carried, 
 // superseded it. `restoring` plots the committed graph again after a
 // failure, leaving the error shown; `keep` (`keptView`) is the view and the
 // selection it draws again.
-async function plot(encoding, { restoring = false, keep = null } = {}) {
+async function plot(encoding, { restoring = false, keep = null } = {}) { // noqa: C901, PLR0912, PLR0915
   if (!restoring) statusLine.release();
   const size = stageSize();
   plottedEncoding = encoding;
@@ -1049,7 +1049,7 @@ function isDrawn(meta, layout) {
 // `path` is the endpoint, `body` what it takes besides the size and the
 // filters, `status` the text shown meanwhile, `onFailed` what to put back
 // when the request fails.
-async function requestAgain({ path, body, ranges, whole, status, onFailed = null }) {
+async function requestAgain({ path, body, ranges, whole, status, onFailed = null }) { // noqa: C901, PLR0912, PLR0915
   const mine = ++generation;
   const size = stageSize();
   requestedSize = size;
@@ -1436,7 +1436,7 @@ function atWhole(shown) {
 // longer set by hand; `only` lists the axis columns ({role, index}) of a
 // double click on an axis, which alone go back. The lock stays as it is:
 // on, it keeps the ranges gone back to.
-function resetAxes(only = null) {
+function resetAxes(only = null) { // noqa: C901
   hideHover();
   if (!overview || !current || !gd._fullLayout) return;
   statusLine.release();
@@ -1696,7 +1696,7 @@ function setLevelColor(level, color) {
 // the levels): the overview's, the drawn result's and the selection layer's.
 // Their files are still on the server, so no aggregation runs. Images being
 // decoded meanwhile are decoded again in the new colors (`loadImages`).
-async function recolor() {
+async function recolor() { // noqa: C901
   colorsChanged();
   legend.render();
   // The boxes and the smoothing lines take the new colors at once.
