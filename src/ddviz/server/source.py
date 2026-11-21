@@ -695,6 +695,10 @@ class Source:
         if gaps:
             await right._convert(gaps, "plot")
         end = await self._broker.run(task, "plot")
+        if end.type != "done":
+            # The merge's files on disk (up to about 4 GiB on 100M rows)
+            # would stay until the app quits.
+            end.discard()
         ensure_done(end)
         found = end.take()
         if "refused" in found:

@@ -186,7 +186,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.162.0" },
     { name = "numpy", specifier = ">=2.5.4" },
     { name = "polars", specifier = "==2.1.0" },
-    { name = "polars-helpers", git = "https://github.com/ribuka/polars-helpers.git?rev=v0.2.0" },
+    { name = "polars-helpers", git = "https://github.com/ribuka/polars-helpers.git?rev=v0.3.1" },
     { name = "pyarrow", specifier = ">=26.0.0" },
     { name = "pywebview", specifier = ">=6.2.1" },
     { name = "tomlkit", specifier = ">=0.15.2" },
@@ -418,8 +418,8 @@ wheels = [
 
 [[package]]
 name = "polars-helpers"
-version = "0.2.0"
-source = { git = "https://github.com/ribuka/polars-helpers.git?rev=v0.2.0#2f560f0d971a3e8069134d0c48feaf58b8130c5b" }
+version = "0.3.1"
+source = { git = "https://github.com/ribuka/polars-helpers.git?rev=v0.3.1#e855d5aba6a1cff54b3c34136e11841efa1bc134" }
 dependencies = [
     { name = "polars" },
 ]

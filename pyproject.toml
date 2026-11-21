@@ -69,4 +69,4 @@ max-statements = 50
 convention = "numpy"
 
 [tool.uv.sources]
-polars-helpers = { git = "https://github.com/ribuka/polars-helpers.git", rev = "v0.2.0" }
+polars-helpers = { git = "https://github.com/ribuka/polars-helpers.git", rev = "v0.3.1" }

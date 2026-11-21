@@ -1,10 +1,10 @@
 """Join another table (the joined table) to the input side by side: the map of its rows and the parts of its columns.
 
 A join by keys finds, once, the row of the joined table of each row of the
-input (`run_join`): a left join of the input's keys and row index on the
-joined table's keys and row index, with `polars_helpers.merge`, which keeps
-the rows of the input in their order. The rows found are written per file of
-the input as parts of the map (`ddviz.shared.joined.MAP_COLUMN`, null where
+input (`run_join`): a left join of the input's keys on the joined table's
+keys and row index, with `polars_helpers.merge_on_disk`, which keeps its
+intermediate data and its result on disk and the rows of the input in their
+order. The rows found are written per file of the input as parts of the map (`ddviz.shared.joined.MAP_COLUMN`, null where
 no row matches), with the parts of ``_joined``, the merge's indicator. A
 column of the joined table is converted when first used, as any column
 (`run_join_convert`): per file of the input, its values gathered through the
@@ -17,6 +17,7 @@ found through the same map (`run_join_equal`).
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import polars as pl
@@ -34,11 +35,18 @@ from ddviz.shared.tasks import JoinConvertTask, JoinEqualTask, JoinTask
 UINT32_ROWS = 2**32
 # Examples of duplicate keys a refusal shows.
 DUPLICATE_EXAMPLES = 5
-# The row indices of the two tables in the merge, and the count of a key in
-# the check of duplicates, named apart from the keys (`_free`).
-_INDEX = "__ddviz_index"
+# A joined table of up to this many rows is merged, and its duplicate keys
+# found, in one piece; a larger one in `BUCKETS` pieces by the hash of its
+# keys. On 100M rows joined with 1M-10M, one piece was faster and used less
+# memory than 16; on 100M with 100M, one piece does not fit 8 GiB.
+ONE_BUCKET_ROWS = 10_000_000
+BUCKETS = 16
+# The row index of the joined table in the merge, the count of a key in the
+# check of duplicates, and the piece of a key, named apart from the keys
+# (`_free`).
 _ROW = "__ddviz_row"
 _COUNT = "__ddviz_count"
+_BUCKET = "__ddviz_bucket"
 
 
 def map_dtype(right_rows: int) -> pl.DataType:
@@ -61,6 +69,14 @@ def _write(frame: pl.DataFrame, file: str) -> None:
     os.replace(partial, file)
 
 
+def _sink(frame: pl.LazyFrame, file: str) -> None:
+    """Sink a part with the streaming engine under a temporary name, then rename it, as `_write` does."""
+    partial = Path(file + PARTIAL)
+    partial.parent.mkdir(parents=True, exist_ok=True)
+    frame.sink_parquet(partial, engine="streaming")
+    os.replace(partial, file)
+
+
 def _text(row: tuple) -> str:
     """Return a key's values as a refusal shows them: a value alone, or ``(a, b)``."""
     if len(row) == 1:
@@ -68,10 +84,31 @@ def _text(row: tuple) -> str:
     return "(" + ", ".join(str(v) for v in row) + ")"
 
 
-def duplicate_keys(right: pl.LazyFrame, keys: list[str]) -> tuple[int, list[str]]:
+def _duplicates(right: pl.LazyFrame, keys: list[str]) -> tuple[int, list[tuple]]:
+    """Return the sets of key values more than one row of `right` holds, and the first of them, counted in memory."""
+    count = _free(_COUNT, set(keys))
+    found = (
+        right.group_by(keys)
+        .agg(pl.len().alias(count))
+        .filter(pl.col(count) > 1)
+        .select(keys)
+        .sort(keys)
+        .collect()
+    )
+    return found.height, found.head(DUPLICATE_EXAMPLES).rows()
+
+
+def duplicate_keys(
+    right: pl.LazyFrame, keys: list[str], buckets: int, work: Path
+) -> tuple[int, list[str]]:
     """Return the sets of key values more than one row of the joined table holds, and the first of them.
 
-    A set with a null is left out: it matches no row.
+    A set with a null is left out: it matches no row. With several
+    `buckets`, the keys are split on disk by their hash with one streaming
+    sink, and each piece is counted in memory: on 100M rows, counting at
+    once took 6.28 GiB for Int64 keys and over 9 GiB for String keys, and in
+    16 pieces 1.12 GiB and 1.69 GiB. A set lies in one piece only, so the
+    first sets of all are among the first of each piece.
 
     Parameters
     ----------
@@ -79,6 +116,11 @@ def duplicate_keys(right: pl.LazyFrame, keys: list[str]) -> tuple[int, list[str]
         The joined table's keys.
     keys : list of str
         The keys.
+    buckets : int
+        The pieces the keys are counted in.
+    work : pathlib.Path
+        Directory for the pieces, removed before returning; unused with one
+        bucket.
 
     Returns
     -------
@@ -87,18 +129,26 @@ def duplicate_keys(right: pl.LazyFrame, keys: list[str]) -> tuple[int, list[str]
     examples : list of str
         The first `DUPLICATE_EXAMPLES` of them, in ascending order (`_text`).
     """
-    count = _free(_COUNT, set(keys))
-    found = (
-        right.select(keys)
-        .drop_nulls()
-        .group_by(keys)
-        .agg(pl.len().alias(count))
-        .filter(pl.col(count) > 1)
-        .select(keys)
-        .sort(keys)
-        .collect()
-    )
-    return found.height, [_text(r) for r in found.head(DUPLICATE_EXAMPLES).rows()]
+    right = right.select(keys).drop_nulls()
+    if buckets == 1:
+        count, first = _duplicates(right, keys)
+        return count, [_text(r) for r in first]
+    bucket = _free(_BUCKET, set(keys))
+    try:
+        right.with_columns(
+            (pl.struct(keys).hash(seed=0) % buckets).alias(bucket)
+        ).sink_parquet(
+            pl.PartitionBy(work, key=bucket, include_key=False), engine="streaming"
+        )
+        count, first = 0, []
+        for piece in sorted(work.rglob("*.parquet")):
+            found, rows = _duplicates(pl.scan_parquet(piece), keys)
+            count += found
+            first += rows
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    examples = pl.DataFrame(first, schema=right.collect_schema(), orient="row").sort(keys)
+    return count, [_text(r) for r in examples.head(DUPLICATE_EXAMPLES).rows()]
 
 
 def _refuse(out: Path, message: str) -> None:
@@ -114,8 +164,10 @@ def run_join(task: JoinTask, out: Path, emit: Emit) -> None:
     A join is refused (the manifest's ``refused``, the reason as the user
     reads it) when a pair has no such type, or when several rows of the
     joined table hold the same keys, which would add rows to the input.
-    The input is merged at once: a merge too large for the worker's memory
-    fails.
+    The merge keeps its intermediate data and its result on disk under
+    `out` (`polars_helpers.merge_on_disk`), in one piece for a joined table
+    of up to `ONE_BUCKET_ROWS` rows and in `BUCKETS` pieces above. The parts
+    are sunk from the result file by file, and the result is then removed.
 
     Parameters
     ----------
@@ -128,11 +180,10 @@ def run_join(task: JoinTask, out: Path, emit: Emit) -> None:
         Receives progress messages.
     """
     emit({"type": "progress", "stage": "join"})
-    # The row indices are named apart from the keys, which then take names
-    # of their own (``l0``, ``r0``, ...), apart from the row indices.
-    index = _free(_INDEX, {k["left"] for k in task.keys})
+    # The row index is named apart from the keys, which then take names of
+    # their own (``l0``, ``r0``, ...), apart from the row index.
     row = _free(_ROW, {k["right"] for k in task.keys})
-    left = scan_columns({k["left"]: task.left[k["left"]] for k in task.keys}, index, False)
+    left = scan_columns({k["left"]: task.left[k["left"]] for k in task.keys}, None, False)
     right = scan_columns(
         {k["right"]: task.right[k["right"]] for k in task.keys}, row, False
     )
@@ -153,36 +204,35 @@ def run_join(task: JoinTask, out: Path, emit: Emit) -> None:
     left_on = [f"l{i}" for i in range(len(lefts))]
     right_on = [f"r{i}" for i in range(len(rights))]
     right = right.select(pl.col(row).cast(map_dtype(task.right_rows)).alias(_ROW), *rights)
-    left = left.select(pl.col(index).alias(_INDEX), *lefts)
-    count, examples = duplicate_keys(right, right_on)
+    left = left.select(*lefts)
+    buckets = 1 if task.right_rows <= ONE_BUCKET_ROWS else BUCKETS
+    count, examples = duplicate_keys(right, right_on, buckets, out / "duplicates")
     if count:
         _refuse(
             out,
             f"結合する表でキーが重複しています：{count:,} 組（例：{'、'.join(examples)}）",
         )
         return
-    merged = (
-        plh.merge(
-            left,
-            right,
-            left_on=left_on,
-            right_on=right_on,
-            how="left",
-            indicator=INDICATOR,
-        )
-        .select(_INDEX, _ROW, INDICATOR)
-        .collect()
-    )
-    if not merged[_INDEX].is_sorted():
-        merged = merged.sort(_INDEX)
-    matched = int((merged[INDICATOR] == BOTH).sum())
+    merged = plh.merge_on_disk(
+        left,
+        right,
+        left_on=left_on,
+        right_on=right_on,
+        how="left",
+        indicator=INDICATOR,
+        directory=out / "merge",
+        delete_on_exit=False,
+        buckets=buckets,
+    ).select(_ROW, INDICATOR)
+    matched = merged.select((pl.col(INDICATOR) == BOTH).sum()).collect().item()
     start = 0
     for rows, map_part, indicator in zip(task.rows, task.maps, task.indicators, strict=True):
         piece = merged.slice(start, rows)
         start += rows
-        _write(piece.select(pl.col(_ROW).alias(MAP_COLUMN)), map_part)
-        _write(piece.select(pl.col(INDICATOR).alias(task.indicator)), indicator)
-    write_manifest(out, {"kind": "join", "matched": matched})
+        _sink(piece.select(pl.col(_ROW).alias(MAP_COLUMN)), map_part)
+        _sink(piece.select(pl.col(INDICATOR).alias(task.indicator)), indicator)
+    shutil.rmtree(out / "merge")
+    write_manifest(out, {"kind": "join", "matched": int(matched)})
 
 
 def run_join_convert(task: JoinConvertTask, out: Path, emit: Emit) -> None:
