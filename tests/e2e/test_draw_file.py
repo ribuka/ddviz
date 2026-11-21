@@ -22,7 +22,14 @@ from ddviz.shared.drawfile import parse
 from tests.e2e.conftest import TOKEN, make_app, served
 from tests.e2e.test_app_menu import FAKE_API, GEOMETRY, open_item, popups
 from tests.e2e.test_favorites import menu, open_menu, set_line
-from tests.e2e.test_join_dialog import pick, read_source, run_join
+from tests.e2e.test_join_dialog import (
+    join_dialog,
+    joined_marks,
+    pick,
+    pick_added,
+    read_source,
+    run_join,
+)
 from tests.e2e.test_scatter import drop_on_filters, place, wait_idle, watch_errors
 from tests.e2e.test_undo import REDO, UNDO, chip_names, press, x_and_y
 
@@ -99,7 +106,7 @@ def test_a_saved_file_draws_the_same_graph_again(
     name, content = download(page)
     assert name == "scatter.ddviz.json"
     assert content["format"] == "ddviz-draw-settings"
-    assert content["version"] == 2
+    assert content["version"] == 3
     assert content["source"] == {
         "paths": [str(scatter_path)],
         "relative": None,
@@ -299,6 +306,8 @@ def test_a_file_joined_joins_again_and_draws_its_joined_columns(
         "relative": None,
         "kind": "key",
         "keys": [{"left": "label", "right": "label"}],
+        "columns": None,
+        "same_names": "rename",
     }
     assert content["columns"] == {"score": "numeric", "y": "numeric"}
     assert parse(json.dumps(content)).content == content
@@ -337,6 +346,47 @@ def test_a_file_joined_joins_again_and_draws_its_joined_columns(
         assert errors == []
 
 
+def test_a_file_joined_with_columns_picked_joins_them_again(
+    page: Page,
+    app_page: Page,
+    tmp_path: Path,
+    scatter_path: Path,
+    settings_store: SettingsStore,
+    join_paths: list[Path],
+) -> None:
+    """A join of `score` alone (`選んだ列だけ`) saves its columns; a server opened with the file joins `score` alone again and draws it on X (Issue #358)."""
+    page = app_page
+    expect(page.locator("#columns .column").first).to_be_visible()
+    page.wait_for_function("window.ddvizCanJoin()")
+    page.evaluate("document.activeElement?.blur()")
+    page.keyboard.press("Control+j")
+    read_source(page, join_paths)
+    pick(page, 0, 0, "lab", "label")
+    join_dialog(page).get_by_label("選んだ列だけ").check()
+    pick_added(page, 0, "sco", "score")
+    run_join(page, "2 列を結合しました。")
+    place(page, "score", "x")
+    place(page, "y", "y")
+    wait_idle(page)
+    content = download(page)[1]
+    assert content["source"]["join"]["columns"] == ["score"]
+    assert content["source"]["join"]["same_names"] == "rename"
+
+    with opened_with(page, content, tmp_path, scatter_path, settings_store) as url:
+        with page.expect_request("**/api/join") as joined, page.expect_request("**/api/plot") as plotted:
+            page.goto(url)
+        assert joined.value.post_data_json == {
+            "kind": "key",
+            "keys": [{"left": "label", "right": "label"}],
+            "columns": ["score"],
+            "same_names": "rename",
+        }
+        assert plotted.value.post_data_json["encoding"]["x"] == ["score"]
+        wait_idle(page)
+        expect(page.locator("#columns .column .joined")).to_have_count(2)
+        assert [name for name, _, _ in joined_marks(page)] == ["_joined", "score"]
+
+
 def test_a_join_that_fails_opens_the_file_without_it(
     page: Page,
     app_page: Page,
@@ -353,6 +403,8 @@ def test_a_join_that_fails_opens_the_file_without_it(
         "relative": None,
         "kind": "key",
         "keys": [{"left": "label", "right": "label"}],
+        "columns": None,
+        "same_names": "rename",
     }
     nulls = {"range": True, "pick": False, "contains": False, "listed": False}
     content["settings"]["filters"] = [

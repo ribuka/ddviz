@@ -1,7 +1,8 @@
 // The dialog of the join (docs/spec.md, "横の結合"): it reads the table to
 // join (`POST /api/join/source`), takes the kind and, for a join by keys,
-// the pairs of keys picked from the columns of both tables, and joins
-// (`POST /api/join`). The page (app.js) opens it from the window's
+// the pairs of keys picked from the columns of both tables, the columns to
+// add (all, maybe but those named like the input's, or those picked), and
+// joins (`POST /api/join`). The page (app.js) opens it from the window's
 // `Data → 結合…` or Ctrl+J, and takes the answer of a join.
 // A refused read or join tells the server's reason in the dialog, which
 // stays open; Esc and キャンセル close it without joining, but not while it
@@ -32,19 +33,26 @@ export function sourceText(found) {
 }
 
 // The toast of a join of `kind` that answered `answer` (`{added, rows,
-// matched}`): the columns added and, by keys, the share of the input's rows
-// that matched, to one decimal.
+// matched, skipped}`): the columns added, by keys the share of the input's
+// rows that matched, to one decimal, and the columns left out by name.
 export function joinedText(answer, kind) {
-  const added = `${answer.added.length.toLocaleString()} 列を結合しました。`;
-  if (kind !== "key") return added;
-  const share = answer.rows > 0 ? (answer.matched / answer.rows) * 100 : 0;
-  return `${added}元の表の ${share.toFixed(1)}% の行が結合できました。`;
+  let text = `${answer.added.length.toLocaleString()} 列を結合しました。`;
+  if (kind === "key") {
+    const share = answer.rows > 0 ? (answer.matched / answer.rows) * 100 : 0;
+    text += `元の表の ${share.toFixed(1)}% の行が結合できました。`;
+  }
+  const skipped = answer.skipped?.length ?? 0;
+  if (skipped > 0) text += `元の表と同じ名前の ${skipped.toLocaleString()} 列は足しませんでした。`;
+  return text;
 }
 
-// Whether `結合` may be pressed: a table read and, by keys, both columns of
-// every pair picked (`keys` of `{left, right}`, null while not picked).
-export function joinReady(read, kind, keys) {
+// Whether `結合` may be pressed: a table read; by keys, both columns of
+// every pair picked (`keys` of `{left, right}`, null while not picked); and,
+// for the columns picked (`columns` of the names, null while not picked;
+// null for all the columns), at least one, each picked.
+export function joinReady(read, kind, keys, columns = null) {
   if (!read) return false;
+  if (columns !== null && (columns.length === 0 || columns.includes(null))) return false;
   if (kind === "rows") return true;
   return keys.length > 0 && keys.every((key) => key.left !== null && key.right !== null);
 }
@@ -216,6 +224,114 @@ export class ColumnField {
   }
 }
 
+// The section `足す列` of the dialog (`element`): all the columns of the
+// joined table, but those named like the input's when checked, or those
+// picked, one a line. `onChange()` is called at every change of the choice.
+export class AddedColumns {
+  constructor(onChange) {
+    this.onChange = onChange;
+    this.picked = false;
+    this.rows = [];
+    this.element = element("section", "join-section join-added");
+    const modes = element("div", "join-added-modes");
+    this.modeInputs = [];
+    for (const [value, text] of [
+      ["all", "すべての列"],
+      ["picked", "選んだ列だけ"],
+    ]) {
+      const label = element("label", "join-added-mode");
+      const radio = element("input");
+      Object.assign(radio, { type: "radio", name: "join-added", value });
+      radio.addEventListener("change", () => {
+        if (!radio.checked) return;
+        this.picked = value === "picked";
+        this.onChange();
+      });
+      this.modeInputs.push(radio);
+      label.append(radio, ` ${text}`);
+      modes.append(label);
+    }
+    this.skipLabel = element("label", "join-skip-label");
+    this.skip = element("input", "join-skip");
+    this.skip.type = "checkbox";
+    this.skip.addEventListener("change", () => this.onChange());
+    this.skipLabel.append(this.skip, " 元の表と同じ名前の列は足さない");
+    this.list = element("div", "join-added-columns");
+    this.addButton = button("join-add-column", "+ 列を足す", () => {
+      const row = this.addRow();
+      this.onChange();
+      row.field.input.focus();
+    });
+    this.element.append(element("h3", "", "足す列"), modes, this.skipLabel, this.list, this.addButton);
+    this.reset();
+  }
+
+  // Back to all the columns, unchecked, with one empty line of a column.
+  reset() {
+    this.close();
+    this.picked = false;
+    for (const radio of this.modeInputs) radio.checked = radio.value === "all";
+    this.skip.checked = false;
+    this.rows = [];
+    this.list.replaceChildren();
+    this.addRow();
+  }
+
+  // Adds a line of a column, empty, at the end. Returns it.
+  addRow() {
+    const row = {};
+    row.field = new ColumnField("/api/join/columns", "結合する表の列", {
+      onPick: () => this.onChange(),
+      onEdit: () => this.onChange(),
+    });
+    row.remove = button("join-remove-column", "×", () => {
+      row.field.close();
+      this.rows = this.rows.filter((other) => other !== row);
+      row.element.remove();
+      this.onChange();
+    });
+    row.remove.title = "この列を外す";
+    row.remove.setAttribute("aria-label", "この列を外す");
+    row.element = element("div", "join-added-column");
+    row.element.append(row.field.input, row.remove);
+    this.rows.push(row);
+    this.list.append(row.element);
+    return row;
+  }
+
+  // Closes the candidates of every field.
+  close() {
+    for (const row of this.rows) row.field.close();
+  }
+
+  // Shows the check for all the columns, the lines for those picked, and
+  // disables them all while `off`.
+  show(off) {
+    for (const radio of this.modeInputs) radio.disabled = off;
+    this.skip.disabled = off;
+    this.skipLabel.hidden = this.picked;
+    this.list.hidden = !this.picked;
+    this.addButton.hidden = !this.picked;
+    for (const row of this.rows) {
+      row.field.disabled = off;
+      row.remove.disabled = off || this.rows.length === 1;
+    }
+    this.addButton.disabled = off;
+  }
+
+  // The columns picked, in the order of the lines (null while one is not
+  // picked), or null for all the columns.
+  columns() {
+    return this.picked ? this.rows.map((row) => row.field.value) : null;
+  }
+
+  // What `POST /api/join` takes of the choice: `{columns, same_names}`.
+  body() {
+    const columns = this.columns();
+    return { columns, same_names: columns === null && this.skip.checked ? "skip" : "rename" };
+  }
+}
+
 // The join dialog in `dialog` (an empty `<dialog>`). `choose(kind)`, given
 // in the window only, asks for the table with the OS dialog (`"files"` or
 // `"folder"`) and resolves to its paths or null; `joined(answer, kind)` takes
@@ -252,6 +368,7 @@ export class JoinDialog {
     dialog.addEventListener("close", () => {
       this.generation++;
       for (const row of this.rows) for (const field of [row.left, row.right]) field.close();
+      this.added.close();
     });
   }
 
@@ -265,12 +382,20 @@ export class JoinDialog {
     this.paths.focus();
   }
 
-  build() { // noqa: PLR0915
+  // Fills the dialog with its sections, in order.
+  build() {
     const dialog = this.dialog;
     dialog.classList.add("join-dialog");
     dialog.setAttribute("aria-label", "結合");
     const title = element("h2", "join-title", "結合");
+    this.added = new AddedColumns(() => this.update());
+    const sections = [this.buildSource(), this.buildKinds(), this.buildKeys(), this.added.element];
+    dialog.replaceChildren(title, ...sections, ...this.buildEnd());
+  }
 
+  // The section of the table to join: its paths, the choice of its
+  // subfolders, `読む`, and what was read. Returns the section.
+  buildSource() {
     const source = element("section", "join-section join-source");
     this.paths = element("textarea", "join-paths");
     Object.assign(this.paths, { rows: 3, spellcheck: false, placeholder: "Parquet のファイルかフォルダのパス（1 行に 1 つ）" });
@@ -310,7 +435,11 @@ export class JoinDialog {
     castsList.append(table);
     this.casts.append(this.castsText, castsList);
     source.append(element("h3", "", "結合するデータ"), this.paths, controls, this.sourceResult, this.casts);
+    return source;
+  }
 
+  // The section of the kind of the join. Returns the section.
+  buildKinds() {
     const kinds = element("section", "join-section join-kinds");
     kinds.append(element("h3", "", "種類"));
     this.kindInputs = [];
@@ -330,7 +459,11 @@ export class JoinDialog {
       label.append(radio, ` ${text}`);
       kinds.append(label);
     }
+    return kinds;
+  }
 
+  // The section of the pairs of keys. Returns the section.
+  buildKeys() {
     this.keysSection = element("section", "join-section join-keys-section");
     this.keyList = element("div", "join-keys");
     this.addButton = button("join-add-key", "+ キーを足す", () => {
@@ -341,16 +474,19 @@ export class JoinDialog {
     const keysHead = element("div", "join-keys-head");
     keysHead.append(element("span", "", "元の表の列"), element("span", ""), element("span", "", "結合する表の列"));
     this.keysSection.append(element("h3", "", "キー"), keysHead, this.keyList, this.addButton);
+    return this.keysSection;
+  }
 
+  // The field of the error and the buttons. Returns both.
+  buildEnd() {
     this.error = element("div", "join-error");
     this.error.setAttribute("role", "alert");
     const buttons = element("div", "join-buttons");
     this.busyText = element("span", "join-busy", "結合しています…");
-    this.cancelButton = button("join-cancel", "キャンセル", () => dialog.close());
+    this.cancelButton = button("join-cancel", "キャンセル", () => this.dialog.close());
     this.joinButton = button("join-run primary", "結合", () => this.join());
     buttons.append(this.busyText, this.cancelButton, this.joinButton);
-
-    dialog.replaceChildren(title, source, kinds, this.keysSection, this.error, buttons);
+    return [this.error, buttons];
   }
 
   // Empties every field, as each open starts.
@@ -366,7 +502,7 @@ export class JoinDialog {
     this.casts.hidden = true;
     this.kind = "key";
     for (const radio of this.kindInputs) radio.checked = radio.value === "key";
-    this.resetKeys();
+    this.resetPicks();
     this.error.textContent = "";
     this.update();
   }
@@ -377,7 +513,8 @@ export class JoinDialog {
   }
 
   // The paths or `recursive` edited: once they differ from those read or
-  // being read, the table read is not theirs. Its keys go and `結合` waits
+  // being read, the table read is not theirs. Its keys and columns to add go
+  // and `結合` waits
   // for another `読む`; the answer of a read in flight is dropped.
   sourceEdited() {
     if ((this.read || this.reading) && this.sourceKey() !== this.readKey) {
@@ -385,18 +522,20 @@ export class JoinDialog {
       this.read = false;
       this.reading = false;
       this.readKey = null;
-      this.resetKeys();
+      this.resetPicks();
       this.showSource("", false);
       this.casts.hidden = true;
     }
     this.update();
   }
 
-  resetKeys() {
+  // Empties the keys and the columns to add, as a table read anew starts.
+  resetPicks() {
     for (const row of this.rows) for (const field of [row.left, row.right]) field.close();
     this.rows = [];
     this.keyList.replaceChildren();
     this.addRow();
+    this.added.reset();
   }
 
   // Adds a pair of keys, empty, at the end.
@@ -456,8 +595,9 @@ export class JoinDialog {
     this.sourceResult.classList.toggle("join-failed", failed);
   }
 
-  // Enables what may be used now: nothing while it joins; the keys once a
-  // table is read; `結合` once it may join (`joinReady`).
+  // Enables what may be used now: nothing while it joins; the keys and the
+  // columns to add once a table is read; `結合` once it may join
+  // (`joinReady`).
   update() {
     const locked = this.busy;
     const keysOff = locked || !this.read;
@@ -473,10 +613,11 @@ export class JoinDialog {
       row.remove.disabled = keysOff || this.rows.length === 1;
     }
     this.addButton.disabled = keysOff;
+    this.added.show(keysOff);
     this.cancelButton.disabled = locked;
     this.busyText.hidden = !locked;
     const keys = this.rows.map((row) => ({ left: row.left.value, right: row.right.value }));
-    this.joinButton.disabled = locked || !joinReady(this.read, this.kind, keys);
+    this.joinButton.disabled = locked || !joinReady(this.read, this.kind, keys, this.added.columns());
   }
 
   // Asks for the table with the OS dialog: the paths chosen replace the
@@ -495,8 +636,8 @@ export class JoinDialog {
     this.readSource();
   }
 
-  // Reads the table of the paths, in place of one read before; the keys
-  // start again empty.
+  // Reads the table of the paths, in place of one read before; the keys and
+  // the columns to add start again empty.
   async readSource() {
     const paths = parsePaths(this.paths.value);
     if (!paths.length || this.busy || this.reading) return;
@@ -504,7 +645,7 @@ export class JoinDialog {
     this.readKey = this.sourceKey();
     this.reading = true;
     this.read = false;
-    this.resetKeys();
+    this.resetPicks();
     this.showSource("読んでいます…", false);
     this.casts.hidden = true;
     this.error.textContent = "";
@@ -538,7 +679,7 @@ export class JoinDialog {
     this.busy = true;
     this.error.textContent = "";
     this.update();
-    const answer = await post("/api/join", { kind, keys });
+    const answer = await post("/api/join", { kind, keys, ...this.added.body() });
     this.busy = false;
     this.answered();
     if (answer.ok) {

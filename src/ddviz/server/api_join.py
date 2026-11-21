@@ -54,6 +54,6 @@ def join_router(source: Source, max_listed: Callable[[], int]) -> APIRouter:
     async def join(request: JoinRequest) -> dict:
         """Join the table read to the input, by keys or by rows, once (`ddviz.server.source.Source.join`)."""
         keys = [{"left": k.left, "right": k.right} for k in request.keys]
-        return await source.join(request.kind, keys)
+        return await source.join(request.kind, keys, request.columns, request.same_names)
 
     return router

@@ -41,7 +41,7 @@ def test_the_draw_file_holds_the_input_and_the_kinds_of_the_columns(
     assert response.status_code == 200
     content = response.json()
     assert content["format"] == "ddviz-draw-settings"
-    assert content["version"] == 2
+    assert content["version"] == 3
     assert content["app_version"] == importlib.metadata.version("ddviz")
     assert content["source"] == {
         "paths": [str(scatter_path)],
@@ -58,14 +58,23 @@ def test_the_draw_file_holds_the_input_and_the_kinds_of_the_columns(
 
 
 @pytest.mark.parametrize(
-    ("kind", "keys", "recursive"),
-    [("key", [{"left": "label", "right": "name"}], True), ("rows", [], False)],
+    ("kind", "keys", "recursive", "added"),
+    [
+        ("key", [{"left": "label", "right": "name"}], True, {"columns": ["score"], "same_names": "rename"}),
+        ("rows", [], False, {"columns": None, "same_names": "skip"}),
+    ],
     ids=["key", "rows"],
 )
 def test_the_draw_file_holds_the_join_given(
-    serve_with_draw: ServeWithDraw, tmp_path: Path, scatter_frame: pl.DataFrame, kind: str, keys: list[dict], recursive: bool
+    serve_with_draw: ServeWithDraw,
+    tmp_path: Path,
+    scatter_frame: pl.DataFrame,
+    kind: str,
+    keys: list[dict],
+    recursive: bool,
+    added: dict,
 ) -> None:
-    """After a join, ``source.join`` holds what the join was given (Issue #345): the table's absolute paths, its subfolders' choice, the kind and the keys; no relative paths."""
+    """After a join, ``source.join`` holds what the join was given (Issue #345): the table's absolute paths, its subfolders' choice, the kind, the keys and the columns to add (Issue #358); no relative paths."""
     folder = tmp_path / "lots"
     # Found only with its subfolders when they are read.
     held = folder / "sub" if recursive else folder
@@ -77,9 +86,11 @@ def test_the_draw_file_holds_the_join_given(
     client = serve_with_draw(None)
     loaded = client.post("/api/join/source", json={"paths": [str(folder)], "recursive": recursive})
     assert loaded.status_code == 200, loaded.text
-    joined = client.post("/api/join", json={"kind": kind, "keys": keys})
+    joined = client.post("/api/join", json={"kind": kind, "keys": keys, **added})
     assert joined.status_code == 200, joined.text
     assert "score" in joined.json()["added"]
+    join = client.get("/api/source").json()["join"]
+    assert {k: join[k] for k in added} == added
     response = client.post("/api/draw-file", json={"settings": SETTINGS, "columns": ["x", "score"]})
     assert response.status_code == 200, response.text
     content = response.json()
@@ -89,6 +100,7 @@ def test_the_draw_file_holds_the_join_given(
         "relative": None,
         "kind": kind,
         "keys": keys,
+        **added,
     }
     assert content["columns"] == {"x": "numeric", "score": "numeric"}
 

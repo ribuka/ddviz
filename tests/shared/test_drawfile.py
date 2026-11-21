@@ -128,7 +128,7 @@ def test_build_writes_the_format_and_the_paths_from_the_file() -> None:
     )
     assert content == {
         "format": "ddviz-draw-settings",
-        "version": 2,
+        "version": 3,
         "app_version": "0.1.6",
         "saved_at": "2026-11-18T14:30:00+09:00",
         "source": {
@@ -193,9 +193,13 @@ def test_parse_reads_what_build_wrote() -> None:
             _text(source={"paths": [], "relative": None, "recursive": False, "join": None}),
             "描画設定のファイルを読めませんでした：キー source.paths の値の形が違います",
         ),
-        (_text(version=1), "この描画設定は読めません（版 1。この ddviz は版 2 を読みます）"),
+        (_text(version=1), "この描画設定は読めません（版 1。この ddviz は版 3 を読みます）"),
+        (_text(version=2), "この描画設定は読めません（版 2。この ddviz は版 3 を読みます）"),
     ],
-    ids=["broken", "not-object", "format", "version-key", "settings", "columns", "relative", "paths", "version-1"],
+    ids=[
+        "broken", "not-object", "format", "version-key", "settings", "columns", "relative", "paths", "version-1",
+        "version-2",
+    ],
 )
 def test_parse_refuses_with_the_message_shown(text: str, message: str) -> None:
     """Broken JSON, another format, a key missing or of the wrong form and another version are refused with the chooser's message."""
@@ -282,7 +286,7 @@ def test_column_kind_and_default_name() -> None:
     assert default_name(PureWindowsPath(r"D:\data\v1.2"), True) == "v1.2.ddviz.json"
 
 
-# ---- the table joined to the input (Issue #345) ----
+# ---- the table joined to the input (Issue #345, #358) ----
 
 #: A join by keys, as the file's `build` is given it.
 JOIN = {
@@ -290,6 +294,8 @@ JOIN = {
     "recursive": False,
     "kind": "key",
     "keys": [{"left": "lot", "right": "lot_id"}],
+    "columns": None,
+    "same_names": "rename",
 }
 
 
@@ -319,15 +325,25 @@ def test_build_writes_the_join_with_its_paths_from_the_file() -> None:
     content = build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, None, "0", join=JOIN)
     assert content["source"]["join"] == {**JOIN, "relative": None}
     assert build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, json_path, "0")["source"]["join"] is None
+    for added in ({"columns": ["yield", "line"], "same_names": "rename"}, {"columns": None, "same_names": "skip"}):
+        content = build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, None, "0", join={**JOIN, **added})
+        assert content["source"]["join"] == {**JOIN, **added, "relative": None}
 
 
 @pytest.mark.parametrize(
     "join",
-    [None, _joined(), _joined(kind="rows", keys=[]), _joined(relative=["a", "b"], recursive=True)],
-    ids=["null", "key", "rows", "relative"],
+    [
+        None,
+        _joined(),
+        _joined(kind="rows", keys=[]),
+        _joined(relative=["a", "b"], recursive=True),
+        _joined(columns=["yield", "line"]),
+        _joined(same_names="skip"),
+    ],
+    ids=["null", "key", "rows", "relative", "columns", "skip"],
 )
 def test_parse_reads_a_join(join: dict | None) -> None:
-    """A null join, or one of either kind with or without relative paths, reads back."""
+    """A null join, or one of either kind with or without relative paths, all its columns or some, reads back."""
     assert parse(_text(source=_source(join))).join == join
 
 
@@ -345,10 +361,20 @@ def test_parse_reads_a_join(join: dict | None) -> None:
         (_joined(recursive=None), "キー source.join の値の形が違います"),
         (_joined(keys=[{"left": "lot"}]), "キー source.join の値の形が違います"),
         ([], "キー source.join の値の形が違います"),
+        (_joined(columns=[]), "キー source.join の値の形が違います"),
+        (_joined(columns=["yield", 1]), "キー source.join の値の形が違います"),
+        (_joined(columns="yield"), "キー source.join の値の形が違います"),
+        (_joined(same_names="drop"), "キー source.join の値の形が違います"),
+        (_joined(same_names=None), "キー source.join の値の形が違います"),
+        (_joined(columns=["yield"], same_names="skip"), "キー source.join の値の形が違います"),
+        (_joined(columns=...), "キー source.join の値の形が違います"),
+        (_joined(same_names=...), "キー source.join の値の形が違います"),
     ],
     ids=[
         "absent", "keys-missing", "relative-missing", "kind", "key-without-keys", "rows-with-keys",
-        "relative-length", "paths-empty", "recursive", "pair", "not-object",
+        "relative-length", "paths-empty", "recursive", "pair", "not-object", "columns-empty", "columns-not-text",
+        "columns-text", "same-names", "same-names-null", "columns-with-skip", "columns-missing",
+        "same-names-missing",
     ],
 )
 def test_parse_refuses_a_join_of_the_wrong_form(join: object, reason: str) -> None:

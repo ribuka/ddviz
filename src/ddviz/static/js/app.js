@@ -2079,7 +2079,7 @@ async function joinInitialDraw(join) {
   try {
     for (const [url, body] of [
       ["/api/join/source", { paths: join.paths, recursive: join.recursive }],
-      ["/api/join", { kind: join.kind, keys: join.keys }],
+      ["/api/join", { kind: join.kind, keys: join.keys, columns: join.columns, same_names: join.same_names }],
     ]) {
       const response = await fetch(url, {
         method: "POST",

@@ -2641,8 +2641,22 @@ html.desktop #toasts {
   border-color: var(--accent);
 }
 
-.join-remove-key {
+.join-remove-key,
+.join-remove-column {
   padding: 0;
+}
+
+.join-added-mode {
+  margin-right: 16px;
+}
+
+/* A column to add: its field and ×, as a pair of keys lines them. */
+.join-added-column {
+  display: grid;
+  grid-template-columns: 1fr 24px;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0;
 }
 
 /* The candidates of a key's field, under it in the dialog's top layer. */

@@ -6,7 +6,8 @@ After the columns of the input come, in order: ``_joined`` (by keys only:
 ``both`` or ``left_only`` per row), the columns of the joined table but its
 keys, and its added columns (``source_joined``, ``filename_joined``, for a
 joined table of several files). A name already taken (case-sensitive, like
-the schema) moves to the first free one of a series:
+the schema) moves to the first free one of a series (a column left out takes
+no name):
 
 - ``_joined``: ``_joined_2``, ``_joined_3``, ...
 - a column ``n``: ``n_joined``, ``n_joined_2``, ...
@@ -22,6 +23,9 @@ from collections.abc import Iterable
 INDICATOR = "_joined"
 SUFFIX = "_joined"
 KINDS = ("key", "rows")
+# What a join adding all the columns of the joined table does with one named
+# like a column of the input: add it renamed, or leave it out.
+SAME_NAMES = ("rename", "skip")
 # The values of the indicator, as `polars_helpers.merge` writes them.
 BOTH = "both"
 LEFT_ONLY = "left_only"
