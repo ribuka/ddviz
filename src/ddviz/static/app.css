@@ -2650,6 +2650,10 @@ html.desktop #toasts {
   margin-right: 16px;
 }
 
+.join-same-name {
+  margin-left: 8px;
+}
+
 /* A column to add: its field and ×, as a pair of keys lines them. */
 .join-added-column {
   display: grid;

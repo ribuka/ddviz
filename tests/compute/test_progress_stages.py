@@ -12,6 +12,7 @@ APP_JS = SRC / "static" / "js" / "app.js"
 # Stages the page does not name in its status line (`STAGES` of ``app.js``).
 NOT_IN_STAGES = {
     "convert": "the cover shows it (`showConverting`)",
+    "compare": "the cover shows it (`showConverting`)",
     "export": "the save's toast shows it (`saves.js`)",
     "values": "the save's toast shows it (`saves.js`)",
     "summary": "the summary pool's progress is not streamed",

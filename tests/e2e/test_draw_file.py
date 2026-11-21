@@ -106,7 +106,7 @@ def test_a_saved_file_draws_the_same_graph_again(
     name, content = download(page)
     assert name == "scatter.ddviz.json"
     assert content["format"] == "ddviz-draw-settings"
-    assert content["version"] == 3
+    assert content["version"] == 4
     assert content["source"] == {
         "paths": [str(scatter_path)],
         "relative": None,
@@ -385,6 +385,45 @@ def test_a_file_joined_with_columns_picked_joins_them_again(
         wait_idle(page)
         expect(page.locator("#columns .column .joined")).to_have_count(2)
         assert [name for name, _, _ in joined_marks(page)] == ["_joined", "score"]
+
+
+def test_a_file_joined_on_skip_equal_compares_again(
+    page: Page,
+    app_page: Page,
+    tmp_path: Path,
+    scatter_path: Path,
+    settings_store: SettingsStore,
+    equal_paths: list[Path],
+) -> None:
+    """A join on `中身も同じなら足さない` saves ``"skip_equal"``; a server opened with the file joins with it again and lists the same joined columns (Issue #359)."""
+    page = app_page
+    expect(page.locator("#columns .column").first).to_be_visible()
+    page.wait_for_function("window.ddvizCanJoin()")
+    page.evaluate("document.activeElement?.blur()")
+    page.keyboard.press("Control+j")
+    read_source(page, equal_paths, "2 ファイル・1,500 行・6 列")
+    pick(page, 0, 0, "lab", "label")
+    join_dialog(page).get_by_label("中身も同じなら足さない").check()
+    run_join(page, "元の表と名前も中身も同じ 1 列は足しませんでした。")
+    marks = joined_marks(page)
+    place(page, "score", "x")
+    place(page, "y", "y")
+    wait_idle(page)
+    content = download(page)[1]
+    assert content["source"]["join"]["same_names"] == "skip_equal"
+
+    with opened_with(page, content, tmp_path, scatter_path, settings_store) as url:
+        with page.expect_request("**/api/join") as joined, page.expect_request("**/api/plot"):
+            page.goto(url)
+        assert joined.value.post_data_json == {
+            "kind": "key",
+            "keys": [{"left": "label", "right": "label"}],
+            "columns": None,
+            "same_names": "skip_equal",
+        }
+        wait_idle(page)
+        expect(page.locator("#columns .column .joined")).to_have_count(len(marks))
+        assert joined_marks(page) == marks
 
 
 def test_a_join_that_fails_opens_the_file_without_it(

@@ -22,7 +22,7 @@ from ddviz.shared.joined import SAME_NAMES
 #: The value of the file's ``format``.
 FORMAT = "ddviz-draw-settings"
 #: The version of the format this ddviz writes and reads; raised with every change of the format.
-VERSION = 3
+VERSION = 4
 #: The suffix of the file's default name, after the first input's name.
 SUFFIX = ".ddviz.json"
 
@@ -436,7 +436,7 @@ def parse(text: str) -> DrawFile:  # noqa: C901, PLR0912
     ValueError
         With the message the chooser shows: ``描画設定のファイルを読めませんでした：<理由>``
         for text that is not JSON, another ``format`` or a key missing or of
-        the wrong type, and ``この描画設定は読めません（版 <N>。この ddviz は版 3 を読みます）``
+        the wrong type, and ``この描画設定は読めません（版 <N>。この ddviz は版 4 を読みます）``
         for another ``version``.
     """
     try:

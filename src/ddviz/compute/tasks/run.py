@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from ddviz.compute.convert import convert_columns
-from ddviz.compute.join import run_join, run_join_convert
+from ddviz.compute.join import run_join, run_join_convert, run_join_equal
 from ddviz.compute.progress import Emit
 from ddviz.compute.tasks.columns import run_nonnull, run_schema, run_summary
 from ddviz.compute.tasks.levels import run_level_index, run_level_search
@@ -15,6 +16,7 @@ from ddviz.compute.tasks.table import run_table
 from ddviz.shared.tasks import (
     ConvertTask,
     JoinConvertTask,
+    JoinEqualTask,
     JoinTask,
     LevelIndexTask,
     LevelSearchTask,
@@ -25,11 +27,30 @@ from ddviz.shared.tasks import (
     SelectionTask,
     SummaryTask,
     TableTask,
+    Task,
     task_from_dict,
 )
 
+# The function of each type of task, called with the task, the directory to
+# write into and the receiver of progress messages.
+RUNNERS: dict[type, Callable[[Task, Path, Emit], None]] = {
+    SchemaTask: lambda t, out, emit: run_schema(t.paths, out, emit),
+    NonnullTask: lambda t, out, emit: run_nonnull(t.paths, t.names, t.generated, out, emit),
+    ConvertTask: lambda t, _out, emit: convert_columns(t, emit),
+    JoinTask: run_join,
+    JoinConvertTask: run_join_convert,
+    JoinEqualTask: run_join_equal,
+    PlotTask: lambda t, out, emit: run_plot(t.spec, out, emit),
+    SelectionTask: lambda t, out, emit: run_selection(t.spec, out, emit),
+    TableTask: run_table,
+    SummaryTask: lambda t, out, emit: run_summary(t.parts, t.column, out, emit),
+    LevelIndexTask: lambda t, out, emit: run_level_index(t.parts, t.column, t.index, out, emit),
+    LevelSearchTask: lambda t, out, emit: run_level_search(t.index, t.query, t.order, out, emit),
+    PlotDataTask: run_plot_data,
+}
 
-def run_task(data: dict, emit: Emit) -> None:  # noqa: C901
+
+def run_task(data: dict, emit: Emit) -> None:
     """Run a task described by the UI server.
 
     Parameters
@@ -48,28 +69,4 @@ def run_task(data: dict, emit: Emit) -> None:  # noqa: C901
     out = Path(data["out"])
     out.mkdir(parents=True, exist_ok=True)
     task = task_from_dict(data)
-    match task:
-        case SchemaTask(paths=paths):
-            run_schema(paths, out, emit)
-        case NonnullTask(paths=paths, names=names, generated=generated):
-            run_nonnull(paths, names, generated, out, emit)
-        case ConvertTask():
-            convert_columns(task, emit)
-        case JoinTask():
-            run_join(task, out, emit)
-        case JoinConvertTask():
-            run_join_convert(task, out, emit)
-        case PlotTask(spec=spec):
-            run_plot(spec, out, emit)
-        case SelectionTask(spec=spec):
-            run_selection(spec, out, emit)
-        case TableTask():
-            run_table(task, out, emit)
-        case SummaryTask(parts=parts, column=column):
-            run_summary(parts, column, out, emit)
-        case LevelIndexTask(parts=parts, column=column, index=index):
-            run_level_index(parts, column, index, out, emit)
-        case LevelSearchTask(index=index, query=query, order=order):
-            run_level_search(index, query, order, out, emit)
-        case PlotDataTask():
-            run_plot_data(task, out, emit)
+    RUNNERS[type(task)](task, out, emit)
