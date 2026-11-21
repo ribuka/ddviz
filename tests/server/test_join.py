@@ -590,6 +590,15 @@ def test_converting_is_on_while_the_comparison_runs(
     assert source.converting is False
 
 
+def test_skip_equal_does_not_compare_when_no_columns_are_candidates(tmp_path: Path) -> None:
+    """A join whose only same-named columns are right keys runs just the join task."""
+    source, broker = _joining_source(tmp_path)
+    keys = [{"left": name, "right": name} for name in ("k", "v")]
+    answer = asyncio.run(source.join("key", keys, same_names="skip_equal"))
+    assert (answer["added"], answer["skipped"]) == (["_joined"], [])
+    assert broker.seen == [("join", True)]
+
+
 @pytest.mark.parametrize(
     ("kind", "keys"), [("key", [{"left": "k", "right": "k"}]), ("rows", [])], ids=["key", "rows"]
 )
