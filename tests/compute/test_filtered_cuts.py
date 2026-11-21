@@ -46,7 +46,7 @@ def _spec(tmp_path: Path, **fields: object) -> ScatterSpec:
             "width": 200,
             "height": 200,
             "hover": ["x"],
-            "binned": {r: BINNING for r in roles},
+            "binned": dict.fromkeys(roles, BINNING),
             **roles,
             **fields,
         },

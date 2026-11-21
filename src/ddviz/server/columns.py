@@ -41,7 +41,7 @@ def _ranks_by_name(columns: list[dict]) -> list[int]:
     return _name_ranks[1]
 
 
-def search_columns(  # noqa: C901
+def search_columns(
     columns: list[dict],
     query: str,
     kind: str | None,
@@ -104,10 +104,7 @@ def search_columns(  # noqa: C901
     if order not in ORDERS:
         raise ValueError(f"unknown order: {order}")
     words = keywords(query)
-    if nonnull is None:
-        counts = [None] * len(columns)
-    else:
-        counts = nonnull["counts"]
+    counts = [None] * len(columns) if nonnull is None else nonnull["counts"]
     # A known count implies rows: `nonnull_counts` gives none without rows.
     shares = [None if c is None else c / nonnull["rows"] for c in counts]
     found = []

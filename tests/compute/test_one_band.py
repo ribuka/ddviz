@@ -97,5 +97,5 @@ def test_a_selection_in_one_band_takes_the_rows_in_its_y_range(
         .collect()
     )
     expected = _drawn(scatter_frame).filter(pl.col("y").is_between(-0.5, 0.5))
-    assert 0 < found.height
+    assert found.height > 0
     assert found[INDEX].to_list() == expected[INDEX].to_list()

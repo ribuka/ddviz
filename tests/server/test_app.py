@@ -511,7 +511,7 @@ def test_a_graph_without_x_draws_one_band(client: TestClient) -> None:
     assert body["figure"]["layout"]["xaxis"]["ticktext"] == ["a", "b", "c"]
     box = {"task": meta["task"], "panel": 0, "x_range": [-0.5, 0.5], "y_range": [-1, 1]}
     selected = client.post("/api/selection", json=box).json()
-    assert 0 < selected["rows"]
+    assert selected["rows"] > 0
     table = client.get("/api/table").json()
     assert table["rows"] == selected["rows"]
     assert [c["name"] for c in table["columns"]][:2] == ["y", "color"]
@@ -688,7 +688,7 @@ def test_a_categorical_axis_plots_zooms_filters_and_selects(client: TestClient) 
         "y_range": [-5, 5],
     }
     selected = client.post("/api/selection", json=box).json()
-    assert 0 < selected["rows"]
+    assert selected["rows"] > 0
     table = client.get("/api/table").json()
     assert table["rows"] == selected["rows"]
     assert {

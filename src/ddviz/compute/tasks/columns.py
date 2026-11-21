@@ -102,7 +102,7 @@ def run_schema(paths: list[str], out: Path, emit: Emit) -> None:
 
 
 def run_nonnull(
-    paths: list[str], names: list[str], generated: list[str], out: Path, emit: Emit
+    paths: list[str], names: list[str], generated: list[str], out: Path, emit: Emit  # noqa: ARG001 - every task takes it
 ) -> None:
     """Write the non-null values of each column and the rows (`ddviz.compute.nonnull`).
 
