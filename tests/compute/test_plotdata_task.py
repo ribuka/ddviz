@@ -574,13 +574,15 @@ def test_an_error_reading_a_chunk_comes_out_as_it_is(
     cached = plotdata._cached
     calls: list[int] = []
 
-    def failing(*args: object, measure: bool = False) -> pl.DataFrame:
-        """Read the first chunk's values, then fail."""
+    def failing(
+        parts: dict[str, list[str]], index: pl.Series, lo: int, hi: int, *, measure: bool
+    ) -> pl.DataFrame:
+        """Pass through size measurements and fail on the second value read."""
         if not measure:
             calls.append(1)
             if len(calls) == 2:
                 raise RuntimeError("out of memory")
-        return cached(*args, measure=measure)
+        return cached(parts, index, lo, hi, measure=measure)
 
     monkeypatch.setattr(plotdata, "_cached", failing)
     with pytest.raises(RuntimeError, match="out of memory"):
