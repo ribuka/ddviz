@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import io
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import date
 from pathlib import Path
 
@@ -15,47 +15,21 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from ddviz.server.app import create_app
 from ddviz.server.broker import TaskEnd
-from ddviz.server.settings import CacheSettings, Settings
-from ddviz.server.settings_store import SettingsStore
+from ddviz.server.settings import CacheSettings
 from ddviz.server.source import Source
 from ddviz.shared.cache import ColumnCache
 from ddviz.shared.manifest import write_manifest
 from ddviz.shared.tasks import JoinTask
+from tests.server.test_source_columns import (
+    first_table_page,
+    plot_body,
+    table_values,
+    write_parquet_file,
+)
 
-TOKEN = "secret-of-the-run"
-SIZE = {"width": 400, "height": 300}
-HIDE_NULLS = {"show_nulls": False}
-EVERYWHERE = {"panel": 0, "x_range": [-100, 100], "y_range": [-100, 100]}
 XY = {"x": ["x"], "y": ["y"]}
 LEFT_COLUMNS = ["lot", "sub", "x", "y", "temp", "day", "source", "filename"]
-
-
-@contextmanager
-def _serve(tmp_path: Path, paths: list[Path], recursive: bool = False) -> Iterator[TestClient]:
-    """Serve an input with its column cache under `tmp_path`, kept across calls."""
-    run = tmp_path / "run"
-    run.mkdir(exist_ok=True)
-    app = create_app(
-        [str(p) for p in paths],
-        recursive,
-        run,
-        tmp_path / "cache",
-        tmp_path / "history",
-        SettingsStore(Settings()),
-        TOKEN,
-    )
-    with TestClient(app) as client:
-        assert client.get("/", params={"token": TOKEN}).status_code == 200
-        yield client
-
-
-def _write(path: Path, frame: pl.DataFrame) -> Path:
-    """Write a frame as Parquet, making its folder."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.write_parquet(path)
-    return path
 
 
 def _left(lots: list[int | None], subs: list[str], start: int) -> pl.DataFrame:
@@ -78,9 +52,9 @@ def _left(lots: list[int | None], subs: list[str], start: int) -> pl.DataFrame:
 def left(tmp_path: Path) -> Path:
     """Return a folder of 3 files, 12 rows: keys repeated, missing in the joined table, and null."""
     root = tmp_path / "left"
-    _write(root / "a.parquet", _left([1, 2, 3, None], ["a", "b", "a", "a"], 0))
-    _write(root / "b.parquet", _left([4, 5, 1], ["a", "b", "b"], 4))
-    _write(root / "c.parquet", _left([9, 2, 3, 6, 7], ["a", "a", "b", "a", "a"], 7))
+    write_parquet_file(root / "a.parquet", _left([1, 2, 3, None], ["a", "b", "a", "a"], 0))
+    write_parquet_file(root / "b.parquet", _left([4, 5, 1], ["a", "b", "b"], 4))
+    write_parquet_file(root / "c.parquet", _left([9, 2, 3, 6, 7], ["a", "a", "b", "a", "a"], 7))
     return root
 
 
@@ -103,8 +77,8 @@ def _right_file(lots: list[int | None], subs: list[str], first: int) -> pl.DataF
 def right(tmp_path: Path) -> Path:
     """Return a folder of 2 files, 7 rows, with unique keys and a null key."""
     root = tmp_path / "right"
-    _write(root / "r1.parquet", _right_file([1, 2, 3], ["a", "a", "a"], 0))
-    _write(root / "r2.parquet", _right_file([4, 5, 6, None], ["a", "b", "a", "a"], 3))
+    write_parquet_file(root / "r1.parquet", _right_file([1, 2, 3], ["a", "a", "a"], 0))
+    write_parquet_file(root / "r2.parquet", _right_file([4, 5, 6, None], ["a", "b", "a", "a"], 3))
     return root
 
 
@@ -140,29 +114,6 @@ def _expected(left: Path, right: Path, keys: list[str]) -> pl.DataFrame:
         maintain_order="left",
     )
     return found.with_columns(pl.col("_joined").fill_null("left_only"))
-
-
-def _plot(client: TestClient, encoding: dict, **extra: object) -> dict:
-    """Draw `encoding` and return the response body."""
-    response = client.post(
-        "/api/plot", json={"encoding": encoding, **SIZE, **HIDE_NULLS, **extra}
-    )
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-def _table(client: TestClient, task: int) -> dict:
-    """Select every row of a drawn plot and return the first page of the table."""
-    selected = client.post("/api/selection", json={"task": task, **EVERYWHERE})
-    assert selected.status_code == 200, selected.text
-    table = client.get("/api/table")
-    assert table.status_code == 200, table.text
-    return table.json()
-
-
-def _values(table: dict) -> dict[str, list]:
-    """Return the values of each column of a table page."""
-    return {c["name"]: c["values"] for c in table["columns"]}
 
 
 def _save(client: TestClient, task: int, file_format: str) -> pl.DataFrame:
@@ -210,7 +161,11 @@ ADDED_TWO = ["_joined", "temp_joined", "vendor", "score", "source_joined", "file
     ("keys", "added"), [(KEYS_ONE, ADDED_ONE), (KEYS_TWO, ADDED_TWO)], ids=["one", "two"]
 )
 def test_a_join_by_keys_adds_the_matching_rows(
-    tmp_path: Path, left: Path, right: Path, keys: list[dict], added: list[str]
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    left: Path,
+    right: Path,
+    keys: list[dict],
+    added: list[str],
 ) -> None:
     """Each row takes the joined table's row of the same keys; the others and null keys get nulls.
 
@@ -219,8 +174,8 @@ def test_a_join_by_keys_adds_the_matching_rows(
     and the joined columns plot, filter and summarize as any column.
     """
     expected = _expected(left, right, [k["left"] for k in keys])
-    with _serve(tmp_path, [left]) as client:
-        before = _table(client, _plot(client, XY)["meta"]["task"])
+    with serve([left]) as client:
+        before = first_table_page(client, plot_body(client, XY)["meta"]["task"])
         loaded = client.post("/api/join/source", json={"paths": [str(right)]}).json()
         assert loaded == {
             "paths": [str(right)],
@@ -256,10 +211,10 @@ def test_a_join_by_keys_adds_the_matching_rows(
         }
 
         # Before conversion: read through the map.
-        task = _plot(client, XY)["meta"]["task"]
-        table = _table(client, task)
+        task = plot_body(client, XY)["meta"]["task"]
+        table = first_table_page(client, task)
         assert table["index"] == before["index"] == list(range(12))
-        values = _values(table)
+        values = table_values(table)
         for column in added:
             assert values[column] == expected[column].to_list(), column
         unconverted = {f: _save(client, task, f) for f in ("parquet", "csv")}
@@ -271,8 +226,8 @@ def test_a_join_by_keys_adds_the_matching_rows(
             assert summary.status_code == 200, summary.text
         levels = client.get("/api/filter-levels", params={"column": "vendor"}).json()
         assert {v for v, _ in levels["levels"]} == set(expected["vendor"].drop_nulls())
-        task = _plot(client, XY)["meta"]["task"]
-        assert _values(_table(client, task)) == values
+        task = plot_body(client, XY)["meta"]["task"]
+        assert table_values(first_table_page(client, task)) == values
         converted = {f: _save(client, task, f) for f in ("parquet", "csv")}
         _check_saved(converted, expected, added)
         for f in ("parquet", "csv"):
@@ -280,14 +235,16 @@ def test_a_join_by_keys_adds_the_matching_rows(
 
         # The joined columns on X, Color and a filter.
         both = [{"column": "_joined", "levels": ["both"]}]
-        meta = _plot(client, {"x": ["score"], "y": ["y"], "color": "vendor"}, filters=both)["meta"]
+        meta = plot_body(client, {"x": ["score"], "y": ["y"], "color": "vendor"}, filters=both)["meta"]
         assert meta["rows"] == matched
 
 
-def test_keys_of_types_with_a_common_type_match(tmp_path: Path, left: Path) -> None:
+def test_keys_of_types_with_a_common_type_match(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], left: Path
+) -> None:
     """Keys of Int32 and of text match the input's Int64 keys in their common type."""
     root = tmp_path / "typed"
-    _write(
+    write_parquet_file(
         root / "t.parquet",
         pl.DataFrame(
             {"k32": [1, 2, 9], "kstr": ["1", "2", "9"], "v": [10.0, 20.0, 90.0]},
@@ -297,11 +254,11 @@ def test_keys_of_types_with_a_common_type_match(tmp_path: Path, left: Path) -> N
     lots = _read_folder(left)["lot"].to_list()
     expected = [{1: 10.0, 2: 20.0, 9: 90.0}.get(lot) for lot in lots]
     for key in ("k32", "kstr"):
-        with _serve(tmp_path, [left]) as client:
+        with serve([left]) as client:
             keys = [{"left": "lot", "right": key}]
             answer = _join(client, root, "key", keys)
             assert answer["matched"] == sum(v is not None for v in expected)
-            values = _values(_table(client, _plot(client, XY)["meta"]["task"]))
+            values = table_values(first_table_page(client, plot_body(client, XY)["meta"]["task"]))
             assert values["v"] == expected
 
 
@@ -315,15 +272,19 @@ def test_keys_of_types_with_a_common_type_match(tmp_path: Path, left: Path) -> N
     ],
 )
 def test_keys_of_no_common_type_or_nested_or_unknown_are_refused(
-    tmp_path: Path, left: Path, pair: dict, detail: str
+    tmp_path: Path,
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    left: Path,
+    pair: dict,
+    detail: str,
 ) -> None:
     """Keys that cannot be compared are refused, adding nothing; another try works."""
     root = tmp_path / "typed"
-    _write(
+    write_parquet_file(
         root / "t.parquet",
         pl.DataFrame({"lot": [1, 2], "flag": [True, False], "items": [[1], [2]]}),
     )
-    with _serve(tmp_path, [left]) as client:
+    with serve([left]) as client:
         schema = client.get("/api/schema").json()
         loaded = client.post("/api/join/source", json={"paths": [str(root)]})
         assert loaded.status_code == 200
@@ -353,23 +314,29 @@ def test_keys_of_no_common_type_or_nested_or_unknown_are_refused(
     ],
 )
 def test_keys_given_wrong_are_refused(
-    tmp_path: Path, left: Path, right: Path, body: dict, detail: str
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    left: Path,
+    right: Path,
+    body: dict,
+    detail: str,
 ) -> None:
     """A kind or keys given wrong are refused with the reason."""
-    with _serve(tmp_path, [left]) as client:
+    with serve([left]) as client:
         client.post("/api/join/source", json={"paths": [str(right)]})
         refused = client.post("/api/join", json=body)
         assert refused.status_code == 400
         assert refused.json()["detail"] == detail
 
 
-def test_duplicate_keys_in_the_joined_table_are_refused(tmp_path: Path, left: Path) -> None:
+def test_duplicate_keys_in_the_joined_table_are_refused(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], left: Path
+) -> None:
     """Keys several rows hold are counted and shown, those with a null left out; nothing is added."""
     root = tmp_path / "dup"
     lots = [7, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, None, None]
-    _write(root / "d1.parquet", pl.DataFrame({"lot": lots[:9], "v": [0.0] * 9}))
-    _write(root / "d2.parquet", pl.DataFrame({"lot": lots[9:], "v": [0.0] * 8}))
-    with _serve(tmp_path, [left]) as client:
+    write_parquet_file(root / "d1.parquet", pl.DataFrame({"lot": lots[:9], "v": [0.0] * 9}))
+    write_parquet_file(root / "d2.parquet", pl.DataFrame({"lot": lots[9:], "v": [0.0] * 8}))
+    with serve([left]) as client:
         schema = client.get("/api/schema").json()
         client.post("/api/join/source", json={"paths": [str(root)]})
         refused = client.post("/api/join", json={"kind": "key", "keys": KEYS_ONE})
@@ -379,7 +346,7 @@ def test_duplicate_keys_in_the_joined_table_are_refused(tmp_path: Path, left: Pa
         )
         assert client.get("/api/schema").json() == schema
         two = [{"left": "lot", "right": "lot"}, {"left": "sub", "right": "s"}]
-        _write(
+        write_parquet_file(
             root / "d1.parquet",
             pl.DataFrame({"lot": [1, 1, 2, None, None], "s": ["a", "a", "b", "c", "c"]}),
         )
@@ -391,14 +358,16 @@ def test_duplicate_keys_in_the_joined_table_are_refused(tmp_path: Path, left: Pa
         )
 
 
-def test_a_join_by_rows_puts_rows_side_by_side(tmp_path: Path, left: Path) -> None:
+def test_a_join_by_rows_puts_rows_side_by_side(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], left: Path
+) -> None:
     """The i-th rows go together across files split differently, without ``_joined``; other rows are refused."""
     root = tmp_path / "rows"
-    _write(root / "p1.parquet", pl.DataFrame({"w": [float(i) for i in range(5)], "x": list(range(5))}))
-    _write(root / "p2.parquet", pl.DataFrame({"w": [float(i) for i in range(5, 12)], "x": list(range(5, 12))}))
+    write_parquet_file(root / "p1.parquet", pl.DataFrame({"w": [float(i) for i in range(5)], "x": list(range(5))}))
+    write_parquet_file(root / "p2.parquet", pl.DataFrame({"w": [float(i) for i in range(5, 12)], "x": list(range(5, 12))}))
     short = tmp_path / "short"
-    _write(short / "s.parquet", pl.DataFrame({"w": [0.0] * 11}))
-    with _serve(tmp_path, [left]) as client:
+    write_parquet_file(short / "s.parquet", pl.DataFrame({"w": [0.0] * 11}))
+    with serve([left]) as client:
         client.post("/api/join/source", json={"paths": [str(short)]})
         refused = client.post("/api/join", json={"kind": "rows", "keys": []})
         assert refused.status_code == 400
@@ -406,24 +375,24 @@ def test_a_join_by_rows_puts_rows_side_by_side(tmp_path: Path, left: Path) -> No
         answer = _join(client, root, "rows", [])
         added = ["w", "x_joined", "source_joined", "filename_joined"]
         assert answer == {"added": added, "rows": 12, "matched": 12}
-        task = _plot(client, XY)["meta"]["task"]
-        values = _values(_table(client, task))
+        task = plot_body(client, XY)["meta"]["task"]
+        values = table_values(first_table_page(client, task))
         assert values["w"] == [float(i) for i in range(12)]
         assert values["x_joined"] == list(range(12))
         assert values["filename_joined"] == ["p1"] * 5 + ["p2"] * 7
         unconverted = _save(client, task, "parquet")
         assert client.get("/api/summary", params={"column": "w"}).status_code == 200
         assert client.get("/api/summary", params={"column": "x_joined"}).status_code == 200
-        task = _plot(client, {"x": ["w"], "y": ["x_joined"]})["meta"]["task"]
-        assert _values(_table(client, task)) == values
+        task = plot_body(client, {"x": ["w"], "y": ["x_joined"]})["meta"]["task"]
+        assert table_values(first_table_page(client, task)) == values
         assert _save(client, task, "parquet").equals(unconverted)
 
 
 def test_a_second_join_and_a_join_without_a_table_are_refused(
-    tmp_path: Path, left: Path, right: Path
+    serve: Callable[..., AbstractContextManager[TestClient]], left: Path, right: Path
 ) -> None:
     """A join needs a table read first, and is made once."""
-    with _serve(tmp_path, [left]) as client:
+    with serve([left]) as client:
         refused = client.post("/api/join", json={"kind": "key", "keys": KEYS_ONE})
         assert (refused.status_code, refused.json()["detail"]) == (409, "no join source")
         assert client.get("/api/join/columns").status_code == 409
@@ -446,12 +415,12 @@ def test_a_second_join_and_a_join_without_a_table_are_refused(
 
 
 def test_a_joined_table_without_parquet_is_refused_as_load_refuses(
-    tmp_path: Path, left: Path
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], left: Path
 ) -> None:
     """A joined table is read as Load reads an input, with its refusals."""
     empty = tmp_path / "empty"
     empty.mkdir()
-    with _serve(tmp_path, [left]) as client:
+    with serve([left]) as client:
         refused = client.post("/api/join/source", json={"paths": [str(empty)]})
         assert refused.status_code == 400
         assert refused.json()["detail"] == f"Parquet ファイルがありません：{empty}"
@@ -467,23 +436,25 @@ def test_a_joined_table_without_parquet_is_refused_as_load_refuses(
         assert gone.json()["detail"] == f"ファイルかフォルダがありません：{missing}"
 
 
-def test_changed_files_are_read_again(tmp_path: Path, left: Path, right: Path) -> None:
+def test_changed_files_are_read_again(
+    serve: Callable[..., AbstractContextManager[TestClient]], left: Path, right: Path
+) -> None:
     """A changed file of the joined table, or of the input, gives its new values, not old parts."""
-    with _serve(tmp_path, [left]) as client:
+    with serve([left]) as client:
         _join(client, right, "key", KEYS_ONE)
-        _plot(client, {"x": ["score"], "y": ["y"]})
-        assert _values(_table(client, _plot(client, XY)["meta"]["task"]))["score"][:3] == [0, 1, 2]
+        plot_body(client, {"x": ["score"], "y": ["y"]})
+        assert table_values(first_table_page(client, plot_body(client, XY)["meta"]["task"]))["score"][:3] == [0, 1, 2]
     time.sleep(0.01)
-    _write(right / "r1.parquet", _right_file([1, 2, 3], ["a", "a", "a"], 50))
-    with _serve(tmp_path, [left]) as client:
+    write_parquet_file(right / "r1.parquet", _right_file([1, 2, 3], ["a", "a", "a"], 50))
+    with serve([left]) as client:
         _join(client, right, "key", KEYS_ONE)
-        _plot(client, {"x": ["score"], "y": ["y"]})
-        assert _values(_table(client, _plot(client, XY)["meta"]["task"]))["score"][:3] == [50, 51, 52]
-    _write(left / "a.parquet", _left([3, 2, 1, None], ["a", "b", "a", "a"], 0))
-    with _serve(tmp_path, [left]) as client:
+        plot_body(client, {"x": ["score"], "y": ["y"]})
+        assert table_values(first_table_page(client, plot_body(client, XY)["meta"]["task"]))["score"][:3] == [50, 51, 52]
+    write_parquet_file(left / "a.parquet", _left([3, 2, 1, None], ["a", "b", "a", "a"], 0))
+    with serve([left]) as client:
         _join(client, right, "key", KEYS_ONE)
-        _plot(client, {"x": ["score"], "y": ["y"]})
-        assert _values(_table(client, _plot(client, XY)["meta"]["task"]))["score"][:4] == [52, 51, 50, None]
+        plot_body(client, {"x": ["score"], "y": ["y"]})
+        assert table_values(first_table_page(client, plot_body(client, XY)["meta"]["task"]))["score"][:4] == [52, 51, 50, None]
 
 
 def _nonnull(client: TestClient, names: list[str]) -> dict[str, int | None]:
@@ -499,14 +470,16 @@ def _nonnull(client: TestClient, names: list[str]) -> dict[str, int | None]:
         time.sleep(0.1)
 
 
-def test_non_null_counts_are_estimated_then_exact(tmp_path: Path, left: Path) -> None:
+def test_non_null_counts_are_estimated_then_exact(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], left: Path
+) -> None:
     """Before conversion a joined column counts its share times the rows matched; after, its own values."""
     root = tmp_path / "skewed"
     # Keys 1 and 2 (matched 2 + 2 times) have no value; 4..7 (each once) have.
     lots = [1, 2, 4, 5, 6, 7, 10, 11]
     values = [None, None, 4.0, 5.0, 6.0, 7.0, 10.0, 11.0]
-    _write(root / "s.parquet", pl.DataFrame({"lot": lots, "v": values}))
-    with _serve(tmp_path, [left]) as client:
+    write_parquet_file(root / "s.parquet", pl.DataFrame({"lot": lots, "v": values}))
+    with serve([left]) as client:
         answer = _join(client, root, "key", KEYS_ONE)
         matched = answer["matched"]
         assert matched == 8
@@ -514,16 +487,18 @@ def test_non_null_counts_are_estimated_then_exact(tmp_path: Path, left: Path) ->
         assert counts == {"_joined": 12, "v": round(6 / 8 * matched)}
         assert client.get("/api/summary", params={"column": "v"}).status_code == 200
         assert _nonnull(client, ["v"]) == {"v": 4}
-    with _serve(tmp_path, [left]) as client:
+    with serve([left]) as client:
         _join(client, root, "key", KEYS_ONE)
         assert _nonnull(client, ["v"]) == {"v": 4}
 
 
-def test_a_join_by_rows_counts_the_joined_table(tmp_path: Path, left: Path) -> None:
+def test_a_join_by_rows_counts_the_joined_table(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], left: Path
+) -> None:
     """A column joined by rows has the joined table's count from the start."""
     root = tmp_path / "rows"
-    _write(root / "p.parquet", pl.DataFrame({"w": [None, *range(11)]}))
-    with _serve(tmp_path, [left]) as client:
+    write_parquet_file(root / "p.parquet", pl.DataFrame({"w": [None, *range(11)]}))
+    with serve([left]) as client:
         _join(client, root, "rows", [])
         assert _nonnull(client, ["w"]) == {"w": 11}
 
@@ -551,7 +526,7 @@ def _joining_source(tmp_path: Path, end: str) -> tuple[Source, _JoinBroker]:
     broker = _JoinBroker(end, tmp_path / "task")
     sources = []
     for name in ("a", "b"):
-        file = _write(tmp_path / f"{name}.parquet", pl.DataFrame({"k": [1, 2]}))
+        file = write_parquet_file(tmp_path / f"{name}.parquet", pl.DataFrame({"k": [1, 2]}))
         source = Source([str(file)], False, tmp_path / "cache", tmp_path / "index", CacheSettings, broker)
         source._schema = [{"name": "k", "dtype": "Int64", "numeric": True, "temporal": None, "joined": False}]
         source._dtypes = {"k": "Int64"}
@@ -584,41 +559,45 @@ def test_converting_is_off_after_a_failed_join(tmp_path: Path) -> None:
     assert source.joined is None
 
 
-def test_another_spelling_of_the_paths_joins_its_own_values(tmp_path: Path, left: Path) -> None:
+def test_another_spelling_of_the_paths_joins_its_own_values(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], left: Path
+) -> None:
     """A key on ``source``, and ``source_joined``, follow the paths as given in each session, not parts made with another spelling."""
     root = tmp_path / "bysource"
     first = str((left / "a.parquet").absolute())
-    _write(root / "s1.parquet", pl.DataFrame({"src": [first], "v": [99.0]}))
-    _write(root / "s2.parquet", pl.DataFrame({"src": ["elsewhere"], "v": [1.0]}))
+    write_parquet_file(root / "s1.parquet", pl.DataFrame({"src": [first], "v": [99.0]}))
+    write_parquet_file(root / "s2.parquet", pl.DataFrame({"src": ["elsewhere"], "v": [1.0]}))
     keys = [{"left": "source", "right": "src"}]
-    with _serve(tmp_path, [left]) as client:
+    with serve([left]) as client:
         assert _join(client, root, "key", keys)["matched"] == 4
         assert client.get("/api/summary", params={"column": "v"}).status_code == 200
-        values = _values(_table(client, _plot(client, XY)["meta"]["task"]))
+        values = table_values(first_table_page(client, plot_body(client, XY)["meta"]["task"]))
         assert values["v"] == [99.0] * 4 + [None] * 8
     spelled = tmp_path / "left" / ".." / "left"
     other = tmp_path / "bysource" / ".." / "bysource"
-    with _serve(tmp_path, [spelled]) as client:
+    with serve([spelled]) as client:
         assert _join(client, other, "key", keys)["matched"] == 0
-        table = _table(client, _plot(client, XY)["meta"]["task"])
-        assert _values(table)["v"] == [None] * 12
-        assert _values(table)["_joined"] == ["left_only"] * 12
+        table = first_table_page(client, plot_body(client, XY)["meta"]["task"])
+        assert table_values(table)["v"] == [None] * 12
+        assert table_values(table)["_joined"] == ["left_only"] * 12
         for column in ("v", "source_joined"):
             assert client.get("/api/summary", params={"column": column}).status_code == 200
-        assert _values(_table(client, _plot(client, XY)["meta"]["task"])) == _values(table)
-    with _serve(tmp_path, [left]) as client:
+        assert table_values(first_table_page(client, plot_body(client, XY)["meta"]["task"])) == table_values(table)
+    with serve([left]) as client:
         _join(client, other, "key", keys)
         for column in ("v", "source_joined"):
             assert client.get("/api/summary", params={"column": column}).status_code == 200
-        values = _values(_table(client, _plot(client, XY)["meta"]["task"]))
+        values = table_values(first_table_page(client, plot_body(client, XY)["meta"]["task"]))
         assert values["v"] == [99.0] * 4 + [None] * 8
         assert values["source_joined"] == [str((other / "s1.parquet").absolute())] * 4 + [None] * 8
 
 
-def test_columns_named_as_the_internal_ones_keep_their_values(tmp_path: Path, left: Path) -> None:
+def test_columns_named_as_the_internal_ones_keep_their_values(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], left: Path
+) -> None:
     """Columns and keys named as the names a join uses inside are joined, read and saved as any others."""
     root = tmp_path / "named"
-    _write(
+    write_parquet_file(
         root / "n.parquet",
         pl.DataFrame(
             {
@@ -640,22 +619,22 @@ def test_columns_named_as_the_internal_ones_keep_their_values(tmp_path: Path, le
             ("__ddviz_value_0", (50, 60)),
         )
     }
-    with _serve(tmp_path, [left]) as client:
+    with serve([left]) as client:
         answer = _join(client, root, "key", keys)
         assert answer["matched"] == 4
-        task = _plot(client, XY)["meta"]["task"]
-        values = _values(_table(client, task))
+        task = plot_body(client, XY)["meta"]["task"]
+        values = table_values(first_table_page(client, task))
         for column, found in expected.items():
             assert values[column] == found, column
         unconverted = _save(client, task, "parquet")
         for column in expected:
             assert client.get("/api/summary", params={"column": column}).status_code == 200
-        task = _plot(client, XY)["meta"]["task"]
-        assert _values(_table(client, task)) == values
+        task = plot_body(client, XY)["meta"]["task"]
+        assert table_values(first_table_page(client, task)) == values
         assert _save(client, task, "parquet").equals(unconverted)
     dup = tmp_path / "dupnamed"
-    _write(dup / "d.parquet", pl.DataFrame({"__ddviz_count": [1, 1, 2], "__ddviz_row": [5, 5, 6]}))
-    with _serve(tmp_path, [left]) as client:
+    write_parquet_file(dup / "d.parquet", pl.DataFrame({"__ddviz_count": [1, 1, 2], "__ddviz_row": [5, 5, 6]}))
+    with serve([left]) as client:
         client.post("/api/join/source", json={"paths": [str(dup)]})
         pair = [{"left": "lot", "right": "__ddviz_count"}, {"left": "sub", "right": "__ddviz_row"}]
         refused = client.post("/api/join", json={"kind": "key", "keys": pair})
