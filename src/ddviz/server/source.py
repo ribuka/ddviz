@@ -32,8 +32,7 @@ from ddviz.server.join import (
     check_columns,
     check_keys,
     check_rows,
-    chosen,
-    compared,
+    choose_columns,
 )
 from ddviz.server.plan import parse_filters
 from ddviz.server.settings import CacheSettings
@@ -542,8 +541,9 @@ class Source:
 
         A join by keys runs the join task in the plot pool (plots are
         refused meanwhile, as while converting), after converting the keys
-        of both tables. On ``"skip_equal"``, the columns named like the
-        input's are then compared (`_run_equal`), still with plots refused.
+        of both tables. On ``"skip_equal"``, the columns selected by
+        `ddviz.server.join.choose_columns` are then compared (`_run_equal`),
+        still with plots refused.
         Its columns then follow the input's
         (`ddviz.shared.joined.joined_names`). A refused join adds nothing,
         and the table read stays for another try.
@@ -562,7 +562,7 @@ class Source:
             the input: ``"rename"``, by default, adds it renamed,
             ``"skip_equal"`` leaves it out when the rows joined hold the
             same values in both, ``"skip"`` leaves it out
-            (`ddviz.server.join.chosen`).
+            (`ddviz.server.join.choose_columns`).
 
         Returns
         -------
@@ -591,10 +591,9 @@ class Source:
             if kind == "rows":
                 check_rows(sum(self.rows), sum(right.rows))
             check_columns(columns, same_names, right._dtypes, keys)
-            plain, generated, skipped = chosen(
-                [c["name"] for c in right._schema], right._generated, keys, columns, same_names, self._dtypes
+            plain, generated, skipped, pairs = choose_columns(
+                self._dtypes, right._dtypes, right._generated, keys, columns, same_names
             )
-            pairs = compared(plain, self._dtypes, right._dtypes) if same_names == "skip_equal" else []
             typed = [
                 {**k, "left_dtype": self._dtypes[k["left"]], "right_dtype": right._dtypes[k["right"]]}
                 for k in keys

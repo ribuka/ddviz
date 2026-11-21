@@ -7,13 +7,12 @@ numbers stay those of the input. The columns added and their names are
 `ddviz.shared.joined`'s; the map of the rows and the parts of the columns are
 written by workers (`ddviz.compute.join`). The join may add only some of the
 joined table's columns, or leave out those named like the input's
-(`check_columns`, `chosen`), maybe only when their values are the same
-(`compared`, `ddviz.compute.join.run_join_equal`).
+(`check_columns`, `choose_columns`), maybe only when their values are the same
+(`ddviz.compute.join.run_join_equal`).
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -194,78 +193,54 @@ def check_columns(
         raise HTTPException(400, f"{WRONG_COLUMNS}キーの列は足せません：{key}")
 
 
-def chosen(
-    order: list[str],
+def choose_columns(
+    left: dict[str, str],
+    right: dict[str, str],
     generated: dict[str, str],
     keys: list[dict[str, str]],
     columns: list[str] | None,
     same_names: str,
-    left: Iterable[str],
-) -> tuple[list[str], dict[str, str], list[str]]:
-    """Return the columns of the joined table a join adds, as `ddviz.shared.joined.joined_names` takes them, and those left out.
+) -> tuple[list[str], dict[str, str], list[str], list[str]]:
+    """Select the columns to add, leave out by name, or compare before naming them.
 
     Parameters
     ----------
-    order : list of str
-        The columns of the joined table, in its order.
+    left, right : dict of str to str
+        The column types of the input and the joined table, in schema order,
+        including generated columns.
     generated : dict of str to str
-        Its added columns, with their kinds (`ddviz.shared.generated`).
+        The generated columns of the joined table with their kinds (`ddviz.shared.generated`).
     keys : list of dict of str to str
         The pairs of keys, ``{"left", "right"}``: its keys are not added.
     columns : list of str or None
         The columns asked to be added (`check_columns`); None for all.
     same_names : str
         What to do with a column named like one of the input, for all the
-        columns (`SAME_NAMES`): ``"skip"`` leaves it out, unless it is an
-        added column; ``"skip_equal"`` keeps it here, to compare
-        (`compared`).
-    left : iterable of str
-        The columns of the input, its added columns included.
+        columns (`SAME_NAMES`): ``"skip"`` leaves out same-named ordinary
+        columns; ``"skip_equal"`` compares them when neither type is nested.
 
     Returns
     -------
-    tuple of (list of str, dict of str to str, list of str)
-        The columns to add but the added ones, in the joined table's order;
-        the added columns to add with their kinds; and the columns left out
-        by name, in the joined table's order.
+    tuple of (list of str, dict of str to str, list of str, list of str)
+        The ordinary columns to add and the generated columns to add with
+        their kinds (`ddviz.shared.joined.joined_names`); then the columns
+        left out by name and the columns to compare, in the joined table's order.
     """
     taken = {k["right"] for k in keys}
     if columns is not None:
         asked = set(columns)
-        plain = [c for c in order if c in asked and c not in generated]
-        return plain, {c: k for c, k in generated.items() if c in asked}, []
-    plain = [c for c in order if c not in generated and c not in taken]
+        plain = [c for c in right if c in asked and c not in generated]
+        return plain, {c: k for c, k in generated.items() if c in asked}, [], []
+    plain = [c for c in right if c not in generated and c not in taken]
     added = {c: k for c, k in generated.items() if c not in taken}
-    skipped: list[str] = []
+    if same_names == "rename":
+        return plain, added, [], []
+    same = [c for c in plain if c in left]
     if same_names == "skip":
-        names = set(left)
-        skipped = [c for c in plain if c in names]
-        plain = [c for c in plain if c not in names]
-    return plain, added, skipped
-
-
-def compared(plain: list[str], left: dict[str, str], right: dict[str, str]) -> list[str]:
-    """Return the columns a join on ``"skip_equal"`` compares: those of `plain` named like a column of the input, neither of the two nested.
-
-    Parameters
-    ----------
-    plain : list of str
-        The columns of the joined table to add but its added ones, in its
-        order (`chosen`).
-    left, right : dict of str to str
-        The type of each column of the input, its added columns included,
-        and of the joined table.
-
-    Returns
-    -------
-    list of str
-        The columns, in the joined table's order.
-    """
-    return [
-        c
-        for c in plain
-        if c in left and not left[c].startswith(NESTED) and not right[c].startswith(NESTED)
-    ]
+        skipped = set(same)
+        return [c for c in plain if c not in skipped], added, same, []
+    pairs = [c for c in same if not left[c].startswith(NESTED) and not right[c].startswith(NESTED)]
+    return plain, added, [], pairs
 
 
 def check_added(kind: str, names: dict[str, str | None]) -> None:
