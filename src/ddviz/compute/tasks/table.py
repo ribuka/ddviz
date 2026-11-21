@@ -10,12 +10,12 @@ from pathlib import Path
 import polars as pl
 
 from ddviz.compute.aggregate import INDEX
-from ddviz.compute.convert import column_expr, input_dtypes
+from ddviz.compute.convert import input_dtypes
 from ddviz.compute.joinread import joined_rows
 from ddviz.compute.progress import Emit
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.selection import selection_columns, selection_filter
-from ddviz.shared.generated import generated_value
+from ddviz.compute.sourceread import file_values
 from ddviz.shared.manifest import write_manifest
 from ddviz.shared.tasks import SourceFiles, TableTask
 
@@ -62,12 +62,10 @@ def _source_rows(
     """Return the rows `index` of columns read from the source files, with the row index.
 
     Only the files holding the rows are scanned, each once: a scan of all the
-    files would parse every footer. Values are cast to the input's types,
-    and a file lacking a column gives nulls. An added column
-    (`ddviz.shared.generated`) gives the file's value, as its parts do.
+    files would parse every footer; each file's values are given by
+    `ddviz.compute.sourceread.file_values`.
     """
-    added = {c: source.generated[c] for c in columns if c in source.generated}
-    dtypes = {c: source.dtypes[c] for c in columns if c not in added}
+    dtypes = {c: source.dtypes[c] for c in columns if c not in source.generated}
     target: dict[str, pl.DataType] = {}
     starts = list(itertools.accumulate(source.rows, initial=0))
     by_file: dict[int, list[int]] = {}
@@ -83,16 +81,8 @@ def _source_rows(
             c not in present or str(present[c]) != d for c, d in dtypes.items()
         ):
             target = input_dtypes(source.schema, dtypes)
-        values = {
-            c: column_expr(c, d, present, target)
-            if c in present
-            else pl.lit(None, dtype=target[c]).alias(c)
-            for c, d in dtypes.items()
-        }
-        for c, kind in added.items():
-            value = generated_value(kind, source.paths[i])
-            values[c] = pl.lit(value, dtype=pl.String).alias(c)
-        frame = scan.select(INDEX, *(values[c] for c in columns))
+        values = file_values(source, source.paths[i], columns, present, target)
+        frame = scan.select(INDEX, *values.values())
         found += [
             frame.slice(start - starts[i], length).collect()
             for start, length in _spans(rows)
