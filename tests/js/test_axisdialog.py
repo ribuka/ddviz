@@ -109,6 +109,15 @@ def test_wrong_numeric_fields_tell_why(page: Page) -> None:
         ({"dtick": "1", "minor": "101"}, {"minor": "2〜100 の整数にしてください"}),
         ({"dtick": "1", "minor": "2.5"}, {"minor": "2〜100 の整数にしてください"}),
         ({"minor": "2"}, {"minor": "間隔を入れたときだけ使えます"}),
+        (
+            {"min": "3", "max": "2", "dtick": "abc", "minor": "1", "format": "fixed", "digits": "-1"},
+            {
+                "max": "最小値より大きくしてください",
+                "dtick": "数値を入れてください",
+                "minor": "2〜100 の整数にしてください",
+                "digits": DIGITS_ERROR,
+            },
+        ),
     ]
     results = call(page, *[["readFields", {**base, **fields}] for fields, _ in cases])
     assert results == [{"errors": errors} for _, errors in cases]

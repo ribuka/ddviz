@@ -247,18 +247,86 @@ function readNumber(text, optional = false) {
   return Number.isFinite(value) ? { value } : { error: "数値を入れてください" };
 }
 
-// Checks the fields of the dialog of an axis of `kind` (texts as typed, the
-// unit of the interval, the format picked and whether the separators are
-// checked) and returns the settings and range they make, `{range, dtick,
-// unit, minor, format, digits, separators}`, or the reason of each field
-// that is wrong (`{errors: {field: text}}`). An end whose text is that of
-// `known` (`{min: {text, value}, max}`) is that value: the text of a
-// temporal value is rounded. A field the format does not use is neither
-// checked nor kept; a temporal axis keeps plotly's labels. A calendar unit
-// takes a positive integer (`readCount`) and the check of its minor ticks
-// (`calendarMinor`), kept from an interval of 2 on; the field of the minor
-// splits is then neither checked nor kept.
-export function readFields({ // noqa: C901, PLR0912
+// Returns the range and end-field errors. Reuses a known end when its text
+// is unchanged because the displayed text of a temporal value is rounded.
+function readRangeFields(kind, min, max, known) {
+  const errors = {};
+  const end = (name, text) => (known[name]?.text === text ? { value: known[name].value } : readValue(kind, text));
+  const lo = end("min", min);
+  const hi = end("max", max);
+  if (lo.error) errors.min = lo.error;
+  if (hi.error) errors.max = hi.error;
+  if (!lo.error && !hi.error && lo.value >= hi.value) errors.max = "最小値より大きくしてください";
+  return { range: [lo.value, hi.value], errors };
+}
+
+// Reads a fixed interval as {value} or {error}, allowing an empty field.
+function readFixedStep(kind, text, unit) {
+  const step = readNumber(text, true);
+  if (step.error || step.value === null) return step;
+  if (step.value <= 0) return { error: "0 より大きくしてください" };
+  if (kind !== "number") {
+    const size = plotlyStep(kind, step.value, unit);
+    if (!(Number.isFinite(size) && size > 0)) return { error: "この単位では使えない間隔です" };
+  }
+  return step;
+}
+
+// Reads fixed minor splits as {value} or {error}. A valid split needs a
+// step; an invalid step already has its own error.
+function readMinorSplits(text, most, step) {
+  const parts = readNumber(text, true);
+  if (parts.error || parts.value === null) return parts;
+  if (!Number.isInteger(parts.value) || parts.value < 2 || parts.value > most) {
+    return { error: `2〜${most} の整数にしてください` };
+  }
+  if (step.value === null) return { error: "間隔を入れたときだけ使えます" };
+  return parts;
+}
+
+// Returns the interval, unit, minor ticks and errors. Calendar units use
+// the checkbox from an interval of 2 on and skip the minor splits field.
+function readTickFields(kind, dtick, unit, minor, calendarMinor) {
+  const errors = {};
+  const temporal = kind !== "number";
+  const calendar = hasCalendar(kind) && isCalendar(unit);
+  const step = calendar ? readCount(dtick, unit) : readFixedStep(kind, dtick, unit);
+  if (step.error) errors.dtick = step.error;
+  const most = temporal ? MAX_TEMPORAL_MINOR : MAX_MINOR;
+  const parts = calendar
+    ? { value: calendarMinor && step.value >= 2 ? step.value : null }
+    : readMinorSplits(minor, most, step);
+  if (parts.error) errors.minor = parts.error;
+  return {
+    dtick: step.value,
+    unit: temporal && step.value !== null ? unit : null,
+    minor: parts.value,
+    errors,
+  };
+}
+
+// Returns the label format, digits, separators and errors, checking and
+// keeping only the fields used by the chosen format on a numeric axis.
+function readNumericFormatFields(kind, format, digits, separators) {
+  const errors = {};
+  if (kind !== "number") return { format: "auto", digits: null, separators: false, errors };
+  let places = null;
+  if (USES_DIGITS.has(format)) {
+    const trimmed = digits.trim();
+    places = /^[0-9]+$/.test(trimmed) ? Number(trimmed) : NaN;
+    if (!(places <= MAX_DIGITS)) errors.digits = `0〜${MAX_DIGITS} の整数にしてください`;
+  }
+  return {
+    format,
+    digits: places,
+    separators: USES_SEPARATORS.has(format) && separators,
+    errors,
+  };
+}
+
+// Returns the dialog's {range, dtick, unit, minor, format, digits,
+// separators} or all field errors as {errors: {field: text}}.
+export function readFields({
   kind = "number",
   min,
   max,
@@ -271,49 +339,19 @@ export function readFields({ // noqa: C901, PLR0912
   separators = false,
   known = {},
 }) {
-  const errors = {};
-  const temporal = kind !== "number";
-  const end = (name, text) => (known[name]?.text === text ? { value: known[name].value } : readValue(kind, text));
-  const lo = end("min", min);
-  const hi = end("max", max);
-  if (lo.error) errors.min = lo.error;
-  if (hi.error) errors.max = hi.error;
-  if (!lo.error && !hi.error && lo.value >= hi.value) errors.max = "最小値より大きくしてください";
-  const calendar = hasCalendar(kind) && isCalendar(unit);
-  const step = calendar ? readCount(dtick, unit) : readNumber(dtick, true);
-  if (step.error) errors.dtick = step.error;
-  else if (!calendar && step.value !== null && step.value <= 0) errors.dtick = "0 より大きくしてください";
-  else if (!calendar && temporal && step.value !== null) {
-    const size = plotlyStep(kind, step.value, unit);
-    if (!(Number.isFinite(size) && size > 0)) errors.dtick = "この単位では使えない間隔です";
-  }
-  const most = temporal ? MAX_TEMPORAL_MINOR : MAX_MINOR;
-  const parts = calendar
-    ? { value: calendarMinor && step.value >= 2 ? step.value : null }
-    : readNumber(minor, true);
-  if (parts.error) errors.minor = parts.error;
-  else if (parts.value !== null && !calendar) {
-    if (!Number.isInteger(parts.value) || parts.value < 2 || parts.value > most) {
-      errors.minor = `2〜${most} の整数にしてください`;
-    } else if (step.value === null && !errors.dtick) {
-      errors.minor = "間隔を入れたときだけ使えます";
-    }
-  }
-  let places = null;
-  if (!temporal && USES_DIGITS.has(format)) {
-    const trimmed = digits.trim();
-    places = /^[0-9]+$/.test(trimmed) ? Number(trimmed) : NaN;
-    if (!(places <= MAX_DIGITS)) errors.digits = `0〜${MAX_DIGITS} の整数にしてください`;
-  }
+  const bounds = readRangeFields(kind, min, max, known);
+  const ticks = readTickFields(kind, dtick, unit, minor, calendarMinor);
+  const labels = readNumericFormatFields(kind, format, digits, separators);
+  const errors = { ...bounds.errors, ...ticks.errors, ...labels.errors };
   if (Object.keys(errors).length) return { errors };
   return {
-    range: [lo.value, hi.value],
-    dtick: step.value,
-    unit: temporal && step.value !== null ? unit : null,
-    minor: parts.value,
-    format: temporal ? "auto" : format,
-    digits: places,
-    separators: !temporal && USES_SEPARATORS.has(format) && separators,
+    range: bounds.range,
+    dtick: ticks.dtick,
+    unit: ticks.unit,
+    minor: ticks.minor,
+    format: labels.format,
+    digits: labels.digits,
+    separators: labels.separators,
   };
 }
 
