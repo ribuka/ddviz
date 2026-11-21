@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 
 import polars as pl
 import pytest
 
 from ddviz.compute import join
-from ddviz.compute.join import run_join
+from ddviz.compute.join import duplicate_keys, run_join
 from ddviz.shared.joined import MAP_COLUMN
 from ddviz.shared.manifest import read_manifest
 from ddviz.shared.tasks import JoinTask
@@ -124,3 +125,12 @@ def test_duplicate_keys_are_refused_alike(tmp_path: Path, monkeypatch: pytest.Mo
     assert refused == [
         "結合する表でキーが重複しています：6 組（例：(a, 1)、(a, 2)、(b, 1)、(b, 3)、(c, 1)）"
     ] * 2
+
+
+def test_a_bucket_of_several_files_is_counted_whole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rows of the same keys written to different files of a bucket are still counted as duplicates (PR #372 review)."""
+    monkeypatch.setattr(pl, "PartitionBy", functools.partial(pl.PartitionBy, max_rows_per_file=1))
+    right = pl.LazyFrame({"k": [7, 7, 7, 3, 3, 5]})
+    assert duplicate_keys(right, ["k"], join.BUCKETS, tmp_path / "work") == (2, ["3", "7"])
+    assert duplicate_keys(right, ["k"], 1, tmp_path / "work") == (2, ["3", "7"])
+    assert not (tmp_path / "work").exists()

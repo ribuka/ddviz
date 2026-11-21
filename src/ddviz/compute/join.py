@@ -140,9 +140,14 @@ def duplicate_keys(
         ).sink_parquet(
             pl.PartitionBy(work, key=bucket, include_key=False), engine="streaming"
         )
+        # A piece may be written as several files in its directory
+        # (``<bucket>=<n>/``): it is counted with all of them.
+        pieces: dict[Path, list[Path]] = {}
+        for file in sorted(work.rglob("*.parquet")):
+            pieces.setdefault(file.parent, []).append(file)
         count, first = 0, []
-        for piece in sorted(work.rglob("*.parquet")):
-            found, rows = _duplicates(pl.scan_parquet(piece), keys)
+        for files in pieces.values():
+            found, rows = _duplicates(pl.scan_parquet(files), keys)
             count += found
             first += rows
     finally:
