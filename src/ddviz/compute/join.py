@@ -11,7 +11,11 @@ column of the joined table is converted when first used, as any column
 map. A join by rows needs no map: the part of a file holds the joined
 table's rows from the rows of the files before. A join may leave out the
 columns named like the input's that hold the same values in the rows joined,
-found through the same map (`run_join_equal`).
+found through the same map (`run_join_equal`). The rows of the joined table
+some row of the input matches are found from the map too (`write_matched`),
+and rows are split on disk by the hash of their keys (`hash_pieces`), for
+the summary and the rows of both tables of a dry run
+(`ddviz.compute.joinsummary`, `ddviz.compute.joinrows`).
 """
 
 from __future__ import annotations
