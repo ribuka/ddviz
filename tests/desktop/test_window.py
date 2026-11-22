@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Self
+from urllib.parse import urlsplit
 
 import pytest
 import webview
@@ -453,6 +454,32 @@ def test_after_new_another_input_opens_on_a_new_server(tmp_path: Path) -> None:
         app.stop()
     assert not window.destroyed
     assert not app.failed
+
+
+def test_the_port_allowed_is_the_open_inputs_server_from_before_its_page_loads(
+    tmp_path: Path,
+) -> None:
+    """`port` (the window's navigations, `OfflineGuard`) is the server's when its page is loaded, and None after `New`."""
+
+    class Watching(_FakeWindow):
+        def load_url(self, url: str) -> None:
+            super().load_url(url)
+            ports.append((urlsplit(url).port, app.port))
+
+    ports: list[tuple] = []
+    window = Watching(chosen=[str(tmp_path)])
+    app = _App(window, [str(tmp_path)], False, _hello, input_label, DrawFileIO())
+    assert app.port is None
+    app.start()
+    app.new()
+    try:
+        assert app.port is None
+        app.choose("folder", False)
+        assert [shown for shown, _ in ports] == [allowed for _, allowed in ports]
+        assert len({shown for shown, _ in ports}) == 2
+        assert app.port == ports[-1][0]
+    finally:
+        app.stop()
 
 
 def test_new_runs_once_and_only_with_an_input_shown(tmp_path: Path) -> None:

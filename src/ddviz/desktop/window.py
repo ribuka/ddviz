@@ -26,6 +26,7 @@ from webview.dom import DOMEventHandler
 
 from ddviz.desktop.downloads import Downloads
 from ddviz.desktop.messages import show_warning
+from ddviz.desktop.offline import OfflineGuard
 from ddviz.desktop.runlog import RunLog, app_data_dir
 from ddviz.desktop.single_instance import IN_USE_MESSAGE, Outcome, claim, record_window
 from ddviz.desktop.splash import close_splash
@@ -365,6 +366,9 @@ class _App:
         # The input of the settings, picked or found, while the table joined
         # to it is not found: the data picked next is that table.
         self._waiting: tuple[list[str], bool] | None = None
+        # The port of the input's server while the window shows its page or
+        # opens it; the only one the window may navigate to (`OfflineGuard`).
+        self.port: int | None = None
         self.failed = False
 
     def start(self) -> None:
@@ -648,6 +652,7 @@ class _App:
             if not self._serving:
                 return
             self._serving = False
+            self.port = None
             self._window.load_html(_CLOSING)
             server, thread = self._server, self._thread
             self._server = None
@@ -693,6 +698,7 @@ class _App:
             if server.started:
                 _log.info("serving on port %d", port)
                 self._serving = True
+                self.port = port
                 self._window.load_url(f"http://127.0.0.1:{port}/?token={token}")
         except Exception:  # noqa: BLE001 - logged; the run fails and the window closes
             _log.exception("failed to start")
@@ -971,6 +977,8 @@ def _run(
         draw_files,
     )
     api.app = app
+    # Before the window shows: nothing it shows reaches outside ddviz.
+    OfflineGuard(lambda: app.port).attach(window)
     window.events.loaded += app.watch_drops
     # Not private: private mode deletes the WebView2 user data on every exit.
     webview.start(
