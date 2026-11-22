@@ -162,6 +162,8 @@ def test_the_menu_works_with_the_mouse(menu_page: Page) -> None:
     """`…` opens File, Edit, Data and Help; one submenu at a time; commands call the window."""
     page = menu_page
     button = page.locator("#titlebar .titlebar-menu")
+    expect(button).to_have_attribute("title", "Menu")
+    expect(button).to_have_attribute("aria-label", "Menu")
     button.click()
     assert popups(page) == [["File", "Edit", "Data", "Help"]]
     assert focused(page) == "File"
@@ -170,8 +172,8 @@ def test_the_menu_works_with_the_mouse(menu_page: Page) -> None:
     page.locator(".titlebar-item").filter(has_text="Help").click()
     assert popups(page) == [["File", "Edit", "Data", "Help"], ["Version"]]
     page.locator(".titlebar-item").filter(has_text="File").click()
-    # 描画設定を保存… (Issue #287) is there, disabled without a figure.
-    assert popups(page) == [["File", "Edit", "Data", "Help"], ["New", "描画設定を保存…", "Quit"]]
+    # Save drawing settings… (Issue #287) is there, disabled without a figure.
+    assert popups(page) == [["File", "Edit", "Data", "Help"], ["New", "Save drawing settings…", "Quit"]]
     # The submenu opens on the right of the menu.
     menu, submenu = (p.bounding_box() for p in page.locator(".titlebar-popup").all())
     assert submenu["x"] >= menu["x"] + menu["width"] - 1
@@ -217,9 +219,9 @@ def test_the_menu_works_with_the_keyboard(menu_page: Page) -> None:
     keys.press("ArrowUp")
     keys.press("ArrowUp")
     keys.press("Space")
-    assert popups(page) == [["File", "Edit", "Data", "Help"], ["New", "描画設定を保存…", "Quit"]]
+    assert popups(page) == [["File", "Edit", "Data", "Help"], ["New", "Save drawing settings…", "Quit"]]
     assert focused(page) == "New"
-    # 描画設定を保存… is disabled without a figure: the arrows skip it.
+    # Save drawing settings… is disabled without a figure: the arrows skip it.
     keys.press("ArrowDown")
     assert focused(page) == "Quit"
     keys.press("ArrowDown")
@@ -297,7 +299,7 @@ def test_new_asks_first_and_keeps_the_graph_when_cancelled(menu_page: Page) -> N
 
 
 def data_item(page: Page) -> Locator:
-    """Open `…` → `Data` and return its one item, `結合…`."""
+    """Open `…` → `Data` and return its one item, `Join…`."""
     page.locator("#titlebar .titlebar-menu").click()
     page.locator(".titlebar-popup .titlebar-item").filter(has_text="Data").click()
     items = page.locator(".titlebar-popup").nth(1).locator(".titlebar-item")
@@ -306,11 +308,11 @@ def data_item(page: Page) -> Locator:
 
 
 def test_data_join_opens_the_dialog_until_the_join(menu_page: Page, join_paths: list[Path]) -> None:
-    """`Data → 結合…` (Ctrl+J beside it) opens the dialog before the join and is disabled after (Issue #344)."""
+    """`Data → Join…` (Ctrl+J beside it) opens the dialog before the join and is disabled after (Issue #344)."""
     page = menu_page
     page.wait_for_function("window.ddvizCanJoin()")
     item = data_item(page)
-    expect(item).to_contain_text("結合…")
+    expect(item).to_contain_text("Join…")
     expect(item.locator(".titlebar-shortcut")).to_have_text("Ctrl+J")
     expect(item).to_be_enabled()
     item.click()

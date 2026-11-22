@@ -176,27 +176,27 @@ def test_parse_reads_what_build_wrote() -> None:
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("{", "描画設定のファイルを読めませんでした：JSON ではありません"),
-        ("[]", "描画設定のファイルを読めませんでした：JSON のオブジェクトではありません"),
+        ("{", "Could not read the drawing settings file: not JSON ("),
+        ("[]", "Could not read the drawing settings file: not a JSON object"),
         (
             _text(format="other"),
-            "描画設定のファイルを読めませんでした：format が ddviz-draw-settings ではありません",
+            "Could not read the drawing settings file: format is not ddviz-draw-settings",
         ),
-        (_text(version=None), "描画設定のファイルを読めませんでした：キー version がありません"),
-        (_text(settings=None), "描画設定のファイルを読めませんでした：キー settings がありません"),
-        (_text(columns=None), "描画設定のファイルを読めませんでした：キー columns がありません"),
+        (_text(version=None), "Could not read the drawing settings file: key version is missing"),
+        (_text(settings=None), "Could not read the drawing settings file: key settings is missing"),
+        (_text(columns=None), "Could not read the drawing settings file: key columns is missing"),
         (
             _text(source={"paths": ["a"], "recursive": False, "join": None}),
-            "描画設定のファイルを読めませんでした：キー source.relative がありません",
+            "Could not read the drawing settings file: key source.relative is missing",
         ),
         (
             _text(source={"paths": [], "relative": None, "recursive": False, "join": None}),
-            "描画設定のファイルを読めませんでした：キー source.paths の値の形が違います",
+            "Could not read the drawing settings file: key source.paths has a value of the wrong shape",
         ),
-        (_text(version=1), "この描画設定は読めません（版 1。この ddviz は版 5 を読みます）"),
-        (_text(version=2), "この描画設定は読めません（版 2。この ddviz は版 5 を読みます）"),
-        (_text(version=3), "この描画設定は読めません（版 3。この ddviz は版 5 を読みます）"),
-        (_text(version=4), "この描画設定は読めません（版 4。この ddviz は版 5 を読みます）"),
+        (_text(version=1), "These drawing settings cannot be read (version 1; this ddviz reads version 5)."),
+        (_text(version=2), "These drawing settings cannot be read (version 2; this ddviz reads version 5)."),
+        (_text(version=3), "These drawing settings cannot be read (version 3; this ddviz reads version 5)."),
+        (_text(version=4), "These drawing settings cannot be read (version 4; this ddviz reads version 5)."),
     ],
     ids=[
         "broken", "not-object", "format", "version-key", "settings", "columns", "relative", "paths", "version-1",
@@ -213,26 +213,26 @@ def test_parse_refuses_with_the_message_shown(text: str, message: str) -> None:
 @pytest.mark.parametrize(
     ("path", "value", "reason"),
     [
-        ("elements", ..., "キー settings.elements がありません"),
-        ("zones.encoding.x", "amount", "キー settings.zones.encoding.x の値の形が違います"),
-        ("zones.encoding.wrap", ..., "キー settings.zones.encoding.wrap がありません"),
-        ("zones.numeric", [["amount"]], "キー settings.zones.numeric[0] の値の形が違います"),
-        ("options.levelSizes", None, "キー settings.options.levelSizes の値の形が違います"),
-        ("options.levelShapes", {"column": "shop"}, "キー settings.options.levelShapes.shapes がありません"),
-        ("axes.logs", {"x": []}, "キー settings.axes.logs.y がありません"),
-        ("axes.dialog", [["amount", 1]], "キー settings.axes.dialog[0][1] の値の形が違います"),
-        ("filters.0.name", ..., "キー settings.filters[0].name がありません"),
-        ("filters.0.numeric", 0, "キー settings.filters[0].numeric の値の形が違います"),
-        ("options.smoothing", None, "キー settings.options.smoothing の値の形が違います"),
-        ("options.smoothing", {}, "キー settings.options.smoothing.method がありません"),
-        ("options.smoothing", {"method": "spline"}, "キー settings.options.smoothing.method の値の形が違います"),
-        ("options.colorBins", 5, "キー settings.options.colorBins の値の形が違います"),
-        ("options.shapeSize", "9", "キー settings.options.shapeSize の値の形が違います"),
-        ("options.lineAggregation", None, "キー settings.options.lineAggregation の値の形が違います"),
-        ("axes.dialog.0.1.lines", [{"type": "mean"}], "キー settings.axes.dialog[0][1].lines[0].type の値の形が違います"),
-        ("axes.dialog.0.1.format", ..., "キー settings.axes.dialog[0][1].format がありません"),
-        ("axes.angles", [["x:amount", "45"]], "キー settings.axes.angles[0][1] の値の形が違います"),
-        ("filters.0.mode", None, "キー settings.filters[0].mode の値の形が違います"),
+        ("elements", ..., "key settings.elements is missing"),
+        ("zones.encoding.x", "amount", "key settings.zones.encoding.x has a value of the wrong shape"),
+        ("zones.encoding.wrap", ..., "key settings.zones.encoding.wrap is missing"),
+        ("zones.numeric", [["amount"]], "key settings.zones.numeric[0] has a value of the wrong shape"),
+        ("options.levelSizes", None, "key settings.options.levelSizes has a value of the wrong shape"),
+        ("options.levelShapes", {"column": "shop"}, "key settings.options.levelShapes.shapes is missing"),
+        ("axes.logs", {"x": []}, "key settings.axes.logs.y is missing"),
+        ("axes.dialog", [["amount", 1]], "key settings.axes.dialog[0][1] has a value of the wrong shape"),
+        ("filters.0.name", ..., "key settings.filters[0].name is missing"),
+        ("filters.0.numeric", 0, "key settings.filters[0].numeric has a value of the wrong shape"),
+        ("options.smoothing", None, "key settings.options.smoothing has a value of the wrong shape"),
+        ("options.smoothing", {}, "key settings.options.smoothing.method is missing"),
+        ("options.smoothing", {"method": "spline"}, "key settings.options.smoothing.method has a value of the wrong shape"),
+        ("options.colorBins", 5, "key settings.options.colorBins has a value of the wrong shape"),
+        ("options.shapeSize", "9", "key settings.options.shapeSize has a value of the wrong shape"),
+        ("options.lineAggregation", None, "key settings.options.lineAggregation has a value of the wrong shape"),
+        ("axes.dialog.0.1.lines", [{"type": "mean"}], "key settings.axes.dialog[0][1].lines[0].type has a value of the wrong shape"),
+        ("axes.dialog.0.1.format", ..., "key settings.axes.dialog[0][1].format is missing"),
+        ("axes.angles", [["x:amount", "45"]], "key settings.axes.angles[0][1] has a value of the wrong shape"),
+        ("filters.0.mode", None, "key settings.filters[0].mode has a value of the wrong shape"),
     ],
     ids=[
         "elements", "x", "wrap", "numeric", "level-sizes", "level-shapes", "logs", "dialog", "card-name",
@@ -244,7 +244,7 @@ def test_parse_refuses_settings_the_page_cannot_apply(path: str, value: object, 
     """A key of the settings the page reads, missing or of the wrong form, is refused before the data opens (review of PR #336)."""
     with pytest.raises(ValueError) as caught:
         parse(_text(settings=_with(path, value)))
-    assert str(caught.value) == f"描画設定のファイルを読めませんでした：{reason}"
+    assert str(caught.value) == f"Could not read the drawing settings file: {reason}"
 
 
 def test_parse_takes_the_optional_and_any_values() -> None:
@@ -357,28 +357,28 @@ def test_parse_reads_a_join(join: dict | None) -> None:
 @pytest.mark.parametrize(
     ("join", "reason"),
     [
-        ("absent", "キー source.join がありません"),
-        (_joined(keys=...), "キー source.join の値の形が違います"),
-        (_joined(relative=...), "キー source.join の値の形が違います"),
-        (_joined(kind="outer"), "キー source.join の値の形が違います"),
-        (_joined(keys=[]), "キー source.join の値の形が違います"),
-        (_joined(kind="rows"), "キー source.join の値の形が違います"),
-        (_joined(relative=["a"]), "キー source.join の値の形が違います"),
-        (_joined(paths=[]), "キー source.join の値の形が違います"),
-        (_joined(recursive=None), "キー source.join の値の形が違います"),
-        (_joined(keys=[{"left": "lot"}]), "キー source.join の値の形が違います"),
-        ([], "キー source.join の値の形が違います"),
-        (_joined(columns=[]), "キー source.join の値の形が違います"),
-        (_joined(columns=["yield", 1]), "キー source.join の値の形が違います"),
-        (_joined(columns="yield"), "キー source.join の値の形が違います"),
-        (_joined(same_names="drop"), "キー source.join の値の形が違います"),
-        (_joined(same_names="rename"), "キー source.join の値の形が違います"),
-        (_joined(same_names=None), "キー source.join の値の形が違います"),
-        (_joined(columns=["yield"], same_names="skip_equal"), "キー source.join の値の形が違います"),
-        (_joined(columns=["yield"], same_names="skip"), "キー source.join の値の形が違います"),
-        (_joined(columns=["yield"], same_names="rename"), "キー source.join の値の形が違います"),
-        (_joined(columns=...), "キー source.join の値の形が違います"),
-        (_joined(same_names=...), "キー source.join の値の形が違います"),
+        ("absent", "key source.join is missing"),
+        (_joined(keys=...), "key source.join has a value of the wrong shape"),
+        (_joined(relative=...), "key source.join has a value of the wrong shape"),
+        (_joined(kind="outer"), "key source.join has a value of the wrong shape"),
+        (_joined(keys=[]), "key source.join has a value of the wrong shape"),
+        (_joined(kind="rows"), "key source.join has a value of the wrong shape"),
+        (_joined(relative=["a"]), "key source.join has a value of the wrong shape"),
+        (_joined(paths=[]), "key source.join has a value of the wrong shape"),
+        (_joined(recursive=None), "key source.join has a value of the wrong shape"),
+        (_joined(keys=[{"left": "lot"}]), "key source.join has a value of the wrong shape"),
+        ([], "key source.join has a value of the wrong shape"),
+        (_joined(columns=[]), "key source.join has a value of the wrong shape"),
+        (_joined(columns=["yield", 1]), "key source.join has a value of the wrong shape"),
+        (_joined(columns="yield"), "key source.join has a value of the wrong shape"),
+        (_joined(same_names="drop"), "key source.join has a value of the wrong shape"),
+        (_joined(same_names="rename"), "key source.join has a value of the wrong shape"),
+        (_joined(same_names=None), "key source.join has a value of the wrong shape"),
+        (_joined(columns=["yield"], same_names="skip_equal"), "key source.join has a value of the wrong shape"),
+        (_joined(columns=["yield"], same_names="skip"), "key source.join has a value of the wrong shape"),
+        (_joined(columns=["yield"], same_names="rename"), "key source.join has a value of the wrong shape"),
+        (_joined(columns=...), "key source.join has a value of the wrong shape"),
+        (_joined(same_names=...), "key source.join has a value of the wrong shape"),
     ],
     ids=[
         "absent", "keys-missing", "relative-missing", "kind", "key-without-keys", "rows-with-keys",
@@ -395,7 +395,7 @@ def test_parse_refuses_a_join_of_the_wrong_form(join: object, reason: str) -> No
         del source["join"]
     with pytest.raises(ValueError) as caught:
         parse(_text(source=source))
-    assert str(caught.value) == f"描画設定のファイルを読めませんでした：{reason}"
+    assert str(caught.value) == f"Could not read the drawing settings file: {reason}"
 
 
 def test_draw_file_io_finds_the_join_and_writes_its_paths_from_the_file(tmp_path: Path) -> None:

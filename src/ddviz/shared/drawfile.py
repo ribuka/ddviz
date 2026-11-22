@@ -216,7 +216,7 @@ def build(
 
 
 def _unreadable(reason: str) -> ValueError:
-    return ValueError(f"描画設定のファイルを読めませんでした：{reason}")
+    return ValueError(f"Could not read the drawing settings file: {reason}")
 
 
 @dataclass(frozen=True)
@@ -338,7 +338,7 @@ def _check(value: object, shape: object, path: str) -> None:  # noqa: C901, PLR0
         return
     if isinstance(shape, _OneOf):
         if not any(value == v and type(value) is type(v) for v in shape.values):
-            raise _unreadable(f"キー {path} の値の形が違います")
+            raise _unreadable(f"key {path} has a value of the wrong shape")
         return
     if isinstance(shape, _Optional):
         if value is not None:
@@ -346,28 +346,28 @@ def _check(value: object, shape: object, path: str) -> None:  # noqa: C901, PLR0
         return
     if isinstance(shape, dict):
         if not isinstance(value, dict):
-            raise _unreadable(f"キー {path} の値の形が違います")
+            raise _unreadable(f"key {path} has a value of the wrong shape")
         for key, inner in shape.items():
             if key not in value:
-                raise _unreadable(f"キー {path}.{key} がありません")
+                raise _unreadable(f"key {path}.{key} is missing")
             _check(value[key], inner, f"{path}.{key}")
         return
     if isinstance(shape, _List):
         if not isinstance(value, list):
-            raise _unreadable(f"キー {path} の値の形が違います")
+            raise _unreadable(f"key {path} has a value of the wrong shape")
         for index, item in enumerate(value):
             _check(item, shape.item, f"{path}[{index}]")
         return
     if isinstance(shape, _Pair):
         if not isinstance(value, list) or len(value) != 2:
-            raise _unreadable(f"キー {path} の値の形が違います")
+            raise _unreadable(f"key {path} has a value of the wrong shape")
         _check(value[0], shape.first, f"{path}[0]")
         _check(value[1], shape.second, f"{path}[1]")
         return
     types = shape if isinstance(shape, tuple) else (shape,)
     # JSON's true and false are not the numbers a shape of int means.
     if not isinstance(value, types) or (isinstance(value, bool) and bool not in types):
-        raise _unreadable(f"キー {path} の値の形が違います")
+        raise _unreadable(f"key {path} has a value of the wrong shape")
 
 
 def _strings(value: object) -> bool:
@@ -433,45 +433,45 @@ def parse(text: str) -> DrawFile:  # noqa: C901, PLR0912
     Raises
     ------
     ValueError
-        With the message the chooser shows: ``描画設定のファイルを読めませんでした：<理由>``
+        With the message the chooser shows: ``Could not read the drawing settings file: <reason>``
         for text that is not JSON, another ``format`` or a key missing or of
-        the wrong type, and ``この描画設定は読めません（版 <N>。この ddviz は版 5 を読みます）``
+        the wrong type, and ``These drawing settings cannot be read (version <N>; this ddviz reads version 5).``
         for another ``version``.
     """
     try:
         content = json.loads(text)
     except json.JSONDecodeError as error:
-        raise _unreadable(f"JSON ではありません（{error}）") from error
+        raise _unreadable(f"not JSON ({error})") from error
     if not isinstance(content, dict):
-        raise _unreadable("JSON のオブジェクトではありません")
+        raise _unreadable("not a JSON object")
     if content.get("format") != FORMAT:
-        raise _unreadable(f"format が {FORMAT} ではありません")
+        raise _unreadable(f"format is not {FORMAT}")
     if "version" not in content:
-        raise _unreadable("キー version がありません")
+        raise _unreadable("key version is missing")
     version = content["version"]
     if version != VERSION or isinstance(version, bool):
-        raise ValueError(f"この描画設定は読めません（版 {version}。この ddviz は版 {VERSION} を読みます）")
+        raise ValueError(f"These drawing settings cannot be read (version {version}; this ddviz reads version {VERSION}).")
     for key, kind in (("source", dict), ("columns", dict), ("settings", dict)):
         if key not in content:
-            raise _unreadable(f"キー {key} がありません")
+            raise _unreadable(f"key {key} is missing")
         if not isinstance(content[key], kind):
-            raise _unreadable(f"キー {key} の値の形が違います")
+            raise _unreadable(f"key {key} has a value of the wrong shape")
     source = content["source"]
     for key in ("paths", "relative", "recursive", "join"):
         if key not in source:
-            raise _unreadable(f"キー source.{key} がありません")
+            raise _unreadable(f"key source.{key} is missing")
     paths, relative, recursive = source["paths"], source["relative"], source["recursive"]
     if not _strings(paths) or not paths:
-        raise _unreadable("キー source.paths の値の形が違います")
+        raise _unreadable("key source.paths has a value of the wrong shape")
     if relative is not None and (not _strings(relative) or len(relative) != len(paths)):
-        raise _unreadable("キー source.relative の値の形が違います")
+        raise _unreadable("key source.relative has a value of the wrong shape")
     if not isinstance(recursive, bool):
-        raise _unreadable("キー source.recursive の値の形が違います")
+        raise _unreadable("key source.recursive has a value of the wrong shape")
     join = source["join"]
     if join is not None and not _join_shaped(join):
-        raise _unreadable("キー source.join の値の形が違います")
+        raise _unreadable("key source.join has a value of the wrong shape")
     if not all(isinstance(v, str) for v in content["columns"].values()):
-        raise _unreadable("キー columns の値の形が違います")
+        raise _unreadable("key columns has a value of the wrong shape")
     _check(content["settings"], SETTINGS_SHAPE, "settings")
     return DrawFile(paths=paths, relative=relative, recursive=recursive, content=content, join=join)
 

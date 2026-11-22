@@ -11,11 +11,11 @@
 //
 // `<html data-screen>` says which screen this is: `New` is enabled on
 // "graph" only, `Preferences…` on "chooser" and "graph" (not while starting
-// or closing the data, "loading"). `描画設定を保存…` is enabled on "graph"
+// or closing the data, "loading"). `Save drawing settings…` is enabled on "graph"
 // while the page can save its drawing settings (`window.ddvizCanSaveDrawFile`
 // of app.js: a figure drawn, no plot in flight), whose file the page gives
 // (`window.ddvizDrawFile`) and the window saves where the user picks.
-// `Data → 結合…` (Ctrl+J, which the page takes) is enabled on "graph" while
+// `Data → Join…` (Ctrl+J, which the page takes) is enabled on "graph" while
 // the page can open its join dialog (`window.ddvizCanJoin` of app.js), which
 // it opens (`window.ddvizOpenJoin`); the dialog's OS dialogs come through
 // `window.ddvizChooseJoin`. The commands go to the window through
@@ -48,12 +48,12 @@
       label: "File",
       items: [
         { command: "new", label: "New" },
-        { command: "save-draw-file", label: "描画設定を保存…" },
+        { command: "save-draw-file", label: "Save drawing settings…" },
         { command: "quit", label: "Quit" },
       ],
     },
     { label: "Edit", items: [{ command: "preferences", label: "Preferences…" }] },
-    { label: "Data", items: [{ command: "join", label: "結合…", shortcut: "Ctrl+J" }] },
+    { label: "Data", items: [{ command: "join", label: "Join…", shortcut: "Ctrl+J" }] },
     { label: "Help", items: [{ command: "version", label: "Version" }] },
   ];
   const NEW_CONFIRM =
@@ -94,8 +94,8 @@
   button.type = "button";
   button.className = "titlebar-menu";
   button.textContent = "…";
-  button.title = "メニュー";
-  button.setAttribute("aria-label", "メニュー");
+  button.title = "Menu";
+  button.setAttribute("aria-label", "Menu");
   button.setAttribute("aria-haspopup", "menu");
   button.setAttribute("aria-expanded", "false");
   const title = document.createElement("span");

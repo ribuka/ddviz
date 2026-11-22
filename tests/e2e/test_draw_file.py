@@ -35,7 +35,10 @@ from tests.e2e.test_undo import REDO, UNDO, chip_names, press, x_and_y
 
 pytestmark = pytest.mark.e2e
 
+# The star menu's item, on the page in a browser.
 SAVE_FILE = "描画設定を保存…"
+# The title bar's `File` item, in the window.
+SAVE_MENU_ITEM = "Save drawing settings…"
 # Stands in for the window's `save_draw_file`: records the file's content.
 FAKE_SAVE = """
 window.savedDrawFiles = [];
@@ -473,7 +476,7 @@ def test_a_join_that_fails_opens_the_file_without_it(
 
 @pytest.mark.parametrize("desktop", [True])
 def test_the_window_saves_the_file_from_its_menu(page: Page, app_page: Page) -> None:
-    """`File` has 描画設定を保存… below `New`, disabled on the empty graph; once drawn it hands the file to the window."""
+    """`File` has `Save drawing settings…` below `New`, disabled on the empty graph; once drawn it hands the file to the window."""
     page.add_init_script(GEOMETRY)
     page.add_init_script(FAKE_API)
     page.add_init_script(FAKE_SAVE)
@@ -483,13 +486,13 @@ def test_the_window_saves_the_file_from_its_menu(page: Page, app_page: Page) -> 
     expect(open_menu(page).get_by_role("menuitem", name=SAVE_FILE)).to_have_count(0)
     page.keyboard.press("Escape")
     open_item(page, "File")
-    assert popups(page) == [["File", "Edit", "Data", "Help"], ["New", SAVE_FILE, "Quit"]]
-    expect(page.locator(".titlebar-popup .titlebar-item").filter(has_text=SAVE_FILE)).to_be_disabled()
+    assert popups(page) == [["File", "Edit", "Data", "Help"], ["New", SAVE_MENU_ITEM, "Quit"]]
+    expect(page.locator(".titlebar-popup .titlebar-item").filter(has_text=SAVE_MENU_ITEM)).to_be_disabled()
     page.keyboard.press("Escape")
     page.keyboard.press("Escape")
 
     x_and_y(page)
-    open_item(page, "File", SAVE_FILE)
+    open_item(page, "File", SAVE_MENU_ITEM)
     page.wait_for_function("window.savedDrawFiles.length === 1")
     content = json.loads(page.evaluate("window.savedDrawFiles[0]"))
     assert content["settings"]["zones"]["encoding"]["x"] == ["x"]
