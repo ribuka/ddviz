@@ -1,7 +1,10 @@
 """Keeps the window's WebView2 from reaching outside ddviz (Issue #377).
 
-ddviz runs offline, and nothing it shows needs another host. Once WebView2
-is ready, `OfflineGuard`:
+ddviz runs offline, and nothing it shows needs another host. Before the
+window starts, `OfflineGuard` gives WebView2's browser process `ARGUMENTS`
+(``WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS``, which WebView2 adds to pywebview's
+own): no component updates (``edge.microsoft.com/componentupdater``) and no
+proxy, so no lookup of WPAD. Once WebView2 is ready, it:
 
 - cancels a top-level navigation (``NavigationStarting``) to anything but
   the UI server of the open input (``http://127.0.0.1:<port>``, which changes
@@ -18,8 +21,9 @@ is ready, `OfflineGuard`:
 from __future__ import annotations
 
 import logging
+import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, MutableMapping
 from urllib.parse import urlsplit
 
 from ddviz.desktop.webview2 import on_ui, when_ready
@@ -33,6 +37,25 @@ _log = logging.getLogger(__name__)
 OWN_PAGES = "data:text/html;charset=utf-8;base64,"
 #: How much of a refused URI is logged; a data URI holds a whole page.
 LOGGED_LENGTH = 200
+#: The environment variable of WebView2's additional browser arguments.
+ARGUMENTS_VARIABLE = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+#: What ddviz adds to them: the window's only server is on 127.0.0.1, which
+#: needs no proxy, and the window needs none of the runtime's components.
+ARGUMENTS = ("--disable-component-update", "--no-proxy-server")
+
+
+def add_arguments(environ: MutableMapping[str, str]) -> None:
+    """Add `ARGUMENTS` to WebView2's additional browser arguments in `environ`, after those already set.
+
+    Parameters
+    ----------
+    environ : MutableMapping
+        The environment the window's process creates WebView2 in
+        (``os.environ``); one set by the user (for example a debugging port)
+        keeps its arguments.
+    """
+    present = environ.get(ARGUMENTS_VARIABLE, "").split()
+    environ[ARGUMENTS_VARIABLE] = " ".join([*present, *(a for a in ARGUMENTS if a not in present)])
 
 
 def allowed(uri: str, port: int | None) -> bool:
@@ -81,7 +104,7 @@ class OfflineGuard:
         self._window = None
 
     def attach(self, window: object) -> None:
-        """Guard the window once WebView2 is ready; off Windows, nothing.
+        """Add `ARGUMENTS` for the WebView2 to come and guard the window once WebView2 is ready; off Windows, nothing.
 
         Parameters
         ----------
@@ -90,6 +113,7 @@ class OfflineGuard:
         """
         if sys.platform != "win32":
             return
+        add_arguments(os.environ)
         self._window = window
         window.events.before_show += self._before_show
 

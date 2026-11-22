@@ -9,7 +9,12 @@ from typing import Self
 
 import pytest
 
-from ddviz.desktop.offline import OfflineGuard, allowed
+from ddviz.desktop.offline import (
+    ARGUMENTS_VARIABLE,
+    OfflineGuard,
+    add_arguments,
+    allowed,
+)
 
 PORT = 50123
 #: How pywebview's ``NavigateToString`` page starts (``html=``, ``load_html``).
@@ -168,3 +173,19 @@ def test_a_runtime_without_the_setting_still_guards_the_navigation(
     assert "cannot turn off SmartScreen" in caplog.text
     assert core.NavigationStarting.handlers == [guard.starting]
     assert core.NewWindowRequested.handlers == [guard.new_window]
+
+
+def test_the_arguments_turn_off_component_updates_and_the_proxy() -> None:
+    """Without arguments set, WebView2 gets ddviz's alone."""
+    environ: dict[str, str] = {}
+    add_arguments(environ)
+    assert environ[ARGUMENTS_VARIABLE] == "--disable-component-update --no-proxy-server"
+
+
+def test_the_arguments_of_the_user_stay_before_ddviz_s_once() -> None:
+    """A debugging port set by the user stays; an argument already there is not repeated."""
+    environ = {ARGUMENTS_VARIABLE: "--remote-debugging-port=9222 --no-proxy-server"}
+    add_arguments(environ)
+    assert environ[ARGUMENTS_VARIABLE] == (
+        "--remote-debugging-port=9222 --no-proxy-server --disable-component-update"
+    )
