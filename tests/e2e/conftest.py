@@ -17,7 +17,7 @@ import polars as pl
 import pytest
 import uvicorn
 from fastapi import FastAPI
-from playwright.sync_api import BrowserContext, Page, Route
+from playwright.sync_api import APIResponse, BrowserContext, Page, Route
 
 from ddviz.server.app import create_app
 from ddviz.server.settings import Settings
@@ -80,21 +80,45 @@ def external_requests() -> list[str]:
 
 
 @pytest.fixture
-def context(context: BrowserContext, external_requests: list[str]) -> Iterator[BrowserContext]:
+def context(
+    context: BrowserContext, external_requests: list[str], monkeypatch: pytest.MonkeyPatch
+) -> Iterator[BrowserContext]:
     """Return pytest-playwright's context, whose requests outside the UI server are aborted and recorded.
 
     Every page of the test is in it (`page`, `app_page`); a recorded URL fails
-    the test at its end.
+    the test at its end. What a test's own ``page.route`` fulfills or aborts
+    is sent nowhere and is not recorded. Its routes run before the context's,
+    and its ``route.continue_()`` or ``route.fetch()`` would send the request
+    without them: those stop an external request too.
     """
 
-    def guard(route: Route) -> None:
-        url = route.request.url
-        if is_local(url):
-            route.fallback()
-            return
-        external_requests.append(url)
+    def stop(route: Route) -> None:
+        external_requests.append(route.request.url)
         route.abort()
 
+    def guard(route: Route) -> None:
+        if is_local(route.request.url):
+            route.fallback()
+        else:
+            stop(route)
+
+    send, fetch = Route.continue_, Route.fetch
+
+    def continue_(route: Route, **overrides: object) -> None:
+        if is_local(overrides.get("url") or route.request.url):
+            send(route, **overrides)
+        else:
+            stop(route)
+
+    def fetch_(route: Route, **overrides: object) -> APIResponse:
+        url = overrides.get("url") or route.request.url
+        if not is_local(url):
+            stop(route)
+            pytest.fail(f"route.fetch() outside the UI server: {url}", pytrace=False)
+        return fetch(route, **overrides)
+
+    monkeypatch.setattr(Route, "continue_", continue_)
+    monkeypatch.setattr(Route, "fetch", fetch_)
     context.route("**/*", guard)
     yield context
     fail_on_external(external_requests)
