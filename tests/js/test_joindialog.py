@@ -115,7 +115,7 @@ def test_the_texts_and_when_it_may_join(js_page: Page) -> None:
             equalByKey: m.joinedText({ added: ["a", "b"], rows: 4, matched: 2, skipped: ["d"] }, "key", "skip_equal"),
             equalByRows: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: Array(1200).fill("d") }, "rows", "skip_equal"),
             noneEqual: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: [] }, "rows", "skip_equal"),
-            renamed: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: [] }, "rows", "rename"),
+            columnsPicked: m.joinedText({ added: ["a"], rows: 10, matched: 10, skipped: [] }, "rows", null),
             comparing: [
               m.comparingText({ type: "progress", stage: "compare", done: 0, total: 10, column: "temp" }),
               m.comparingText({ type: "progress", stage: "compare", done: 1199, total: 1200, column: "lot id" }),
@@ -145,13 +145,13 @@ def test_the_texts_and_when_it_may_join(js_page: Page) -> None:
         "byKey": "3 列を結合しました。元の表の 74.9% の行が結合できました。",
         "none": "1 列を結合しました。元の表の 0.0% の行が結合できました。",
         "byRows": "2 列を結合しました。",
-        "skippedByKey": "3 列を結合しました。元の表の 74.9% の行が結合できました。元の表と同じ名前の 2 列は足しませんでした。",
-        "skippedByRows": "1 列を結合しました。元の表と同じ名前の 1,200 列は足しませんでした。",
+        "skippedByKey": "3 列を結合しました。元の表の 74.9% の行が結合できました。元の表と同じ名前の 2 列は保持しませんでした。",
+        "skippedByRows": "1 列を結合しました。元の表と同じ名前の 1,200 列は保持しませんでした。",
         "noneSkipped": "1 列を結合しました。",
-        "equalByKey": "2 列を結合しました。元の表の 50.0% の行が結合できました。元の表と名前も中身も同じ 1 列は足しませんでした。",
-        "equalByRows": "1 列を結合しました。元の表と名前も中身も同じ 1,200 列は足しませんでした。",
+        "equalByKey": "2 列を結合しました。元の表の 50.0% の行が結合できました。元の表と名前も中身も同じ 1 列は保持しませんでした。",
+        "equalByRows": "1 列を結合しました。元の表と名前も中身も同じ 1,200 列は保持しませんでした。",
         "noneEqual": "1 列を結合しました。",
-        "renamed": "1 列を結合しました。",
+        "columnsPicked": "1 列を結合しました。",
         "comparing": [
             "同じ名前の列を比べています（1 / 10）：temp",
             "同じ名前の列を比べています（1200 / 1200）：lot id",
@@ -246,13 +246,13 @@ def test_a_refused_join_tells_why_and_a_new_key_joins(dialog: Page) -> None:
     page.wait_for_function("window.joinDone !== null")
     assert page.evaluate("document.getElementById('join-under-test').open") is False
     assert page.evaluate("window.joinBodies") == [
-        {"kind": "key", "keys": [{"left": "color", "right": "color"}], "columns": None, "same_names": "rename"},
-        {"kind": "key", "keys": [{"left": "label", "right": "label"}], "columns": None, "same_names": "rename"},
+        {"kind": "key", "keys": [{"left": "color", "right": "color"}], "columns": None, "same_names": "skip_equal"},
+        {"kind": "key", "keys": [{"left": "label", "right": "label"}], "columns": None, "same_names": "skip_equal"},
     ]
     assert page.evaluate("window.joinDone") == [
         {"added": ["_joined", "score"], "rows": 2000, "matched": 1500},
         "key",
-        "rename",
+        "skip_equal",
     ]
 
 
@@ -343,7 +343,7 @@ def test_a_read_answered_after_an_edit_is_dropped(dialog: Page) -> None:
 
 
 def _added(page: Page) -> dict:
-    """Return the section `足す列`: the radios of the mode and of the same names (checked, disabled, the label and the texts of the latter), what is hidden, and the lines of the columns."""
+    """Return the section `保持する列`: its heading, the radios of the mode and of the same names (checked, disabled, the label and the texts of the latter), what is hidden, and the lines of the columns."""
     return page.evaluate(
         """() => {
           const section = document.querySelector("#join-under-test .join-added");
@@ -352,6 +352,7 @@ def _added(page: Page) -> dict:
           const sames = [...same.querySelectorAll("input[type=radio]")];
           const add = section.querySelector(".join-add-column");
           return {
+            heading: section.querySelector("h3").textContent,
             hidden: section.hidden,
             mode: radios.filter((e) => e.checked).map((e) => e.value),
             radiosOff: radios.map((e) => e.disabled),
@@ -380,7 +381,7 @@ def _pick_added(page: Page, row: int, typed: str, name: str) -> None:
 
 
 def _choose_added(page: Page) -> None:
-    """Choose `足さない` for the same names, then pick `score` and add an empty line under `選んだ列だけ`."""
+    """Choose `保持しない` for the same names, then pick `score` and add an empty line under `選んだ列だけ`."""
     page.locator("#join-under-test .join-same-names input[value=skip]").check()
     page.locator("#join-under-test .join-added input[value=picked]").check()
     _pick_added(page, 0, "sco", "score")
@@ -388,13 +389,14 @@ def _choose_added(page: Page) -> None:
 
 
 # The radios of the same names, in order, with their texts.
-SAME_TEXTS = [["rename", "名前を変えて足す"], ["skip_equal", "中身も同じなら足さない"], ["skip", "足さない"]]
+SAME_TEXTS = [["skip_equal", "中身が違えば保持"], ["skip", "保持しない"]]
 # The section as each open and read starts it, once the table is read.
 DEFAULT_ADDED = {
+    "heading": "保持する列",
     "hidden": False,
     "mode": ["all"],
     "radiosOff": [False, False],
-    "same": {"label": "元の表と同じ名前の列：", "texts": SAME_TEXTS, "checked": ["rename"], "off": [False] * 3, "hidden": False},
+    "same": {"label": "元の表と同じ名前の列：", "texts": SAME_TEXTS, "checked": ["skip_equal"], "off": [False] * 2, "hidden": False},
     "listHidden": True,
     "fields": [["", False, "結合する表の列"]],
     "remove": [True],
@@ -404,14 +406,14 @@ DEFAULT_ADDED = {
 UNREAD_ADDED = {
     **DEFAULT_ADDED,
     "radiosOff": [True, True],
-    "same": {**DEFAULT_ADDED["same"], "off": [True] * 3},
+    "same": {**DEFAULT_ADDED["same"], "off": [True] * 2},
     "fields": [["", True, "結合する表の列"]],
     "add": [True, True],
 }
 
 
 def test_the_columns_to_add_wait_for_the_read_and_switch_by_the_radio(dialog: Page) -> None:
-    """`足す列` is disabled before `読む`, shown for both kinds; `選んだ列だけ` hides the radios of the same names and lists the lines, added and removed, never the last."""
+    """`保持する列` is disabled before `読む`, shown for both kinds; `選んだ列だけ` hides the radios of the same names and lists the lines, added and removed, never the last."""
     page = dialog
     assert _added(page) == UNREAD_ADDED
     _read(page)
@@ -440,7 +442,7 @@ def test_the_columns_to_add_wait_for_the_read_and_switch_by_the_radio(dialog: Pa
 
 
 def test_the_join_sends_the_columns_to_add(dialog: Page) -> None:
-    """`すべての列` sends null with the radio of the same names as `same_names`; `選んだ列だけ` sends the lines in their order with `"rename"`; each open starts again."""
+    """`すべての列` sends null with the radio of the same names as `same_names`; `選んだ列だけ` sends the lines in their order with null; each open starts again."""
     page = dialog
 
     def join() -> dict:
@@ -451,7 +453,7 @@ def test_the_join_sends_the_columns_to_add(dialog: Page) -> None:
 
     page.locator("#join-under-test input[value=rows]").check()
     _read(page)
-    assert join() == {"kind": "rows", "keys": [], "columns": None, "same_names": "rename"}
+    assert join() == {"kind": "rows", "keys": [], "columns": None, "same_names": "skip_equal"}
 
     page.evaluate("window.joinDialog.open()")
     assert _added(page) == UNREAD_ADDED
@@ -464,6 +466,7 @@ def test_the_join_sends_the_columns_to_add(dialog: Page) -> None:
     assert _added(page) == UNREAD_ADDED
     page.locator("#join-under-test input[value=rows]").check()
     _read(page)
+    page.locator("#join-under-test .join-same-names input[value=skip]").check()
     page.locator("#join-under-test .join-same-names input[value=skip_equal]").check()
     assert _added(page)["same"]["checked"] == ["skip_equal"]
     assert join() == {"kind": "rows", "keys": [], "columns": None, "same_names": "skip_equal"}
@@ -475,11 +478,11 @@ def test_the_join_sends_the_columns_to_add(dialog: Page) -> None:
     _read(page)
     _choose_added(page)
     _pick_added(page, 1, "label_1", "label_1")
-    assert join() == {"kind": "rows", "keys": [], "columns": ["score", "label_1"], "same_names": "rename"}
+    assert join() == {"kind": "rows", "keys": [], "columns": ["score", "label_1"], "same_names": None}
 
 
 def test_reading_again_or_editing_the_paths_resets_the_columns_to_add(dialog: Page) -> None:
-    """`読む` again, and paths changed after the read, bring `足す列` back to its default."""
+    """`読む` again, and paths changed after the read, bring `保持する列` back to its default."""
     page = dialog
     _read(page)
     _choose_added(page)

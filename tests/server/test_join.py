@@ -206,7 +206,7 @@ def test_a_join_by_keys_adds_the_matching_rows(
             "kind": "key",
             "keys": keys,
             "columns": None,
-            "same_names": "rename",
+            "same_names": "skip_equal",
             "rows": 12,
             "matched": matched,
             "added": added,
@@ -365,8 +365,8 @@ def test_a_join_by_rows_puts_rows_side_by_side(
 ) -> None:
     """The i-th rows go together across files split differently, without ``_joined``; other rows are refused."""
     root = tmp_path / "rows"
-    write_parquet_file(root / "p1.parquet", pl.DataFrame({"w": [float(i) for i in range(5)], "x": list(range(5))}))
-    write_parquet_file(root / "p2.parquet", pl.DataFrame({"w": [float(i) for i in range(5, 12)], "x": list(range(5, 12))}))
+    write_parquet_file(root / "p1.parquet", pl.DataFrame({"w": [float(i) for i in range(5)], "x": list(range(50, 55))}))
+    write_parquet_file(root / "p2.parquet", pl.DataFrame({"w": [float(i) for i in range(5, 12)], "x": list(range(55, 62))}))
     short = tmp_path / "short"
     write_parquet_file(short / "s.parquet", pl.DataFrame({"w": [0.0] * 11}))
     with serve([left]) as client:
@@ -380,7 +380,7 @@ def test_a_join_by_rows_puts_rows_side_by_side(
         task = plot_body(client, XY)["meta"]["task"]
         values = table_values(first_table_page(client, task))
         assert values["w"] == [float(i) for i in range(12)]
-        assert values["x_joined"] == list(range(12))
+        assert values["x_joined"] == list(range(50, 62))
         assert values["filename_joined"] == ["p1"] * 5 + ["p2"] * 7
         unconverted = _save(client, task, "parquet")
         assert client.get("/api/summary", params={"column": "w"}).status_code == 200
@@ -553,10 +553,10 @@ def _joining_source(tmp_path: Path, fails: str | None = None) -> tuple[Source, _
 
 
 def test_converting_is_on_while_the_join_task_runs(tmp_path: Path) -> None:
-    """The join task runs with plots refused, and lets them again once done."""
+    """The join task and, by default, the comparison of ``v`` run with plots refused, and let them again once done."""
     source, broker = _joining_source(tmp_path)
     asyncio.run(source.join("key", [{"left": "k", "right": "k"}]))
-    assert broker.seen == [("join", True)]
+    assert broker.seen == [("join", True), ("join_equal", True)]
     assert source.converting is False
 
 
@@ -733,6 +733,10 @@ def test_a_later_read_of_the_table_to_join_wins(tmp_path: Path, monkeypatch: pyt
 
 # ---- the columns to add (Issue #358) ----
 
+# Start of the message of the columns to keep given wrong, and the reason for a same_names with columns chosen.
+WRONG = "保持する列の指定が正しくありません："
+CHOSEN = "列を選んだときは同じ名前の扱いを指定しません"
+
 
 def _joined_values(
     serve: Callable[..., AbstractContextManager[TestClient]], left: Path, right: Path, body: dict
@@ -751,10 +755,10 @@ def _joined_values(
 
 @pytest.fixture
 def rows_right(tmp_path: Path) -> Path:
-    """Return a folder of 2 files of 12 rows to join by rows to `left`: ``w`` and ``x``."""
+    """Return a folder of 2 files of 12 rows to join by rows to `left`: ``w``, and ``x`` of values other than the input's."""
     root = tmp_path / "rows"
-    write_parquet_file(root / "p1.parquet", pl.DataFrame({"w": [float(i) for i in range(5)], "x": list(range(5))}))
-    write_parquet_file(root / "p2.parquet", pl.DataFrame({"w": [float(i) for i in range(5, 12)], "x": list(range(5, 12))}))
+    write_parquet_file(root / "p1.parquet", pl.DataFrame({"w": [float(i) for i in range(5)], "x": list(range(50, 55))}))
+    write_parquet_file(root / "p2.parquet", pl.DataFrame({"w": [float(i) for i in range(5, 12)], "x": list(range(55, 62))}))
     return root
 
 
@@ -811,7 +815,7 @@ def same_named(tmp_path: Path) -> tuple[Path, Path, Path]:
 def test_columns_named_like_the_input_s_are_left_out_on_skip(
     serve: Callable[..., AbstractContextManager[TestClient]], same_named: tuple[Path, Path, Path]
 ) -> None:
-    """``"skip"`` leaves out ``label``, names the others as if it were not there and keeps ``source`` and ``filename``; ``"rename"`` adds all."""
+    """``"skip"`` leaves out ``label``, names the others as if it were not there and keeps ``source`` and ``filename``; by default, ``label`` of other values is kept renamed."""
     left, right, alone = same_named
     keys = [{"left": "id", "right": "id"}]
     answer, listed, values = _joined_values(serve, left, right, {"kind": "key", "keys": keys, "same_names": "skip"})
@@ -820,7 +824,7 @@ def test_columns_named_like_the_input_s_are_left_out_on_skip(
     assert values["label_joined"] == ["J1", "J2", "J3"]
     assert values["label"] == ["a", "b", "c"]
 
-    answer, listed, values = _joined_values(serve, left, right, {"kind": "key", "keys": keys, "same_names": "rename"})
+    answer, listed, values = _joined_values(serve, left, right, {"kind": "key", "keys": keys})
     added = ["_joined", "label_joined", "label_joined_joined", "score", "source_joined", "filename_joined"]
     assert (answer["added"], answer["skipped"], listed) == (added, [], added)
     assert (values["label_joined"], values["label_joined_joined"]) == (["L1", "L2", "L3"], ["J1", "J2", "J3"])
@@ -834,7 +838,7 @@ def test_columns_named_like_the_input_s_are_left_out_on_skip(
         client.post("/api/join/source", json={"paths": [str(alone)]})
         refused = client.post("/api/join", json={"kind": "rows", "same_names": "skip"})
         assert refused.status_code == 400
-        assert refused.json()["detail"] == "足す列がありません：結合する表の列はすべて元の表と同じ名前です"
+        assert refused.json()["detail"] == "保持する列がありません：結合する表の列はすべて元の表と同じ名前です"
         assert client.get("/api/schema").json() == schema
         again = client.post("/api/join", json={"kind": "rows"})
         assert again.status_code == 200, again.text
@@ -844,15 +848,29 @@ def test_columns_named_like_the_input_s_are_left_out_on_skip(
 @pytest.mark.parametrize(
     ("given", "detail"),
     [
-        ({"same_names": "drop"}, "足す列の指定が正しくありません：知らない扱いです：drop"),
-        ({"columns": ["score"], "same_names": "skip"}, "足す列の指定が正しくありません：列を選んだときは同じ名前の扱いを指定しません"),
-        ({"columns": []}, "足す列の指定が正しくありません：列を 1 つ以上選んでください"),
-        ({"columns": ["score", "vendor", "score"]}, "足す列の指定が正しくありません：列が 2 回あります：score"),
+        ({"same_names": "drop"}, f"{WRONG}知らない扱いです：drop"),
+        ({"columns": None, "same_names": "rename"}, f"{WRONG}知らない扱いです：rename"),
+        ({"columns": ["score"], "same_names": "skip_equal"}, f"{WRONG}{CHOSEN}"),
+        ({"columns": ["score"], "same_names": "skip"}, f"{WRONG}{CHOSEN}"),
+        ({"columns": ["score"], "same_names": "rename"}, f"{WRONG}{CHOSEN}"),
+        ({"columns": []}, f"{WRONG}列を 1 つ以上選んでください"),
+        ({"columns": ["score", "vendor", "score"]}, f"{WRONG}列が 2 回あります：score"),
         ({"columns": ["score", "nope"]}, "列がありません：nope"),
-        ({"columns": ["lot", "score"]}, "足す列の指定が正しくありません：キーの列は足せません：lot"),
+        ({"columns": ["lot", "score"]}, f"{WRONG}キーの列は足せません：lot"),
         ({"columns": ["lot", "nope"]}, "列がありません：nope"),
     ],
-    ids=["same-names", "columns-with-skip", "empty", "twice", "missing", "key", "missing-before-key"],
+    ids=[
+        "same-names",
+        "rename",
+        "columns-with-skip-equal",
+        "columns-with-skip",
+        "columns-with-rename",
+        "empty",
+        "twice",
+        "missing",
+        "key",
+        "missing-before-key",
+    ],
 )
 def test_columns_to_add_given_wrong_are_refused(
     serve: Callable[..., AbstractContextManager[TestClient]],
@@ -861,7 +879,11 @@ def test_columns_to_add_given_wrong_are_refused(
     given: dict,
     detail: str,
 ) -> None:
-    """Columns to add given wrong are refused with the reason, adding nothing; the join given right then works."""
+    """Columns to add given wrong are refused with the reason, adding nothing; the join given right then works.
+
+    The join given right picks ``temp``, named like a column of the input,
+    without ``same_names``: it is kept renamed, and ``same_names`` stays null.
+    """
     with serve([left]) as client:
         schema = client.get("/api/schema").json()
         client.post("/api/join/source", json={"paths": [str(right)]})
@@ -870,9 +892,10 @@ def test_columns_to_add_given_wrong_are_refused(
         assert refused.json()["detail"] == detail
         assert client.get("/api/schema").json() == schema
         assert client.get("/api/source").json()["join"] is None
-        again = client.post("/api/join", json={"kind": "key", "keys": KEYS_ONE, "columns": ["score"]})
+        again = client.post("/api/join", json={"kind": "key", "keys": KEYS_ONE, "columns": ["temp", "score"]})
         assert again.status_code == 200, again.text
-        assert again.json()["added"] == ["_joined", "score"]
+        assert again.json()["added"] == ["_joined", "temp_joined", "score"]
+        assert client.get("/api/source").json()["join"]["same_names"] is None
 
 
 # ---- the columns of the same values (Issue #359) ----
@@ -945,6 +968,33 @@ def test_columns_of_the_same_values_in_the_rows_joined_are_left_out_on_skip_equa
     assert values["differ_joined"] == [1.0, 2.0, None, 4.0, 5.0, 6.0, 70.0, None]
 
 
+@pytest.mark.parametrize("kind", ["key", "rows"])
+def test_columns_of_the_same_values_are_left_out_by_default(
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], equal_left: Path, kind: str
+) -> None:
+    """Without ``same_names``, a column named like the input's of the same values in the rows joined is left out, one of other values kept renamed (Issue #378)."""
+    root = tmp_path / "eq_default"
+    if kind == "key":
+        ids = [1, 2, 4]
+        xs = [float(i) for i in ids]
+        frame = pl.DataFrame({"id": ids, "same": xs, "differ": [*xs[:-1], 40.0]})
+        keys = [{"left": "id", "right": "id"}]
+        added = ["_joined", "differ_joined"]
+    else:
+        xs = [float(i) for i in range(1, 9)]
+        frame = pl.DataFrame({"same": xs, "differ": [*xs[:-1], 80.5]})
+        keys = []
+        added = ["differ_joined"]
+    write_parquet_file(root / "r.parquet", frame)
+    with serve([equal_left]) as client:
+        client.post("/api/join/source", json={"paths": [str(root)]})
+        joined = client.post("/api/join", json={"kind": kind, "keys": keys})
+        assert joined.status_code == 200, joined.text
+        assert (joined.json()["added"], joined.json()["skipped"]) == (added, ["same"])
+        join = client.get("/api/source").json()["join"]
+        assert (join["columns"], join["same_names"], join["added"]) == (None, "skip_equal", added)
+
+
 def test_columns_are_compared_in_every_row_by_rows(
     tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], equal_left: Path
 ) -> None:
@@ -962,7 +1012,7 @@ def test_columns_are_compared_in_every_row_by_rows(
         client.post("/api/join/source", json={"paths": [str(alone)]})
         refused = client.post("/api/join", json={"kind": "rows", "same_names": "skip_equal"})
         assert refused.status_code == 400
-        assert refused.json()["detail"] == "足す列がありません：結合する表の列はすべて元の表と同じ名前です"
+        assert refused.json()["detail"] == "保持する列がありません：結合する表の列はすべて元の表と同じ名前です"
         assert client.get("/api/schema").json() == schema
 
 

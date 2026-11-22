@@ -22,7 +22,7 @@ from ddviz.shared.joined import SAME_NAMES
 #: The value of the file's ``format``.
 FORMAT = "ddviz-draw-settings"
 #: The version of the format this ddviz writes and reads; raised with every change of the format.
-VERSION = 4
+VERSION = 5
 #: The suffix of the file's default name, after the first input's name.
 SUFFIX = ".ddviz.json"
 
@@ -381,15 +381,14 @@ _JOIN_KEYS = ("paths", "recursive", "relative", "kind", "keys", "columns", "same
 def _added_shaped(join: dict) -> bool:
     """Return whether the columns to add of a ``source.join`` have their shape.
 
-    ``columns`` null or a list of strings, not empty; ``same_names`` one of
-    `ddviz.shared.joined.SAME_NAMES`, ``"rename"`` when ``columns`` is a list.
+    ``columns`` null with ``same_names`` one of
+    `ddviz.shared.joined.SAME_NAMES`, or a list of strings, not empty, with
+    ``same_names`` null.
     """
     columns, same_names = join["columns"], join["same_names"]
-    if not isinstance(same_names, str) or same_names not in SAME_NAMES:
-        return False
     if columns is None:
-        return True
-    return _strings(columns) and bool(columns) and same_names == "rename"
+        return isinstance(same_names, str) and same_names in SAME_NAMES
+    return _strings(columns) and bool(columns) and same_names is None
 
 
 def _join_shaped(join: object) -> bool:
@@ -436,7 +435,7 @@ def parse(text: str) -> DrawFile:  # noqa: C901, PLR0912
     ValueError
         With the message the chooser shows: ``描画設定のファイルを読めませんでした：<理由>``
         for text that is not JSON, another ``format`` or a key missing or of
-        the wrong type, and ``この描画設定は読めません（版 <N>。この ddviz は版 4 を読みます）``
+        the wrong type, and ``この描画設定は読めません（版 <N>。この ddviz は版 5 を読みます）``
         for another ``version``.
     """
     try:

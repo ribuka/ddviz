@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 
-from ddviz.shared.joined import KINDS, NESTED, SAME_NAMES
+from ddviz.shared.joined import KINDS, NESTED, SAME_NAMES, SAME_NAMES_DEFAULT
 from ddviz.shared.tasks import JoinTask
 
 if TYPE_CHECKING:
@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 
 # Start of the message of a key given wrong.
 WRONG_KEYS = "キーの指定が正しくありません："
-# Start of the message of the columns to add given wrong.
-WRONG_COLUMNS = "足す列の指定が正しくありません："
+# Start of the message of the columns to keep given wrong.
+WRONG_COLUMNS = "保持する列の指定が正しくありません："
 
 
 @dataclass
@@ -44,9 +44,9 @@ class Join:
         The pairs of keys, ``{"left", "right"}``; empty for ``"rows"``.
     columns : list of str or None
         The columns of the joined table asked to be added; None for all.
-    same_names : str
+    same_names : str or None
         What was done with a column named like one of the input
-        (`SAME_NAMES`).
+        (`SAME_NAMES`); None with columns chosen.
     names : dict of str to str or None
         The columns added, in order, with the column of the joined table
         each holds; None for ``_joined`` (`ddviz.shared.joined.joined_names`).
@@ -69,7 +69,7 @@ class Join:
     kind: str
     keys: list[dict[str, str]]
     columns: list[str] | None
-    same_names: str
+    same_names: str | None
     names: dict[str, str | None]
     id: str
     matched: int
@@ -149,35 +149,45 @@ def _repeated(names: list[str]) -> str | None:
 
 def check_columns(
     columns: list[str] | None,
-    same_names: str,
+    same_names: str | None,
     right: dict[str, str],
     keys: list[dict[str, str]],
-) -> None:
-    """Refuse a join whose columns to add are given wrong (400).
+) -> str | None:
+    """Refuse a join whose columns to add are given wrong (400), else return what to do with the same names.
 
     Parameters
     ----------
     columns : list of str or None
         The columns of the joined table asked to be added; None for all.
-    same_names : str
-        What to do with a column named like one of the input (`SAME_NAMES`).
+    same_names : str or None
+        What to do with a column named like one of the input (`SAME_NAMES`);
+        None for `SAME_NAMES_DEFAULT` with all the columns, and the only
+        value taken with columns chosen.
     right : dict of str to str
         The type of each column of the joined table.
     keys : list of dict of str to str
         The pairs of keys asked for, ``{"left", "right"}``.
 
+    Returns
+    -------
+    str or None
+        For all the columns, `same_names` or its default; None with columns
+        chosen.
+
     Raises
     ------
     fastapi.HTTPException
-        400 for an unknown `same_names`, `same_names` other than
-        ``"rename"`` with columns chosen, no column chosen, a column chosen
-        twice, a column that is not there, or a key chosen.
+        400 for an unknown `same_names`, `same_names` given with columns
+        chosen, no column chosen, a column chosen twice, a column that is
+        not there, or a key chosen.
     """
-    if same_names not in SAME_NAMES:
-        raise HTTPException(400, f"{WRONG_COLUMNS}知らない扱いです：{same_names}")
     if columns is None:
-        return
-    if same_names != "rename":
+        if same_names is None:
+            return SAME_NAMES_DEFAULT
+        if same_names not in SAME_NAMES:
+            raise HTTPException(400, f"{WRONG_COLUMNS}知らない扱いです：{same_names}")
+        return same_names
+    if same_names is not None:
         raise HTTPException(400, WRONG_COLUMNS + "列を選んだときは同じ名前の扱いを指定しません")
     if not columns:
         raise HTTPException(400, WRONG_COLUMNS + "列を 1 つ以上選んでください")
@@ -191,6 +201,7 @@ def check_columns(
     key = next((name for name in columns if name in taken), None)
     if key is not None:
         raise HTTPException(400, f"{WRONG_COLUMNS}キーの列は足せません：{key}")
+    return None
 
 
 def choose_columns(
@@ -199,7 +210,7 @@ def choose_columns(
     generated: dict[str, str],
     keys: list[dict[str, str]],
     columns: list[str] | None,
-    same_names: str,
+    same_names: str | None,
 ) -> tuple[list[str], dict[str, str], list[str], list[str]]:
     """Select the columns to add, leave out by name, or compare before naming them.
 
@@ -214,9 +225,9 @@ def choose_columns(
         The pairs of keys, ``{"left", "right"}``: its keys are not added.
     columns : list of str or None
         The columns asked to be added (`check_columns`); None for all.
-    same_names : str
+    same_names : str or None
         What to do with a column named like one of the input, for all the
-        columns (`SAME_NAMES`): ``"skip"`` leaves out same-named ordinary
+        columns (`check_columns`): ``"skip"`` leaves out same-named ordinary
         columns; ``"skip_equal"`` compares them when neither type is nested.
 
     Returns
@@ -233,8 +244,6 @@ def choose_columns(
         return plain, {c: k for c, k in generated.items() if c in asked}, [], []
     plain = [c for c in right if c not in generated and c not in taken]
     added = {c: k for c, k in generated.items() if c not in taken}
-    if same_names == "rename":
-        return plain, added, [], []
     same = [c for c in plain if c in left]
     if same_names == "skip":
         skipped = set(same)
@@ -246,4 +255,4 @@ def choose_columns(
 def check_added(kind: str, names: dict[str, str | None]) -> None:
     """Refuse a join by rows that adds no column, all of the joined table's being named like the input's (400)."""
     if kind == "rows" and not names:
-        raise HTTPException(400, "足す列がありません：結合する表の列はすべて元の表と同じ名前です")
+        raise HTTPException(400, "保持する列がありません：結合する表の列はすべて元の表と同じ名前です")

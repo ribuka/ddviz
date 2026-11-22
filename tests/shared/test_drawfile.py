@@ -128,7 +128,7 @@ def test_build_writes_the_format_and_the_paths_from_the_file() -> None:
     )
     assert content == {
         "format": "ddviz-draw-settings",
-        "version": 4,
+        "version": 5,
         "app_version": "0.1.6",
         "saved_at": "2026-11-18T14:30:00+09:00",
         "source": {
@@ -193,13 +193,14 @@ def test_parse_reads_what_build_wrote() -> None:
             _text(source={"paths": [], "relative": None, "recursive": False, "join": None}),
             "描画設定のファイルを読めませんでした：キー source.paths の値の形が違います",
         ),
-        (_text(version=1), "この描画設定は読めません（版 1。この ddviz は版 4 を読みます）"),
-        (_text(version=2), "この描画設定は読めません（版 2。この ddviz は版 4 を読みます）"),
-        (_text(version=3), "この描画設定は読めません（版 3。この ddviz は版 4 を読みます）"),
+        (_text(version=1), "この描画設定は読めません（版 1。この ddviz は版 5 を読みます）"),
+        (_text(version=2), "この描画設定は読めません（版 2。この ddviz は版 5 を読みます）"),
+        (_text(version=3), "この描画設定は読めません（版 3。この ddviz は版 5 を読みます）"),
+        (_text(version=4), "この描画設定は読めません（版 4。この ddviz は版 5 を読みます）"),
     ],
     ids=[
         "broken", "not-object", "format", "version-key", "settings", "columns", "relative", "paths", "version-1",
-        "version-2", "version-3",
+        "version-2", "version-3", "version-4",
     ],
 )
 def test_parse_refuses_with_the_message_shown(text: str, message: str) -> None:
@@ -296,7 +297,7 @@ JOIN = {
     "kind": "key",
     "keys": [{"left": "lot", "right": "lot_id"}],
     "columns": None,
-    "same_names": "rename",
+    "same_names": "skip_equal",
 }
 
 
@@ -327,7 +328,7 @@ def test_build_writes_the_join_with_its_paths_from_the_file() -> None:
     assert content["source"]["join"] == {**JOIN, "relative": None}
     assert build(SETTINGS, COLUMNS, [r"D:\data\a.parquet"], False, json_path, "0")["source"]["join"] is None
     for added in (
-        {"columns": ["yield", "line"], "same_names": "rename"},
+        {"columns": ["yield", "line"], "same_names": None},
         {"columns": None, "same_names": "skip"},
         {"columns": None, "same_names": "skip_equal"},
     ):
@@ -342,7 +343,7 @@ def test_build_writes_the_join_with_its_paths_from_the_file() -> None:
         _joined(),
         _joined(kind="rows", keys=[]),
         _joined(relative=["a", "b"], recursive=True),
-        _joined(columns=["yield", "line"]),
+        _joined(columns=["yield", "line"], same_names=None),
         _joined(same_names="skip"),
         _joined(same_names="skip_equal"),
     ],
@@ -371,15 +372,19 @@ def test_parse_reads_a_join(join: dict | None) -> None:
         (_joined(columns=["yield", 1]), "キー source.join の値の形が違います"),
         (_joined(columns="yield"), "キー source.join の値の形が違います"),
         (_joined(same_names="drop"), "キー source.join の値の形が違います"),
+        (_joined(same_names="rename"), "キー source.join の値の形が違います"),
         (_joined(same_names=None), "キー source.join の値の形が違います"),
+        (_joined(columns=["yield"], same_names="skip_equal"), "キー source.join の値の形が違います"),
         (_joined(columns=["yield"], same_names="skip"), "キー source.join の値の形が違います"),
+        (_joined(columns=["yield"], same_names="rename"), "キー source.join の値の形が違います"),
         (_joined(columns=...), "キー source.join の値の形が違います"),
         (_joined(same_names=...), "キー source.join の値の形が違います"),
     ],
     ids=[
         "absent", "keys-missing", "relative-missing", "kind", "key-without-keys", "rows-with-keys",
         "relative-length", "paths-empty", "recursive", "pair", "not-object", "columns-empty", "columns-not-text",
-        "columns-text", "same-names", "same-names-null", "columns-with-skip", "columns-missing",
+        "columns-text", "same-names", "rename", "same-names-null", "columns-with-skip-equal", "columns-with-skip",
+        "columns-with-rename", "columns-missing",
         "same-names-missing",
     ],
 )

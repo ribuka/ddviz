@@ -106,7 +106,7 @@ def test_a_saved_file_draws_the_same_graph_again(
     name, content = download(page)
     assert name == "scatter.ddviz.json"
     assert content["format"] == "ddviz-draw-settings"
-    assert content["version"] == 4
+    assert content["version"] == 5
     assert content["source"] == {
         "paths": [str(scatter_path)],
         "relative": None,
@@ -307,7 +307,7 @@ def test_a_file_joined_joins_again_and_draws_its_joined_columns(
         "kind": "key",
         "keys": [{"left": "label", "right": "label"}],
         "columns": None,
-        "same_names": "rename",
+        "same_names": "skip_equal",
     }
     assert content["columns"] == {"score": "numeric", "y": "numeric"}
     assert parse(json.dumps(content)).content == content
@@ -370,7 +370,7 @@ def test_a_file_joined_with_columns_picked_joins_them_again(
     wait_idle(page)
     content = download(page)[1]
     assert content["source"]["join"]["columns"] == ["score"]
-    assert content["source"]["join"]["same_names"] == "rename"
+    assert content["source"]["join"]["same_names"] is None
 
     with opened_with(page, content, tmp_path, scatter_path, settings_store) as url:
         with page.expect_request("**/api/join") as joined, page.expect_request("**/api/plot") as plotted:
@@ -379,7 +379,7 @@ def test_a_file_joined_with_columns_picked_joins_them_again(
             "kind": "key",
             "keys": [{"left": "label", "right": "label"}],
             "columns": ["score"],
-            "same_names": "rename",
+            "same_names": None,
         }
         assert plotted.value.post_data_json["encoding"]["x"] == ["score"]
         wait_idle(page)
@@ -395,7 +395,7 @@ def test_a_file_joined_on_skip_equal_compares_again(
     settings_store: SettingsStore,
     equal_paths: list[Path],
 ) -> None:
-    """A join on `中身も同じなら足さない` saves ``"skip_equal"``; a server opened with the file joins with it again and lists the same joined columns (Issue #359)."""
+    """A join without touching the radios (`中身が違えば保持`) saves ``"skip_equal"``; a server opened with the file joins with it again and lists the same joined columns (Issue #359, #378)."""
     page = app_page
     expect(page.locator("#columns .column").first).to_be_visible()
     page.wait_for_function("window.ddvizCanJoin()")
@@ -403,8 +403,7 @@ def test_a_file_joined_on_skip_equal_compares_again(
     page.keyboard.press("Control+j")
     read_source(page, equal_paths, "2 ファイル・1,500 行・6 列")
     pick(page, 0, 0, "lab", "label")
-    join_dialog(page).get_by_label("中身も同じなら足さない").check()
-    run_join(page, "元の表と名前も中身も同じ 1 列は足しませんでした。")
+    run_join(page, "元の表と名前も中身も同じ 1 列は保持しませんでした。")
     marks = joined_marks(page)
     place(page, "score", "x")
     place(page, "y", "y")
@@ -443,7 +442,7 @@ def test_a_join_that_fails_opens_the_file_without_it(
         "kind": "key",
         "keys": [{"left": "label", "right": "label"}],
         "columns": None,
-        "same_names": "rename",
+        "same_names": "skip_equal",
     }
     nulls = {"range": True, "pick": False, "contains": False, "listed": False}
     content["settings"]["filters"] = [

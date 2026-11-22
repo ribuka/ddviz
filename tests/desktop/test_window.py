@@ -615,7 +615,7 @@ def _draw_file(
             "kind": "key",
             "keys": [{"left": "id", "right": "id"}],
             "columns": None,
-            "same_names": "rename",
+            "same_names": "skip_equal",
         }
     content = build(
         copy.deepcopy(SETTINGS),
@@ -862,8 +862,8 @@ def test_another_draw_file_replaces_the_one_waiting_for_its_join(tmp_path: Path)
             "描画設定のファイルを読めませんでした：format が ddviz-draw-settings ではありません",
         ),
         (
-            '{"format": "ddviz-draw-settings", "version": 5}',
-            "この描画設定は読めません（版 5。この ddviz は版 4 を読みます）",
+            '{"format": "ddviz-draw-settings", "version": 4}',
+            "この描画設定は読めません（版 4。この ddviz は版 5 を読みます）",
         ),
     ],
     ids=["json", "format", "version"],

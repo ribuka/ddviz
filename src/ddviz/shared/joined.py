@@ -24,9 +24,11 @@ INDICATOR = "_joined"
 SUFFIX = "_joined"
 KINDS = ("key", "rows")
 # What a join adding all the columns of the joined table does with one named
-# like a column of the input: add it renamed, leave it out when it holds the
-# same values in the rows joined, or leave it out.
-SAME_NAMES = ("rename", "skip_equal", "skip")
+# like a column of the input: leave it out when it holds the same values in
+# the rows joined, else add it renamed (the default); or leave it out.
+SAME_NAMES = ("skip_equal", "skip")
+# What a join adding all the columns does when no `SAME_NAMES` is given.
+SAME_NAMES_DEFAULT = "skip_equal"
 # The values of the indicator, as `polars_helpers.merge` writes them.
 BOTH = "both"
 LEFT_ONLY = "left_only"
