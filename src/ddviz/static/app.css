@@ -2707,9 +2707,76 @@ html.desktop #toasts {
   border-top: 1px solid var(--border-separator);
 }
 
-.join-busy {
+/* What the dialog waits for, with its 中止 (Issue #379). */
+.join-wait {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.join-busy {
   color: var(--text-hint);
+}
+
+.join-busy[hidden],
+.join-abort[hidden] {
+  display: none;
+}
+
+/* A dry run cancelled: told plainly, not as an error. */
+.join-error.join-notice {
+  color: var(--text);
+}
+
+/* The dry run (Issue #379): 確かめる, what it found, and the save of the
+   rows of both tables. Each table of the keys matching none scrolls in a box
+   of its own height, so that the dialog does not grow too tall. */
+.join-check-result {
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.join-check-result[hidden] {
+  display: none;
+}
+
+.join-check-line,
+.join-unmatched-heading {
+  margin: 4px 0;
+}
+
+.join-unmatched {
+  max-height: 12em;
+  overflow: auto;
+  border: 1px solid var(--border-light);
+}
+
+.join-unmatched table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.join-unmatched th,
+.join-unmatched td {
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border-light);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.join-unmatched th {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+
+.join-rows-save {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .join-buttons .primary {
