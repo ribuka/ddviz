@@ -1,9 +1,10 @@
 """Routes that write the plot's data to a file and hand it to the page.
 
 ``POST /api/plot-data/{task}`` writes the rows of the overview (the whole
-plot whatever the zoom), and ``POST /api/plot-data/selection`` the selected
-rows, as a CSV or Parquet file in a worker of the table's pool
-(`ddviz.compute.tasks.plotdata`), whose progress goes to ``/api/events``
+plot whatever the zoom), ``POST /api/plot-data/selection`` the selected
+rows, and ``POST /api/plot-data/join-rows`` the rows of both tables of the
+last dry run of a join (`ddviz.compute.joinrows`), as a CSV or Parquet file
+in a worker of the table's pool (`ddviz.compute.tasks.plotdata`), whose progress goes to ``/api/events``
 with the page's ``export``; the page then fetches the file once from
 ``/api/plot-data/file/{id}``. A file not fetched is removed when the next
 one is written. While it is written, the table's pages are refused
@@ -27,12 +28,17 @@ from starlette.background import BackgroundTask
 from ddviz.server.broker import TaskBroker, TaskEnd
 from ddviz.server.errors import ensure_done
 from ddviz.server.exporting import Exporting
-from ddviz.server.models import ExportCancel, PlotDataRequest, SelectionDataRequest
-from ddviz.server.plotdata import FORMATS, SELECTED, file_name
+from ddviz.server.models import (
+    ExportCancel,
+    JoinRowsRequest,
+    PlotDataRequest,
+    SelectionDataRequest,
+)
+from ddviz.server.plotdata import FORMATS, JOIN_ROWS, SELECTED, file_name
 from ddviz.server.results import Results
 from ddviz.server.source import Source
 from ddviz.shared.manifest import read_manifest
-from ddviz.shared.tasks import PlotDataTask, SourceFiles, Task
+from ddviz.shared.tasks import JoinRowsTask, PlotDataTask, SourceFiles, Task
 
 # Makes the task of the columns of a file, their parts and their source files.
 TaskOf = Callable[[list[str], dict[str, list[str]], SourceFiles], PlotDataTask]
@@ -74,7 +80,7 @@ def export_router(  # noqa: C901, PLR0915
         return task_of(chosen, parts, files)
 
     async def export(
-        request: PlotDataRequest | SelectionDataRequest,
+        request: PlotDataRequest | SelectionDataRequest | JoinRowsRequest,
         held: AbstractContextManager,
         make: Callable[[], Awaitable[Task]],
         kind: str,
@@ -155,6 +161,22 @@ def export_router(  # noqa: C901, PLR0915
             lambda: plot_task(request.columns, spec.files, task_of),
             SELECTED,
         )
+
+    # Before ``/api/plot-data/{task}`` too.
+    @router.post("/api/plot-data/join-rows", response_model=None)
+    async def join_rows(request: JoinRowsRequest) -> dict | JSONResponse:
+        """Write the rows of both tables of the last dry run of a join (`ddviz.compute.joinrows`) as a CSV or Parquet file and return its id and name.
+
+        409 ``no join check`` without a dry run, ``already joined`` after
+        the join (`ddviz.server.source.Source.join_rows_task`). Otherwise
+        as ``POST /api/plot-data/{task}``.
+        """
+
+        async def make() -> JoinRowsTask:
+            """Return the task writing the rows."""
+            return await source.join_rows_task(request.format, request.columns, request.export)
+
+        return await export(request, contextlib.nullcontext(), make, JOIN_ROWS)
 
     @router.post("/api/plot-data/{task}", response_model=None)
     async def plot_data(task: int, request: PlotDataRequest) -> dict | JSONResponse:

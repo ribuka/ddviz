@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ddviz.compute.convert import convert_columns
 from ddviz.compute.join import run_join, run_join_convert, run_join_equal
+from ddviz.compute.joinrows import run_join_rows
 from ddviz.compute.joinsummary import run_join_summary
 from ddviz.compute.progress import Emit
 from ddviz.compute.tasks.columns import run_nonnull, run_schema, run_summary
@@ -18,6 +19,7 @@ from ddviz.shared.tasks import (
     ConvertTask,
     JoinConvertTask,
     JoinEqualTask,
+    JoinRowsTask,
     JoinSummaryTask,
     JoinTask,
     LevelIndexTask,
@@ -50,6 +52,7 @@ RUNNERS: dict[type, Callable[[Task, Path, Emit], None]] = {
     LevelIndexTask: lambda t, out, emit: run_level_index(t.parts, t.column, t.index, out, emit),
     LevelSearchTask: lambda t, out, emit: run_level_search(t.index, t.query, t.order, out, emit),
     PlotDataTask: run_plot_data,
+    JoinRowsTask: run_join_rows,
 }
 
 

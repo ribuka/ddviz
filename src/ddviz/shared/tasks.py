@@ -419,6 +419,58 @@ class PlotDataTask:
     selection: ScatterSpec | None = None
 
 
+@dataclass(frozen=True)
+class JoinRowsTask:
+    """Write the rows of both tables of a join by keys, as a full outer join with the state of each row, as a file to save (`ddviz.compute.joinrows`).
+
+    Parameters
+    ----------
+    file_format : str
+        ``"csv"`` or ``"parquet"``.
+    columns : str
+        ``"key"``: the keys of both tables, and their added columns
+        (`ddviz.shared.generated`); ``"all"``: every column of both.
+    keys : list of dict of str to str
+        The pairs of keys, ``{"left", "right"}``.
+    maps : list of str
+        Per file of the input, the part of the map of the dry run
+        (`ddviz.shared.joined.MAP_COLUMN`).
+    left_columns : list of str
+        Every column of the input, in its order.
+    left_generated : dict of str to str
+        The added columns of the input with their kinds.
+    left_parts : dict of str to list of str
+        The parts of the input's columns in its column cache.
+    left_files : SourceFiles
+        The input's files, for its other columns.
+    right_columns : list of str
+        Every column of the joined table, in its order.
+    right_generated : dict of str to str
+        The added columns of the joined table with their kinds.
+    right_parts : dict of str to list of str
+        The parts of the joined table's columns in its column cache.
+    right_files : SourceFiles
+        The joined table's files, for its other columns.
+    export : str
+        Token the page gave, carried by the progress messages.
+    """
+
+    KIND: ClassVar[str] = "join_rows"
+    file_format: str
+    columns: str
+    keys: list[dict[str, str]]
+    maps: list[str]
+    left_columns: list[str]
+    left_generated: dict[str, str]
+    left_parts: dict[str, list[str]]
+    left_files: SourceFiles
+    right_columns: list[str]
+    right_generated: dict[str, str]
+    right_parts: dict[str, list[str]]
+    right_files: SourceFiles
+    export: str
+
+
 Task = (
     SchemaTask
     | NonnullTask
@@ -434,6 +486,7 @@ Task = (
     | LevelIndexTask
     | LevelSearchTask
     | PlotDataTask
+    | JoinRowsTask
 )
 TASKS: dict[str, type[Task]] = {
     t.KIND: t
@@ -452,6 +505,7 @@ TASKS: dict[str, type[Task]] = {
         LevelIndexTask,
         LevelSearchTask,
         PlotDataTask,
+        JoinRowsTask,
     )
 }
 
@@ -497,6 +551,7 @@ def task_from_dict(data: dict) -> Task:
     for key in ("spec", "selection"):
         if values.get(key) is not None:
             values[key] = ScatterSpec.from_dict(values[key])
-    if "source" in values:
-        values["source"] = SourceFiles.from_dict(values["source"])
+    for key in ("source", "left_files", "right_files"):
+        if key in values:
+            values[key] = SourceFiles.from_dict(values[key])
     return cls(**values)

@@ -54,6 +54,7 @@ from ddviz.shared.tasks import (
     JoinConvertTask,
     JoinedFiles,
     JoinEqualTask,
+    JoinRowsTask,
     JoinSummaryTask,
     JoinTask,
     LevelIndexTask,
@@ -689,6 +690,44 @@ class Source:
         ensure_done(end)
         found = end.take()
         return {k: found[k] for k in ("right_matched", "left_unmatched", "right_unmatched")}
+
+    async def join_rows_task(self, file_format: str, columns: str, export: str) -> JoinRowsTask:
+        """Return the task writing the rows of both tables through the map of the last dry run (`ddviz.compute.joinrows`).
+
+        Parameters
+        ----------
+        file_format : str
+            ``"csv"`` or ``"parquet"``.
+        columns : str
+            ``"key"`` or ``"all"`` (`ddviz.shared.tasks.JoinRowsTask`).
+        export : str
+            The page's token of the save.
+
+        Returns
+        -------
+        JoinRowsTask
+            The task: each table's columns read from their parts in the
+            cache, the others from its files.
+
+        Raises
+        ------
+        fastapi.HTTPException
+            409 ``already joined`` after the join, ``no join check`` without
+            a dry run.
+        """
+        if self.joined is not None:
+            raise HTTPException(409, "already joined")
+        check = self.join_check
+        if check is None:
+            raise HTTPException(409, "no join check")
+        sides = []
+        for table in (self, self.join_source):
+            names = [c["name"] for c in await table.schema()]
+            missing = await asyncio.to_thread(table.missing, names)
+            parts = {c: table.parts(c) for c in names if c not in missing}
+            files = table.source_files([c for c in names if c not in parts])
+            sides.append((names, dict(table._generated), parts, files))
+        return JoinRowsTask(file_format, columns, check.keys, check.task.maps, *sides[0], *sides[1], export)
 
     def _checked(self, id_: str) -> JoinCheck | None:
         """Return the last dry run when it is of the join `id_` and the parts of its map and ``_joined`` are there, else None."""
