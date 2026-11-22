@@ -205,29 +205,28 @@ def test_only_the_columns_picked_are_added(join_page: Page, join_paths: list[Pat
 
 
 def test_columns_named_like_the_input_s_are_left_out(join_page: Page, join_paths: list[Path]) -> None:
-    """`足さない` for the same names leaves `color` out, not as `color_joined`, and the toast tells it (Issue #358)."""
+    """`保持しない` for the same names leaves `color` out, not as `color_joined`, and the toast tells it (Issue #358, #378)."""
     page = join_page
     page.keyboard.press("Control+j")
     read_source(page, join_paths)
     pick(page, 0, 0, "lab", "label")
-    join_dialog(page).get_by_label("足さない", exact=True).check()
+    join_dialog(page).get_by_label("保持しない", exact=True).check()
     run_join(
         page,
-        "4 列を結合しました。元の表の 74.9% の行が結合できました。元の表と同じ名前の 1 列は足しませんでした。",
+        "4 列を結合しました。元の表の 74.9% の行が結合できました。元の表と同じ名前の 1 列は保持しませんでした。",
     )
     assert [name for name, _, _ in joined_marks(page)] == ["_joined", "score", "source_joined", "filename_joined"]
 
 
 def test_columns_of_the_same_values_are_left_out(join_page: Page, equal_paths: list[Path]) -> None:
-    """`中身も同じなら足さない` leaves out `color`, of the input's values, adds `facet`, of others, as `facet_joined`, and the toast tells it (Issue #359)."""
+    """Without touching the radios (`中身が違えば保持`), the join leaves out `color`, of the input's values, adds `facet`, of others, as `facet_joined`, and the toast tells it (Issue #359, #378)."""
     page = join_page
     page.keyboard.press("Control+j")
     read_source(page, equal_paths, "2 ファイル・1,500 行・6 列")
     pick(page, 0, 0, "lab", "label")
-    join_dialog(page).get_by_label("中身も同じなら足さない").check()
     run_join(
         page,
-        "5 列を結合しました。元の表の 74.9% の行が結合できました。元の表と名前も中身も同じ 1 列は足しませんでした。",
+        "5 列を結合しました。元の表の 74.9% の行が結合できました。元の表と名前も中身も同じ 1 列は保持しませんでした。",
     )
     assert [name for name, _, _ in joined_marks(page)] == [
         "_joined",

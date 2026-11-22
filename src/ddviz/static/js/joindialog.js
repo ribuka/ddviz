@@ -46,8 +46,8 @@ export function joinedText(answer, kind, sameNames) {
   const skipped = answer.skipped?.length ?? 0;
   if (skipped === 0) return text;
   const count = skipped.toLocaleString();
-  if (sameNames === "skip_equal") return `${text}元の表と名前も中身も同じ ${count} 列は足しませんでした。`;
-  return `${text}元の表と同じ名前の ${count} 列は足しませんでした。`;
+  if (sameNames === "skip_equal") return `${text}元の表と名前も中身も同じ ${count} 列は保持しませんでした。`;
+  return `${text}元の表と同じ名前の ${count} 列は保持しませんでした。`;
 }
 
 // The overlay's text of a progress of the comparison of the columns named
@@ -234,10 +234,10 @@ export class ColumnField {
   }
 }
 
-// The section `足す列` of the dialog (`element`): all the columns of the
-// joined table, with those named like the input's added renamed, left out
-// when of the same values, or left out (the radios of `元の表と同じ名前の
-// 列：`), or those picked, one a line. `onChange()` is called at every
+// The section `保持する列` of the dialog (`element`): all the columns of the
+// joined table, with those named like the input's left out when of the same
+// values and kept renamed otherwise, or left out (the radios of `元の表と同じ
+// 名前の列：`), or those picked, one a line. `onChange()` is called at every
 // change of the choice.
 export class AddedColumns {
   constructor(onChange) {
@@ -267,9 +267,8 @@ export class AddedColumns {
     this.sameNames.append(element("span", "join-same-names-label", "元の表と同じ名前の列："));
     this.sameInputs = [];
     for (const [value, text] of [
-      ["rename", "名前を変えて足す"],
-      ["skip_equal", "中身も同じなら足さない"],
-      ["skip", "足さない"],
+      ["skip_equal", "中身が違えば保持"],
+      ["skip", "保持しない"],
     ]) {
       const label = element("label", "join-same-name");
       const radio = element("input");
@@ -285,17 +284,17 @@ export class AddedColumns {
       this.onChange();
       row.field.input.focus();
     });
-    this.element.append(element("h3", "", "足す列"), modes, this.sameNames, this.list, this.addButton);
+    this.element.append(element("h3", "", "保持する列"), modes, this.sameNames, this.list, this.addButton);
     this.reset();
   }
 
-  // Back to all the columns, renamed when named like the input's, with one
-  // empty line of a column.
+  // Back to all the columns, those named like the input's kept when their
+  // values differ, with one empty line of a column.
   reset() {
     this.close();
     this.picked = false;
     for (const radio of this.modeInputs) radio.checked = radio.value === "all";
-    for (const radio of this.sameInputs) radio.checked = radio.value === "rename";
+    for (const radio of this.sameInputs) radio.checked = radio.value === "skip_equal";
     this.rows = [];
     this.list.replaceChildren();
     this.addRow();
@@ -352,7 +351,7 @@ export class AddedColumns {
   body() {
     const columns = this.columns();
     const same = this.sameInputs.find((radio) => radio.checked).value;
-    return { columns, same_names: columns === null ? same : "rename" };
+    return { columns, same_names: columns === null ? same : null };
   }
 }
 

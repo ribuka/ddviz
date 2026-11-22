@@ -535,7 +535,7 @@ class Source:
         kind: str,
         keys: list[dict[str, str]],
         columns: list[str] | None = None,
-        same_names: str = "rename",
+        same_names: str | None = None,
     ) -> dict:
         """Join the table read (`load_join_source`) to the input, once.
 
@@ -557,12 +557,13 @@ class Source:
         columns : list of str, optional
             The columns of the joined table to add, added in its order; None,
             by default, for all but its keys.
-        same_names : str, optional
+        same_names : str or None, optional
             For all the columns, what to do with one named like a column of
-            the input: ``"rename"``, by default, adds it renamed,
-            ``"skip_equal"`` leaves it out when the rows joined hold the
-            same values in both, ``"skip"`` leaves it out
-            (`ddviz.server.join.choose_columns`).
+            the input: ``"skip_equal"``, for None by default, leaves it out
+            when the rows joined hold the same values in both and adds it
+            renamed otherwise, ``"skip"`` leaves it out
+            (`ddviz.server.join.choose_columns`). None alone with columns
+            chosen (`ddviz.server.join.check_columns`).
 
         Returns
         -------
@@ -590,7 +591,7 @@ class Source:
             check_keys(kind, keys, self._dtypes, right._dtypes)
             if kind == "rows":
                 check_rows(sum(self.rows), sum(right.rows))
-            check_columns(columns, same_names, right._dtypes, keys)
+            same_names = check_columns(columns, same_names, right._dtypes, keys)
             plain, generated, skipped, pairs = choose_columns(
                 self._dtypes, right._dtypes, right._generated, keys, columns, same_names
             )
