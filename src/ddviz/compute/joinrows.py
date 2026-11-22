@@ -102,9 +102,10 @@ def join_rows_columns(task: JoinRowsTask) -> JoinRowsColumns:
         taken.add(named[-1])
     lefts = [k["left"] for k in task.keys]
     rights = [k["right"] for k in task.keys]
-    plain = [c for c in task.right_columns if c not in rights and c not in task.right_generated]
-    generated = {c: k for c, k in task.right_generated.items() if c not in rights}
-    names = joined_names(taken, [*rights, *plain], generated, False)
+    plain = [c for c in dict.fromkeys([*rights, *task.right_columns]) if c not in task.right_generated]
+    # An added column takes the name of its kind, a key too.
+    names = joined_names(taken, plain, task.right_generated, False)
+    generated = [c for c in task.right_generated if c not in rights]
     by_right = {held: name for name, held in names.items()}
     if task.columns == "key":
         left = [*lefts, *(c for c in task.left_columns if c in task.left_generated and c not in lefts)]
@@ -133,6 +134,11 @@ def _rows(task: JoinRowsTask, out: Path) -> tuple[pl.LazyFrame, int]:
     pl.concat([left, right]).sink_parquet(rows)
     matched.unlink()
     return pl.scan_parquet(rows), sum(task.left_files.rows) + right_rows - found
+
+
+def _series(frames: list[pl.DataFrame]) -> dict[str, pl.Series]:
+    """Return the columns of `frames`, each of its own name, by their names."""
+    return {column.name: column for frame in frames for column in frame.iter_columns()}
 
 
 def _sizes(frames: list[pl.DataFrame], rows: int, extra: int) -> pl.Series:
@@ -186,18 +192,19 @@ def run_join_rows(task: JoinRowsTask, out: Path, emit: Emit) -> None:
         if measure:
             sizes = [_sizes(top, lefts.height, 0), _sizes(bottom, rights.height, len(RIGHT_ONLY))]
             return pl.DataFrame({"bytes": pl.concat(sizes)})
-        first = pl.concat([lefts, *top], how="horizontal")
-        second = pl.concat([rights, *bottom], how="horizontal")
+        # The values by their names, apart from the row numbers of `chunk`:
+        # a column of either table may have the name of one of them.
+        first, second = _series(top), _series(bottom)
         held = [
-            first[_LEFT].alias(columns.index),
-            first[_RIGHT].alias(columns.index_joined),
+            lefts[_LEFT].alias(columns.index),
+            lefts[_RIGHT].alias(columns.index_joined),
             *(first[c] for c in [columns.state, *columns.left, *columns.right]),
         ]
         alone_rows = [
-            second[_LEFT].alias(columns.index),
-            second[_RIGHT].alias(columns.index_joined),
-            pl.repeat(RIGHT_ONLY, second.height, dtype=pl.String, eager=True).alias(columns.state),
-            *(pl.repeat(None, second.height, dtype=first[c].dtype, eager=True).alias(c) for c in columns.left),
+            rights[_LEFT].alias(columns.index),
+            rights[_RIGHT].alias(columns.index_joined),
+            pl.repeat(RIGHT_ONLY, rights.height, dtype=pl.String, eager=True).alias(columns.state),
+            *(pl.repeat(None, rights.height, dtype=first[c].dtype, eager=True).alias(c) for c in columns.left),
             *(second[held_by].alias(name) for name, held_by in columns.right.items()),
         ]
         return pl.concat(

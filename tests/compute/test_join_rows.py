@@ -272,3 +272,33 @@ def test_the_rows_are_the_full_outer_join_of_both_tables(
     assert expected.schema["lot_joined"] == pl.Int64
     found = _write(tmp_path, left, right, keys, columns, file_format)
     _check(found, expected, file_format)
+
+
+@pytest.mark.parametrize("file_format", FORMATS)
+def test_columns_named_as_the_internal_ones_keep_their_values(tmp_path: Path, file_format: str) -> None:
+    """Columns of either table named as the row numbers the task holds inside, keys or not, are written as any column (review of #382)."""
+    left = _table(
+        tmp_path / "left",
+        [pl.DataFrame({"__ddviz_left": [1, 2, 4], "__ddviz_right": ["a", "b", "c"]})],
+        ["__ddviz_left"],
+    )
+    right = _table(tmp_path / "right", [pl.DataFrame({"k": [2, 3], "__ddviz_left": [0.5, 1.5]})], [])
+    keys = [("__ddviz_left", "k")]
+    names = {"k": "k", "__ddviz_left": "__ddviz_left_joined"}
+    order = ["_joined", "index", "index_joined", "__ddviz_left", "k", "__ddviz_right", "__ddviz_left_joined"]
+    found = _write(tmp_path, left, right, keys, "all", file_format)
+    _check(found, _expected(left, right, keys, names, order), file_format)
+
+
+@pytest.mark.parametrize("columns", ["key", "all"])
+def test_an_added_column_as_a_key_takes_the_name_of_its_kind(tmp_path: Path, columns: str) -> None:
+    """The joined table's ``filename`` as its key is ``filename_joined``, as an added column, even when the input has no such column (review of #382)."""
+    left = _table(tmp_path / "left", [pl.DataFrame({"fname": ["f0", "f1", "x"], "v": [1, 2, 3]})], [])
+    right = _table(tmp_path / "right", [pl.DataFrame({"w": [10]}), pl.DataFrame({"w": [20]})], [])
+    keys = [("fname", "filename")]
+    names = {"filename": "filename_joined", "source": "source_joined", "w": "w"}
+    rest = ["source_joined"] if columns == "key" else ["v", "w", "source_joined"]
+    order = ["_joined", "index", "index_joined", "fname", "filename_joined", *rest]
+    found = _write(tmp_path, left, right, keys, columns, "parquet")
+    _check(found, _expected(left, right, keys, names, order), "parquet")
+    assert found["_joined"].to_list() == ["both", "both", "left_only"]
