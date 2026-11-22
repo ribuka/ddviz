@@ -595,14 +595,7 @@ class Source:
             plain, generated, skipped, pairs = choose_columns(
                 self._dtypes, right._dtypes, right._generated, keys, columns, same_names
             )
-            typed = [
-                {**k, "left_dtype": self._dtypes[k["left"]], "right_dtype": right._dtypes[k["right"]]}
-                for k in keys
-            ]
-            files = right.cache.identity["files"]
-            rows = self.rows if kind == "rows" else []
-            given = [str(Path(p).absolute()) for p in [*self.paths, *right.paths]]
-            id_ = join_id(kind, right.cache.key, files, typed, rows, given)
+            id_ = self._join_id(kind, keys, right)
             maps, task, matched, equal = await self._run_tasks(kind, keys, right, id_, pairs)
             if pairs:
                 skipped = [c for c in pairs if c in equal]
@@ -612,6 +605,31 @@ class Source:
             join = Join(right, kind, keys, columns, same_names, names, id_, matched, maps, task)
             self._add_join(join)
         return {"added": list(names), "rows": sum(self.rows), "matched": matched, "skipped": skipped}
+
+    def _join_id(self, kind: str, keys: list[dict[str, str]], right: Source) -> str:
+        """Return what tells the join of `right` of `kind` by `keys` apart from another (`ddviz.shared.joined.join_id`)."""
+        typed = [
+            {**k, "left_dtype": self._dtypes[k["left"]], "right_dtype": right._dtypes[k["right"]]}
+            for k in keys
+        ]
+        files = right.cache.identity["files"]
+        rows = self.rows if kind == "rows" else []
+        given = [str(Path(p).absolute()) for p in [*self.paths, *right.paths]]
+        return join_id(kind, right.cache.key, files, typed, rows, given)
+
+    def _join_task(self, keys: list[dict[str, str]], right: Source, id_: str) -> JoinTask:
+        """Return the task writing the map and ``_joined`` of the join `id_` of `right` by `keys`, into the parts the join's id names."""
+        indicator = next(iter(joined_names(self._dtypes, [], {}, True)))
+        return JoinTask(
+            keys,
+            {k["left"]: self.parts(k["left"]) for k in keys},
+            {k["right"]: right.parts(k["right"]) for k in keys},
+            self.rows,
+            sum(right.rows),
+            [str(p) for p in self.cache.parts(MAP_COLUMN, map_part_key(id_))],
+            indicator,
+            [str(p) for p in self.cache.parts(indicator, joined_part_key("String", id_, None))],
+        )
 
     async def _run_tasks(
         self, kind: str, keys: list[dict[str, str]], right: Source, id_: str, pairs: list[str]
@@ -647,18 +665,8 @@ class Source:
         self.converting = True
         try:
             if kind == "key":
-                maps = [str(p) for p in self.cache.parts(MAP_COLUMN, map_part_key(id_))]
-                indicator = next(iter(joined_names(self._dtypes, [], {}, True)))
-                task = JoinTask(
-                    keys,
-                    {k["left"]: self.parts(k["left"]) for k in keys},
-                    {k["right"]: right.parts(k["right"]) for k in keys},
-                    self.rows,
-                    sum(right.rows),
-                    maps,
-                    indicator,
-                    [str(p) for p in self.cache.parts(indicator, joined_part_key("String", id_, None))],
-                )
+                task = self._join_task(keys, right, id_)
+                maps = task.maps
                 matched = await self._run_join(task, keys, right)
             if pairs:
                 equal = await self._run_equal(pairs, right, maps)

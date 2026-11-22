@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
 from datetime import datetime
 
@@ -28,11 +28,11 @@ from ddviz.server.broker import TaskBroker, TaskEnd
 from ddviz.server.errors import ensure_done
 from ddviz.server.exporting import Exporting
 from ddviz.server.models import ExportCancel, PlotDataRequest, SelectionDataRequest
-from ddviz.server.plotdata import FORMATS, file_name
+from ddviz.server.plotdata import FORMATS, SELECTED, file_name
 from ddviz.server.results import Results
 from ddviz.server.source import Source
 from ddviz.shared.manifest import read_manifest
-from ddviz.shared.tasks import PlotDataTask, SourceFiles
+from ddviz.shared.tasks import PlotDataTask, SourceFiles, Task
 
 # Makes the task of the columns of a file, their parts and their source files.
 TaskOf = Callable[[list[str], dict[str, list[str]], SourceFiles], PlotDataTask]
@@ -64,34 +64,34 @@ def export_router(  # noqa: C901, PLR0915
     # Files of the plot's data written and not fetched yet, by their id.
     exports: dict[str, tuple[TaskEnd, str]] = {}
 
+    async def plot_task(columns: str, drawn: dict[str, list[str]], task_of: TaskOf) -> PlotDataTask:
+        """Return the task of a file of the plot's data: ``"all"`` the columns of the input, else those of `drawn`, the plot's."""
+        names = [c["name"] for c in await source.schema()]
+        chosen = names if columns == "all" else [c for c in names if c in drawn]
+        missing = await asyncio.to_thread(source.missing, chosen)
+        parts = {c: source.parts(c) for c in chosen if c not in missing}
+        files = source.source_files([c for c in chosen if c not in parts])
+        return task_of(chosen, parts, files)
+
     async def export(
         request: PlotDataRequest | SelectionDataRequest,
-        drawn: dict[str, list[str]],
         held: AbstractContextManager,
-        task_of: TaskOf,
-        selected: bool,
+        make: Callable[[], Awaitable[Task]],
+        kind: str,
     ) -> dict | JSONResponse:
-        """Write a file of the plot's data in the table's pool and return its id and name.
+        """Write a file of rows in the table's pool and return its id and name (`ddviz.server.plotdata.file_name`, with `kind`).
 
-        `drawn` holds the plot's columns, those of ``"drawn"`` columns;
-        `held` is entered from the first await until the worker has read
-        what it reads. A file not fetched is removed when the next one is
-        written. While it is written, the table's pages are refused
-        (`Exporting`); an export cancelled by ``POST /api/plot-data/cancel``
-        answers 409 ``{"cancelled": true}`` and leaves no file.
+        `make` returns the task, after the first await; `held` is entered
+        from then until the worker has read what it reads. A file not
+        fetched is removed when the next one is written. While it is
+        written, the table's pages are refused (`Exporting`); an export
+        cancelled by ``POST /api/plot-data/cancel`` answers 409
+        ``{"cancelled": true}`` and leaves no file.
         """
         exporting.begin(request.export)
         try:
             with held:
-                names = [c["name"] for c in await source.schema()]
-                if request.columns == "all":
-                    columns = names
-                else:
-                    columns = [c for c in names if c in drawn]
-                missing = await asyncio.to_thread(source.missing, columns)
-                parts = {c: source.parts(c) for c in columns if c not in missing}
-                files = source.source_files([c for c in columns if c not in parts])
-                data = task_of(columns, parts, files)
+                data = await make()
                 for end, _ in exports.values():
                     end.discard()
                 exports.clear()
@@ -106,7 +106,7 @@ def export_router(  # noqa: C901, PLR0915
             exporting.end()
         ensure_done(end)
         now = datetime.now().astimezone()
-        name = file_name(source.paths, request.format, now, selected=selected)
+        name = file_name(source.paths, request.format, now, kind)
         key = uuid.uuid4().hex
         exports[key] = (end, name)
         return {"file": key, "name": name}
@@ -150,7 +150,10 @@ def export_router(  # noqa: C901, PLR0915
             )
 
         return await export(
-            request, spec.files, contextlib.nullcontext(), task_of, selected=True
+            request,
+            contextlib.nullcontext(),
+            lambda: plot_task(request.columns, spec.files, task_of),
+            SELECTED,
         )
 
     @router.post("/api/plot-data/{task}", response_model=None)
@@ -184,10 +187,9 @@ def export_router(  # noqa: C901, PLR0915
         # worker has read it: keep its directory.
         return await export(
             request,
-            index.manifest.spec.files,
             results.hold(index),
-            task_of,
-            selected=False,
+            lambda: plot_task(request.columns, index.manifest.spec.files, task_of),
+            "",
         )
 
     @router.get("/api/plot-data/file/{key}")

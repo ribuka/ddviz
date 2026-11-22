@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import polars as pl
@@ -98,6 +100,46 @@ def _duplicates(right: pl.LazyFrame, keys: list[str]) -> tuple[int, list[tuple]]
     return found.height, found.head(DUPLICATE_EXAMPLES).rows()
 
 
+@contextmanager
+def hash_pieces(frame: pl.LazyFrame, keys: list[str], buckets: int, work: Path) -> Iterator[list[list[Path]]]:
+    """Split the rows of `frame` on disk by the hash of their `keys` into `buckets` pieces, and yield the files of each piece.
+
+    One streaming sink writes the pieces; a set of key values lies in one
+    piece only. The pieces are removed when the context ends.
+
+    Parameters
+    ----------
+    frame : polars.LazyFrame
+        The rows to split.
+    keys : list of str
+        The columns whose values decide the piece of a row.
+    buckets : int
+        The pieces.
+    work : pathlib.Path
+        Directory for the pieces, removed at the end.
+
+    Yields
+    ------
+    list of list of pathlib.Path
+        The files of each piece holding rows.
+    """
+    bucket = _free(_BUCKET, set(frame.collect_schema().names()))
+    try:
+        frame.with_columns(
+            (pl.struct(keys).hash(seed=0) % buckets).alias(bucket)
+        ).sink_parquet(
+            pl.PartitionBy(work, key=bucket, include_key=False), engine="streaming"
+        )
+        # A piece may be written as several files in its directory
+        # (``<bucket>=<n>/``): it is read with all of them.
+        pieces: dict[Path, list[Path]] = {}
+        for file in sorted(work.rglob("*.parquet")):
+            pieces.setdefault(file.parent, []).append(file)
+        yield list(pieces.values())
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def duplicate_keys(
     right: pl.LazyFrame, keys: list[str], buckets: int, work: Path
 ) -> tuple[int, list[str]]:
@@ -133,25 +175,12 @@ def duplicate_keys(
     if buckets == 1:
         count, first = _duplicates(right, keys)
         return count, [_text(r) for r in first]
-    bucket = _free(_BUCKET, set(keys))
-    try:
-        right.with_columns(
-            (pl.struct(keys).hash(seed=0) % buckets).alias(bucket)
-        ).sink_parquet(
-            pl.PartitionBy(work, key=bucket, include_key=False), engine="streaming"
-        )
-        # A piece may be written as several files in its directory
-        # (``<bucket>=<n>/``): it is counted with all of them.
-        pieces: dict[Path, list[Path]] = {}
-        for file in sorted(work.rglob("*.parquet")):
-            pieces.setdefault(file.parent, []).append(file)
-        count, first = 0, []
-        for files in pieces.values():
+    count, first = 0, []
+    with hash_pieces(right, keys, buckets, work) as pieces:
+        for files in pieces:
             found, rows = _duplicates(pl.scan_parquet(files), keys)
             count += found
             first += rows
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
     examples = pl.DataFrame(first, schema=right.collect_schema(), orient="row").sort(keys)
     return count, [_text(r) for r in examples.head(DUPLICATE_EXAMPLES).rows()]
 
