@@ -24,7 +24,7 @@
 Example:
 
 ```text
-perf: bin_scatter のビン集約を group_by 1 回にまとめる
+fix: load_config が空のファイルで落ちないようにする
 ```
 
 ## Attribution

@@ -20,6 +20,8 @@
 - Always use `uv run -m`.
 - NEVER use `python -m`.
 - Coding rules: [.agents/docs/python.md](.agents/docs/python.md)
+- Choose the package for new code from "パッケージ構成" in `docs/spec.md` (the packages, what each may import, and the modules inside `server` and `compute`). `tests/test_layers.py` checks the import boundaries.
+  - When adding a module to `server` or `compute`, add it to its module table in `docs/spec.md`.
 - Running tests: [.agents/docs/pytest.md](.agents/docs/pytest.md)
 - Checking the UI in a browser and E2E tests: [.agents/docs/browser.md](.agents/docs/browser.md)
 

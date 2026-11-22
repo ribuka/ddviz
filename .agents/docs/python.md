@@ -10,11 +10,14 @@ Follow [coding.md](coding.md) first; this file adds what is specific to Python.
 ## Structure
 
 - State each module's responsibility in its module docstring.
-- Choose the package for new code from "パッケージ構成" in `docs/spec.md` (the packages, what each may import, and the modules inside `server` and `compute`). `tests/test_layers.py` checks the import boundaries.
-- When adding a module to `server` or `compute`, add it to its module table in `docs/spec.md`.
-- Keep `__init__.py` files to a docstring. NEVER re-export names from them (importing `ddviz.compute` would then load polars).
+- Keep `__init__.py` files to a docstring. NEVER re-export names from them: importing the package would then load every module behind those names, with their dependencies.
 
 ## Lint
 
-- ruff checks the limits of coding.md (C901, PLR0912, PLR0915) and fails on a stale `noqa` (RUF100). Existing debt is marked `# noqa: <codes>` on the `def` line.
+- ruff checks the limits of coding.md (C901, PLR0912, PLR0915) with the values in `pyproject.toml`, and fails on a stale `noqa` (RUF100). Existing debt is marked `# noqa: <codes>` on the `def` line.
 - ruff also flags unused arguments (ARG; not in tests, where pytest passes fixtures). An argument a caller's signature requires stays, with `# noqa: ARG001 - <why>`.
+
+## Tests
+
+- Before adding a helper or fixture, search the `conftest.py` files under `tests/` and the test file you are editing.
+- Share setup through pytest fixtures scoped as narrowly as the tests that use them.

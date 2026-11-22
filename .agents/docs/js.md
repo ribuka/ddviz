@@ -14,7 +14,7 @@ Follow [coding.md](coding.md) first; this file adds what is specific to the JS u
 
 ## Complexity limits
 
-- `tests/test_js_complexity.py` checks the limits of coding.md for each function, with the codes of ruff (C901, PLR0912, PLR0915). A nested function is measured on its own. Existing debt is marked `// noqa: <codes>` at the end of the line the function starts on.
+- `tests/test_js_complexity.py` checks the limits of coding.md for each function, with the codes of ruff (C901, PLR0912, PLR0915) and the values in `pyproject.toml`. A nested function is measured on its own. Existing debt is marked `// noqa: <codes>` at the end of the line the function starts on.
 
 ## Tests
 
