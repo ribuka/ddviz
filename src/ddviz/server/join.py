@@ -8,12 +8,14 @@ numbers stay those of the input. The columns added and their names are
 written by workers (`ddviz.compute.join`). The join may add only some of the
 joined table's columns, or leave out those named like the input's
 (`check_columns`, `choose_columns`), maybe only when their values are the same
-(`ddviz.compute.join.run_join_equal`).
+(`ddviz.compute.join.run_join_equal`). A join by keys may be tried first
+without joining (a dry run, `JoinCheck`): its map is then taken by the join.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
@@ -76,6 +78,38 @@ class Join:
     maps: list[str]
     task: JoinTask | None
     exact: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class JoinCheck:
+    """The last dry run of a join by keys that ended (`ddviz.server.source.Source.check_join`).
+
+    A join by the same keys of the same tables takes its map and
+    ``_joined`` while their parts are there, instead of running the join
+    task again; the rows of both tables are saved through its map
+    (``POST /api/plot-data/join-rows``).
+
+    Parameters
+    ----------
+    id : str
+        The join it is of (`ddviz.shared.joined.join_id`).
+    keys : list of dict of str to str
+        The pairs of keys, ``{"left", "right"}``.
+    task : JoinTask
+        The join task it ran: its map and ``_joined`` parts.
+    answer : dict
+        What it answered (``POST /api/join/check``).
+    """
+
+    id: str
+    keys: list[dict[str, str]]
+    task: JoinTask
+    answer: dict
+
+    @property
+    def parts(self) -> list[Path]:
+        """Return the parts of the map and ``_joined`` the join task wrote."""
+        return [Path(p) for p in [*self.task.maps, *self.task.indicators]]
 
 
 def _wrong(reason: str) -> HTTPException:

@@ -1,4 +1,4 @@
-"""Routes of the join of another table to the input (`ddviz.server.source.Source.join`): read the table, search its columns, join."""
+"""Routes of the join of another table to the input (`ddviz.server.source.Source.join`): read the table, search its columns, try the join without joining, join, and cancel a try or a join."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, HTTPException
 
 from ddviz.server.columns import search_columns
-from ddviz.server.models import JoinRequest, JoinSourceRequest
+from ddviz.server.models import JoinCheckRequest, JoinRequest, JoinSourceRequest
 from ddviz.server.source import Source
 
 # What the search of the joined table's columns returns of each.
@@ -55,5 +55,15 @@ def join_router(source: Source, max_listed: Callable[[], int]) -> APIRouter:
         """Join the table read to the input, by keys or by rows, once (`ddviz.server.source.Source.join`)."""
         keys = [{"left": k.left, "right": k.right} for k in request.keys]
         return await source.join(request.kind, keys, request.columns, request.same_names)
+
+    @router.post("/api/join/check")
+    async def join_check(request: JoinCheckRequest) -> dict:
+        """Try a join by the keys without joining, and return the rows of both tables it matches and the keys matching none (`ddviz.server.source.Source.check_join`)."""
+        return await source.check_join([{"left": k.left, "right": k.right} for k in request.keys])
+
+    @router.post("/api/join/cancel", status_code=204)
+    async def join_cancel() -> None:
+        """Cancel the dry run or the join running, which answers 409 ``cancelled``; nothing when none runs (`ddviz.server.source.Source.cancel_join`)."""
+        await source.cancel_join()
 
     return router

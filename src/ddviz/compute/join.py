@@ -22,6 +22,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import polars_helpers as plh
 
@@ -43,6 +44,8 @@ DUPLICATE_EXAMPLES = 5
 # memory than 16; on 100M with 100M, one piece does not fit 8 GiB.
 ONE_BUCKET_ROWS = 10_000_000
 BUCKETS = 16
+# The column of the file of the rows of the joined table matched (`write_matched`).
+MATCHED = "matched"
 # The row index of the joined table in the merge, the count of a key in the
 # check of duplicates, and the piece of a key, named apart from the keys
 # (`_free`).
@@ -183,6 +186,33 @@ def duplicate_keys(
             first += rows
     examples = pl.DataFrame(first, schema=right.collect_schema(), orient="row").sort(keys)
     return count, [_text(r) for r in examples.head(DUPLICATE_EXAMPLES).rows()]
+
+
+def write_matched(maps: list[str], right_rows: int, file: Path) -> int:
+    """Write whether a row of the input matched each row of the joined table, and return the rows matched.
+
+    Parameters
+    ----------
+    maps : list of str
+        The parts of the map (`MAP_COLUMN`), read one at a time.
+    right_rows : int
+        The rows of the joined table.
+    file : pathlib.Path
+        The Parquet file to write: per row of the joined table, in order,
+        `MATCHED` (Boolean).
+
+    Returns
+    -------
+    int
+        The rows of the joined table some row of the input matched.
+    """
+    matched = np.zeros(right_rows, dtype=bool)
+    for part in maps:
+        rows = pl.read_parquet(part, columns=[MAP_COLUMN])[MAP_COLUMN].drop_nulls().to_numpy()
+        matched[rows] = True
+        del rows
+    pl.DataFrame({MATCHED: matched}).write_parquet(file)
+    return int(matched.sum())
 
 
 def _refuse(out: Path, message: str) -> None:

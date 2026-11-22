@@ -176,6 +176,36 @@ class JoinTask:
 
 
 @dataclass(frozen=True)
+class JoinSummaryTask:
+    """Count the rows of both tables a join by keys matches, and the sets of keys that match none (`ddviz.compute.joinsummary`).
+
+    Parameters
+    ----------
+    keys : list of dict of str to str
+        The pairs of keys, ``{"left", "right"}``.
+    left : dict of str to list of str
+        The parts of the input's keys in its column cache.
+    right : dict of str to list of str
+        The parts of the joined table's keys in its column cache.
+    maps : list of str
+        Per file of the input, the part of the map the join task wrote
+        (`ddviz.shared.joined.MAP_COLUMN`).
+    left_rows : int
+        The rows of the input.
+    right_rows : int
+        The rows of the joined table.
+    """
+
+    KIND: ClassVar[str] = "join_summary"
+    keys: list[dict[str, str]]
+    left: dict[str, list[str]]
+    right: dict[str, list[str]]
+    maps: list[str]
+    left_rows: int
+    right_rows: int
+
+
+@dataclass(frozen=True)
 class JoinConvertTask:
     """Write the parts of columns a join added, from the joined table's parts (`ddviz.compute.join`).
 
@@ -394,6 +424,7 @@ Task = (
     | NonnullTask
     | ConvertTask
     | JoinTask
+    | JoinSummaryTask
     | JoinConvertTask
     | JoinEqualTask
     | PlotTask
@@ -411,6 +442,7 @@ TASKS: dict[str, type[Task]] = {
         NonnullTask,
         ConvertTask,
         JoinTask,
+        JoinSummaryTask,
         JoinConvertTask,
         JoinEqualTask,
         PlotTask,

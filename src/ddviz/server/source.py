@@ -28,12 +28,14 @@ from ddviz.server.broker import Pool, TaskBroker
 from ddviz.server.errors import ensure_done
 from ddviz.server.join import (
     Join,
+    JoinCheck,
     check_added,
     check_columns,
     check_keys,
     check_rows,
     choose_columns,
 )
+from ddviz.server.joining import Joining
 from ddviz.server.plan import parse_filters
 from ddviz.server.settings import CacheSettings
 from ddviz.shared.cache import SCHEMA, ColumnCache, evict
@@ -52,6 +54,7 @@ from ddviz.shared.tasks import (
     JoinConvertTask,
     JoinedFiles,
     JoinEqualTask,
+    JoinSummaryTask,
     JoinTask,
     LevelIndexTask,
     LevelSearchTask,
@@ -151,6 +154,12 @@ class Source:
         # once made (`join`).
         self.join_source: Source | None = None
         self.joined: Join | None = None
+        # The last dry run of a join by keys that ended (`check_join`), whose
+        # map a join by the same keys takes (`join`).
+        self.join_check: JoinCheck | None = None
+        # The dry run or the join running, which the page may cancel
+        # (`cancel_join`); the joined table's conversions go through it too.
+        self.joining = Joining()
 
     async def schema(self) -> list[dict]:
         """Return the columns of the input, reading them on the first call.
@@ -282,9 +291,11 @@ class Source:
         self.cache.touch({c: self._key(c) for c in dict.fromkeys(columns)})
 
     def evict(self, keep: list[Path]) -> None:
-        """Remove old column parts, keeping the given ones and the map and ``_joined`` of the join."""
+        """Remove old column parts, keeping the given ones and the map and ``_joined`` of the join and of the last dry run."""
         if self.joined is not None:
             keep = [*keep, *self._join_parts()]
+        if self.join_check is not None:
+            keep = [*keep, *self.join_check.parts]
         limits = self._cache_limits()
         evict(self._cache_root, limits.max_bytes, limits.max_unused_days, keep)
 
@@ -374,7 +385,7 @@ class Source:
             [by_file[i] for i in order],
             {c: self._generated[c] for c in missing if c in self._generated},
         )
-        end = await self._broker.run(task, pool)
+        end = await self.joining.run(self._broker, task, pool)
         end.discard()
         if end.type != "done":
             raise HTTPException(500, end.error)
@@ -514,6 +525,7 @@ class Source:
         # Its non-null count runs in the summary pool, where a new task
         # kills the running one.
         right._summary_lock = self._summary_lock
+        right.joining = self.joining
         columns = await right.schema()
         if self.joined is not None:
             raise HTTPException(409, "already joined")
@@ -522,6 +534,7 @@ class Source:
         if read != self._join_reads:
             raise HTTPException(409, "superseded")
         self.join_source = right
+        self.join_check = None
         return {
             "paths": right.paths,
             "files": len(right.files),
@@ -546,7 +559,10 @@ class Source:
         still with plots refused.
         Its columns then follow the input's
         (`ddviz.shared.joined.joined_names`). A refused join adds nothing,
-        and the table read stays for another try.
+        and the table read stays for another try. A join by keys right after
+        a dry run of the same keys (`check_join`) takes its map instead of
+        running the join task again. A join cancelled (`cancel_join`)
+        answers 409 ``cancelled`` and adds nothing; the dry run stays.
 
         Parameters
         ----------
@@ -583,11 +599,7 @@ class Source:
         """
         await self.schema()
         async with self._convert_lock:
-            right = self.join_source
-            if self.joined is not None:
-                raise HTTPException(409, "already joined")
-            if right is None:
-                raise HTTPException(409, "no join source")
+            right = self._join_source()
             check_keys(kind, keys, self._dtypes, right._dtypes)
             if kind == "rows":
                 check_rows(sum(self.rows), sum(right.rows))
@@ -604,7 +616,86 @@ class Source:
             check_added(kind, names)
             join = Join(right, kind, keys, columns, same_names, names, id_, matched, maps, task)
             self._add_join(join)
+            # Nothing takes the dry run's map any more.
+            self.join_check = None
         return {"added": list(names), "rows": sum(self.rows), "matched": matched, "skipped": skipped}
+
+    def _join_source(self) -> Source:
+        """Return the table read to join, refusing a dry run or a join without one (409 ``no join source``) or after the join (409 ``already joined``)."""
+        if self.joined is not None:
+            raise HTTPException(409, "already joined")
+        if self.join_source is None:
+            raise HTTPException(409, "no join source")
+        return self.join_source
+
+    async def check_join(self, keys: list[dict[str, str]]) -> dict:
+        """Try a join by `keys` of the table read without joining (a dry run): count the rows of both tables it matches and the sets of keys matching none.
+
+        As a join by keys, it converts the keys of both tables and runs the
+        join task in the plot pool, with plots refused meanwhile; then the
+        summary (`ddviz.compute.joinsummary`). Nothing is joined. The dry
+        run that ends is kept (`join_check`) in place of the last one, whose
+        map a join by the same keys takes; one that does not end leaves
+        none.
+
+        Parameters
+        ----------
+        keys : list of dict of str to str
+            The pairs of keys, ``{"left", "right"}``.
+
+        Returns
+        -------
+        dict
+            ``{"rows", "matched", "right_rows", "right_matched",
+            "left_unmatched", "right_unmatched"}``: the rows of the input and
+            those that match, the rows of the joined table and those some row
+            of the input matches, and per table the sets of keys of the rows
+            matching none (`ddviz.compute.joinsummary.unmatched_keys`).
+
+        Raises
+        ------
+        fastapi.HTTPException
+            As `join` refuses a join by keys; 409 ``cancelled`` when
+            cancelled (`cancel_join`).
+        """
+        await self.schema()
+        async with self._convert_lock:
+            self.join_check = None
+            right = self._join_source()
+            check_keys("key", keys, self._dtypes, right._dtypes)
+            id_ = self._join_id("key", keys, right)
+            task = self._join_task(keys, right, id_)
+            self.joining.begin()
+            self.converting = True
+            try:
+                matched = await self._run_join(task, keys, right)
+                summary = await self._run_summary(task)
+            finally:
+                self.converting = False
+                self.joining.end()
+            answer = {"rows": sum(self.rows), "matched": matched, "right_rows": sum(right.rows), **summary}
+            self.join_check = JoinCheck(id_, keys, task, answer)
+        return answer
+
+    async def cancel_join(self) -> None:
+        """Cancel the dry run or the join running, if any (`ddviz.server.joining.Joining`): kill its task in the plot pool, or stop it before the next."""
+        if self.joining.cancel():
+            await self._broker.cancel("plot")
+
+    async def _run_summary(self, join: JoinTask) -> dict:
+        """Run the summary of the join task `join` (`ddviz.compute.joinsummary.run_join_summary`) and return what the dry run answers of it."""
+        task = JoinSummaryTask(join.keys, join.left, join.right, join.maps, sum(join.rows), join.right_rows)
+        end = await self.joining.run(self._broker, task, "plot")
+        ensure_done(end)
+        found = end.take()
+        return {k: found[k] for k in ("right_matched", "left_unmatched", "right_unmatched")}
+
+    def _checked(self, id_: str) -> JoinCheck | None:
+        """Return the last dry run when it is of the join `id_` and the parts of its map and ``_joined`` are there, else None."""
+        check = self.join_check
+        if check is None or check.id != id_:
+            return None
+        return check if all(p.exists() for p in check.parts) else None
 
     def _join_id(self, kind: str, keys: list[dict[str, str]], right: Source) -> str:
         """Return what tells the join of `right` of `kind` by `keys` apart from another (`ddviz.shared.joined.join_id`)."""
@@ -634,7 +725,7 @@ class Source:
     async def _run_tasks(
         self, kind: str, keys: list[dict[str, str]], right: Source, id_: str, pairs: list[str]
     ) -> tuple[list[str], JoinTask | None, int, set[str]]:
-        """Run the tasks of a join, with plots refused meanwhile: the join task by keys, then the comparison of `pairs`.
+        """Run the tasks of a join, with plots refused meanwhile: the join task by keys, unless the last dry run of the same join left its map (`_checked`), then the comparison of `pairs`.
 
         Parameters
         ----------
@@ -662,16 +753,22 @@ class Source:
         equal: set[str] = set()
         if kind == "rows" and not pairs:
             return maps, task, matched, equal
+        self.joining.begin()
         self.converting = True
         try:
             if kind == "key":
-                task = self._join_task(keys, right, id_)
+                check = self._checked(id_)
+                if check is None:
+                    task = self._join_task(keys, right, id_)
+                    matched = await self._run_join(task, keys, right)
+                else:
+                    task, matched = check.task, check.answer["matched"]
                 maps = task.maps
-                matched = await self._run_join(task, keys, right)
             if pairs:
                 equal = await self._run_equal(pairs, right, maps)
         finally:
             self.converting = False
+            self.joining.end()
         return maps, task, matched, equal
 
     async def _run_equal(self, pairs: list[str], right: Source, maps: list[str]) -> set[str]:
@@ -689,7 +786,7 @@ class Source:
             self.rows,
             maps,
         )
-        end = await self._broker.run(task, "plot")
+        end = await self.joining.run(self._broker, task, "plot")
         ensure_done(end)
         return set(end.take()["equal"])
 
@@ -703,7 +800,7 @@ class Source:
         gaps = await asyncio.to_thread(right.missing, [k["right"] for k in keys])
         if gaps:
             await right._convert(gaps, "plot")
-        end = await self._broker.run(task, "plot")
+        end = await self.joining.run(self._broker, task, "plot")
         if end.type != "done":
             # The merge's files on disk (up to about 4 GiB on 100M rows)
             # would stay until the app quits.

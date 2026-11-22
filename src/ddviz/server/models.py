@@ -191,3 +191,21 @@ class JoinRequest(BaseModel):
     keys: list[JoinKey] = []
     columns: list[str] | None = None
     same_names: str | None = None
+
+
+class JoinCheckRequest(BaseModel):
+    """Body of ``POST /api/join/check``: the pairs of keys of a join by keys to try without joining (`ddviz.server.source.Source.check_join`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    keys: list[JoinKey]
+
+
+class JoinRowsRequest(BaseModel):
+    """Body of ``POST /api/plot-data/join-rows``: the file's format and columns (``"key"`` or ``"all"``), and the page's token for the progress (`ddviz.shared.tasks.JoinRowsTask`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: Literal["csv", "parquet"]
+    columns: Literal["key", "all"]
+    export: str
