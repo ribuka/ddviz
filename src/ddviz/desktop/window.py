@@ -74,7 +74,7 @@ def _page(screen: str, style: str, body: str) -> str:
         The HTML.
     """
     return (
-        f'<!doctype html><html lang="ja" class="desktop" data-screen="{screen}">'
+        f'<!doctype html><html lang="en" class="desktop" data-screen="{screen}">'
         f'<head><meta charset="utf-8"><title>{TITLE}</title>'
         f"<style>{_TITLEBAR_CSS}{_PREFERENCES_CSS}{style}</style></head>"
         f"<body><script>{_PREFERENCES_JS}</script><script>{_TITLEBAR_JS}</script>"
@@ -84,12 +84,31 @@ def _page(screen: str, style: str, body: str) -> str:
 
 _MESSAGE_STYLE = """html,body{height:100%}body{margin:0;display:flex;
 flex-direction:column;font-family:sans-serif;color:#555}
-main{flex:1;display:flex;align-items:center;justify-content:center}"""
+main{flex:1;display:flex;flex-direction:column;gap:12px;align-items:center;
+justify-content:center}"""
 
-_LOADING = _page("loading", _MESSAGE_STYLE, "<main>起動しています…</main>")
+# The spinner of the window's waits: on the loading pages, and on the
+# chooser's cover while an input opens. CSS alone: it turns while Python
+# works, without images or timers.
+_SPINNER_STYLE = """.spinner{width:28px;height:28px;box-sizing:border-box;
+border:3px solid #ddd;border-top-color:#1a73e8;border-radius:50%;
+animation:ddviz-spin .8s linear infinite}
+@keyframes ddviz-spin{to{transform:rotate(360deg)}}"""
+
+_SPINNER = '<div class="spinner" aria-hidden="true"></div>'
+
+
+def _waiting(text: str) -> str:
+    """Return a loading page: the spinner above `text`."""
+    return _page(
+        "loading", _MESSAGE_STYLE + _SPINNER_STYLE, f"<main>{_SPINNER}<span>{text}</span></main>"
+    )
+
+
+_LOADING = _waiting("Starting…")
 
 # Shown while `New` stops the open input's server, before the chooser.
-_CLOSING = _page("loading", _MESSAGE_STYLE, "<main>前のデータを閉じています…</main>")
+_CLOSING = _waiting("Closing the previous data…")
 
 # Shown when no input was given, and after `New`: the OS has no dialog that
 # picks a file or a folder, so the user first picks which (several files may
@@ -101,34 +120,44 @@ _CLOSING = _page("loading", _MESSAGE_STYLE, "<main>前のデータを閉じて�
 # pywebview's DOM events, which alone carry the files' full paths. A file of
 # the drawing settings (`ddviz.shared.drawfile`), picked or dropped alone,
 # opens its data with them; when the data is not found, `#pending` tells it
-# until other data is picked for the settings or they are dropped
-# ("描画設定を使わない"). When the table joined to it is not found, it tells
-# that too, with "結合を使わない" to open the data without the join.
+# until other data is picked for the settings or they are dropped ("Don't use
+# the drawing settings"). When the table joined to it is not found, it tells
+# that too, with "Open without the join" to open the data without the join.
+# Once an input is to open, `_App._open_chosen` calls `window.ddvizOpening`,
+# which covers `#drop` with the spinner and stops the page; nothing removes
+# the cover, since the window never comes back to the page: `_App._open`
+# loads the input's page, or closes the window when it fails.
 _CHOOSER = _page(
     "chooser",
     """html,body{height:100%}body{margin:0;display:flex;flex-direction:column;
 font-family:sans-serif;color:#333}
-#drop{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
-background:#f6f6f6;box-sizing:border-box;border:3px solid transparent}
+#drop{position:relative;flex:1;min-height:0;display:flex;align-items:center;
+justify-content:center;background:#f6f6f6;box-sizing:border-box;
+border:3px solid transparent}
 #drop.dragging{background:#e8f0fe;border:3px dashed #1a73e8}
 main{display:flex;flex-direction:column;gap:14px;padding:28px 36px;
 background:#fff;border:1px solid #ddd;border-radius:6px;min-width:320px}
 h1{font-size:16px;margin:0 0 4px}main button{font-size:14px;padding:8px 14px}
 .row{display:flex;gap:10px}label,p{font-size:13px}p{margin:0;color:#666}
 #error{color:#c5221f}#error:empty{display:none}
-#pending{color:#333;max-width:520px;overflow-wrap:anywhere}""",
-    """<div id="drop"><main><h1>開く Parquet を選んでください</h1>
-<div class="row"><button type="button" id="file">ファイルを開く…</button>
-<button type="button" id="folder">フォルダを開く…</button></div>
-<p>ファイルは複数選べます。選んだファイルを縦につなげて 1 つの表にします。</p>
-<p>Parquet ファイルをこの画面にドラッグ＆ドロップできます。</p>
-<p>描画設定（.json）を開くと、そのデータを同じ描画設定で開きます。</p>
-<label><input type="checkbox" id="recursive"> フォルダのサブフォルダの Parquet も読む</label>
+#pending{color:#333;max-width:520px;overflow-wrap:anywhere}
+#opening{position:absolute;inset:0;display:flex;flex-direction:column;gap:12px;
+align-items:center;justify-content:center;background:rgba(246,246,246,0.8);
+font-size:14px;color:#555}#opening[hidden]{display:none}"""
+    + _SPINNER_STYLE,
+    """<div id="drop"><main><h1>Open Parquet data</h1>
+<div class="row"><button type="button" id="file">Open files…</button>
+<button type="button" id="folder">Open folder…</button></div>
+<label><input type="checkbox" id="recursive"> Include subfolders when opening a folder</label>
+<p>You can select several files; they are stacked into one table.</p>
+<p>Opening drawing settings (.json) opens their data with the same settings.</p>
 <p id="error" role="alert"></p>
 <p id="pending" role="status" hidden><span id="pending-text"></span>
-<a href="#" id="forget-join" hidden>結合を使わない</a>
-<a href="#" id="forget">描画設定を使わない</a></p>
-<div class="row"><button type="button" id="cancel">キャンセル</button></div></main></div>
+<a href="#" id="forget-join" hidden>Open without the join</a>
+<a href="#" id="forget">Don't use the drawing settings</a></p></main>
+<div id="opening" hidden>"""
+    + _SPINNER
+    + """<span role="status">Opening…</span></div></div>
 <script>
 const drop = document.getElementById("drop");
 const recursive = document.getElementById("recursive");
@@ -142,7 +171,6 @@ async function call(name, ...args) {
 }
 document.getElementById("file").onclick = () => call("choose", "file", false);
 document.getElementById("folder").onclick = () => call("choose", "folder", recursive.checked);
-document.getElementById("cancel").onclick = () => call("cancel");
 window.ddvizDropError = (text) => { error.textContent = text; };
 const pending = document.getElementById("pending");
 const forgetJoin = document.getElementById("forget-join");
@@ -161,6 +189,16 @@ forgetJoin.onclick = (e) => {
   window.ddvizPendingDraw(null);
   call("forget_join");
 };
+// An input is opening: `inert` keeps the buttons, the checkbox and the links
+// from working whatever `call` gives back, and dragged files are not
+// highlighted any more.
+let opening = false;
+window.ddvizOpening = () => {
+  opening = true;
+  idle();
+  document.querySelector("main").inert = true;
+  document.getElementById("opening").hidden = false;
+};
 // Entering a child fires dragenter before the parent's dragleave, so a
 // count of the elements entered stays above 0 until the drag leaves the
 // area, is cancelled, or drops: the highlight does not flicker.
@@ -168,7 +206,7 @@ let entered = 0;
 const files = (e) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
 function idle() { entered = 0; drop.classList.remove("dragging"); }
 drop.addEventListener("dragenter", (e) => {
-  if (!files(e)) return;
+  if (opening || !files(e)) return;
   if (entered++ === 0) { error.textContent = ""; drop.classList.add("dragging"); }
 });
 drop.addEventListener("dragleave", (e) => {
@@ -177,7 +215,7 @@ drop.addEventListener("dragleave", (e) => {
 document.addEventListener("dragenter", (e) => e.preventDefault());
 document.addEventListener("dragover", (e) => {
   e.preventDefault();
-  e.dataTransfer.dropEffect = files(e) && drop.contains(e.target) ? "copy" : "none";
+  e.dataTransfer.dropEffect = !opening && files(e) && drop.contains(e.target) ? "copy" : "none";
 });
 document.addEventListener("drop", (e) => { e.preventDefault(); idle(); });
 window.addEventListener("blur", idle);
@@ -185,15 +223,17 @@ window.addEventListener("blur", idle);
 )
 
 #: Shown on the chooser when a drop has a folder or another kind of file.
-DROP_NOT_PARQUET = ".parquet ファイルだけをドロップしてください。"
+DROP_NOT_PARQUET = "Drop only .parquet files."
 #: Shown on the chooser when a dropped file's path is unknown or the file is gone.
-DROP_UNREADABLE = "ドロップしたファイルを確認できませんでした。ファイルを確認して、もう一度試してください。"
+DROP_UNREADABLE = "Could not check the dropped files. Check the files and try again."
 #: Shown on the chooser when a drop has a file of the drawing settings and anything else.
-DROP_ONE_DRAW_FILE = "描画設定は 1 つだけドロップしてください。"
+DROP_ONE_DRAW_FILE = "Drop only one drawing settings file."
 #: Shown on the chooser when the dialog's files have one of the drawing settings and anything else.
-CHOOSE_ONE_DRAW_FILE = "描画設定は 1 つだけ選んでください。"
+CHOOSE_ONE_DRAW_FILE = "Select only one drawing settings file."
 #: The kinds of files of the chooser's dialog.
-OPEN_FILE_TYPES = ("Parquet (*.parquet)", "描画設定 (*.json)", "すべてのファイル (*.*)")
+OPEN_FILE_TYPES = ("Parquet (*.parquet)", "Drawing settings (*.json)", "All files (*.*)")
+#: Covers the chooser with the spinner once an input is to open (`_App._open_chosen`).
+OPENING_SCRIPT = "window.ddvizOpening()"
 #: The kinds of files of the join dialog's OS dialog: Parquet only.
 JOIN_FILE_TYPES = ("Parquet (*.parquet)",)
 
@@ -476,8 +516,8 @@ class _App:
         self._waiting = None
         if draw.missing:
             text = (
-                f"描画設定「{json_path.name}」のデータが見つかりません："
-                f"{'、'.join(draw.missing)}。データを選んでください。"
+                f'Data for the drawing settings "{json_path.name}" was not found: '
+                f"{', '.join(draw.missing)}. Choose the data."
             )
             self._window.run_js(f"window.ddvizPendingDraw({json.dumps(text)})")
             return
@@ -501,16 +541,31 @@ class _App:
             (opened, opened_recursive), self._waiting = self._waiting, None
             self._pending = _with_join(self._pending, paths, recursive)
             self._join_missing = []
-            self._open(opened, opened_recursive)
+            self._open_chosen(opened, opened_recursive)
             return
         if self._pending is not None and self._join_missing:
             self._waiting = (paths, recursive)
             text = (
-                f"描画設定「{self._pending_name}」の結合するデータが見つかりません："
-                f"{'、'.join(self._join_missing)}。結合するデータを選んでください。"
+                f'Data to join for the drawing settings "{self._pending_name}" was not found: '
+                f"{', '.join(self._join_missing)}. Choose the data to join."
             )
             self._window.run_js(f"window.ddvizPendingDraw({json.dumps(text)}, true)")
             return
+        self._open_chosen(paths, recursive)
+
+    def _open_chosen(self, paths: list[str], recursive: bool) -> None:
+        """Cover the chooser with the spinner, then open the input it chose (`_open`).
+
+        Every way the chooser opens an input comes here, and only those: a
+        dialog closed, an error, a message that asks for data, or
+        `forget_draw` leaves the chooser as it is. `start` opens the input
+        given directly, on the loading page with its own spinner. Once an
+        input is open, nothing more opens (`_open`), and the cover is not
+        asked for again.
+        """
+        if self._opened.locked():
+            return
+        self._window.run_js(OPENING_SCRIPT)
         self._open(paths, recursive)
 
     def choose_join(self, kind: str) -> list[str] | None:
@@ -546,13 +601,13 @@ class _App:
         return [chosen[0]] if kind == "folder" else list(chosen)
 
     def forget_draw(self) -> None:
-        """Drop the drawing settings kept for the next input (the chooser's 描画設定を使わない), and the input waiting for its table joined."""
+        """Drop the drawing settings kept for the next input (the chooser's "Don't use the drawing settings"), and the input waiting for its table joined."""
         self._pending = None
         self._join_missing = []
         self._waiting = None
 
     def forget_join(self) -> None:
-        """Open the input waiting for its table joined without the join (the chooser's 結合を使わない).
+        """Open the input waiting for its table joined without the join (the chooser's "Open without the join").
 
         The settings' ``source.join`` becomes null: the page applies them to
         the input alone, leaving out the joined columns.
@@ -565,7 +620,7 @@ class _App:
             (paths, recursive), self._waiting = self._waiting, None
             self._pending = {**self._pending, "source": {**self._pending["source"], "join": None}}
             self._join_missing = []
-            self._open(paths, recursive)
+            self._open_chosen(paths, recursive)
         finally:
             self._choosing.release()
 
@@ -861,8 +916,8 @@ def _record(window: webview.Window) -> None:
 class _Api:
     """What the window's pages may call through pywebview's JS API, and nothing else of `_App`.
 
-    The chooser calls `choose`, `cancel`, `forget_draw` and `forget_join`; the title bar's
-    app menu (`static/js/titlebar.js`) calls `new`, `quit`, `version`,
+    The chooser calls `choose`, `forget_draw` and `forget_join`; the title
+    bar's app menu (`static/js/titlebar.js`) calls `new`, `quit`, `version`,
     `settings` and `save_settings` on every page, and `save_draw_file` and
     `choose_join` (for the join dialog, `static/js/joindialog.js`) on the
     graph's.
@@ -880,10 +935,6 @@ class _Api:
     def choose(self, kind: str, recursive: bool) -> None:
         """Open the OS dialog for files or a folder (`_App.choose`)."""
         self.app.choose(kind, bool(recursive))
-
-    def cancel(self) -> None:
-        """Close the window (`_App.cancel`)."""
-        self.app.cancel()
 
     def forget_draw(self) -> None:
         """Drop the drawing settings kept for the next input (`_App.forget_draw`)."""

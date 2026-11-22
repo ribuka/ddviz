@@ -24,6 +24,8 @@ from ddviz.desktop.window import (
     DROP_NOT_PARQUET,
     DROP_ONE_DRAW_FILE,
     DROP_UNREADABLE,
+    OPEN_FILE_TYPES,
+    OPENING_SCRIPT,
     TITLE,
     _Api,
     _App,
@@ -46,6 +48,8 @@ class _FakeWindow:
         self.destroyed = False
         self.dialogs: list[object] = []
         self.scripts: list[str] = []
+        # The scripts run before the first URL was loaded.
+        self.scripts_at_url: list[str] | None = None
         # What the window was told to show, in order, with what the servers did.
         self.log: list[tuple] = []
         self._chosen = chosen
@@ -60,6 +64,8 @@ class _FakeWindow:
         self.scripts.append(script)
 
     def load_url(self, url: str) -> None:
+        if self.scripts_at_url is None:
+            self.scripts_at_url = list(self.scripts)
         self.url = url
         self.log.append(("url", url))
 
@@ -68,6 +74,12 @@ class _FakeWindow:
 
     def destroy(self) -> None:
         self.destroyed = True
+
+
+def _covered_once(window: _FakeWindow) -> None:
+    """Assert that the chooser was covered with the spinner once, before the input's page loaded."""
+    assert window.scripts.count(OPENING_SCRIPT) == 1
+    assert OPENING_SCRIPT in window.scripts_at_url
 
 
 def _hello(
@@ -106,6 +118,8 @@ def test_the_window_shows_the_server_and_closing_stops_it(tmp_path: Path) -> Non
         app.stop()
     assert not app.failed
     assert not window.destroyed
+    # The loading page has its own spinner: the chooser's cover is not asked for.
+    assert window.scripts == []
 
 
 def test_a_server_that_stops_by_itself_closes_the_window() -> None:
@@ -149,6 +163,7 @@ def test_cancelling_the_os_dialog_keeps_the_chooser() -> None:
     app.stop()
     assert window.dialogs == [(webview.FileDialog.OPEN, True)]
     assert window.url is None
+    assert window.scripts == []
     assert not window.destroyed
     assert not app.failed
 
@@ -166,6 +181,7 @@ def test_a_chosen_folder_opens_with_its_subfolders_on_request(tmp_path: Path) ->
         first = window.url
         app.choose("folder", False)
         assert window.url == first
+        _covered_once(window)
     finally:
         app.stop()
     assert not app.failed
@@ -187,6 +203,7 @@ def test_several_chosen_files_open_as_one_input(tmp_path: Path) -> None:
         assert paths == [str(tmp_path / n) for n in names]
         assert recursive is False
         assert window.title == "ddviz - data_1.parquet and 2 more"
+        _covered_once(window)
     finally:
         app.stop()
     assert not app.failed
@@ -253,6 +270,15 @@ def test_another_kind_of_file_outweighs_an_unknown_path(tmp_path: Path) -> None:
     assert dropped_paths(event) == ([], DROP_NOT_PARQUET)
 
 
+def test_the_choosers_messages_are_in_english() -> None:
+    """The chooser's errors and the dialog's kinds of files are the English of Issue #376."""
+    assert DROP_NOT_PARQUET == "Drop only .parquet files."
+    assert DROP_UNREADABLE == "Could not check the dropped files. Check the files and try again."
+    assert DROP_ONE_DRAW_FILE == "Drop only one drawing settings file."
+    assert CHOOSE_ONE_DRAW_FILE == "Select only one drawing settings file."
+    assert OPEN_FILE_TYPES == ("Parquet (*.parquet)", "Drawing settings (*.json)", "All files (*.*)")
+
+
 def test_a_drop_without_files_is_ignored() -> None:
     """A dropped link or text has no files: nothing opens and nothing is shown."""
     assert dropped_paths({"type": "drop", "dataTransfer": {"files": []}}) == ([], None)
@@ -276,7 +302,7 @@ def test_dropped_files_open_as_files_chosen_in_the_dialog_are(tmp_path: Path) ->
         assert window.url == first
     finally:
         app.stop()
-    assert window.scripts == []
+    _covered_once(window)
     assert window.dialogs == []
     assert not app.failed
 
@@ -554,6 +580,18 @@ def test_quit_closes_the_window_as_the_close_button_does(tmp_path: Path) -> None
     assert not app.failed
 
 
+def test_the_api_has_no_cancel_and_quit_closes_the_window() -> None:
+    """The chooser has no cancel button: the app menu's `Quit` (or the close button) closes the window."""
+    assert not hasattr(_Api, "cancel")
+    window = _FakeWindow()
+    api = _Api(None)
+    api.app = _App(window, None, False, _hello, input_label, DrawFileIO())
+    api.quit()
+    api.app.stop()
+    assert window.destroyed
+    assert not api.app.failed
+
+
 def test_version_is_the_packages_from_the_version_file() -> None:
     """`Version` is the installed package's version, which is the repository's VERSION."""
     app = _App(_FakeWindow(), None, False, _hello, input_label, DrawFileIO())
@@ -694,7 +732,7 @@ def test_a_dropped_draw_file_opens_its_data_with_its_settings(tmp_path: Path) ->
         assert _initial_draw(window) == content
     finally:
         app.stop()
-    assert window.scripts == []
+    _covered_once(window)
 
 
 def test_a_moved_draw_file_finds_its_data_from_where_it_is(tmp_path: Path) -> None:
@@ -724,7 +762,7 @@ def test_data_not_found_waits_for_other_data_or_is_dropped(tmp_path: Path) -> No
     app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.drop(_drop(tmp_path / "graph.json"))
     assert window.url is None
-    text = f"描画設定「graph.json」のデータが見つかりません：{gone}。データを選んでください。"
+    text = f'Data for the drawing settings "graph.json" was not found: {gone}. Choose the data.'
     assert window.scripts == [f"window.ddvizPendingDraw({json.dumps(text)})"]
     app.drop(_drop(other))
     try:
@@ -732,11 +770,13 @@ def test_data_not_found_waits_for_other_data_or_is_dropped(tmp_path: Path) -> No
         assert _initial_draw(window) == content
     finally:
         app.stop()
+    _covered_once(window)
 
     window = _FakeWindow()
     app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.drop(_drop(tmp_path / "graph.json"))
     app.forget_draw()
+    assert OPENING_SCRIPT not in window.scripts
     app.drop(_drop(other))
     try:
         assert _initial_draw(window) is None
@@ -750,8 +790,8 @@ def test_data_not_found_waits_for_other_data_or_is_dropped(tmp_path: Path) -> No
 def _join_text(name: str, missing: list[Path]) -> str:
     """Return the chooser's script that asks for the table joined to the settings of `name`."""
     text = (
-        f"描画設定「{name}」の結合するデータが見つかりません："
-        f"{'、'.join(str(p) for p in missing)}。結合するデータを選んでください。"
+        f'Data to join for the drawing settings "{name}" was not found: '
+        f"{', '.join(str(p) for p in missing)}. Choose the data to join."
     )
     return f"window.ddvizPendingDraw({json.dumps(text)}, true)"
 
@@ -779,7 +819,7 @@ def test_a_moved_draw_file_finds_its_table_joined_from_where_it_is(tmp_path: Pat
         }
     finally:
         app.stop()
-    assert window.scripts == []
+    _covered_once(window)
 
 
 def test_a_table_joined_not_found_waits_for_the_one_picked(tmp_path: Path) -> None:
@@ -800,6 +840,7 @@ def test_a_table_joined_not_found_waits_for_the_one_picked(tmp_path: Path) -> No
         assert _initial_draw(window) == _joined_from(content, [lots], True)
     finally:
         app.stop()
+    _covered_once(window)
 
 
 def test_an_input_and_its_table_joined_not_found_are_asked_for_in_turn(tmp_path: Path) -> None:
@@ -813,7 +854,7 @@ def test_an_input_and_its_table_joined_not_found_are_asked_for_in_turn(tmp_path:
     window = _FakeWindow()
     app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.drop(_drop(tmp_path / "graph.json"))
-    text = f"描画設定「graph.json」のデータが見つかりません：{gone}。データを選んでください。"
+    text = f'Data for the drawing settings "graph.json" was not found: {gone}. Choose the data.'
     assert window.scripts == [f"window.ddvizPendingDraw({json.dumps(text)})"]
     app.drop(_drop(other))
     assert window.url is None
@@ -827,7 +868,7 @@ def test_an_input_and_its_table_joined_not_found_are_asked_for_in_turn(tmp_path:
 
 
 def test_without_the_join_the_input_opens_with_no_join(tmp_path: Path) -> None:
-    """結合を使わない opens the input waiting, with the settings' join null."""
+    """`Open without the join` opens the input waiting, with the settings' join null."""
     (data, gone) = _files(tmp_path, "data.parquet", "gone.parquet")
     content = _draw_file(tmp_path / "graph.json", [data], join=[gone])
     gone.unlink()
@@ -835,16 +876,18 @@ def test_without_the_join_the_input_opens_with_no_join(tmp_path: Path) -> None:
     app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.drop(_drop(tmp_path / "graph.json"))
     assert window.url is None
+    assert OPENING_SCRIPT not in window.scripts
     app.forget_join()
     try:
         assert _get(window.url)[0] == [str(data)]
         assert _initial_draw(window) == {**content, "source": {**content["source"], "join": None}}
     finally:
         app.stop()
+    _covered_once(window)
 
 
 def test_forgetting_the_settings_drops_the_input_waiting_for_its_join(tmp_path: Path) -> None:
-    """描画設定を使わない drops the settings and the input waiting: the data picked next opens alone, without them."""
+    """`Don't use the drawing settings` drops the settings and the input waiting: the data picked next opens alone, without them."""
     (data, gone, other) = _files(tmp_path, "data.parquet", "gone.parquet", "other.parquet")
     _draw_file(tmp_path / "graph.json", [data], join=[gone])
     gone.unlink()
@@ -854,6 +897,7 @@ def test_forgetting_the_settings_drops_the_input_waiting_for_its_join(tmp_path: 
     app.forget_draw()
     app.forget_join()
     assert window.url is None
+    assert OPENING_SCRIPT not in window.scripts
     app.drop(_drop(other))
     try:
         assert _get(window.url)[0] == [str(other)]
@@ -883,14 +927,14 @@ def test_another_draw_file_replaces_the_one_waiting_for_its_join(tmp_path: Path)
 @pytest.mark.parametrize(
     ("text", "error"),
     [
-        ("{", "描画設定のファイルを読めませんでした：JSON ではありません"),
+        ("{", "Could not read the drawing settings file: not JSON ("),
         (
             '{"format": "x"}',
-            "描画設定のファイルを読めませんでした：format が ddviz-draw-settings ではありません",
+            "Could not read the drawing settings file: format is not ddviz-draw-settings",
         ),
         (
             '{"format": "ddviz-draw-settings", "version": 4}',
-            "この描画設定は読めません（版 4。この ddviz は版 5 を読みます）",
+            "These drawing settings cannot be read (version 4; this ddviz reads version 5).",
         ),
     ],
     ids=["json", "format", "version"],
@@ -912,9 +956,9 @@ def test_an_unreadable_draw_file_tells_why_and_keeps_the_chooser(
 @pytest.mark.parametrize(
     ("part", "key", "value", "reason"),
     [
-        (None, "elements", ..., "キー settings.elements がありません"),
-        ("options", "smoothing", None, "キー settings.options.smoothing の値の形が違います"),
-        ("options", "smoothing", {}, "キー settings.options.smoothing.method がありません"),
+        (None, "elements", ..., "key settings.elements is missing"),
+        ("options", "smoothing", None, "key settings.options.smoothing has a value of the wrong shape"),
+        ("options", "smoothing", {}, "key settings.options.smoothing.method is missing"),
     ],
     ids=["elements", "smoothing-null", "smoothing-empty"],
 )
@@ -934,7 +978,7 @@ def test_settings_the_page_cannot_apply_keep_the_chooser(
     app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.drop(_drop(tmp_path / "graph.json"))
     assert window.url is None
-    error = f"描画設定のファイルを読めませんでした：{reason}"
+    error = f"Could not read the drawing settings file: {reason}"
     assert window.scripts == [f"window.ddvizDropError({json.dumps(error)})"]
 
 
@@ -951,7 +995,8 @@ def test_the_dialog_offers_draw_files_and_takes_one_alone(tmp_path: Path) -> Non
     window = _Kinds(chosen=[str(drawn), str(data)])
     app = _App(window, None, False, _hello, input_label, DrawFileIO())
     app.choose("file", False)
-    assert kinds == [("Parquet (*.parquet)", "描画設定 (*.json)", "すべてのファイル (*.*)")]
+    assert kinds == [("Parquet (*.parquet)", "Drawing settings (*.json)", "All files (*.*)")]
+    assert kinds == [OPEN_FILE_TYPES]
     assert window.url is None
     assert window.scripts == [f"window.ddvizDropError({json.dumps(CHOOSE_ONE_DRAW_FILE)})"]
 
