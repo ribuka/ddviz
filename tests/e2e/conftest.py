@@ -1,4 +1,8 @@
-"""E2E fixtures: the UI server on a free port, opened in a browser with its token."""
+"""E2E fixtures: the UI server on a free port, opened in a browser with its token.
+
+Every page of a test may reach only the UI server: a request elsewhere is
+aborted, and fails the test with its URL (`context`, Issue #377).
+"""
 
 from __future__ import annotations
 
@@ -7,12 +11,13 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import polars as pl
 import pytest
 import uvicorn
 from fastapi import FastAPI
-from playwright.sync_api import Page
+from playwright.sync_api import BrowserContext, Page, Route
 
 from ddviz.server.app import create_app
 from ddviz.server.settings import Settings
@@ -40,6 +45,59 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     dropped = {item for i, item in enumerate(e2e) if i % count != index - 1}
     config.hook.pytest_deselected(items=[item for item in items if item in dropped])
     items[:] = [item for item in items if item not in dropped]
+
+
+def is_local(url: str) -> bool:
+    """Return whether a page may request `url`: the UI server (``http://127.0.0.1:<port>``), ``data:`` or ``blob:``."""
+    parts = urlsplit(url)
+    if parts.scheme in ("data", "blob"):
+        return True
+    return parts.scheme == "http" and parts.hostname == "127.0.0.1"
+
+
+def fail_on_external(urls: list[str]) -> None:
+    """Fail the test when its pages requested any of `urls`, named in the message."""
+    if urls:
+        pytest.fail("requests outside the UI server: " + ", ".join(urls), pytrace=False)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Iterator[None]:
+    """Fail a test whose pages requested outside the UI server by its end; later requests fail its teardown (`context`)."""
+    result = yield
+    urls = getattr(item, "funcargs", {}).get("external_requests")
+    if urls:
+        found = list(urls)
+        urls.clear()
+        fail_on_external(found)
+    return result
+
+
+@pytest.fixture
+def external_requests() -> list[str]:
+    """Return the URLs outside the UI server that the test's pages requested, in order."""
+    return []
+
+
+@pytest.fixture
+def context(context: BrowserContext, external_requests: list[str]) -> Iterator[BrowserContext]:
+    """Return pytest-playwright's context, whose requests outside the UI server are aborted and recorded.
+
+    Every page of the test is in it (`page`, `app_page`); a recorded URL fails
+    the test at its end.
+    """
+
+    def guard(route: Route) -> None:
+        url = route.request.url
+        if is_local(url):
+            route.fallback()
+            return
+        external_requests.append(url)
+        route.abort()
+
+    context.route("**/*", guard)
+    yield context
+    fail_on_external(external_requests)
 
 
 @pytest.fixture
