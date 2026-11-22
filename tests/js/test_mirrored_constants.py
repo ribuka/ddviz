@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page
 
-from ddviz.compute import boxes, levelindex
+from ddviz.compute import boxes, joinsummary, levelindex
 from ddviz.server import encoding, figure, plotoptions
 from ddviz.shared import missing, palette, scatter
 
@@ -25,6 +25,7 @@ PAIRS: dict[str, tuple[str, str, Value]] = {
     "boxes.js:BOX": ("boxes.js", "m.BOX", boxes.BOX),
     "colorpanel.js:HUES": ("colorpanel.js", "m.HUES", list(palette.DEFAULT_COLORS)),
     "filters.js:LISTED": ("filters.js", "m.LISTED", levelindex.LISTED),
+    "joindialog.js:UNMATCHED_EXAMPLES": ("joindialog.js", "m.UNMATCHED_EXAMPLES", joinsummary.UNMATCHED_EXAMPLES),
     "plotimage.js:HIDDEN": (
         "plotimage.js",
         "m.HIDDEN",

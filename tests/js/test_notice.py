@@ -152,3 +152,34 @@ def test_error_text(js_page: Page, args: list, expected: str) -> None:
         args,
     )
     assert text == expected
+
+
+def test_the_toasts_go_over_a_modal_dialog_while_it_is_open(js_page: Page) -> None:
+    """While a modal dialog is open the stack sits in it, its toasts on top and pressable; once the dialog closes it is back in its place (Issue #379)."""
+    found = js_page.evaluate(
+        """async () => {
+          const { Toasts } = await import("/static/js/notice.js");
+          const before = document.createElement("p");
+          const box = document.createElement("div");
+          box.style.cssText = "position: fixed; top: 10px; right: 10px;";
+          const after = document.createElement("p");
+          const dialog = document.createElement("dialog");
+          document.body.append(before, box, after, dialog);
+          const toasts = new Toasts(box);
+          dialog.showModal();
+          toasts.over(dialog);
+          toasts.over(dialog);
+          toasts.show("gone");
+          const toast = box.querySelector(".toast");
+          const rect = toast.getBoundingClientRect();
+          const hit = document.elementFromPoint(rect.left + 2, rect.top + 2);
+          const inside = box.parentNode === dialog;
+          const closed = new Promise((resolve) => dialog.addEventListener("close", resolve, { once: true }));
+          dialog.close();
+          await closed;
+          const back = before.nextSibling === box && box.nextSibling === after;
+          [before, box, after, dialog].forEach((e) => e.remove());
+          return { inside, hit: toast.contains(hit), back };
+        }"""
+    )
+    assert found == {"inside": True, "hit": True, "back": True}

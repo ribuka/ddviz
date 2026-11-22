@@ -65,8 +65,11 @@ import { attachZoneMenu } from "./zonemenu.js";
 const toasts = new Toasts(document.getElementById("toasts"));
 const statusLine = new StatusLine(document.getElementById("status"), toasts);
 // The saves of the plot's data; the table fetches the pages refused while
-// one was written.
-const saves = new Saves(toasts, () => table.exportEnded());
+// one was written, and the join dialog lets its save start again.
+const saves = new Saves(toasts, () => {
+  table.exportEnded();
+  joinDialog.update();
+});
 // The desktop window saves the plot's data to the Downloads folder by itself
 // and calls these with how far it got and how it ended
 // (ddviz.desktop.downloads); a browser (`--port`) saves it as its own
@@ -2004,11 +2007,15 @@ const joinDialog = new JoinDialog(document.getElementById("join"), {
   // never calls pywebview itself.
   choose: document.documentElement.classList.contains("desktop") ? (kind) => window.ddvizChooseJoin(kind) : null,
   joined: joinDone,
-  // The join converts its keys first, which shows the overlay of a
-  // conversion; no plot result follows to take it away.
+  // A dry run and the join convert their keys first, which shows the
+  // overlay of a conversion; no plot result follows to take it away.
   answered: () => {
     converting.hidden = true;
   },
+  // The rows of both tables are saved as the plot's data is, its toasts
+  // above the dialog.
+  saves,
+  toasts,
 });
 
 // Reads the input's files and its join (`GET /api/source`); null when the

@@ -19,6 +19,7 @@ NOT_IN_STAGES = {
     "level_index": "the levels pool's progress is not streamed",
     "level_search": "the levels pool's progress is not streamed",
     "join": "the page does not join yet (the join's dialog is Issue #344)",
+    "join_summary": "the join's dialog shows its wait (`確かめています…`, Issue #379)",
 }
 
 

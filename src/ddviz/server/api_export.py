@@ -1,9 +1,10 @@
 """Routes that write the plot's data to a file and hand it to the page.
 
 ``POST /api/plot-data/{task}`` writes the rows of the overview (the whole
-plot whatever the zoom), and ``POST /api/plot-data/selection`` the selected
-rows, as a CSV or Parquet file in a worker of the table's pool
-(`ddviz.compute.tasks.plotdata`), whose progress goes to ``/api/events``
+plot whatever the zoom), ``POST /api/plot-data/selection`` the selected
+rows, and ``POST /api/plot-data/join-rows`` the rows of both tables of the
+last dry run of a join (`ddviz.compute.joinrows`), as a CSV or Parquet file
+in a worker of the table's pool (`ddviz.compute.tasks.plotdata`), whose progress goes to ``/api/events``
 with the page's ``export``; the page then fetches the file once from
 ``/api/plot-data/file/{id}``. A file not fetched is removed when the next
 one is written. While it is written, the table's pages are refused
@@ -16,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
 from datetime import datetime
 
@@ -27,12 +28,17 @@ from starlette.background import BackgroundTask
 from ddviz.server.broker import TaskBroker, TaskEnd
 from ddviz.server.errors import ensure_done
 from ddviz.server.exporting import Exporting
-from ddviz.server.models import ExportCancel, PlotDataRequest, SelectionDataRequest
-from ddviz.server.plotdata import FORMATS, file_name
+from ddviz.server.models import (
+    ExportCancel,
+    JoinRowsRequest,
+    PlotDataRequest,
+    SelectionDataRequest,
+)
+from ddviz.server.plotdata import FORMATS, JOIN_ROWS, SELECTED, file_name
 from ddviz.server.results import Results
 from ddviz.server.source import Source
 from ddviz.shared.manifest import read_manifest
-from ddviz.shared.tasks import PlotDataTask, SourceFiles
+from ddviz.shared.tasks import JoinRowsTask, PlotDataTask, SourceFiles, Task
 
 # Makes the task of the columns of a file, their parts and their source files.
 TaskOf = Callable[[list[str], dict[str, list[str]], SourceFiles], PlotDataTask]
@@ -64,34 +70,34 @@ def export_router(  # noqa: C901, PLR0915
     # Files of the plot's data written and not fetched yet, by their id.
     exports: dict[str, tuple[TaskEnd, str]] = {}
 
-    async def export(
-        request: PlotDataRequest | SelectionDataRequest,
-        drawn: dict[str, list[str]],
-        held: AbstractContextManager,
-        task_of: TaskOf,
-        selected: bool,
-    ) -> dict | JSONResponse:
-        """Write a file of the plot's data in the table's pool and return its id and name.
+    async def plot_task(columns: str, drawn: dict[str, list[str]], task_of: TaskOf) -> PlotDataTask:
+        """Return the task of a file of the plot's data: ``"all"`` the columns of the input, else those of `drawn`, the plot's."""
+        names = [c["name"] for c in await source.schema()]
+        chosen = names if columns == "all" else [c for c in names if c in drawn]
+        missing = await asyncio.to_thread(source.missing, chosen)
+        parts = {c: source.parts(c) for c in chosen if c not in missing}
+        files = source.source_files([c for c in chosen if c not in parts])
+        return task_of(chosen, parts, files)
 
-        `drawn` holds the plot's columns, those of ``"drawn"`` columns;
-        `held` is entered from the first await until the worker has read
-        what it reads. A file not fetched is removed when the next one is
-        written. While it is written, the table's pages are refused
-        (`Exporting`); an export cancelled by ``POST /api/plot-data/cancel``
-        answers 409 ``{"cancelled": true}`` and leaves no file.
+    async def export(
+        request: PlotDataRequest | SelectionDataRequest | JoinRowsRequest,
+        held: AbstractContextManager,
+        make: Callable[[], Awaitable[Task]],
+        kind: str,
+    ) -> dict | JSONResponse:
+        """Write a file of rows in the table's pool and return its id and name (`ddviz.server.plotdata.file_name`, with `kind`).
+
+        `make` returns the task, after the first await; `held` is entered
+        from then until the worker has read what it reads. A file not
+        fetched is removed when the next one is written. While it is
+        written, the table's pages are refused (`Exporting`); an export
+        cancelled by ``POST /api/plot-data/cancel`` answers 409
+        ``{"cancelled": true}`` and leaves no file.
         """
         exporting.begin(request.export)
         try:
             with held:
-                names = [c["name"] for c in await source.schema()]
-                if request.columns == "all":
-                    columns = names
-                else:
-                    columns = [c for c in names if c in drawn]
-                missing = await asyncio.to_thread(source.missing, columns)
-                parts = {c: source.parts(c) for c in columns if c not in missing}
-                files = source.source_files([c for c in columns if c not in parts])
-                data = task_of(columns, parts, files)
+                data = await make()
                 for end, _ in exports.values():
                     end.discard()
                 exports.clear()
@@ -106,7 +112,7 @@ def export_router(  # noqa: C901, PLR0915
             exporting.end()
         ensure_done(end)
         now = datetime.now().astimezone()
-        name = file_name(source.paths, request.format, now, selected=selected)
+        name = file_name(source.paths, request.format, now, kind)
         key = uuid.uuid4().hex
         exports[key] = (end, name)
         return {"file": key, "name": name}
@@ -150,8 +156,27 @@ def export_router(  # noqa: C901, PLR0915
             )
 
         return await export(
-            request, spec.files, contextlib.nullcontext(), task_of, selected=True
+            request,
+            contextlib.nullcontext(),
+            lambda: plot_task(request.columns, spec.files, task_of),
+            SELECTED,
         )
+
+    # Before ``/api/plot-data/{task}`` too.
+    @router.post("/api/plot-data/join-rows", response_model=None)
+    async def join_rows(request: JoinRowsRequest) -> dict | JSONResponse:
+        """Write the rows of both tables of the last dry run of a join (`ddviz.compute.joinrows`) as a CSV or Parquet file and return its id and name.
+
+        409 ``no join check`` without a dry run, ``already joined`` after
+        the join (`ddviz.server.source.Source.join_rows_task`). Otherwise
+        as ``POST /api/plot-data/{task}``.
+        """
+
+        async def make() -> JoinRowsTask:
+            """Return the task writing the rows."""
+            return await source.join_rows_task(request.format, request.columns, request.export)
+
+        return await export(request, contextlib.nullcontext(), make, JOIN_ROWS)
 
     @router.post("/api/plot-data/{task}", response_model=None)
     async def plot_data(task: int, request: PlotDataRequest) -> dict | JSONResponse:
@@ -184,10 +209,9 @@ def export_router(  # noqa: C901, PLR0915
         # worker has read it: keep its directory.
         return await export(
             request,
-            index.manifest.spec.files,
             results.hold(index),
-            task_of,
-            selected=False,
+            lambda: plot_task(request.columns, index.manifest.spec.files, task_of),
+            "",
         )
 
     @router.get("/api/plot-data/file/{key}")

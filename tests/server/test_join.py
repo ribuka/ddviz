@@ -5,28 +5,34 @@ from __future__ import annotations
 import asyncio
 import io
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from ddviz.server.broker import TaskEnd
+from ddviz.server.broker import TaskBroker, TaskEnd
 from ddviz.server.settings import CacheSettings
 from ddviz.server.source import Source
 from ddviz.shared.cache import ColumnCache
 from ddviz.shared.manifest import write_manifest
-from ddviz.shared.tasks import JoinEqualTask, JoinTask
+from ddviz.shared.tasks import JoinTask
+from tests.compute.test_join_summary import _sets
 from tests.server.test_source_columns import (
     first_table_page,
     plot_body,
     table_values,
     write_parquet_file,
 )
+
+if TYPE_CHECKING:
+    from httpx import Response
+
 
 XY = {"x": ["x"], "y": ["y"]}
 LEFT_COLUMNS = ["lot", "sub", "x", "y", "temp", "day", "source", "filename"]
@@ -134,6 +140,16 @@ def _join(client: TestClient, right: Path, kind: str, keys: list[dict]) -> dict:
     joined = client.post("/api/join", json={"kind": kind, "keys": keys})
     assert joined.status_code == 200, joined.text
     return joined.json()
+
+
+# A join by keys and its dry run, refused alike.
+JOIN_URLS = ["/api/join", "/api/join/check"]
+
+
+def _by_keys(client: TestClient, url: str, keys: list[dict]) -> Response:
+    """Post a join by `keys` to `url`, a join or a dry run (which takes no kind)."""
+    body = {"keys": keys} if url == "/api/join/check" else {"kind": "key", "keys": keys}
+    return client.post(url, json=body)
 
 
 def _texts(values: list) -> list[str | None]:
@@ -273,14 +289,16 @@ def test_keys_of_types_with_a_common_type_match(
         ({"left": "nope", "right": "flag"}, "列がありません：nope"),
     ],
 )
+@pytest.mark.parametrize("url", JOIN_URLS)
 def test_keys_of_no_common_type_or_nested_or_unknown_are_refused(
     tmp_path: Path,
     serve: Callable[..., AbstractContextManager[TestClient]],
     left: Path,
     pair: dict,
+    url: str,
     detail: str,
 ) -> None:
-    """Keys that cannot be compared are refused, adding nothing; another try works."""
+    """Keys that cannot be compared are refused, by a join or a dry run alike, adding nothing; another try works."""
     root = tmp_path / "typed"
     write_parquet_file(
         root / "t.parquet",
@@ -290,7 +308,7 @@ def test_keys_of_no_common_type_or_nested_or_unknown_are_refused(
         schema = client.get("/api/schema").json()
         loaded = client.post("/api/join/source", json={"paths": [str(root)]})
         assert loaded.status_code == 200
-        refused = client.post("/api/join", json={"kind": "key", "keys": [pair]})
+        refused = _by_keys(client, url, [pair])
         assert refused.status_code == 400
         assert refused.json()["detail"] == detail
         assert client.get("/api/schema").json() == schema
@@ -330,10 +348,11 @@ def test_keys_given_wrong_are_refused(
         assert refused.json()["detail"] == detail
 
 
+@pytest.mark.parametrize("url", JOIN_URLS)
 def test_duplicate_keys_in_the_joined_table_are_refused(
-    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], left: Path
+    tmp_path: Path, serve: Callable[..., AbstractContextManager[TestClient]], left: Path, url: str
 ) -> None:
-    """Keys several rows hold are counted and shown, those with a null left out; nothing is added."""
+    """Keys several rows hold are counted and shown, those with a null left out, by a join or a dry run alike; nothing is added."""
     root = tmp_path / "dup"
     lots = [7, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 8, None, None]
     write_parquet_file(root / "d1.parquet", pl.DataFrame({"lot": lots[:9], "v": [0.0] * 9}))
@@ -341,7 +360,7 @@ def test_duplicate_keys_in_the_joined_table_are_refused(
     with serve([left]) as client:
         schema = client.get("/api/schema").json()
         client.post("/api/join/source", json={"paths": [str(root)]})
-        refused = client.post("/api/join", json={"kind": "key", "keys": KEYS_ONE})
+        refused = _by_keys(client, url, KEYS_ONE)
         assert refused.status_code == 400
         assert refused.json()["detail"] == (
             "結合する表でキーが重複しています：7 組（例：1、2、3、4、5）"
@@ -354,7 +373,7 @@ def test_duplicate_keys_in_the_joined_table_are_refused(
         )
         (root / "d2.parquet").unlink()
         client.post("/api/join/source", json={"paths": [str(root)]})
-        refused = client.post("/api/join", json={"kind": "key", "keys": two})
+        refused = _by_keys(client, url, two)
         assert refused.json()["detail"] == (
             "結合する表でキーが重複しています：1 組（例：(1, a)）"
         )
@@ -505,10 +524,28 @@ def test_a_join_by_rows_counts_the_joined_table(
         assert _nonnull(client, ["w"]) == {"w": 11}
 
 
+# What the fake broker's tasks write (`_JoinBroker`): the join task matches 1
+# row; the summary finds 1 row of each table matching none; the comparison
+# finds ``v`` of the same values.
+_MANIFESTS = {
+    "convert": {"kind": "convert"},
+    "join": {"kind": "join", "matched": 1},
+    "join_summary": {
+        "kind": "join_summary",
+        "right_matched": 1,
+        "left_unmatched": {"sets": 1, "top": [{"values": ["2"], "rows": 1}]},
+        "right_unmatched": {"sets": 1, "top": [{"values": ["1"], "rows": 1}]},
+    },
+    "join_equal": {"kind": "join_equal", "equal": ["v"]},
+}
+
+
 class _JoinBroker:
     """A broker recording the kind of each task it gets with `Source.converting`; the task of the kind `fails` fails.
 
-    The join task matches 1 row; the comparison finds ``v`` of the same values.
+    After `hold_on`, the task of its kind waits until the pool is cancelled,
+    then ends cancelled; or, `late`, cancels the dry run or the join itself
+    and ends done, as a task that ended just before the kill.
     """
 
     def __init__(self, fails: str | None, out: Path) -> None:
@@ -516,18 +553,35 @@ class _JoinBroker:
         self.out = out
         self.seen: list[tuple[str, bool]] = []
         self.source: Source | None = None
+        self.hold: str | None = None
+        self.late = False
+        self.held: asyncio.Event | None = None
+        self.killed: asyncio.Event | None = None
+
+    def hold_on(self, kind: str | None, late: bool = False) -> None:
+        """Hold the task of `kind` from now (None for none), in the running loop."""
+        self.hold, self.late = kind, late
+        self.held, self.killed = asyncio.Event(), asyncio.Event()
 
     async def run(self, task: object, pool: str = "plot") -> TaskEnd:
-        assert isinstance(task, JoinTask | JoinEqualTask)
+        assert task.KIND in _MANIFESTS
         self.seen.append((task.KIND, self.source.converting))
         await asyncio.sleep(0)
         self.out.mkdir(parents=True, exist_ok=True)
-        if isinstance(task, JoinTask):
-            write_manifest(self.out, {"kind": "join", "matched": 1})
-        else:
-            write_manifest(self.out, {"kind": "join_equal", "equal": ["v"]})
+        write_manifest(self.out, _MANIFESTS[task.KIND])
+        if self.hold == task.KIND:
+            self.held.set()
+            if self.late:
+                await self.source.cancel_join()
+            else:
+                await self.killed.wait()
+                return TaskEnd(0, self.out, {"type": "cancelled"})
         end = "error" if self.fails == task.KIND else "done"
         return TaskEnd(0, self.out, {"type": end, "message": f"the {task.KIND} task failed"})
+
+    async def cancel(self, pool: str = "plot") -> None:
+        assert pool == "plot"
+        self.killed.set()
 
 
 def _joining_source(tmp_path: Path, fails: str | None = None) -> tuple[Source, _JoinBroker]:
@@ -1025,3 +1079,287 @@ def test_no_row_joined_leaves_out_no_column(
     keys = [{"left": "id", "right": "id"}]
     answer, _, _ = _joined_values(serve, equal_left, root, {"kind": "key", "keys": keys, "same_names": "skip_equal"})
     assert (answer["added"], answer["skipped"], answer["matched"]) == (["_joined", "same_joined"], [], 0)
+
+
+# Issue #379: the dry run of a join by keys, its map taken by the join, and
+# the cancel of a dry run or a join.
+
+KEY_K = [{"left": "k", "right": "k"}]
+# What the dry run of `_joining_source` answers, of the fake broker's tasks.
+CHECKED = {
+    "rows": 2,
+    "matched": 1,
+    "right_rows": 2,
+    **{k: v for k, v in _MANIFESTS["join_summary"].items() if k != "kind"},
+}
+JOINED = {"added": ["_joined"], "rows": 2, "matched": 1, "skipped": ["v"]}
+
+
+@pytest.fixture
+def check_left(tmp_path: Path) -> Path:
+    """Return a folder of 3 files: keys matching the same row twice, null, and 23 sets matching none."""
+    root = tmp_path / "check_left"
+    lots = [[1, 1, 2, None, 50], [51, 52, 3, 1], [*range(53, 76), 2]]
+    subs = [["a", "a", "b", "a", "a"], ["a", "a", "a", "b"], ["a"] * 24]
+    for i, (lot, sub) in enumerate(zip(lots, subs, strict=True)):
+        xs = [float(len(lot) * i + j) for j in range(len(lot))]
+        frame = pl.DataFrame({"lot": lot, "sub": sub, "x": xs, "y": xs}, schema_overrides={"lot": pl.Int64})
+        write_parquet_file(root / f"{i}.parquet", frame)
+    return root
+
+
+@pytest.fixture
+def check_right(tmp_path: Path) -> Path:
+    """Return a folder of 2 files: 4 keys of the input, then 25 sets and a null matching none."""
+    root = tmp_path / "check_right"
+    write_parquet_file(root / "r1.parquet", _right_file([1, 2, 3, 4], ["a", "a", "a", "a"], 0))
+    write_parquet_file(root / "r2.parquet", _right_file([*range(124, 99, -1), None], ["a"] * 26, 4))
+    return root
+
+
+@pytest.mark.parametrize("keys", [KEYS_ONE, KEYS_TWO], ids=["one", "two"])
+def test_a_dry_run_counts_the_rows_matched_and_the_keys_matching_none_and_joins_nothing(
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    check_left: Path,
+    check_right: Path,
+    keys: list[dict],
+) -> None:
+    """The rows of both tables matched and their sets of keys matching none are those polars finds; the schema and the join stay."""
+    lefts, rights = [k["left"] for k in keys], [k["right"] for k in keys]
+    left, right = _read_folder(check_left), _read_folder(check_right)
+    unmatched = left.join(right, left_on=lefts, right_on=rights, how="anti")
+    unused = right.join(left, left_on=rights, right_on=lefts, how="anti")
+    with serve([check_left]) as client:
+        schema = client.get("/api/schema").json()
+        client.post("/api/join/source", json={"paths": [str(check_right)]})
+        checked = client.post("/api/join/check", json={"keys": keys})
+        assert checked.status_code == 200, checked.text
+        found = checked.json()
+        assert found == {
+            "rows": left.height,
+            "matched": left.height - unmatched.height,
+            "right_rows": right.height,
+            "right_matched": right.height - unused.height,
+            "left_unmatched": _sets(unmatched, lefts),
+            "right_unmatched": _sets(unused, rights),
+        }
+        assert len(found["left_unmatched"]["top"]) == len(found["right_unmatched"]["top"]) == 20
+        assert client.get("/api/schema").json() == schema
+        assert client.get("/api/source").json()["join"] is None
+
+
+def test_a_dry_run_without_a_table_or_after_the_join_is_refused(
+    serve: Callable[..., AbstractContextManager[TestClient]], left: Path, right: Path
+) -> None:
+    """A dry run needs a table read first and no join made, as a join does, and changes nothing."""
+    with serve([left]) as client:
+        schema = client.get("/api/schema").json()
+        refused = client.post("/api/join/check", json={"keys": KEYS_ONE})
+        assert (refused.status_code, refused.json()["detail"]) == (409, "no join source")
+        assert client.get("/api/schema").json() == schema
+        joined = _join(client, right, "key", KEYS_ONE)
+        schema = client.get("/api/schema").json()
+        refused = client.post("/api/join/check", json={"keys": KEYS_ONE})
+        assert (refused.status_code, refused.json()["detail"]) == (409, "already joined")
+        assert client.get("/api/schema").json() == schema
+        assert client.get("/api/source").json()["join"]["added"] == joined["added"]
+
+
+def test_converting_is_on_while_the_dry_run_runs(tmp_path: Path) -> None:
+    """The join task and the summary run with plots refused, and let them again once done; nothing is joined and the dry run is kept."""
+    source, broker = _joining_source(tmp_path)
+    assert asyncio.run(source.check_join(KEY_K)) == CHECKED
+    assert broker.seen == [("join", True), ("join_summary", True)]
+    assert source.converting is False
+    assert source.joined is None
+    assert source.join_check.answer == CHECKED
+
+
+@pytest.mark.parametrize("fails", ["join", "join_summary"])
+def test_converting_is_off_after_a_failed_dry_run(tmp_path: Path, fails: str) -> None:
+    """A task of the dry run that fails is a 500 with the worker's reason, leaving the source not converting, not joined, and no dry run kept."""
+    source, broker = _joining_source(tmp_path)
+    asyncio.run(source.check_join(KEY_K))
+    broker.fails = fails
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(source.check_join(KEY_K))
+    assert (raised.value.status_code, raised.value.detail) == (500, f"the {fails} task failed")
+    assert broker.seen[-1] == (fails, True)
+    assert source.converting is False
+    assert source.joined is None
+    assert source.join_check is None
+
+
+def test_the_cache_keeps_the_map_of_the_dry_run(tmp_path: Path) -> None:
+    """Past the size limit, the parts of the dry run's map and ``_joined`` stay while other parts go."""
+    source, _ = _joining_source(tmp_path)
+    asyncio.run(source.check_join(KEY_K))
+    kept = source.join_check.parts
+    other = Path(source.parts("v")[0])
+    for part in [*kept, other]:
+        write_parquet_file(part, pl.DataFrame({"x": [1]}))
+    source._cache_limits = lambda: CacheSettings(max_gb=0, max_unused_days=0)
+    source.evict([])
+    assert len(kept) == 2
+    assert all(p.exists() for p in kept)
+    assert not other.exists()
+
+
+@pytest.fixture
+def join_tasks(monkeypatch: pytest.MonkeyPatch) -> list[JoinTask]:
+    """Record each join task the brokers run."""
+    found: list[JoinTask] = []
+    run = TaskBroker.run
+
+    async def recording(self: TaskBroker, task: object, pool: str = "plot") -> TaskEnd:
+        if isinstance(task, JoinTask):
+            found.append(task)
+        return await run(self, task, pool)
+
+    monkeypatch.setattr(TaskBroker, "run", recording)
+    return found
+
+
+@pytest.mark.parametrize(
+    ("case", "runs"),
+    [("same", 1), ("other_keys", 2), ("part_gone", 2), ("read_again", 2)],
+)
+def test_a_join_after_a_dry_run_of_the_same_keys_takes_its_map(
+    serve: Callable[..., AbstractContextManager[TestClient]],
+    left: Path,
+    right: Path,
+    join_tasks: list[JoinTask],
+    case: str,
+    runs: int,
+) -> None:
+    """A join by the keys of the dry run runs no join task while its map is there, and joins as a join without a dry run does.
+
+    Other keys, a part of the map removed, or the table read again make the
+    join task run again.
+    """
+    with serve([left]) as client:
+        client.post("/api/join/source", json={"paths": [str(right)]})
+        keys = KEYS_TWO if case == "other_keys" else KEYS_ONE
+        checked = client.post("/api/join/check", json={"keys": keys}).json()
+        if case == "part_gone":
+            Path(join_tasks[0].maps[1]).unlink()
+        if case == "read_again":
+            client.post("/api/join/source", json={"paths": [str(right)]})
+        joined = client.post("/api/join", json={"kind": "key", "keys": KEYS_ONE})
+        assert joined.status_code == 200, joined.text
+        assert len(join_tasks) == runs
+        if case != "same":
+            return
+        assert joined.json()["matched"] == checked["matched"]
+        values = table_values(first_table_page(client, plot_body(client, XY)["meta"]["task"]))
+    with serve([left]) as client:
+        _join(client, right, "key", KEYS_ONE)
+        alone = table_values(first_table_page(client, plot_body(client, XY)["meta"]["task"]))
+    assert values == alone
+    assert values["_joined"].count("both") == checked["matched"]
+
+
+async def _cancelled(
+    source: Source, broker: _JoinBroker, run: Callable[[], Awaitable[dict]], stage: str, late: bool
+) -> HTTPException:
+    """Cancel `run()` (a dry run or a join) at the task of `stage` and return its refusal."""
+    broker.seen.clear()
+    broker.hold_on(stage, late)
+    running = asyncio.create_task(run())
+    if not late:
+        await broker.held.wait()
+        await source.cancel_join()
+    with pytest.raises(HTTPException) as raised:
+        await running
+    broker.hold_on(None)
+    return raised.value
+
+
+@pytest.mark.parametrize(
+    ("stage", "late"),
+    [("convert", False), ("join", False), ("join_summary", False), ("convert", True), ("join", True)],
+    ids=["convert", "join", "summary", "after-convert", "after-join"],
+)
+def test_a_cancelled_dry_run_stops_at_its_task_and_can_run_again(tmp_path: Path, stage: str, late: bool) -> None:
+    """A dry run cancelled while a task of it runs, or between two, answers 409 ``cancelled`` and gives no further task.
+
+    Nothing is joined or kept, the output of a task killed is removed, and
+    the same dry run then answers as one not cancelled.
+    """
+    source, broker = _joining_source(tmp_path)
+    # Its keys are converted each time.
+    source.missing = lambda columns: {c: [0] for c in columns}
+    schema = asyncio.run(source.schema())
+    order = ["convert", "join", "join_summary"]
+
+    async def scenario() -> tuple[HTTPException, list[str], dict]:
+        refused = await _cancelled(source, broker, lambda: source.check_join(KEY_K), stage, late)
+        seen = [kind for kind, _ in broker.seen]
+        assert source.converting is False
+        assert source.join_check is None
+        assert not broker.out.exists()
+        return refused, seen, await source.check_join(KEY_K)
+
+    refused, seen, again = asyncio.run(scenario())
+    assert (refused.status_code, refused.detail) == (409, "cancelled")
+    assert seen == order[: order.index(stage) + 1]
+    assert source.joined is None
+    assert asyncio.run(source.schema()) == schema
+    assert again == CHECKED
+
+
+@pytest.mark.parametrize("stage", ["join", "join_equal"])
+def test_a_cancelled_join_stops_at_its_task_keeps_the_dry_run_and_can_run_again(tmp_path: Path, stage: str) -> None:
+    """A join cancelled while its join task or comparison runs answers 409 ``cancelled`` and joins nothing.
+
+    The dry run before stays, and the same join then answers as one not
+    cancelled.
+    """
+    source, broker = _joining_source(tmp_path)
+    schema = asyncio.run(source.schema())
+    order = ["join", "join_equal"]
+
+    async def scenario() -> tuple[HTTPException, list[str], dict]:
+        await source.check_join(KEY_K)
+        refused = await _cancelled(source, broker, lambda: source.join("key", KEY_K), stage, False)
+        seen = [kind for kind, _ in broker.seen]
+        assert source.converting is False
+        assert source.joined is None
+        assert source.join_check.answer == CHECKED
+        assert await source.schema() == schema
+        return refused, seen, await source.join("key", KEY_K)
+
+    refused, seen, again = asyncio.run(scenario())
+    assert (refused.status_code, refused.detail) == (409, "cancelled")
+    assert seen == order[: order.index(stage) + 1]
+    assert again == JOINED
+    assert [c["name"] for c in asyncio.run(source.schema())] == [*(c["name"] for c in schema), "_joined"]
+
+
+@pytest.mark.parametrize("join", [False, True], ids=["dry-run", "join"])
+def test_a_cancel_after_the_last_task_answers_as_done(tmp_path: Path, join: bool) -> None:
+    """A cancel once the last task of a dry run or a join ended stops nothing: it answers as one not cancelled."""
+    source, broker = _joining_source(tmp_path)
+
+    async def scenario() -> dict:
+        if join:
+            await source.check_join(KEY_K)
+        broker.hold_on("join_equal" if join else "join_summary", late=True)
+        return await (source.join("key", KEY_K) if join else source.check_join(KEY_K))
+
+    assert asyncio.run(scenario()) == (JOINED if join else CHECKED)
+    assert source.converting is False
+
+
+def test_a_cancel_with_nothing_running_does_nothing(
+    serve: Callable[..., AbstractContextManager[TestClient]], left: Path, right: Path
+) -> None:
+    """``POST /api/join/cancel`` with no dry run or join running answers 204 and changes nothing; a dry run then runs."""
+    with serve([left]) as client:
+        schema = client.get("/api/schema").json()
+        assert client.post("/api/join/cancel").status_code == 204
+        client.post("/api/join/source", json={"paths": [str(right)]})
+        assert client.post("/api/join/cancel").status_code == 204
+        assert client.get("/api/schema").json() == schema
+        assert client.get("/api/source").json()["join"] is None
+        assert client.post("/api/join/check", json={"keys": KEYS_ONE}).status_code == 200

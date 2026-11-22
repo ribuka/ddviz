@@ -32,6 +32,9 @@ SAME_NAMES_DEFAULT = "skip_equal"
 # The values of the indicator, as `polars_helpers.merge` writes them.
 BOTH = "both"
 LEFT_ONLY = "left_only"
+# The state of a row of the joined table no row of the input matches, in
+# the rows of both tables of a dry run (`ddviz.compute.joinrows`).
+RIGHT_ONLY = "right_only"
 # Types that cannot be keys, as their text starts: nested values.
 NESTED = ("List", "Array", "Struct")
 # The column of a part of the map (`ddviz.compute.join`): per row of the

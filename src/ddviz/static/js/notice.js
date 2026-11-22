@@ -75,6 +75,24 @@ export class Toasts {
     });
   }
 
+  // Shows the toasts above the modal `dialog` while it is open, their
+  // buttons usable (Issue #379): a modal dialog makes the rest of the page
+  // inert, even a popover shown above it, so the stack moves into the
+  // dialog and back to its place once the dialog closes.
+  over(dialog) {
+    if (dialog.contains(this.container)) return;
+    const place = document.createComment("toasts");
+    this.container.before(place);
+    dialog.append(this.container);
+    dialog.addEventListener(
+      "close",
+      () => {
+        place.replaceWith(this.container);
+      },
+      { once: true },
+    );
+  }
+
   // The toasts that are not leaving, oldest first.
   shown() {
     return [...this.container.querySelectorAll(".toast:not(.toast-leaving)")];

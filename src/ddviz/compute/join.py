@@ -11,15 +11,22 @@ column of the joined table is converted when first used, as any column
 map. A join by rows needs no map: the part of a file holds the joined
 table's rows from the rows of the files before. A join may leave out the
 columns named like the input's that hold the same values in the rows joined,
-found through the same map (`run_join_equal`).
+found through the same map (`run_join_equal`). The rows of the joined table
+some row of the input matches are found from the map too (`write_matched`),
+and rows are split on disk by the hash of their keys (`hash_pieces`), for
+the summary and the rows of both tables of a dry run
+(`ddviz.compute.joinsummary`, `ddviz.compute.joinrows`).
 """
 
 from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import polars_helpers as plh
 
@@ -41,6 +48,8 @@ DUPLICATE_EXAMPLES = 5
 # memory than 16; on 100M with 100M, one piece does not fit 8 GiB.
 ONE_BUCKET_ROWS = 10_000_000
 BUCKETS = 16
+# The column of the file of the rows of the joined table matched (`write_matched`).
+MATCHED = "matched"
 # The row index of the joined table in the merge, the count of a key in the
 # check of duplicates, and the piece of a key, named apart from the keys
 # (`_free`).
@@ -98,6 +107,46 @@ def _duplicates(right: pl.LazyFrame, keys: list[str]) -> tuple[int, list[tuple]]
     return found.height, found.head(DUPLICATE_EXAMPLES).rows()
 
 
+@contextmanager
+def hash_pieces(frame: pl.LazyFrame, keys: list[str], buckets: int, work: Path) -> Iterator[list[list[Path]]]:
+    """Split the rows of `frame` on disk by the hash of their `keys` into `buckets` pieces, and yield the files of each piece.
+
+    One streaming sink writes the pieces; a set of key values lies in one
+    piece only. The pieces are removed when the context ends.
+
+    Parameters
+    ----------
+    frame : polars.LazyFrame
+        The rows to split.
+    keys : list of str
+        The columns whose values decide the piece of a row.
+    buckets : int
+        The pieces.
+    work : pathlib.Path
+        Directory for the pieces, removed at the end.
+
+    Yields
+    ------
+    list of list of pathlib.Path
+        The files of each piece holding rows.
+    """
+    bucket = _free(_BUCKET, set(frame.collect_schema().names()))
+    try:
+        frame.with_columns(
+            (pl.struct(keys).hash(seed=0) % buckets).alias(bucket)
+        ).sink_parquet(
+            pl.PartitionBy(work, key=bucket, include_key=False), engine="streaming"
+        )
+        # A piece may be written as several files in its directory
+        # (``<bucket>=<n>/``): it is read with all of them.
+        pieces: dict[Path, list[Path]] = {}
+        for file in sorted(work.rglob("*.parquet")):
+            pieces.setdefault(file.parent, []).append(file)
+        yield list(pieces.values())
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def duplicate_keys(
     right: pl.LazyFrame, keys: list[str], buckets: int, work: Path
 ) -> tuple[int, list[str]]:
@@ -133,27 +182,41 @@ def duplicate_keys(
     if buckets == 1:
         count, first = _duplicates(right, keys)
         return count, [_text(r) for r in first]
-    bucket = _free(_BUCKET, set(keys))
-    try:
-        right.with_columns(
-            (pl.struct(keys).hash(seed=0) % buckets).alias(bucket)
-        ).sink_parquet(
-            pl.PartitionBy(work, key=bucket, include_key=False), engine="streaming"
-        )
-        # A piece may be written as several files in its directory
-        # (``<bucket>=<n>/``): it is counted with all of them.
-        pieces: dict[Path, list[Path]] = {}
-        for file in sorted(work.rglob("*.parquet")):
-            pieces.setdefault(file.parent, []).append(file)
-        count, first = 0, []
-        for files in pieces.values():
+    count, first = 0, []
+    with hash_pieces(right, keys, buckets, work) as pieces:
+        for files in pieces:
             found, rows = _duplicates(pl.scan_parquet(files), keys)
             count += found
             first += rows
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
     examples = pl.DataFrame(first, schema=right.collect_schema(), orient="row").sort(keys)
     return count, [_text(r) for r in examples.head(DUPLICATE_EXAMPLES).rows()]
+
+
+def write_matched(maps: list[str], right_rows: int, file: Path) -> int:
+    """Write whether a row of the input matched each row of the joined table, and return the rows matched.
+
+    Parameters
+    ----------
+    maps : list of str
+        The parts of the map (`MAP_COLUMN`), read one at a time.
+    right_rows : int
+        The rows of the joined table.
+    file : pathlib.Path
+        The Parquet file to write: per row of the joined table, in order,
+        `MATCHED` (Boolean).
+
+    Returns
+    -------
+    int
+        The rows of the joined table some row of the input matched.
+    """
+    matched = np.zeros(right_rows, dtype=bool)
+    for part in maps:
+        rows = pl.read_parquet(part, columns=[MAP_COLUMN])[MAP_COLUMN].drop_nulls().to_numpy()
+        matched[rows] = True
+        del rows
+    pl.DataFrame({MATCHED: matched}).write_parquet(file)
+    return int(matched.sum())
 
 
 def _refuse(out: Path, message: str) -> None:

@@ -1,4 +1,4 @@
-"""The file of a plot's data to save (`ddviz.compute.tasks.plotdata`): its media type and name."""
+"""The file of rows to save (`ddviz.compute.tasks.plotdata`, `ddviz.compute.joinrows`): its media type and name."""
 
 from __future__ import annotations
 
@@ -12,16 +12,17 @@ FORMATS = {
     "csv": "text/csv; charset=utf-8",
     "parquet": "application/vnd.apache.parquet",
 }
+# What a file's name holds before the time, after the input's name, for the
+# rows it holds (`file_name`): the selected rows, or those of a join.
+SELECTED = "selected"
+JOIN_ROWS = "join_rows"
 
 
-def file_name(
-    source: list[str], file_format: str, moment: datetime, selected: bool = False
-) -> str:
-    """Return the name of a saved file: ``<input's name>_<YYYYMMDD-HHMMSS>.<format>``.
+def file_name(source: list[str], file_format: str, moment: datetime, kind: str = "") -> str:
+    """Return the name of a saved file: ``<input's name>[_<kind>]_<YYYYMMDD-HHMMSS>.<format>``.
 
     Characters a file name may not hold, and spaces, become ``_``. For
-    several files, the name is the first one's, then ``_and_<n>_more``. A
-    file of the selected rows has ``_selected`` before the time.
+    several files, the name is the first one's, then ``_and_<n>_more``.
 
     Parameters
     ----------
@@ -32,8 +33,9 @@ def file_name(
         ``"csv"`` or ``"parquet"``.
     moment : datetime.datetime
         When the file is saved.
-    selected : bool
-        Whether the file holds the selected rows.
+    kind : str
+        What rows the file holds besides those of the plot, put before the
+        time with ``_``: `SELECTED` or `JOIN_ROWS`; empty for none.
 
     Returns
     -------
@@ -45,5 +47,5 @@ def file_name(
     if more:
         stem = f"{stem} and {more} more"
     stem = re.sub(r'[\/:*?"<>|\s\x00-\x1f]+', "_", stem).strip("_.")
-    kind = "_selected" if selected else ""
-    return f"{stem or 'ddviz'}{kind}_{moment:%Y%m%d-%H%M%S}.{file_format}"
+    suffix = f"_{kind}" if kind else ""
+    return f"{stem or 'ddviz'}{suffix}_{moment:%Y%m%d-%H%M%S}.{file_format}"
