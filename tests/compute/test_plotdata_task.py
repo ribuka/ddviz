@@ -15,7 +15,7 @@ import pyarrow.parquet as pq
 import pytest
 from polars.testing import assert_frame_equal
 
-from ddviz.compute.tasks import plotdata
+from ddviz.compute import rowsread, savefile
 from ddviz.compute.tasks.columns import run_schema
 from ddviz.compute.tasks.plot import run_plot
 from ddviz.compute.tasks.plotdata import index_name, run_plot_data
@@ -300,7 +300,7 @@ def test_chunks_write_the_same_file_and_report_progress(
     the sink received: once for each chunk and at the end, as for a CSV.
     """
     whole = _export(tmp_path, scatter_spec, file_format=file_format)
-    monkeypatch.setattr(plotdata, "MAX_CHUNK_ROWS", 14)
+    monkeypatch.setattr(savefile, "MAX_CHUNK_ROWS", 14)
     messages: list[dict] = []
     chunked = _export(
         tmp_path, scatter_spec, file_format=file_format, messages=messages
@@ -340,13 +340,13 @@ def test_long_texts_make_chunks_of_fewer_rows(
         height=200,
         hover=list(frame.columns),
     )
-    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
+    monkeypatch.setattr(savefile, "CHUNK_BYTES", 64 * 2**10)
     budget = _halved(file_format, 64 * 2**10)
     messages: list[dict] = []
     saved = _export(tmp_path, spec, file_format=file_format, messages=messages)
     assert saved.drop("index").equals(frame)
     done = [m["done"] for m in messages[1:]]
-    row_bytes = [4 * plotdata.VALUE_BYTES + len(t) for t in texts]
+    row_bytes = [4 * savefile.VALUE_BYTES + len(t) for t in texts]
     chunks = [row_bytes[a:b] for a, b in itertools.pairwise(done)]
     assert sum(len(c) for c in chunks) == n
     assert all(0 < sum(c) <= budget for c in chunks)
@@ -376,7 +376,7 @@ def test_a_row_group_of_many_columns_is_within_the_first_chunk(
         height=200,
         hover=list(frame.columns),
     )
-    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
+    monkeypatch.setattr(savefile, "CHUNK_BYTES", 64 * 2**10)
     messages: list[dict] = []
     saved = _export(tmp_path, spec, rows="filtered", messages=messages)
     assert saved.drop("index").equals(frame)
@@ -424,14 +424,14 @@ def test_a_row_group_of_long_texts_after_short_ones_is_within_a_chunk(
     """Texts of 1 KiB after short ones keep every row group of a Parquet file within half the bytes of a chunk, as the chunks after the first are."""
     texts = ["a"] * 992 + ["w" * 1024] * 1_984
     frame, spec = _texts_spec(tmp_path, texts)
-    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
+    monkeypatch.setattr(savefile, "CHUNK_BYTES", 64 * 2**10)
     saved = _export(tmp_path, spec, rows="filtered")
     assert saved.drop("index").equals(frame)
     groups = _groups(tmp_path)
     assert sum(rows for _, rows in groups) == len(texts)
     # The row index, x, y and the offset of s, besides the longest s.
     estimates = [
-        rows * (4 * plotdata.VALUE_BYTES + max(map(len, texts[start : start + rows])))
+        rows * (4 * savefile.VALUE_BYTES + max(map(len, texts[start : start + rows])))
         for start, rows in groups
     ]
     assert max(estimates) <= 32 * 2**10
@@ -446,14 +446,14 @@ def test_a_row_group_across_two_chunks_is_within_a_chunk(
     lengths = [1, 1, 1, 31_968, 15_968, 7_968, 7_968, 15_968, 7_968, 7_968]
     texts = [f"{i}" + "w" * (n - 1) for i, n in enumerate(lengths)]
     frame, spec = _texts_spec(tmp_path, texts)
-    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
+    monkeypatch.setattr(savefile, "CHUNK_BYTES", 64 * 2**10)
     messages: list[dict] = []
     saved = _export(tmp_path, spec, rows="filtered", messages=messages)
     assert saved.drop("index").equals(frame)
     done = [m["done"] for m in messages[1:]]
     # Chunks of 4, 3 and 3 rows: a row group of 3 rows would hold rows 3 to 5.
     assert [b - a for a, b in itertools.pairwise(done)] == [4, 3, 3]
-    row_bytes = [4 * plotdata.VALUE_BYTES + n for n in lengths]
+    row_bytes = [4 * savefile.VALUE_BYTES + n for n in lengths]
     groups = _groups(tmp_path)
     assert sum(rows for _, rows in groups) == len(texts)
     assert max(sum(row_bytes[a : a + rows]) for a, rows in groups) <= 32 * 2**10
@@ -461,12 +461,12 @@ def test_a_row_group_across_two_chunks_is_within_a_chunk(
 
 def test_row_groups_of_their_most_rows_are_not_rows_far_larger() -> None:
     """Chunks of the same rows, more than `PARQUET_ROW_GROUP_ROWS`, take row groups of those rows, not a row group for each chunk."""
-    rows = plotdata.PARQUET_ROW_GROUP_ROWS
+    rows = savefile.PARQUET_ROW_GROUP_ROWS
     # 100 million rows of 7 numbers: 24 chunks, 96 row groups.
     sizes = [4 * rows] * 23 + [100_000_000 - 23 * 4 * rows]
-    assert plotdata._row_group_rows(sizes, rows) == rows
+    assert savefile._row_group_rows(sizes, rows) == rows
     # One row far larger than the others: a row group for each chunk.
-    assert plotdata._row_group_rows([1_000, 1, *[1_000] * 10], rows) is None
+    assert savefile._row_group_rows([1_000, 1, *[1_000] * 10], rows) is None
 
 
 def test_runs_across_two_chunks_are_kept_within_the_budget() -> None:
@@ -474,11 +474,11 @@ def test_runs_across_two_chunks_are_kept_within_the_budget() -> None:
     before = np.array([1, 1, 1, 10])
     after = np.array([10, 1, 1, 1])
     # Runs of 3 rows: 1 + 10 + 10 and 10 + 10 + 1; of 2 rows: 10 + 10.
-    assert plotdata._across(before, after, 3, 21) == 3
-    assert plotdata._across(before, after, 3, 20) == 2
-    assert plotdata._across(before, after, 3, 19) == 1
+    assert savefile._across(before, after, 3, 21) == 3
+    assert savefile._across(before, after, 3, 20) == 2
+    assert savefile._across(before, after, 3, 19) == 1
     # Of the same bytes, every run of the rows of a chunk fits.
-    assert plotdata._across(np.full(8, 4), np.full(8, 4), 8, 32) == 8
+    assert savefile._across(np.full(8, 4), np.full(8, 4), 8, 32) == 8
 
 
 def test_a_row_far_larger_than_the_others_makes_a_row_group_for_each_chunk(
@@ -488,7 +488,7 @@ def test_a_row_far_larger_than_the_others_makes_a_row_group_for_each_chunk(
     texts = ["a"] * 3_000
     texts[1_500] = "w" * 40_000
     frame, spec = _texts_spec(tmp_path, texts)
-    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
+    monkeypatch.setattr(savefile, "CHUNK_BYTES", 64 * 2**10)
     messages: list[dict] = []
     saved = _export(tmp_path, spec, rows="filtered", messages=messages)
     assert saved.drop("index").equals(frame)
@@ -541,7 +541,7 @@ def test_texts_inside_nested_values_count_in_a_chunk(
     source = SourceFiles(
         [str(path)], found["rows"], str(schema_dir / SCHEMA), {"t": dtypes["t"]}, {}
     )
-    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 64 * 2**10)
+    monkeypatch.setattr(savefile, "CHUNK_BYTES", 64 * 2**10)
     messages: list[dict] = []
     saved = _export(
         tmp_path, spec, columns=["x", "y", "t"], source=source, messages=messages
@@ -570,8 +570,8 @@ def test_an_error_reading_a_chunk_comes_out_as_it_is(
     tmp_path: Path, scatter_spec: ScatterSpec, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An error reading the second chunk of a Parquet file comes out of the task with its own type."""
-    monkeypatch.setattr(plotdata, "MAX_CHUNK_ROWS", 14)
-    cached = plotdata._cached
+    monkeypatch.setattr(savefile, "MAX_CHUNK_ROWS", 14)
+    cached = rowsread._cached
     calls: list[int] = []
 
     def failing(
@@ -584,7 +584,7 @@ def test_an_error_reading_a_chunk_comes_out_as_it_is(
                 raise RuntimeError("out of memory")
         return cached(parts, index, lo, hi, measure=measure)
 
-    monkeypatch.setattr(plotdata, "_cached", failing)
+    monkeypatch.setattr(rowsread, "_cached", failing)
     with pytest.raises(RuntimeError, match="out of memory"):
         _export(tmp_path, scatter_spec)
     assert len(calls) == 2
@@ -737,7 +737,7 @@ def test_a_chunk_with_nested_values_is_written_in_pieces(
     )
     (tmp_path / "whole").mkdir()
     whole = _export_csv(tmp_path / "whole", frame)
-    monkeypatch.setattr(plotdata, "CHUNK_BYTES", 32 * 2**10)
+    monkeypatch.setattr(savefile, "CHUNK_BYTES", 32 * 2**10)
     calls: list[tuple[int, bool, bool]] = []
     write_csv = pl.DataFrame.write_csv
 
@@ -777,7 +777,7 @@ def test_a_chunk_with_nested_values_is_written_in_pieces(
         written = 0
         while written < size:
             rows = next(left)
-            assert rows <= -(-size // plotdata.JSON_PIECES)
+            assert rows <= -(-size // savefile.JSON_PIECES)
             written += rows
         assert written == size
     assert next(left, None) is None
