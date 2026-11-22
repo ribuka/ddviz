@@ -22,25 +22,12 @@ from ddviz.compute.missing import drawn_conditions
 from ddviz.compute.progress import Emit
 from ddviz.compute.rowfilter import filter_columns, filter_conditions
 from ddviz.compute.rowsread import ColumnReader
-from ddviz.compute.savefile import VALUE_BYTES, write_rows
+from ddviz.compute.savefile import VALUE_BYTES, index_name, write_rows
 from ddviz.compute.scan import scan_columns
 from ddviz.compute.selection import selection_columns, selection_filter
 from ddviz.shared.manifest import PlotManifest, write_manifest
 from ddviz.shared.scatter import ONE_BAND, ScatterSpec
 from ddviz.shared.tasks import PlotDataTask
-
-# Name of the row index column of the file, unless a column has it
-# (`index_name`).
-INDEX_NAME = "index"
-
-
-def index_name(columns: list[str]) -> str:
-    """Return the name of the row index column: ``index``, or ``index_2``, ... when a column has it."""
-    name, n = INDEX_NAME, 1
-    while name in columns:
-        n += 1
-        name = f"{INDEX_NAME}_{n}"
-    return name
 
 
 def _on_axis(spec: ScatterSpec, column: str, log: list[str]) -> pl.Expr:

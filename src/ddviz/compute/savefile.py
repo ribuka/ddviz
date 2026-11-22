@@ -24,6 +24,9 @@ import polars as pl
 
 from ddviz.compute.chunksink import PARQUET_ROW_GROUP_ROWS, sink_chunks, write_chunks
 
+# Name of the row index column of a file, unless a column has it
+# (`index_name`).
+INDEX_NAME = "index"
 # Bytes of values a chunk of a CSV holds at most (`_cut`), and its rows at
 # most; a chunk of a Parquet file holds half of each.
 CHUNK_BYTES = 512 * 2**20
@@ -43,6 +46,21 @@ JSON_PIECES = 16
 # bytes of its values of variable size, one column for each such column
 # (none when there are none).
 ReadChunk = Callable[[pl.DataFrame, bool], pl.DataFrame]
+
+
+def numbered(base: str, taken: Iterable[str]) -> str:
+    """Return `base`, or ``<base>_2``, ``<base>_3``, ... when a column of `taken` has it: the name of a column a file to save adds."""
+    taken = set(taken)
+    name, n = base, 1
+    while name in taken:
+        n += 1
+        name = f"{base}_{n}"
+    return name
+
+
+def index_name(columns: list[str]) -> str:
+    """Return the name of the row index column of a file of `columns`: ``index``, or ``index_2``, ... when a column has it."""
+    return numbered(INDEX_NAME, columns)
 
 
 def value_bytes(value: pl.Expr, dtype: pl.DataType) -> pl.Expr | None:

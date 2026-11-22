@@ -16,9 +16,10 @@ import pytest
 from polars.testing import assert_frame_equal
 
 from ddviz.compute import rowsread, savefile
+from ddviz.compute.savefile import index_name
 from ddviz.compute.tasks.columns import run_schema
 from ddviz.compute.tasks.plot import run_plot
-from ddviz.compute.tasks.plotdata import index_name, run_plot_data
+from ddviz.compute.tasks.plotdata import run_plot_data
 from ddviz.compute.tasks.table import run_table
 from ddviz.server.derive import box_selection, selection_spec
 from ddviz.shared.cache import SCHEMA
