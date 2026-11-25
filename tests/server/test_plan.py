@@ -14,6 +14,7 @@ from ddviz.server.plan import (
     scatter_spec,
     undrawn,
 )
+from ddviz.server.plotoptions import PlotOptions
 from ddviz.shared.scatter import (
     LINE_WIDTH,
     ONE_BAND,
@@ -32,7 +33,9 @@ def test_scatter_draws_every_axis_and_symbol_as_shapes() -> None:
         x=("a", "a2"), y=("b", "b2", "b3"), color="g", symbol="o", col="h"
     )
     files = {c: [f"{c}.parquet"] for c in encoding.columns()}
-    spec = scatter_spec(encoding, files, 400, 300, ["#000000"], shape_size=9)
+    spec = scatter_spec(
+        encoding, files, 400, 300, ["#000000"], options=PlotOptions(shape_size=9)
+    )
     assert (spec.x, spec.y, spec.color, spec.symbol, spec.row, spec.col) == (
         ["a", "a2"],
         ["b", "b2", "b3"],
@@ -59,8 +62,7 @@ def test_symbol_alone_draws_shapes_of_one_color() -> None:
         400,
         300,
         ["#000000"],
-        shape_sizes={"p": 11},
-        level_shapes={"p": "square"},
+        options=PlotOptions(shape_sizes={"p": 11}, level_shapes={"p": "square"}),
     )
     assert (spec.color, spec.symbol, spec.gradient) == (None, "o", False)
     assert spec.shape_size == SHAPE_SIZE
@@ -83,18 +85,25 @@ def test_show_null_rows_draws_the_missing_rows_of_each_role_by_default() -> None
     for color in (True, False):
         for symbol in (True, False):
             show = {"color": color, "symbol": symbol}
-            spec = scatter_spec(both, files, 400, 300, [], show_null_rows=show)
+            spec = scatter_spec(
+                both, files, 400, 300, [], options=PlotOptions(show_null_rows=show)
+            )
             assert spec.null_roles == [r for r, on in show.items() if on]
     assert scatter_spec(
-        both, files, 400, 300, [], show_null_rows={"symbol": False}
+        both, files, 400, 300, [], options=PlotOptions(show_null_rows={"symbol": False})
     ).null_roles == ["color"]
     alone = Encoding(x=("a",), y=("b",), symbol="o")
     off = {"color": True, "symbol": False}
-    assert scatter_spec(alone, files, 400, 300, [], show_null_rows=off).null_roles == []
+    assert (
+        scatter_spec(
+            alone, files, 400, 300, [], options=PlotOptions(show_null_rows=off)
+        ).null_roles
+        == []
+    )
     on = {"color": False, "symbol": True}
-    assert scatter_spec(alone, files, 400, 300, [], show_null_rows=on).null_roles == [
-        "symbol"
-    ]
+    assert scatter_spec(
+        alone, files, 400, 300, [], options=PlotOptions(show_null_rows=on)
+    ).null_roles == ["symbol"]
     bare = Encoding(x=("a",), y=("b",))
     assert scatter_spec(bare, files, 400, 300, []).null_roles == []
 
@@ -122,7 +131,13 @@ def test_lines_need_an_x_and_a_numeric_y() -> None:
     assert spec.line_pairs() == {("a", "b")}
     assert not spec.draws_points("a", "b")
     spec = scatter_spec(
-        line, files, 400, 300, ["#000000"], numeric=numeric, line_width=4
+        line,
+        files,
+        400,
+        300,
+        ["#000000"],
+        numeric=numeric,
+        options=PlotOptions(line_width=4),
     )
     assert spec.line_width == 4
     both = Encoding(x=("a",), y=("b",), elements=("points", "line"))
@@ -157,7 +172,12 @@ def test_the_line_aggregation_reaches_the_spec() -> None:
     assert scatter_spec(line, files, 400, 300, ["#000000"]).line_aggregation == "raw"
     for aggregation in ("raw", "mean", "median"):
         spec = scatter_spec(
-            line, files, 400, 300, ["#000000"], line_aggregation=aggregation
+            line,
+            files,
+            400,
+            300,
+            ["#000000"],
+            options=PlotOptions(line_aggregation=aggregation),
         )
         assert spec.line_aggregation == aggregation
     assert not spec.draws_points("a", "b")
@@ -171,7 +191,9 @@ def test_the_default_marker_size_is_larger_for_the_symbol_shapes() -> None:
     assert scatter_spec(shapes, files, 400, 300, ["#000000"]).shape_size == SHAPE_SIZE
     assert scatter_spec(circles, files, 400, 300, ["#000000"]).shape_size == POINT_SIZE
     assert (
-        scatter_spec(circles, files, 400, 300, ["#000000"], shape_size=11).shape_size
+        scatter_spec(
+            circles, files, 400, 300, ["#000000"], options=PlotOptions(shape_size=11)
+        ).shape_size
         == 11
     )
 
@@ -283,7 +305,9 @@ def test_wrap_takes_the_col_role_of_the_scatter() -> None:
     """A wrap column is drawn as col, wrapped; a numeric one is cut like Group X."""
     encoding = Encoding(x=("a",), y=("b",), wrap="w")
     files = {c: [f"{c}.parquet"] for c in encoding.columns()}
-    spec = scatter_spec(encoding, files, 400, 300, ["#000000"], wrap_cols=3)
+    spec = scatter_spec(
+        encoding, files, 400, 300, ["#000000"], options=PlotOptions(wrap_cols=3)
+    )
     assert (spec.row, spec.col, spec.wrap, spec.wrap_cols) == (None, "w", True, 3)
     assert spec.hover == ["a", "b", "w"]
     assert spec.binned == {}
@@ -293,7 +317,9 @@ def test_wrap_takes_the_col_role_of_the_scatter() -> None:
     assert spec.wrap_cols is None
     # The number to a row is kept only for a wrapped grid.
     plain = Encoding(x=("a",), y=("b",), col="w")
-    spec = scatter_spec(plain, files, 400, 300, ["#000000"], wrap_cols=3)
+    spec = scatter_spec(
+        plain, files, 400, 300, ["#000000"], options=PlotOptions(wrap_cols=3)
+    )
     assert (spec.col, spec.wrap, spec.wrap_cols) == ("w", False, None)
 
 
@@ -337,7 +363,13 @@ def test_smoothing_lines_need_a_numeric_x_and_a_numeric_y() -> None:
     assert not spec.draws_points("a", "b")
     lowess = Smoothing("lowess", frac=0.3)
     spec = scatter_spec(
-        smooth, files, 400, 300, ["#000000"], numeric=numeric, smoothing=lowess
+        smooth,
+        files,
+        400,
+        300,
+        ["#000000"],
+        numeric=numeric,
+        options=PlotOptions(smoothing=lowess),
     )
     assert spec.smooth == lowess
     banded = Encoding(x=("g",), y=("b",), elements=("smooth",))
@@ -425,12 +457,19 @@ def test_symbol_levels_take_their_own_sizes() -> None:
     files = {c: [f"{c}.parquet"] for c in ("a", "b", "g", "o")}
     shapes = Encoding(x=("a",), y=("b",), color="g", symbol="o")
     spec = scatter_spec(
-        shapes, files, 400, 300, ["#000000"], shape_size=9, shape_sizes={"q": 3}
+        shapes,
+        files,
+        400,
+        300,
+        ["#000000"],
+        options=PlotOptions(shape_size=9, shape_sizes={"q": 3}),
     )
     assert spec.marker_sizes(["p", "q", "r"]) == [9, 3, 9]
     assert spec.marker_sizes([]) == [9]
     circles = Encoding(x=("a",), y=("b",), color="g")
-    spec = scatter_spec(circles, files, 400, 300, ["#000000"], shape_sizes={"q": 3})
+    spec = scatter_spec(
+        circles, files, 400, 300, ["#000000"], options=PlotOptions(shape_sizes={"q": 3})
+    )
     assert spec.shape_sizes == {}
     assert spec.marker_sizes(["q"]) == [POINT_SIZE]
 
@@ -440,7 +479,12 @@ def test_symbol_levels_take_their_own_shapes() -> None:
     files = {c: [f"{c}.parquet"] for c in ("a", "b", "g", "o")}
     shapes = Encoding(x=("a",), y=("b",), color="g", symbol="o")
     spec = scatter_spec(
-        shapes, files, 400, 300, ["#000000"], level_shapes={"q": "diamond-filled"}
+        shapes,
+        files,
+        400,
+        300,
+        ["#000000"],
+        options=PlotOptions(level_shapes={"q": "diamond-filled"}),
     )
     assert spec.marker_shapes(["p", "q", "r"]) == [
         SHAPES[0],
@@ -449,7 +493,14 @@ def test_symbol_levels_take_their_own_shapes() -> None:
     ]
     assert spec.marker_shapes([]) == [None]
     circles = Encoding(x=("a",), y=("b",), color="g")
-    spec = scatter_spec(circles, files, 400, 300, ["#000000"], level_shapes={"q": "x"})
+    spec = scatter_spec(
+        circles,
+        files,
+        400,
+        300,
+        ["#000000"],
+        options=PlotOptions(level_shapes={"q": "x"}),
+    )
     assert spec.level_shapes == {}
     assert spec.marker_shapes(["q"]) == [None]
 
@@ -461,7 +512,14 @@ def test_keep_unfiltered_symbol_levels_goes_to_the_spec() -> None:
     spec = scatter_spec(encoding, files, 400, 300, [])
     assert not spec.keep_unfiltered_symbol_levels
     assert "symbol" in spec.levels_of_filter()
-    kept = scatter_spec(encoding, files, 400, 300, [], keep_unfiltered_symbol_levels=True)
+    kept = scatter_spec(
+        encoding,
+        files,
+        400,
+        300,
+        [],
+        options=PlotOptions(keep_unfiltered_symbol_levels=True),
+    )
     assert kept.keep_unfiltered_symbol_levels
     assert "symbol" not in kept.levels_of_filter()
 
@@ -474,7 +532,12 @@ def test_keep_unfiltered_color_levels_goes_to_the_spec() -> None:
     assert not spec.keep_unfiltered_color_levels
     assert spec.filters_color()
     kept = scatter_spec(
-        encoding, files, 400, 300, [], keep_unfiltered_color_levels=True
+        encoding,
+        files,
+        400,
+        300,
+        [],
+        options=PlotOptions(keep_unfiltered_color_levels=True),
     )
     assert kept.keep_unfiltered_color_levels
     assert not kept.filters_color()
@@ -482,7 +545,13 @@ def test_keep_unfiltered_color_levels_goes_to_the_spec() -> None:
     gradient = scatter_spec(encoding, files, 400, 300, [], numeric=numeric)
     assert not gradient.filters_color()
     cut = scatter_spec(
-        encoding, files, 400, 300, [], numeric=numeric, color_bins=Binning(5)
+        encoding,
+        files,
+        400,
+        300,
+        [],
+        numeric=numeric,
+        options=PlotOptions(color_bins=Binning(5)),
     )
     assert not cut.filters_color()
     bare = scatter_spec(Encoding(x=("a",), y=("b",)), files, 400, 300, [])
@@ -497,12 +566,16 @@ def test_show_null_rows_of_the_facets_is_on_by_default_and_wrap_takes_its_own() 
     for row in (True, False):
         for col in (True, False):
             show = {"row": row, "col": col, "wrap": not col}
-            spec = scatter_spec(grid, files, 400, 300, [], show_null_rows=show)
+            spec = scatter_spec(
+                grid, files, 400, 300, [], options=PlotOptions(show_null_rows=show)
+            )
             assert spec.null_roles == [r for r in ("row", "col") if show[r]]
     wrapped = Encoding(x=("a",), y=("b",), wrap="w")
     assert scatter_spec(wrapped, files, 400, 300, []).null_roles == ["col"]
     for wrap in (True, False):
         for col in (True, False):
             show = {"col": col, "wrap": wrap}
-            spec = scatter_spec(wrapped, files, 400, 300, [], show_null_rows=show)
+            spec = scatter_spec(
+                wrapped, files, 400, 300, [], options=PlotOptions(show_null_rows=show)
+            )
             assert spec.null_roles == (["col"] if wrap else [])

@@ -40,19 +40,11 @@ from ddviz.server.plan import (
     undrawn,
 )
 from ddviz.server.plotoptions import (
-    parse_color_bins,
     parse_color_scale,
     parse_cuts,
     parse_keep_axis_levels,
-    parse_level_shapes,
-    parse_line_aggregation,
-    parse_line_width,
+    parse_plot_options,
     parse_range_levels,
-    parse_ref_stats,
-    parse_shape_size,
-    parse_shape_sizes,
-    parse_smoothing,
-    parse_wrap_cols,
     spec_color_kind,
 )
 from ddviz.server.results import Results, drop
@@ -268,7 +260,7 @@ def plot_router(  # noqa: C901, PLR0915
         return figure(index, timing, max_hover_bytes)
 
     @router.post("/api/plot")
-    async def plot(request: PlotRequest) -> JSONResponse:  # noqa: C901, PLR0915
+    async def plot(request: PlotRequest) -> JSONResponse:  # noqa: C901
         nonlocal latest
         latest += 1
         mine = latest
@@ -281,15 +273,7 @@ def plot_router(  # noqa: C901, PLR0915
             raise HTTPException(400, str(error)) from error
         filters = await source.filters(request.filters)
         try:
-            color_bins = parse_color_bins(request.color_bins, max_levels)
-            wrap_cols = parse_wrap_cols(request.wrap_cols)
-            smoothing = parse_smoothing(request.smooth)
-            shape_size = parse_shape_size(request.shape_size)
-            line_width = parse_line_width(request.line_width)
-            line_aggregation = parse_line_aggregation(request.line_aggregation)
-            shape_sizes = parse_shape_sizes(request.shape_sizes)
-            level_shapes = parse_level_shapes(request.level_shapes)
-            ref_stats = parse_ref_stats(request.ref_stats)
+            options = parse_plot_options(request, max_levels)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         numeric = await source.numeric()
@@ -304,14 +288,20 @@ def plot_router(  # noqa: C901, PLR0915
         # gradient nor cut is none, and the axes that keep their levels are
         # categorical axis columns of the graph.
         try:
-            color_scale = parse_color_scale(
-                request.color_scale,
-                color_kind(encoding.color, numeric, color_bins),
-                max_levels,
-            )
-            cuts = parse_cuts(request.cuts, cut_roles(encoding, numeric), FACET_BINS)
-            keep_axis_levels = parse_keep_axis_levels(
-                request.keep_unfiltered_axis_levels, categorical_axes(encoding, numeric)
+            options = replace(
+                options,
+                color_scale=parse_color_scale(
+                    request.color_scale,
+                    color_kind(encoding.color, numeric, options.color_bins),
+                    max_levels,
+                ),
+                cuts=parse_cuts(
+                    request.cuts, cut_roles(encoding, numeric), FACET_BINS
+                ),
+                keep_unfiltered_axis_levels=parse_keep_axis_levels(
+                    request.keep_unfiltered_axis_levels,
+                    categorical_axes(encoding, numeric),
+                ),
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -332,27 +322,14 @@ def plot_router(  # noqa: C901, PLR0915
                 DEFAULT_COLORS,
                 filters=filters,
                 numeric=numeric,
-                color_bins=color_bins,
                 max_levels=max_levels,
                 max_axis_levels=current.plot.max_axis_levels,
-                wrap_cols=wrap_cols,
-                smoothing=smoothing,
-                shape_size=shape_size,
                 temporal=await source.temporal(),
-                shape_sizes=shape_sizes,
-                level_shapes=level_shapes,
-                show_null_rows=request.show_null_rows.model_dump(),
                 axis_scales=request.axis_scales,
                 margin_left=request.margin_left,
                 margin_bottom=request.margin_bottom,
-                line_width=line_width,
-                line_aggregation=line_aggregation,
-                keep_unfiltered_color_levels=request.keep_unfiltered_color_levels,
-                keep_unfiltered_symbol_levels=request.keep_unfiltered_symbol_levels,
-                keep_unfiltered_axis_levels=keep_axis_levels,
-                ref_stats=ref_stats,
+                options=options,
             )
-            spec = replace(spec, color_scale=color_scale, kept_cuts=cuts)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         try:

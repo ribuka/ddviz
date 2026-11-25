@@ -15,6 +15,7 @@ from ddviz.compute.cuts import cut_index, cut_labels, find_cuts
 from ddviz.compute.tasks.plot import run_plot, run_selection
 from ddviz.server.encoding import Encoding
 from ddviz.server.plan import FACET_BINS, scatter_spec
+from ddviz.server.plotoptions import PlotOptions
 from ddviz.shared.manifest import IMAGES, read_manifest
 from ddviz.shared.missing import MISSING
 from ddviz.shared.scatter import Binning, Filter, ScatterSpec, Selection, View
@@ -153,7 +154,7 @@ def test_plan_cuts_numeric_facets_and_makes_numeric_color_a_gradient(
         300,
         [],
         numeric=dict.fromkeys(spec.files, True),
-        color_bins=Binning(3, "values"),
+        options=PlotOptions(color_bins=Binning(3, "values")),
     )
     assert binned.binned == {"color": Binning(3, "values")}
     assert not binned.gradient

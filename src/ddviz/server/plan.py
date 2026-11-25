@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from ddviz.server.encoding import Encoding
+from ddviz.server.plotoptions import PlotOptions
 from ddviz.shared.axisscale import parse_axis_scales
 from ddviz.shared.layout import MARGIN_BOTTOM, MARGIN_LEFT, bottom_margin, left_margin
 from ddviz.shared.scatter import (
@@ -16,7 +17,6 @@ from ddviz.shared.scatter import (
     SHAPE_SIZE,
     Binning,
     Filter,
-    RefStat,
     ScatterSpec,
     Smoothing,
 )
@@ -358,25 +358,13 @@ def scatter_spec(
     *,
     filters: list[Filter] | None = None,
     numeric: dict[str, bool] | None = None,
-    color_bins: Binning | None = None,
     max_levels: int = MAX_LEVELS,
     max_axis_levels: int = MAX_AXIS_LEVELS,
-    wrap_cols: int | None = None,
-    smoothing: Smoothing | None = None,
-    shape_size: int | None = None,
     temporal: dict[str, str] | None = None,
-    shape_sizes: dict[str, int] | None = None,
-    level_shapes: dict[str, str] | None = None,
-    show_null_rows: dict[str, bool] | None = None,
     axis_scales: object = None,
     margin_left: int = MARGIN_LEFT,
     margin_bottom: int = MARGIN_BOTTOM,
-    line_width: int | None = None,
-    line_aggregation: str = "raw",
-    keep_unfiltered_color_levels: bool = False,
-    keep_unfiltered_symbol_levels: bool = False,
-    keep_unfiltered_axis_levels: list[str] | None = None,
-    ref_stats: list[RefStat] | None = None,
+    options: PlotOptions | None = None,
 ) -> ScatterSpec:
     """Return the overview scatter plot of a graph.
 
@@ -409,45 +397,16 @@ def scatter_spec(
         Whether each column is numeric. A numeric row, col, wrap or
         symbol column is cut into `FACET_BINS` intervals
         (`ddviz.compute.cuts`); a numeric color column is a gradient, or cut
-        by `color_bins`. An x or y column
+        by the ``color_bins`` of `options`. An x or y column
         missing is numeric; the others, categorical.
-    color_bins : Binning, optional
-        How to cut a numeric color column; None draws it as a gradient.
     max_levels : int, optional
         Most levels a categorical color, symbol, row, col or wrap column
         may have.
     max_axis_levels : int, optional
         Most levels a categorical x or y column may have.
-    wrap_cols : int, optional
-        Wrapped panels to a row
-        (`ddviz.server.plotoptions.parse_wrap_cols`); None to make them
-        closest to square.
-    smoothing : Smoothing, optional
-        How to fit the smoothing lines
-        (`ddviz.server.plotoptions.parse_smoothing`); None for the default.
-    shape_size : int, optional
-        Size of the markers in pixels
-        (`ddviz.server.plotoptions.parse_shape_size`); None for the
-        default, `SHAPE_SIZE` for the symbol's shapes and `POINT_SIZE` for
-        the circles without a symbol.
     temporal : dict of str to str, optional
         The kind of each temporal column (`ddviz.shared.temporal.KINDS`);
         such a column is numeric in `numeric` too.
-    shape_sizes : dict of str to int, optional
-        Size of the shapes of single symbol levels, by the level's name
-        (`ddviz.server.plotoptions.parse_shape_sizes`), in place of
-        `shape_size`; dropped without a symbol.
-    level_shapes : dict of str to str, optional
-        Shape of single symbol levels, by the level's name
-        (`ddviz.server.plotoptions.parse_level_shapes`), in place of the
-        shape of the level's place; dropped without shapes, as
-        `shape_sizes`.
-    show_null_rows : dict of str to bool, optional
-        Whether the ``"color"``, ``"symbol"``, ``"row"``, ``"col"`` and
-        ``"wrap"`` of the graph draw their rows with a null or NaN value
-        (`ScatterSpec.null_roles`); a role left out does. None for all.
-        The wrap's column, the spec's col, takes the ``"wrap"`` setting,
-        not the ``"col"`` one.
     axis_scales : object, optional
         The scale of each placed x and y column, as the request has it
         (`ddviz.shared.axisscale.parse_axis_scales`); None for all linear.
@@ -457,32 +416,10 @@ def scatter_spec(
     margin_bottom : int, optional
         Bottom margin the page asks for, in pixels; kept within the height
         (`ddviz.shared.layout.bottom_margin`).
-    line_width : int, optional
-        Width of the lines joining the points in pixels
-        (`ddviz.server.plotoptions.parse_line_width`); None for the
-        default, `LINE_WIDTH`. The lines are drawn with the ``"line"``
-        element, in the panels of a numeric y (`ScatterSpec.line_width`).
-    line_aggregation : str, optional
-        How the lines treat the rows of one x
-        (`ddviz.server.plotoptions.parse_line_aggregation`,
-        `ScatterSpec.line_aggregation`).
-    keep_unfiltered_color_levels : bool, optional
-        Whether a categorical color column keeps its levels over every row
-        (`ScatterSpec.keep_unfiltered_color_levels`).
-    keep_unfiltered_symbol_levels : bool, optional
-        Whether a categorical symbol column keeps its levels over every row
-        (`ScatterSpec.keep_unfiltered_symbol_levels`).
-    keep_unfiltered_axis_levels : list of str, optional
-        The categorical x and y columns whose bands are the levels over
-        every row (`ddviz.server.plotoptions.parse_keep_axis_levels`,
-        `ScatterSpec.keep_unfiltered_axis_levels`); None for none.
-    ref_stats : list of RefStat, optional
-        The statistics of the reference lines the page asks for, by column
-        (`ddviz.server.plotoptions.parse_ref_stats`): those of the
-        numeric x and y columns of the graph that are not temporal are
-        kept (`ScatterSpec.ref_stats`), the others left out without an
-        error, as the page keeps its lines by column for every graph.
-        None for none.
+    options : PlotOptions, optional
+        The settings of the drawing
+        (`ddviz.server.plotoptions.PlotOptions`, its attributes say how
+        each is drawn); None for ``PlotOptions()``.
 
     Returns
     -------
@@ -496,6 +433,7 @@ def scatter_spec(
         col or the n-th axes, or `axis_scales` is wrong.
     """
     numeric = numeric or {}
+    options = options or PlotOptions()
     if not drawable(encoding, numeric):
         raise ValueError("x and y need a column, or y numeric columns alone")
     # Without an x column, every row lies in one band.
@@ -511,7 +449,7 @@ def scatter_spec(
     col = encoding.wrap if wrap else encoding.col
     color, symbol = encoding.color, encoding.symbol
     show = dict.fromkeys(("color", "symbol", "row", "col", "wrap"), True)
-    show.update(show_null_rows or {})
+    show.update(options.show_null_rows)
     null_roles = [
         role
         for role, column, setting in (
@@ -528,10 +466,10 @@ def scatter_spec(
         role: Binning(FACET_BINS, "rows", values_up_to=FACET_BINS)
         for role in cut_roles(encoding, numeric)
     }
-    kind = color_kind(color, numeric, color_bins)
+    kind = color_kind(color, numeric, options.color_bins)
     gradient = kind == "gradient"
     if kind == "bins":
-        binned["color"] = color_bins
+        binned["color"] = options.color_bins
     read = dict.fromkeys([*hover, *(f.column for f in filters)])
     band = {ONE_BAND: []} if x == [ONE_BAND] else {}
     categorical = [
@@ -557,35 +495,38 @@ def scatter_spec(
         max_levels=max_levels,
         max_axis_levels=max_axis_levels,
         wrap=wrap,
-        wrap_cols=wrap_cols if wrap else None,
+        wrap_cols=options.wrap_cols if wrap else None,
         categorical=categorical,
         points="points" in encoding.elements,
         box="box" in encoding.elements and has_box_pair(encoding, numeric),
-        smooth=(smoothing or Smoothing())
+        smooth=(options.smoothing or Smoothing())
         if "smooth" in encoding.elements and has_smooth_pair(encoding, numeric)
         else None,
-        line_width=(line_width or LINE_WIDTH)
+        line_width=(options.line_width or LINE_WIDTH)
         if "line" in encoding.elements and has_line_pair(encoding, numeric)
         else None,
-        line_aggregation=line_aggregation,
+        line_aggregation=options.line_aggregation,
         symbol=symbol,
-        shape_size=shape_size or (POINT_SIZE if symbol is None else SHAPE_SIZE),
-        shape_sizes=dict(shape_sizes or {}) if symbol is not None else {},
-        level_shapes=dict(level_shapes or {}) if symbol is not None else {},
+        shape_size=options.shape_size
+        or (POINT_SIZE if symbol is None else SHAPE_SIZE),
+        shape_sizes=dict(options.shape_sizes) if symbol is not None else {},
+        level_shapes=dict(options.level_shapes) if symbol is not None else {},
         temporal={c: k for c, k in (temporal or {}).items() if c in read},
         null_roles=null_roles,
         log_x=log_x,
         log_y=log_y,
         margin_left=left_margin(margin_left, width),
         margin_bottom=bottom_margin(margin_bottom, height),
-        keep_unfiltered_color_levels=keep_unfiltered_color_levels,
-        keep_unfiltered_symbol_levels=keep_unfiltered_symbol_levels,
-        keep_unfiltered_axis_levels=list(keep_unfiltered_axis_levels or []),
+        keep_unfiltered_color_levels=options.keep_unfiltered_color_levels,
+        keep_unfiltered_symbol_levels=options.keep_unfiltered_symbol_levels,
+        keep_unfiltered_axis_levels=list(options.keep_unfiltered_axis_levels),
         ref_stats=[
             r
-            for r in ref_stats or []
+            for r in options.ref_stats
             if r.column in axis_columns
             and r.column not in categorical
             and r.column not in (temporal or {})
         ],
+        color_scale=options.color_scale,
+        kept_cuts=dict(options.cuts),
     )
