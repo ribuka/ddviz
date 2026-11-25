@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from itertools import pairwise
 
+from ddviz.server.models import PlotRequest, ShowNullRows
 from ddviz.shared.scatter import (
     LINE_AGGREGATIONS,
     Binning,
@@ -27,6 +29,144 @@ SMOOTH_METHODS = ("gcv", "csaps", "lowess")
 SHAPE_SIZES = (3, 5, 7, 9, 11, 15)
 # Widths in pixels the lines joining the points can take.
 LINE_WIDTHS = (1, 2, 3, 4, 5)
+
+
+@dataclass(frozen=True)
+class PlotOptions:
+    """How the page asks to draw a plot (`POST /api/plot`), checked: the settings `ddviz.server.plan.scatter_spec` takes beside the graph.
+
+    The axes' scales, the margins, the most levels and the temporal columns
+    are not settings of the drawing and stay apart, as the page's
+    ``PlotOptions`` (``static/js/plotoptions.js``) leaves the axes out.
+
+    Attributes
+    ----------
+    color_bins : Binning or None
+        How to cut a numeric color column (`parse_color_bins`); None draws
+        it as a gradient.
+    wrap_cols : int or None
+        Wrapped panels to a row (`parse_wrap_cols`); None to make them
+        closest to square.
+    smoothing : Smoothing or None
+        How to fit the smoothing lines (`parse_smoothing`); None for the
+        default.
+    shape_size : int or None
+        Size of the markers in pixels (`parse_shape_size`); None for the
+        default, `ddviz.shared.scatter.SHAPE_SIZE` for the symbol's shapes
+        and `ddviz.shared.scatter.POINT_SIZE` for the circles without a
+        symbol.
+    line_width : int or None
+        Width of the lines joining the points in pixels
+        (`parse_line_width`); None for the default,
+        `ddviz.shared.scatter.LINE_WIDTH`. The lines are drawn with the
+        ``"line"`` element, in the panels of a numeric y
+        (`ddviz.shared.scatter.ScatterSpec.line_width`).
+    line_aggregation : str
+        How the lines treat the rows of one x (`parse_line_aggregation`,
+        `ddviz.shared.scatter.ScatterSpec.line_aggregation`).
+    shape_sizes : dict of str to int
+        Size of the shapes of single symbol levels, by the level's name
+        (`parse_shape_sizes`), in place of `shape_size`; dropped without a
+        symbol.
+    level_shapes : dict of str to str
+        Shape of single symbol levels, by the level's name
+        (`parse_level_shapes`), in place of the shape of the level's place;
+        dropped without shapes, as `shape_sizes`.
+    ref_stats : list of RefStat
+        The statistics of the reference lines the page asks for, by column
+        (`parse_ref_stats`): those of the numeric x and y columns of the
+        graph that are not temporal are kept
+        (`ddviz.shared.scatter.ScatterSpec.ref_stats`), the others left out
+        without an error, as the page keeps its lines by column for every
+        graph.
+    show_null_rows : dict of str to bool
+        Whether the ``"color"``, ``"symbol"``, ``"row"``, ``"col"`` and
+        ``"wrap"`` of the graph draw their rows with a null or NaN value
+        (`ddviz.shared.scatter.ScatterSpec.null_roles`); a role left out
+        does, and each does by default
+        (`ddviz.server.models.ShowNullRows`). The wrap's column, the spec's
+        col, takes the ``"wrap"`` setting, not the ``"col"`` one.
+    keep_unfiltered_color_levels : bool
+        Whether a categorical color column keeps its levels over every row
+        (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_color_levels`).
+    keep_unfiltered_symbol_levels : bool
+        Whether a categorical symbol column keeps its levels over every row
+        (`ddviz.shared.scatter.ScatterSpec.keep_unfiltered_symbol_levels`).
+    keep_unfiltered_axis_levels : list of str
+        The categorical x and y columns whose bands are the levels over
+        every row (`parse_keep_axis_levels`,
+        `ddviz.shared.scatter.ScatterSpec.keep_unfiltered_axis_levels`).
+    color_scale : dict or None
+        The color scale of a numeric color column the page keeps under the
+        lock of the axes (`parse_color_scale`,
+        `ddviz.shared.scatter.ScatterSpec.color_scale`); None for that of
+        the filter.
+    cuts : dict of str to dict
+        The cuts of the numeric symbol, row and col columns the page keeps
+        under the lock of the axes, by role (`parse_cuts`,
+        `ddviz.shared.scatter.ScatterSpec.kept_cuts`); a role left out
+        takes the cuts of the filter.
+    """
+
+    color_bins: Binning | None = None
+    wrap_cols: int | None = None
+    smoothing: Smoothing | None = None
+    shape_size: int | None = None
+    line_width: int | None = None
+    line_aggregation: str = "raw"
+    shape_sizes: dict[str, int] = field(default_factory=dict)
+    level_shapes: dict[str, str] = field(default_factory=dict)
+    ref_stats: list[RefStat] = field(default_factory=list)
+    show_null_rows: dict[str, bool] = field(
+        default_factory=lambda: ShowNullRows().model_dump()
+    )
+    keep_unfiltered_color_levels: bool = False
+    keep_unfiltered_symbol_levels: bool = False
+    keep_unfiltered_axis_levels: list[str] = field(default_factory=list)
+    color_scale: dict | None = None
+    cuts: dict[str, dict] = field(default_factory=dict)
+
+
+def parse_plot_options(request: PlotRequest, max_levels: int) -> PlotOptions:
+    """Return the settings of the drawing a plot request asks for, checked.
+
+    The settings checked against the graph's columns
+    (``keep_unfiltered_axis_levels``, ``color_scale`` and ``cuts``) are left
+    at their defaults: ``POST /api/plot`` checks them after the unknown
+    columns, with `parse_keep_axis_levels`, `parse_color_scale` and
+    `parse_cuts`.
+
+    Parameters
+    ----------
+    request : PlotRequest
+        The body of ``POST /api/plot``.
+    max_levels : int
+        Most intervals of a numeric color column (``plot.max_levels``).
+
+    Returns
+    -------
+    PlotOptions
+        The settings.
+
+    Raises
+    ------
+    ValueError
+        From the first setting of another form, as its ``parse_*`` raises it.
+    """
+    return PlotOptions(
+        color_bins=parse_color_bins(request.color_bins, max_levels),
+        wrap_cols=parse_wrap_cols(request.wrap_cols),
+        smoothing=parse_smoothing(request.smooth),
+        shape_size=parse_shape_size(request.shape_size),
+        line_width=parse_line_width(request.line_width),
+        line_aggregation=parse_line_aggregation(request.line_aggregation),
+        shape_sizes=parse_shape_sizes(request.shape_sizes),
+        level_shapes=parse_level_shapes(request.level_shapes),
+        ref_stats=parse_ref_stats(request.ref_stats),
+        show_null_rows=request.show_null_rows.model_dump(),
+        keep_unfiltered_color_levels=request.keep_unfiltered_color_levels,
+        keep_unfiltered_symbol_levels=request.keep_unfiltered_symbol_levels,
+    )
 
 
 def is_int(value: object) -> bool:

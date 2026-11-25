@@ -6,8 +6,10 @@ from collections.abc import Callable
 
 import pytest
 
+from ddviz.server.models import PlotRequest
 from ddviz.server.plotoptions import (
     MAX_SAFE_INTEGER,
+    PlotOptions,
     parse_color_bins,
     parse_color_scale,
     parse_cuts,
@@ -15,6 +17,7 @@ from ddviz.server.plotoptions import (
     parse_level_shapes,
     parse_line_aggregation,
     parse_line_width,
+    parse_plot_options,
     parse_range_levels,
     parse_ref_stats,
     parse_shape_size,
@@ -406,3 +409,90 @@ def test_parse_keep_axis_levels_refuses_another_form(raw: object) -> None:
     """Not a list of strings, or a column that is not a categorical axis column of the graph (a numeric one, one unknown), is refused naming ``keep_unfiltered_axis_levels``."""
     with pytest.raises(ValueError, match="keep_unfiltered_axis_levels"):
         parse_keep_axis_levels(raw, ["g"])
+
+
+# The body of a plot request without a setting of the drawing.
+BARE = {"encoding": {}, "width": 400, "height": 300}
+
+
+def test_parse_plot_options_of_a_bare_request_is_the_default() -> None:
+    """A request with the graph and the size only takes every default."""
+    assert parse_plot_options(PlotRequest(**BARE), 100) == PlotOptions()
+
+
+def test_parse_plot_options_takes_each_setting() -> None:
+    """Each setting of the request reaches its attribute, checked by its ``parse_*``."""
+    request = PlotRequest(
+        **BARE,
+        color_bins={"n": 3, "by": "values"},
+        wrap_cols=2,
+        smooth={"method": "lowess", "frac": 0.5},
+        shape_size=7,
+        line_width=3,
+        line_aggregation="mean",
+        shape_sizes={"p": 11},
+        level_shapes={"p": "square"},
+        ref_stats={"y": {"moments": True, "quantiles": [90, 10]}},
+        show_null_rows={"color": False, "wrap": False},
+        keep_unfiltered_color_levels=True,
+        keep_unfiltered_symbol_levels=True,
+    )
+    assert parse_plot_options(request, 100) == PlotOptions(
+        color_bins=Binning(3, "values"),
+        wrap_cols=2,
+        smoothing=Smoothing("lowess", None, 0.5),
+        shape_size=7,
+        line_width=3,
+        line_aggregation="mean",
+        shape_sizes={"p": 11},
+        level_shapes={"p": "square"},
+        ref_stats=[RefStat("y", moments=True, quantiles=[10.0, 90.0])],
+        show_null_rows={
+            "color": False,
+            "symbol": True,
+            "row": True,
+            "col": True,
+            "wrap": False,
+        },
+        keep_unfiltered_color_levels=True,
+        keep_unfiltered_symbol_levels=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "raw", "parse"),
+    [
+        ("color_bins", {"n": 1, "by": "rows"}, lambda r: parse_color_bins(r, 100)),
+        ("wrap_cols", 0, parse_wrap_cols),
+        ("smooth", {"method": "spline"}, parse_smoothing),
+        ("shape_size", 4, parse_shape_size),
+        ("line_width", 9, parse_line_width),
+        ("line_aggregation", "sum", parse_line_aggregation),
+        ("shape_sizes", {"p": 4}, parse_shape_sizes),
+        ("level_shapes", {"p": "star"}, parse_level_shapes),
+        ("ref_stats", ["y"], parse_ref_stats),
+    ],
+)
+def test_parse_plot_options_refuses_as_each_parse_does(
+    field: str, raw: object, parse: Callable[[object], object]
+) -> None:
+    """A wrong setting is refused with the very error of its ``parse_*``."""
+    with pytest.raises(ValueError) as expected:
+        parse(raw)
+    with pytest.raises(ValueError) as error:
+        parse_plot_options(PlotRequest(**BARE, **{field: raw}), 100)
+    assert str(error.value) == str(expected.value)
+
+
+def test_parse_plot_options_leaves_the_settings_checked_against_the_columns() -> None:
+    """The axes that keep their levels, the color scale and the cuts are left at their defaults for ``POST /api/plot`` to check against the graph."""
+    request = PlotRequest(
+        **BARE,
+        keep_unfiltered_axis_levels=["g"],
+        color_scale={"range": [0, 1]},
+        cuts={"row": {"breaks": [0, 1], "values": False}},
+    )
+    options = parse_plot_options(request, 100)
+    assert options.keep_unfiltered_axis_levels == []
+    assert options.color_scale is None
+    assert options.cuts == {}

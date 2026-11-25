@@ -13,6 +13,7 @@ from ddviz.compute import boxes
 from ddviz.compute.aggregate import Aggregation, aggregate
 from ddviz.server.encoding import Encoding
 from ddviz.server.plan import scatter_spec
+from ddviz.server.plotoptions import PlotOptions
 from ddviz.shared.scatter import ONE_BAND, Filter, RefStat, ScatterSpec, View
 
 N = 4000
@@ -246,9 +247,9 @@ def test_only_the_numeric_axis_columns_asked_for_are_found(
         ["#000000"],
         numeric=numeric,
         temporal={"at": "datetime"},
-        ref_stats=[
-            RefStat(c, moments=True) for c in ["x", "y", "at", "g", "tail"]
-        ],
+        options=PlotOptions(
+            ref_stats=[RefStat(c, moments=True) for c in ["x", "y", "at", "g", "tail"]]
+        ),
     )
     assert [r.column for r in planned.ref_stats] == ["x", "y"]
 
